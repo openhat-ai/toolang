@@ -21,7 +21,11 @@ def until_header(statement: RepeatStmt) -> str:
     """Return the Repeat until boundary label without exposing generated names."""
 
     runnable = statement.runnable or ""
-    return "Check whether to stop" if _generated(runnable) else runnable
+    return (
+        "Check whether to break"
+        if _generated(runnable)
+        else f"Run {runnable} to check whether to break"
+    )
 
 
 def _generated(value: str) -> bool:

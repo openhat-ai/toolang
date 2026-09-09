@@ -14,7 +14,7 @@ from toolang.cli.common.execution_progress import (
     ProgressBlock,
     ProgressProjector,
 )
-from toolang.cli.common.execution_progress.headers import statement_header
+from toolang.cli.common.execution_progress.headers import statement_header, until_header
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -99,6 +99,18 @@ def _tool_call_part() -> ToolCallPart:
 
 def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
     return [[row.text for row in block.rows] for block in blocks]
+
+
+@pytest.mark.parametrize(
+    ("runnable", "expected"),
+    [
+        ("completion_check", "Run completion_check to check whether to break"),
+        ("<agic:12>", "Check whether to break"),
+        (None, "Check whether to break"),
+    ],
+)
+def test_until_header_explains_the_condition_run(runnable, expected) -> None:
+    assert until_header(RepeatStmt(span=SPAN, count=3, runnable=runnable)) == expected
 
 
 @pytest.mark.parametrize("runnable", ["search_web", "<agic:12>"])
@@ -295,7 +307,7 @@ def test_parallel_collection_steps_describe_the_result(
     )
     live = projector.handle(StepBegin(step=path, kind="par", given=statement))
 
-    assert _rows(live.live) == [["• 0 succeeded"]]
+    assert _rows(live.live) == [["• Running · 0 succeeded"]]
     assert live.live[0].rows[0].tone == "active"
 
     terminal = projector.handle(
@@ -739,7 +751,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
 
     assert _rows(tool.live) == [
         [
-            "• 0/1 succeeded · 1 running",
+            "• Running · 1 active · 0/1 succeeded",
             "  0 | #0 | › executing web.search",
         ]
     ]
@@ -1171,7 +1183,9 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.committed) == [["<?> completion_check", ""]]
+    assert _rows(live.committed) == [
+        ["<?> Run completion_check to check whether to break", ""]
+    ]
     assert _rows(live.live) == [["• Thinking..."]]
     final = reducer.handle(
         StepEnd(
@@ -1234,7 +1248,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(streamed.live) == [
         [
-            "• 0/8 succeeded · 2 running · 6 queued",
+            "• Running · 2 active · 0/8 succeeded",
             "  0 | #4 | › executing fetch_page",
             "  1 | #5 | • first lane line second lane line",
         ]
@@ -1250,7 +1264,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(failed.live) == [
         [
-            "• 0/8 succeeded · 2 running · 6 queued",
+            "• Running · 2 active · 0/8 succeeded",
             "  0 | #4 | › failed fetch_page · provider returned status 429",
             "  1 | #5 | • first lane line second lane line",
         ]
@@ -1264,7 +1278,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(child_failed.live) == [
         [
-            "• 0/8 succeeded · 1 failed · 1 canceling · 6 not started",
+            "• Running · 1 failed · 1 active · 0/8 succeeded",
             "  0 | #4 | › failed fetch_page · provider returned status 429",
             "  1 | #5 | • canceling",
         ]
@@ -1295,7 +1309,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert terminal.live == ()
     assert _rows(terminal.committed) == [
         [
-            "• Stopped · 0/8 succeeded · 1 failed · 1 canceled · 6 not started",
+            "• Stopped · 1 failed · 1 canceled · 6 not started · 0/8 succeeded",
             "  0 | #4 | › failed fetch_page",
             "             provider returned status 429",
             "",
@@ -1340,12 +1354,13 @@ def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
             )
         )
     live = projector.handle(RunEnd(run="run_child_0", status="succeeded"))
-    assert live.live[0].rows[0].text == "• 1/4 succeeded · 1 running · 2 queued"
+    assert live.live[0].rows[0].text == "• Running · 1 active · 1/4 succeeded"
 
-    projector.handle(RunEnd(run="run_child_1", status="canceled"))
+    live = projector.handle(RunEnd(run="run_child_1", status="canceled"))
+    assert live.live[0].rows[0].text == "• Running · 1/4 succeeded"
     terminal = projector.handle(StepEnd(step=par, kind="par", status="canceled"))
     assert _rows(terminal.committed) == [
-        ["• Canceled · 1/4 succeeded · 1 canceled · 2 not started", "  2 runs", ""]
+        ["• Canceled · 1 canceled · 2 not started · 1/4 succeeded", "  2 runs", ""]
     ]
     assert terminal.committed[0].rows[0].tone == "warning"
     assert terminal.live == ()
@@ -1751,7 +1766,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     )
     assert _rows(live.live) == [
         [
-            "• 0/2 succeeded · 1 running · 1 queued",
+            "• Running · 1 active · 0/2 succeeded",
             "  0 | #0 | › executing fetch_page",
         ]
     ]
@@ -1805,7 +1820,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 
     assert _rows(reused.live) == [
         [
-            "• 1/2 succeeded · 1 running",
+            "• Running · 1 active · 1/2 succeeded",
             "  0 | #1 | • starting",
         ]
     ]
@@ -2170,7 +2185,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "• Stopped · 0/1 succeeded · 1 failed",
+            "• Stopped · 1 failed · 0/1 succeeded",
             "  0 | #0 | • input must be a list",
             "",
             "• parallel step stopped because lane 0 (#0) failed",

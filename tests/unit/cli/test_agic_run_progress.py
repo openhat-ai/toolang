@@ -298,16 +298,31 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
 
     assert header.committed[0].rows == (
         ProgressRow(
-            "---  handoff to agic:abc",
+            "---  execute agic:abc",
             leader="handoff",
         ),
         ProgressRow(""),
     )
     assert header.live[0].rows == (ProgressRow("• Thinking...", "active"),)
     assert re.search(
-        r"╟ handoff to agic:abc ─+",
+        r"---  execute agic:abc -+",
         _render_progress(header.committed[0], width=72),
     )
+
+
+@pytest.mark.parametrize("width", [1, 4, 5, 16, 72])
+def test_handoff_uses_ascii_hyphens_without_losing_its_target(width: int) -> None:
+    block = ProgressBlock(
+        "handoff",
+        (ProgressRow("---  execute agic:delegate", leader="handoff"),),
+    )
+    for render in (_render_progress, _render_chat_progress):
+        output = render(block, width=width)
+        lines = output.splitlines()
+        assert max(display_width(line) for line in lines) <= width
+        assert "".join(output.split()).replace("-", "") == "executeagic:delegate"
+        if width == 72:
+            assert lines == ["---  execute agic:delegate " + "-" * 45]
 
 
 def test_execute_uses_its_persisted_running_description() -> None:
@@ -403,7 +418,7 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
     ended = projector.handle(RunEnd(run="run_root", status=status))
     rows = tuple(row for block in ended.committed for row in block.rows)
     assert rows == (
-        ProgressRow("---  handoff to agic:abc", leader="handoff"),
+        ProgressRow("---  execute agic:abc", leader="handoff"),
         ProgressRow(""),
     )
     assert not projector._broken
@@ -577,7 +592,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     assert header.live == ()
     assert header.committed[0].rows == (
         ProgressRow(
-            "---  handoff to flow:delegate",
+            "---  execute flow:delegate",
             leader="handoff",
         ),
         ProgressRow(""),

@@ -216,6 +216,17 @@ and complete status-plus-ID field. Long captions and identities fold by display
 cells without truncation. Exactly one blank row follows the header, precedes the
 footer, and follows the footer; adjacent child-owned gaps coalesce.
 
+A confirmed `execute` transfer displays one dim boundary before the target's
+first Step:
+
+```text
+---  execute agic:delegate ---------------------------------------------
+```
+
+Its prefix is three ASCII hyphens and two spaces. The right-hand ASCII hyphens
+fill the available width. Long target names wrap under a five-cell indent
+without truncation. Script and Chat use the same rendering.
+
 ## Flow Headers
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
@@ -418,21 +429,26 @@ lane. A lane retains its latest activity until reuse or Step closure. Lane rows
 are truncated rather than wrapped:
 
 ```text
-• 4/18 succeeded · 3 running · 11 queued
+• Running · 3 active · 4/18 succeeded
   0 | #4 | • Thinking...
   1 | #5 | › Executing search ...
   2 | #6 | • Source summary prepared
 ```
 
-Counts describe items across all lane reuse. `succeeded` counts successful child
-Runs, `running` counts active children, and `queued` counts items that have not
-started. A known total is the denominator; an unknown total is omitted. Before
-any child starts, the summary is `0 succeeded`.
+Counts describe items across all lane reuse. Running summaries contain only
+`failed`, `active`, and `succeeded`, in that order. Active children include those
+still canceling; their individual lane activity can say `canceling`. Queued and
+canceled counts do not appear in the running summary. For example:
 
-Failure changes active children to `canceling` and queued items to `not started`.
-Finished failures and cancellations are counted separately. Zero-valued states
-are omitted except for the success count. A terminal summary never labels
-unstarted items as canceled.
+```text
+• Running · 1 failed · 2 active · 2/6 succeeded
+```
+
+Terminal summaries contain `failed`, `canceled`, `not started`, and `succeeded`,
+in that order. Only the success count includes the known total, and it always
+appears last. Zero-valued counts are omitted except for `succeeded`. Before any
+child starts, the summary is `Running · 0 succeeded`, without an invented total.
+A terminal summary never labels unstarted items as canceled.
 
 On success, the live lanes are cleared and one natural-language result remains:
 
@@ -449,7 +465,7 @@ lane retains its causal error, followed by the parallel Step's distinct
 boundary error:
 
 ```text
-• Stopped · 4/18 succeeded · 1 failed · 2 canceled · 11 not started
+• Stopped · 1 failed · 2 canceled · 11 not started · 4/18 succeeded
   1 | #5 | › failed fetch_page
              provider returned status 429
 
@@ -460,7 +476,7 @@ boundary error:
 Cancellation uses the same counts without inventing a failure:
 
 ```text
-• Canceled · 4/18 succeeded · 3 canceled · 11 not started
+• Canceled · 3 canceled · 11 not started · 4/18 succeeded
 ```
 
 ## Repeat and Settle
@@ -471,14 +487,15 @@ normal trace-or-lane rule for its child statement:
 ```text
 --- iteration 1 of 3 ---
 
-<?> completion_check
+<?> Run completion_check to check whether to break
 
 • Thinking...
 • true
 ```
 
 The condition is a child Run, not a synthetic `executed completion_check`
-Step. Terminal loop output identifies the actual cause:
+Step. Generated condition names use `<?> Check whether to break` instead of
+exposing an internal name. Terminal loop output identifies the actual cause:
 
 ```text
 • Completed all 3 iterations

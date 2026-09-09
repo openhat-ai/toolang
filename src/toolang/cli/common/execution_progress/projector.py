@@ -944,7 +944,9 @@ class ProgressProjector:
         )
 
     def _par_live_rows(self, state: StepState) -> tuple[ProgressRow, ...]:
-        rows = [ProgressRow(f"• {self._par_counts(state, live=True)}", "active")]
+        rows = [
+            ProgressRow(f"• Running · {self._par_counts(state, live=True)}", "active")
+        ]
         if not state.par.lanes:
             return tuple(rows)
         lane_width = len(str(max(state.par.lanes)))
@@ -966,17 +968,18 @@ class ProgressProjector:
         succeeded = str(par.succeeded_children)
         if par.total_items is not None:
             succeeded = f"{succeeded}/{par.total_items}"
-        facts = [f"{succeeded} succeeded"]
+        facts = []
         if par.failed_children:
             facts.append(f"{par.failed_children} failed")
-        if live and par.active_children:
-            status = "canceling" if par.terminating else "running"
-            facts.append(f"{par.active_children} {status}")
-        if par.canceled_children:
-            facts.append(f"{par.canceled_children} canceled")
-        if par.total_items is not None and par.total_items > par.child_count:
-            status = "queued" if live and not par.terminating else "not started"
-            facts.append(f"{par.total_items - par.child_count} {status}")
+        if live:
+            if par.active_children:
+                facts.append(f"{par.active_children} active")
+        else:
+            if par.canceled_children:
+                facts.append(f"{par.canceled_children} canceled")
+            if par.total_items is not None and par.total_items > par.child_count:
+                facts.append(f"{par.total_items - par.child_count} not started")
+        facts.append(f"{succeeded} succeeded")
         return " · ".join(facts)
 
     def _par_terminal_text(self, state: StepState, event: StepEnd) -> str:
@@ -1066,7 +1069,7 @@ class ProgressProjector:
             rows.extend(
                 (
                     ProgressRow(
-                        f"---  handoff to {handoff.runnable}",
+                        f"---  execute {handoff.runnable}",
                         leader="handoff",
                     ),
                     ProgressRow(""),
@@ -1094,7 +1097,7 @@ class ProgressProjector:
                 rows.extend(
                     (
                         ProgressRow(
-                            f"---  handoff to {pending.runnable}",
+                            f"---  execute {pending.runnable}",
                             leader="handoff",
                         ),
                         ProgressRow(""),
