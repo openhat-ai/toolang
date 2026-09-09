@@ -9,7 +9,7 @@ from typer._click.types import StringParamType
 from typer.models import TyperPath
 
 
-DEVELOPMENT_WHEEL_HELP = "Use a local Toolang wheel (PATH defaults to .)"
+DEVELOPMENT_WHEEL_HELP = "Use a local Toolang wheel"
 
 
 class TextType(StringParamType):

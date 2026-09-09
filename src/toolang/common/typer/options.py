@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from typer._click import Command, Context
@@ -13,6 +14,14 @@ from typer.core import TyperCommand, TyperGroup, TyperOption
 # Use with text options when the caller needs a distinct bare-selection marker.
 # NUL cannot occur in an OS command-line argument, including an explicit value.
 BARE_VALUE = "\0"
+
+
+@dataclass(frozen=True)
+class OptionalValue:
+    """Define a bare input and its help visibility or display label together."""
+
+    bare_value: str
+    show_bare: bool | str = True
 
 
 class OptionalValueParser(_OptionParser):
@@ -64,21 +73,26 @@ class OptionalValueParser(_OptionParser):
 class _OptionalValueSupport(Command):
     """Supply configured raw values for bare scalar options, by parameter name.
 
-    Subclasses declare ``optional_values = {"parameter": "bare value"}`` and
-    use an optional metavar such as ``[PATH]`` in the option declaration.
+    Subclasses declare ``optional_values = {"parameter": OptionalValue(...)}``
+    with a ``bare_value`` for each option and an optional metavar such as ``[PATH]``.
     Defaults, conversion, validation, callbacks, and completion remain native.
     Compose with an existing command class to retain its routing and help.
     Override ``parser_class`` with an ``OptionalValueParser`` subclass when
-    the command also needs custom positional-input parsing.
+    the command also needs custom positional-input parsing. Values can be raw
+    strings or ``OptionalValue(bare_value=..., show_bare=...)`` declarations.
+    As with Typer's ``show_default``, ``show_bare`` controls visibility or supplies
+    a display label. Formatters read it through ``get_bare_help`` without conversion.
     """
 
-    optional_values: ClassVar[Mapping[str, str]] = {}
+    optional_values: ClassVar[Mapping[str, str | OptionalValue]] = {}
     parser_class: ClassVar[type[OptionalValueParser]] = OptionalValueParser
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         by_name = {param.name: param for param in self.params}
+        self._optional_values: dict[str, OptionalValue] = {}
         for name, value in self.optional_values.items():
+            definition = OptionalValue(value) if isinstance(value, str) else value
             param = by_name.get(name)
             if (
                 not isinstance(param, TyperOption)
@@ -86,16 +100,35 @@ class _OptionalValueSupport(Command):
                 or param.count
                 or param.multiple
                 or param.nargs != 1
-                or not isinstance(value, str)
+                or not isinstance(definition, OptionalValue)
+                or not isinstance(definition.bare_value, str)
+                or not isinstance(definition.show_bare, (bool, str))
             ):
                 raise TypeError(
-                    f"{name}: expected a scalar value option and a raw string"
+                    f"{name}: expected a scalar value option and a raw string or OptionalValue"
                 )
 
+            self._optional_values[name] = definition
+
+    def get_bare_help(self, name: str) -> str | None:
+        """Read the declared display value without resolving the parser's input."""
+        definition = self._optional_values.get(name)
+        if definition is None or definition.show_bare is False:
+            return None
+        value = (
+            definition.show_bare
+            if isinstance(definition.show_bare, str)
+            else definition.bare_value
+        )
+        return value if value else '""'
+
     def make_parser(self, ctx: Context) -> _OptionParser:
-        if not self.optional_values:
+        if not self._optional_values:
             return super().make_parser(ctx)
-        parser = self.parser_class(ctx, self.optional_values)
+        parser = self.parser_class(
+            ctx,
+            {name: value.bare_value for name, value in self._optional_values.items()},
+        )
         for param in self.get_params(ctx):
             param.add_to_parser(parser, ctx)
         return parser

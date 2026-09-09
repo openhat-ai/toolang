@@ -640,6 +640,11 @@ Use `--dev=PATH` or a `./` prefix for paths beginning with `-`. Repeated `--dev`
 options use the last value; a runnable-level occurrence overrides the script
 root value. Explicit empty paths (`--dev=` or `--dev ""`) also resolve to `.`.
 
+Help displays environment, default, and bare-option metadata as separate tags:
+`[env: NAME=] [default: VALUE] [bare: VALUE]`. Only applicable tags are shown.
+For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
+not change the default when the entire option is absent.
+
 `--dev` does not treat a directory as a source project and does not rebuild
 after launch. It applies only while starting a new guest: host execution uses
 the current Toolang installation, and an attached AgentServer has already

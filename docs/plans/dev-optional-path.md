@@ -1,6 +1,7 @@
 # Optional Development Wheel Path
 
-Status: Approved for implementation on 2026-09-09.
+Status: Approved for implementation on 2026-09-09; formatter metadata refinement
+approved in the follow-up request on the same date.
 
 ## Goal and Success Criteria
 
@@ -12,8 +13,8 @@ Make `--dev [PATH]` a three-state option and shorten its help description.
 | `--dev` | `Path(".")` | Select a local wheel under the invocation directory. |
 | `--dev PATH` | `Path(PATH)` | Select a wheel from the supplied file or directory. |
 
-Help shows `--dev [PATH]` with the shared description:
-`Use a local Toolang wheel (PATH defaults to .)`
+Help shows `--dev [PATH]` with the shared description
+`Use a local Toolang wheel` and generated metadata `[bare: .]`.
 
 ## Scope and Decisions
 
@@ -37,21 +38,40 @@ Help shows `--dev [PATH]` with the shared description:
   existing launch behavior. Do not build wheels automatically or change the
   standalone Docker harness interface.
 
+## Formatter Metadata
+
+- Render independent tags in order: `[env: NAME=] [default: VALUE] [bare: VALUE]`,
+  followed by any existing range and required annotations in separate tags.
+- Keep native environment/default visibility and extraction behavior. Show only
+  declared environment names, never their values. A `None` default stays hidden.
+- Obtain bare help from the owning optional-value command or group through a
+  side-effect-free accessor. Each option defines its raw value and help metadata
+  together with `OptionalValue(bare_value=..., show_bare=...)`; keep raw-string
+  declarations as shorthand. `show_bare=True` displays the raw value, `False`
+  hides it, and a string supplies a display label. Empty strings display as `""`.
+  The formatter does not special-case option names, paths, or selection markers.
+- Label Chat's bare selection `latest thread`; this is help text only, not a
+  new accepted thread keyword. Keep its existing selection behavior and guidance.
+- Preserve standalone use of both Typer extensions: the formatter does not import
+  the parser extension or any Toolang runtime module. Help does not convert bare
+  values, access paths/history, or call default factories.
+
 ## Design Touchpoints and Likely Files
 
-Current declarations require PATH. The existing optional-value command supports
-typed bare values, while script runnables use a specialized parser. Compose the
-shared behavior with that parser and script groups without losing runnable input
-handling, parameter-source tracking, help layout, or lazy command routing.
+Use one optional-value declaration for both parsing and help. Script runnables
+compose the shared parser with their input-boundary handling. Preserve native
+conversion, parameter sources, script inheritance, help layout, and lazy routing.
 
-- `src/toolang/common/typer/options.py`: expose only the composition support
-  needed by script parsers and groups; avoid a second optional-value parser.
+- `src/toolang/common/typer/options.py`: shared parser composition and declarative
+  bare-help metadata; avoid a second optional-value parser.
+- `src/toolang/common/typer/ui.py`: format independent metadata tags.
 - `src/toolang/cli/toolang/main.py`: configure existing lazy command classes.
 - `src/toolang/cli/toolang/commands/{runtime,thread,script}.py` and
   `src/toolang/cli/toolang/commands/chat/__init__.py`: option declarations and
   script parser integration.
 - `src/toolang/cli/common/parameters.py`: shorten the shared description.
-- `tests/unit/common/typer/test_options.py`, the CLI command/help/routing tests,
+- `tests/unit/common/typer/test_options.py`, `test_help_metadata.py`,
+  `test_standalone.py`, the CLI command/help/routing tests,
   and `tests/integration/cli/test_runtime_commands.py`: acceptance coverage.
 - `docs/api.md` and `docs/chat.md`: document optional PATH and the bare form.
 
@@ -69,7 +89,10 @@ handling, parameter-source tracking, help layout, or lazy command routing.
    directory without wheels reports the existing error. Help starts no runtime.
 4. Host and attached-server calls still reject development selection; omitted
    selection retains its existing behavior. All affected help views show
-   `[PATH]` and the exact concise description, retaining option order.
+   `[PATH]`, the concise description, and `[bare: .]`, retaining option order.
+   Test combined metadata order, visibility, literal labels, empty and sentinel
+   bare values, command/group ownership, both themes, narrow wrapping, and
+   rendering without conversion, environment reads, or default-factory calls.
 5. Validate documentation examples and run the offline default verification:
    `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
    and `uv run pytest`. Live-provider tests remain opt-in.

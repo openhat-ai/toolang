@@ -298,6 +298,9 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
     assert "most recently updated thread" in " ".join(output.split())
+    assert "[bare: latest thread]" in " ".join(output.split())
+    assert "[bare: .]" in " ".join(output.split())
+    assert "\0" not in output
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])

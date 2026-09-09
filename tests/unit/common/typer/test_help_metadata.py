@@ -8,13 +8,22 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import typer
+from rich.cells import cell_len
 from rich.console import Console
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command
+from typer._click.utils import strip_ansi
 
 from tests.support.typer_ui import invoke
+from toolang.common.typer.options import (
+    BARE_VALUE,
+    OptionalValue,
+    OptionalValueCommand,
+    OptionalValueGroup,
+)
 from toolang.common.typer.ui import (
     PLAIN,
+    UV,
     _format_help,
     _parameter_help,
     _value_label,
@@ -362,7 +371,7 @@ class HelpMetadataTest(unittest.TestCase):
         }
         expected = {
             "dynamic": "[default: (dynamic)]",
-            "count": "[default: 3; 1<=x<=5]",
+            "count": "[default: 3] [1<=x<=5]",
             "mode": "[default: safe]",
             "tags": "[default: a, b]",
             "enabled": "[default: enabled]",
@@ -396,3 +405,163 @@ class HelpMetadataTest(unittest.TestCase):
         self.assertIn("--target PATH", result.stdout)
         self.assertIn("[required]", result.stdout)
         self.assertIn("-c / -C, --color / --no-color", result.stdout)
+
+    def test_optional_value_metadata_is_separate_and_does_not_resolve_values(self):
+        class BudgetCommand(OptionalValueCommand):
+            optional_values = {"budget": OptionalValue(bare_value="8")}
+
+        app = typer.Typer(add_completion=False)
+
+        @app.command(cls=BudgetCommand)
+        def show(
+            budget: Annotated[
+                int, typer.Option(envvar="ABC_DEF", min=1, max=10, help="Set budget")
+            ] = 3,
+        ):
+            self.fail("help executed the command")
+
+        command = get_command(app)
+        ctx = typer.Context(command, info_name="demo", default_map={"budget": 4})
+        option = next(param for param in command.params if param.name == "budget")
+        assert isinstance(option, TyperOption)
+        with (
+            patch.object(
+                option.type, "convert", side_effect=AssertionError("converted")
+            ),
+            patch.object(
+                option, "value_from_envvar", side_effect=AssertionError("read env")
+            ),
+        ):
+            self.assertEqual(
+                _parameter_help(option, ctx).plain,
+                "Set budget  [env: ABC_DEF=] [default: 4] [bare: 8] [1<=x<=10]",
+            )
+            for theme in (PLAIN, UV):
+                for width in (44, 120):
+                    with self.subTest(theme=theme, width=width):
+                        ctx.terminal_width = width
+                        output = strip_ansi(
+                            _format_help(
+                                ctx,
+                                theme=theme,
+                                console=Console(width=width, force_terminal=True),
+                            )
+                        )
+                        self.assertIn(
+                            "[env: ABC_DEF=] [default: 4] [bare: 8] [1<=x<=10]",
+                            " ".join(output.split()),
+                        )
+                        self.assertFalse(
+                            [
+                                line
+                                for line in output.splitlines()
+                                if cell_len(line) > width
+                            ]
+                        )
+            option.show_envvar = False
+            option.show_default = False
+            self.assertEqual(
+                _parameter_help(option, ctx).plain, "Set budget  [bare: 8] [1<=x<=10]"
+            )
+
+    def test_bare_labels_are_literal_and_preserve_raw_selection(self):
+        class SelectionCommand(OptionalValueCommand):
+            optional_values = {
+                "selected": OptionalValue(
+                    bare_value=BARE_VALUE, show_bare="latest thread"
+                ),
+                "private": OptionalValue(bare_value=BARE_VALUE, show_bare=False),
+                "empty": "",
+                "literal": "[env: LITERAL=]",
+                "path": ".",
+            }
+
+        captured = {}
+        app = typer.Typer(add_completion=False)
+
+        def default_factory():
+            self.fail("help called the default factory")
+
+        @app.command(cls=SelectionCommand)
+        def show(
+            dynamic: Annotated[str, typer.Option(default_factory=default_factory)],
+            selected: str | None = None,
+            private: str | None = None,
+            empty: str | None = None,
+            literal: str | None = None,
+            path: Annotated[
+                Path | None, typer.Option(exists=True, resolve_path=True)
+            ] = None,
+        ):
+            captured.update(
+                selected=selected,
+                private=private,
+                empty=empty,
+                literal=literal,
+                path=path,
+            )
+
+        command = get_command(app)
+        ctx = typer.Context(command)
+        expected = {
+            "selected": "[bare: latest thread]",
+            "private": "",
+            "empty": '[bare: ""]',
+            "literal": "[bare: [env: LITERAL=]]",
+            "path": "[bare: .]",
+            "dynamic": "[default: (dynamic)]",
+        }
+        for param in command.params:
+            assert isinstance(param, TyperOption) and param.name is not None
+            with (
+                self.subTest(name=param.name),
+                patch.object(
+                    param.type, "convert", side_effect=AssertionError("converted")
+                ),
+            ):
+                self.assertEqual(
+                    _parameter_help(param, ctx).plain, expected[param.name]
+                )
+        result = invoke(
+            app,
+            args=[
+                "--selected",
+                "--private",
+                "--empty",
+                "--literal",
+                "--path",
+                "--dynamic=value",
+            ],
+        )
+        self.assertEqual(result.exit_code, 0, result.exception)
+        self.assertEqual(
+            captured,
+            {
+                "selected": BARE_VALUE,
+                "private": BARE_VALUE,
+                "empty": "",
+                "literal": "[env: LITERAL=]",
+                "path": Path.cwd(),
+            },
+        )
+
+    def test_bare_metadata_belongs_to_each_command_or_group(self):
+        class Parent(OptionalValueGroup):
+            optional_values = {"value": "parent"}
+
+        class Child(OptionalValueCommand):
+            optional_values = {"value": "child"}
+
+        parent_option = TyperOption(param_decls=["--value"])
+        child_option = TyperOption(param_decls=["--value"])
+        parent = Parent(name="parent", params=[parent_option])
+        child = Child(name="child", params=[child_option])
+        parent.add_command(child)
+        parent_ctx = typer.Context(parent)
+        child_ctx = typer.Context(child, parent=parent_ctx)
+        self.assertEqual(
+            _parameter_help(parent_option, parent_ctx).plain, "[bare: parent]"
+        )
+        self.assertEqual(
+            _parameter_help(child_option, child_ctx).plain, "[bare: child]"
+        )

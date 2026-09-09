@@ -680,7 +680,7 @@ def _assert_common_options(output: str) -> None:
     assert positions == sorted(positions)
     assert "-o" in panel and "-q" in panel
     assert "--dev [PATH]" in panel
-    assert "Use a local Toolang wheel (PATH defaults to .)" in panel
+    assert "Use a local Toolang wheel [bare: .]" in panel
 
 
 @pytest.mark.parametrize("child", [False, True])

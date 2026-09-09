@@ -16,7 +16,7 @@ from typer.core import TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
-from toolang.common.typer.options import BARE_VALUE, OptionalValueCommand
+from toolang.common.typer.options import BARE_VALUE, OptionalValue, OptionalValueCommand
 
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
@@ -94,19 +94,22 @@ _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
 class _RunCommand(OptionalValueCommand, RunAgentCommand):
-    optional_values = {"dev": "."}
+    optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
 class _StartCommand(OptionalValueCommand, StartAgentCommand):
-    optional_values = {"dev": "."}
+    optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
 class _ThreadRunCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
-    optional_values = {"dev": "."}
+    optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
 class _ChatCommand(_ThreadRunCommand):
-    optional_values = {"thread": BARE_VALUE, "dev": "."}
+    optional_values = {
+        "thread": OptionalValue(bare_value=BARE_VALUE, show_bare="latest thread"),
+        "dev": OptionalValue(bare_value="."),
+    }
 
 
 class _CompactCommand(RequiredPrefixAgentCommand):

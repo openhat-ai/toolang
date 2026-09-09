@@ -436,7 +436,7 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
         assert result.exit_code == 0
         output = " ".join(strip_ansi(result.stdout).replace("│", " ").split())
         assert "--dev [PATH]" in output
-        assert "Use a local Toolang wheel (PATH defaults to .)" in output
+        assert "Use a local Toolang wheel [bare: .]" in output
 
 
 @pytest.mark.parametrize(

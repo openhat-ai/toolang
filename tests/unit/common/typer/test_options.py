@@ -1,7 +1,7 @@
 """Reusable optional values retain native Typer behavior outside bare options."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import pytest
 import typer
@@ -11,11 +11,19 @@ from typer._click.utils import strip_ansi
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.testing import CliRunner
 
-from toolang.common.typer.options import OptionalValueCommand, OptionalValueGroup
+from toolang.common.typer.options import (
+    OptionalValue,
+    OptionalValueCommand,
+    OptionalValueGroup,
+)
 
 
 class _ProbeCommand(OptionalValueCommand):
-    optional_values = {"model": "auto", "budget": "10", "artifact": "."}
+    optional_values = {
+        "model": OptionalValue(bare_value="auto", show_bare="automatic selection"),
+        "budget": OptionalValue(bare_value="10"),
+        "artifact": OptionalValue(bare_value="."),
+    }
 
 
 def _app(*, rich: bool = True) -> tuple[typer.Typer, dict[str, object]]:
@@ -321,3 +329,18 @@ def test_unconfigured_command_uses_native_parser(base, native_base):
     assert type(command.make_parser(Context(command))) is type(
         native.make_parser(Context(native))
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        OptionalValue(bare_value=cast(Any, None)),
+        OptionalValue(bare_value="auto", show_bare=cast(Any, None)),
+    ],
+)
+def test_optional_value_definition_requires_raw_text_and_help_metadata(value):
+    class InvalidCommand(OptionalValueCommand):
+        optional_values = {"model": value}
+
+    with pytest.raises(TypeError, match="expected a scalar value option"):
+        InvalidCommand(name="invalid", params=[TyperOption(param_decls=["--model"])])

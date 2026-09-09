@@ -25,6 +25,7 @@ from typer.models import CommandInfo
 from toolang.common.errors import ToolangError
 from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
 from toolang.common.typer.options import (
+    OptionalValue,
     OptionalValueCommand,
     OptionalValueGroup,
     OptionalValueParser,
@@ -147,7 +148,7 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
     """Show runnable help when its collected call is incomplete."""
 
     context_class = _ScriptHelpContext
-    optional_values = {"dev": "."}
+    optional_values = {"dev": OptionalValue(bare_value=".")}
     parser_class = _RunnableParser
 
     def __init__(self, *, flow: FlowDecl | None = None, **kwargs: Any) -> None:
@@ -184,7 +185,7 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     """List runnable descriptions before the script's options."""
 
     context_class = _ScriptHelpContext
-    optional_values = {"dev": "."}
+    optional_values = {"dev": OptionalValue(bare_value=".")}
 
     def resolve_command(
         self, ctx: Context, args: list[str]
