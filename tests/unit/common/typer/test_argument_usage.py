@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from tests.support.typer_ui import grouped_app as create_app
 from tests.support.typer_ui import invoke
-from toolang.common.typer.ui import PLAIN, _usage, _value_label
+from toolang.common.typer.ui import PLAIN, _usage
 
 
 class Mode(str, Enum):
@@ -41,9 +41,9 @@ class ArgumentUsageTest(unittest.TestCase):
             "Usage: demo groups [OPTIONS] SOURCE DESTINATION [LABEL] [TAG...]\n",
             result.stdout,
         )
-        self.assertIn("tag <STR>", result.stdout)
+        self.assertIn("\n    tag\n", result.stdout)
         self.assertNotIn("tags...", result.stdout)
-        self.assertNotIn("tag... <STR>", result.stdout)
+        self.assertNotIn("tag...", result.stdout)
 
     def test_help_missing_arguments_and_input_errors_use_the_same_usage(self):
         app = create_app()
@@ -172,7 +172,6 @@ class ArgumentUsageTest(unittest.TestCase):
         self.assertEqual(child.params[0].metavar, "entry")
         self.assertFalse(child.params[0].required)
         self.assertEqual(child.params[0].nargs, -1)
-        self.assertEqual(_value_label(child.params[0], ctx), "<STR>")
 
     def test_ui_runs_preserve_declarations_and_native_usage(self):
         app = create_app()

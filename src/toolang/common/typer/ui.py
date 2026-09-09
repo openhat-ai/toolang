@@ -32,7 +32,6 @@ PLAIN = Theme(
         "cli.heading": "bold",
         "cli.usage": "",
         "cli.argument.name": "bold",
-        "cli.argument.type": "dim",
         "cli.option.name": "bold",
         "cli.option.metavar": "dim",
         "cli.command.name": "bold",
@@ -48,7 +47,6 @@ UV = Theme(
         "cli.heading": "bold green",
         "cli.usage": "cyan",
         "cli.argument.name": "bold cyan",
-        "cli.argument.type": "cyan",
         "cli.option.name": "bold cyan",
         "cli.option.metavar": "cyan",
         "cli.command.name": "bold cyan",
@@ -348,11 +346,7 @@ class HelpFormatter(TyperHelpFormatter):
         self, param: TyperArgument, ctx: Context
     ) -> tuple[Text, Text, Text]:
         marker = Text("*" if param.required else "", style="cli.required")
-        label = Text()
-        label.append(param.metavar or param.name or "", style="cli.argument.name")
-        if metavar := _value_label(param, ctx):
-            label.append(" ")
-            label.append(metavar, style="cli.argument.type")
+        label = Text(param.metavar or param.name or "", style="cli.argument.name")
         return marker, label, _parameter_help(param, ctx)
 
     def _option_row(self, param: TyperOption, ctx: Context) -> tuple[Text, Text, Text]:
@@ -505,26 +499,22 @@ def _parameter_help(param: TyperArgument | TyperOption, ctx: Context) -> Text:
     return text
 
 
-def _value_label(param: TyperArgument | TyperOption, ctx: Context) -> str | None:
-    is_option = isinstance(param, TyperOption)
-    if isinstance(param, TyperOption):
-        if param.is_flag or param.count:
-            return None
-        if param.metavar is not None:
-            return param.metavar
-
-    label = param.type.get_metavar(param=param, ctx=ctx)
-    if label is None:
-        name = param.type.name.upper()
-        if not name:
-            return None
-        label = name if name.startswith("<") and name.endswith(">") else f"<{name}>"
-    elif is_option and isinstance(param.type, TyperChoice) and not param.show_choices:
-        # Hidden choices expose type names; visible choices are literal inputs.
+def _value_label(param: TyperOption, ctx: Context) -> str | None:
+    if param.is_flag or param.count:
+        return None
+    label = param.make_metavar(ctx)
+    if param.metavar is None and (
+        param.type.get_metavar(param=param, ctx=ctx) is None
+        or isinstance(param.type, TyperChoice)
+        and not param.show_choices
+    ):
+        # Only generated type names are uppercased, not literal choices or formats.
         label = label.upper()
-    if is_option and param.nargs != 1:
-        label += "..."
-    return label
+    value = label.removesuffix("...")
+    # Declarations may bracket individual values, as in key=<VALUE> or [PATH].
+    if ("[" in value and value.endswith("]")) or ("<" in value and value.endswith(">")):
+        return label
+    return f"<{value}>{label[len(value) :]}"
 
 
 def _width(values: Iterable[Text]) -> int:

@@ -66,7 +66,7 @@ def compact_command(
     arguments: Annotated[
         list[str],
         typer.Argument(
-            metavar="[ARGS]",
+            metavar="[ARGUMENTS]",
             click_type=TextType(),
             hidden=True,
         ),

@@ -163,7 +163,7 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             if isinstance(param, RunnableArgument)
         }
         if names - {"_"}:
-            pieces.append("[ARGS]")
+            pieces.append("[ARGUMENTS]")
         if "_" in names:
             pieces.append("INPUT")
         return pieces

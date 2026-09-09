@@ -90,7 +90,7 @@ def _argument(parameter: Parameter, *, input_help: str | None = None) -> TyperAr
     annotation = Annotated[
         str,
         typer.Argument(
-            metavar="INPUT" if primary else f"{parameter.name}=ARGUMENT",
+            metavar="INPUT" if primary else f"{parameter.name}=<ARGUMENT>",
             click_type=_InputType(parameter.type_name or "Part[]"),
             help=help_text,
             show_default=False,

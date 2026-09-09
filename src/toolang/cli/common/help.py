@@ -94,7 +94,9 @@ class CliGroup(TyperGroup):
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(
             subcommand_metavar=(
-                "COMMAND [ARGS]" if subcommand_metavar is None else subcommand_metavar
+                "COMMAND [ARGUMENTS]"
+                if subcommand_metavar is None
+                else subcommand_metavar
             ),
             **kwargs,
         )

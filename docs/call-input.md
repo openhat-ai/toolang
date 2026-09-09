@@ -26,7 +26,7 @@ Use these short names in documentation, authored prose, and CLI help:
 | Named input | Argument | The declared parameter name |
 | Named inputs | Arguments | The declared parameter names |
 
-CLI synopses abbreviate Arguments as `ARGS` and Input as `INPUT`. The
+CLI synopses use `ARGUMENTS` for named inputs and `INPUT` for primary input. The
 **Arguments** help panel lists named assignments first and primary input last.
 
 A parameter is a signature declaration; an argument is a value supplied for a
@@ -193,15 +193,15 @@ not prompt calls nested inside another prompt call.
 Runnable help summarizes the available input categories:
 
 ```text
-Usage: too app.too demo [OPTIONS] [ARGS] INPUT
+Usage: too app.too demo [OPTIONS] [ARGUMENTS] INPUT
 ```
 
-`[ARGS]` appears when the signature declares at least one named parameter.
+`[ARGUMENTS]` appears when the signature declares at least one named parameter.
 `INPUT` appears once, without brackets or an ellipsis, when the signature
 requires primary input. This includes the implicit `Part[]` input of a runnable
 without a signature. Empty and named-only signatures omit it. It denotes one
 logical input, which may span multiple shell words or come from stdin.
-Required named arguments remain required despite the `[ARGS]` abbreviation.
+Required named arguments remain required despite the optional `[ARGUMENTS]` group.
 
 Below usage, `Run KIND NAME.` describes execution. An authored doc comment
 changes this to `Run KIND NAME - DESCRIPTION`. Flows continue with
@@ -210,13 +210,12 @@ description text before the help panels. All outline text uses normal style,
 with one blank line between sibling steps; each step's doc and operation
 description remain adjacent.
 
-The **Arguments** panel uses Typer's native parameter rendering. Named
-parameters appear in signature order as `name=ARGUMENT`, with uppercase authored
-types in the type column and any parameter doc comments in the help column.
-Typer controls type visibility, wrapping, and required markers, including its
-native suppression of Boolean type labels. Missing docs use `Named input, or
-simply argument` for named parameters and `Primary input, or simply input` for
-INPUT. The INPUT row is last when primary input is accepted, and appends
+The **Arguments** panel lists named parameters in signature order as
+`name=<ARGUMENT>`, without a separate type label. A `*` marks required parameters,
+and parameter doc comments appear in the help column. Missing docs use
+`Named input, or simply argument` for named parameters and
+`Primary input, or simply input` for INPUT. The INPUT row is last when primary
+input is accepted, and appends
 `- from stdin, -- starts input` to its description. Arguments may be supplied
 in any order, interspersed with command options, before input.
 

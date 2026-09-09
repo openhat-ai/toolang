@@ -14,13 +14,13 @@ from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, Span
     [
         ("", [("_", "INPUT", "PART[]", True)]),
         ("()", []),
-        ("(topic: Text)", [("topic", "topic=ARGUMENT", "TEXT", True)]),
+        ("(topic: Text)", [("topic", "topic=<ARGUMENT>", "TEXT", True)]),
         (
             "(_: Text, class: Number, enabled?: Boolean, items?: Part[])",
             [
-                ("class", "class=ARGUMENT", "NUMBER", True),
-                ("enabled", "enabled=ARGUMENT", "BOOLEAN", False),
-                ("items", "items=ARGUMENT", "PART[]", False),
+                ("class", "class=<ARGUMENT>", "NUMBER", True),
+                ("enabled", "enabled=<ARGUMENT>", "BOOLEAN", False),
+                ("items", "items=<ARGUMENT>", "PART[]", False),
                 ("_", "INPUT", "TEXT", True),
             ],
         ),

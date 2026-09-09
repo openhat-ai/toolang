@@ -213,7 +213,7 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]" in stdout.splitlines()
+    assert "Usage: pytest [OPTIONS] COMMAND [ARGUMENTS]" in stdout.splitlines()
     assert "Run and manage Toolang agents" in stdout
     assert output.err == ""
 
@@ -271,7 +271,7 @@ def test_compact_help_lists_the_public_runnable_signature(
     output = strip_ansi(captured.out)
     assert "Compact a thread" in output and "NAME=VALUE" not in output
     assert "previous" not in output
-    positions = [output.index(f"{param.name}=ARGUMENT") for param in runnable.params]
+    positions = [output.index(f"{param.name}=<ARGUMENT>") for param in runnable.params]
     assert positions == sorted(positions)
     if extended:
         assert "History page size." in output
@@ -373,26 +373,23 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
 
 
 @pytest.mark.parametrize(
-    ("arguments", "usage", "argument", "argument_type", "syntax_metavar"),
+    ("arguments", "usage", "argument", "syntax_metavar"),
     (
         (
             ["clone"],
             "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
             "TARGET",
-            "TEXT",
             "[TARGET]",
         ),
         (
             ["chat"],
             "Usage: pytest AGENT chat [OPTIONS]",
             "AGENT",
-            "TEXT",
             "{AGENT}",
         ),
         (
             ["fmt"],
             "Usage: pytest fmt [OPTIONS] [PATH...]",
-            "PATH",
             "PATH",
             "[PATH]...",
         ),
@@ -400,31 +397,27 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
             ["inspect"],
             "Usage: pytest AGENT inspect [OPTIONS] SUBJECT...",
             "SUBJECT",
-            "TEXT",
             "SUBJECT...",
         ),
         (
             ["rewind"],
             "Usage: pytest AGENT rewind [OPTIONS] RUN",
             "RUN",
-            "TEXT",
             "{RUN}",
         ),
         (
             ["fork"],
             "Usage: pytest AGENT fork [OPTIONS] RUN",
             "RUN",
-            "TEXT",
             "{RUN}",
         ),
     ),
 )
-def test_cli_argument_panels_separate_names_types_and_usage_syntax(
+def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
     capsys: pytest.CaptureFixture[str],
     arguments: list[str],
     usage: str,
     argument: str,
-    argument_type: str,
     syntax_metavar: str,
 ) -> None:
     result = _call_main([*arguments, "--help"])
@@ -437,7 +430,7 @@ def test_cli_argument_panels_separate_names_types_and_usage_syntax(
 
     assert result == 0
     assert usage in stdout
-    assert argument_type in row
+    assert row.strip().removeprefix("* ").split("  ", 1)[0] == argument
     assert syntax_metavar not in row
 
 

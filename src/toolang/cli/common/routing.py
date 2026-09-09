@@ -178,7 +178,7 @@ class OptionalPrefixAgentGroup(CliGroup):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
-        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]")
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGUMENTS]")
         write_usage(formatter, prefix_path, " ".join(pieces))
 
 

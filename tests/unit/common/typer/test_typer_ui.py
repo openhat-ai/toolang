@@ -174,7 +174,7 @@ class TyperUITest(unittest.TestCase):
         self.assertEqual(self.run_app(sample_app(), ["process"]), 2)
         output = self.stderr.getvalue()
         self.assertTrue(output.startswith("Process one named job.\n\nUsage:"))
-        self.assertIn("  * name <STR>", output)
+        self.assertIn("  * name  Job name.", output)
         self.assertNotIn("[required]", output)
         self.assertNotIn("Error:", output)
         self.assertEqual(self.stdout.getvalue(), "")
@@ -682,7 +682,7 @@ class TyperUITest(unittest.TestCase):
             )
             formatter.write_help(ctx)
         output = formatter.getvalue()
-        self.assertIn("\n    *  name <STR>", output)
+        self.assertIn("\n    *  name   Job name.", output)
         self.assertIn("\n    -n,  --count", output)
 
     def test_later_user_class_changes_are_used_on_the_next_run(self):

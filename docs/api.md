@@ -207,7 +207,7 @@ Foreground runtime port selection depends on the agent mode:
 A script run uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] INPUT
+toolang SCRIPT RUNNABLE [OPTIONS] [ARGUMENTS] INPUT
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -219,21 +219,19 @@ Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
-- `ARGS` are `name=value` assignments for named runnable parameters
+- `ARGUMENTS` are `name=value` assignments for named runnable parameters
 - `INPUT` is one logical input, supplied as line text directly or after `--`;
   `-` reads stdin through EOF, and omitted command-line text reads piped or
   redirected stdin
 
-The synopsis omits `[ARGS]` when there are no named parameters and
+The synopsis omits `[ARGUMENTS]` when there are no named parameters and
 `INPUT` when the signature forbids primary input. Input is required whenever
 accepted; it has no brackets or ellipsis, even when supplied via stdin. The
-**Arguments** panel uses Typer's native rendering. Named parameters use
-`name=ARGUMENT` metavars, with uppercase authored types and parameter doc
-comments or `Named input, or simply argument`. INPUT is last, with an authored
-description or `Primary input, or simply input`, followed by
-`- from stdin, -- starts input`. Typer controls type
-visibility and required markers; `[ARGS]` does not make required named arguments
-optional.
+**Arguments** panel shows `name=<ARGUMENT>` metavars without a separate type label,
+with parameter doc comments or `Named input, or simply argument`. INPUT is last,
+with an authored description or `Primary input, or simply input`, followed by
+`- from stdin, -- starts input`. A `*` marks required parameters;
+`[ARGUMENTS]` does not make required named arguments optional.
 
 Below usage, runnable descriptions use `Run KIND NAME.` or
 `Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
