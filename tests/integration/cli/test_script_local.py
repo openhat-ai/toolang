@@ -78,7 +78,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         async def refresh(self):
             return setup
 
-    monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
     publication = harness.state
 
     class _StateWatcher:
@@ -95,7 +95,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         async def refresh_result(self):
             return StateRefresh(publication)
 
-    monkeypatch.setattr(script, "StateWatcher", _StateWatcher)
+    monkeypatch.setattr("toolang.state.watcher.StateWatcher", _StateWatcher)
     quiet = save_mode in {"stdout", "file"}
 
     def prepare_state(actual_layout, **kwargs):
@@ -103,8 +103,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert (kwargs["progress"] is None) is quiet
         return harness.state
 
-    monkeypatch.setattr(script, "prepare_agent_state", prepare_state)
-    monkeypatch.setattr(script, "configure_logging_plan", lambda _plan: None)
+    monkeypatch.setattr("toolang.state.prepare.prepare_agent_state", prepare_state)
+    monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
     args = [str(source), "echo"]
     destination = tmp_path / "result.txt"
@@ -179,17 +179,16 @@ def test_local_script_renders_composite_flow_progress(
         async def refresh(self):
             return setup
 
-    monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
     monkeypatch.setattr(
-        script,
-        "prepare_agent_state",
+        "toolang.state.prepare.prepare_agent_state",
         lambda actual_layout, **_kwargs: (
             harness.state
             if actual_layout == layout
             else pytest.fail("unexpected layout")
         ),
     )
-    monkeypatch.setattr(script, "configure_logging_plan", lambda _plan: None)
+    monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
     result = script.dispatch(
         [],

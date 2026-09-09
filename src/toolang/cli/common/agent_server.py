@@ -20,6 +20,7 @@ from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import AgentServerRef
 
 from .context import load_runtime_environ
+from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
 from .policy import (
     resolve_ceiling_overrides,
     resolve_compact_override,
@@ -29,12 +30,6 @@ from .policy import (
 from .progress import (
     make_cli_progress,
     runtime_startup_failure_message,
-)
-
-
-DEVELOPMENT_WHEEL_HELP = (
-    "Install Toolang in a new guest from a wheel; directories select the newest "
-    "Toolang wheel recursively"
 )
 
 

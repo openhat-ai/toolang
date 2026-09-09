@@ -24,10 +24,12 @@ from toolang.execution.types import (
     ErrorMessage,
     RunOverride,
     RunStatus,
+    SessionSetting,
     ThreadRef,
 )
 from toolang.lang.input import CallInput
 from toolang.lang.ast import FlowDecl, Program, RunStmt, Span
+from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -573,7 +575,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
     async def current_setup(_watcher):
         return harness.setup
 
-    monkeypatch.setattr(script.SetupWatcher, "refresh", current_setup)
+    monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
     override, input = parse_call(":agic missing\nInput")
     try:
         with pytest.raises(ToolangError, match="runnable query matched no items"):
@@ -1601,15 +1603,16 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         )
 
     monkeypatch.setattr(
-        script.agents,
+        agents,
         "materialize_roaming_program",
         lambda _source: layout,
     )
-    monkeypatch.setattr(script, "acquire_agent_server", agent_server_context)
+    monkeypatch.setattr(
+        "toolang.cli.common.agent_server.acquire_agent_server", agent_server_context
+    )
     monkeypatch.setattr(script, "_execute_remote", execute_remote)
     monkeypatch.setattr(
-        script,
-        "prepare_agent_state",
+        "toolang.state.prepare.prepare_agent_state",
         lambda *_args, **_kwargs: pytest.fail("remote execution prepared local state"),
     )
 
@@ -1667,12 +1670,14 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         raise ValueError("prepare failed")
 
     monkeypatch.setattr(
-        script.agents,
+        agents,
         "materialize_roaming_program",
         lambda _source: layout,
     )
-    monkeypatch.setattr(script, "acquire_agent_server", embedded_server)
-    monkeypatch.setattr(script, "prepare_agent_state", fail_prepare)
+    monkeypatch.setattr(
+        "toolang.cli.common.agent_server.acquire_agent_server", embedded_server
+    )
+    monkeypatch.setattr("toolang.state.prepare.prepare_agent_state", fail_prepare)
 
     result = script._run(
         source,
@@ -1743,8 +1748,10 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
     async def create_thread(*_args, **_kwargs):
         return "script_remote"
 
-    monkeypatch.setattr(script, "RemoteRunClient", Client)
-    monkeypatch.setattr(script, "inspect_remote_runtime", inspect)
+    monkeypatch.setattr("toolang.execution.remote.RemoteRunClient", Client)
+    monkeypatch.setattr(
+        "toolang.cli.common.remote_runtime.inspect_remote_runtime", inspect
+    )
     monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
     monkeypatch.setattr(
         script,
@@ -1758,7 +1765,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
         "_remote_script_defaults",
         lambda *_args, **_kwargs: asyncio.sleep(
             0,
-            result=script.SessionSetting(
+            result=SessionSetting(
                 model=ModelRequest("test/scripted"),
                 runnable="agic:demo",
             ),

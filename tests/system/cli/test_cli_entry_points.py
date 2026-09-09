@@ -155,6 +155,53 @@ print(json.dumps("toolang.up.core" in sys.modules))
 
 
 @pytest.mark.parametrize(
+    ("arguments", "status", "expected"),
+    [
+        ([], 0, "Runnables:"),
+        (["--help"], 0, "Runnables:"),
+        (["research", "--help"], 0, "The flow proceeds as follows:"),
+        (["research"], 2, "The flow proceeds as follows:"),
+    ],
+)
+def test_script_help_does_not_load_execution_dependencies(
+    arguments: list[str], status: int, expected: str
+) -> None:
+    probe = """
+import json
+import sys
+from toolang.cli.toolang.main import main
+
+status = main(["examples/deep_search.too", *sys.argv[1:]])
+prefixes = (
+    "fastapi", "httpx", "toolang.execution.executor", "toolang.execution.schemas",
+    "toolang.execution.remote", "toolang.execution.store", "toolang.setup",
+    "toolang.state.prepare", "toolang.state.watcher", "toolang.up.sandbox",
+    "toolang.cli.common.script_progress",
+)
+loaded = sorted(
+    name for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+)
+print(json.dumps(loaded), file=sys.stderr)
+raise SystemExit(status)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, *arguments],
+        cwd=PROJECT_ROOT,
+        stdin=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == status, completed.stderr
+    assert "Usage:" in completed.stdout
+    assert expected in completed.stdout
+    assert json.loads(completed.stderr) == []
+
+
+@pytest.mark.parametrize(
     ("module", "prefix"),
     [
         ("toolang.cli.toolang", "toolang "),
