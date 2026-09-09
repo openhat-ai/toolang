@@ -151,7 +151,9 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
         )
 
 
+@pytest.mark.parametrize("dev", [Path("."), Path("dist")])
 def test_agent_server_rejects_dev_for_an_attached_agent(
+    dev: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -173,7 +175,7 @@ def test_agent_server_rejects_dev_for_an_attached_agent(
         with agent_server.acquire_agent_server(
             layout,
             sandbox="docker",
-            dev=tmp_path / "dist",
+            dev=dev,
             ui_base_url="https://ui.test",
         ):
             raise AssertionError("an attached AgentServer must not accept --dev")
@@ -270,7 +272,9 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
     assert released == [layout]
 
 
+@pytest.mark.parametrize("dev", [Path("."), Path("dist")])
 def test_agent_server_rejects_dev_for_embedded_host(
+    dev: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -289,7 +293,7 @@ def test_agent_server_rejects_dev_for_embedded_host(
         with agent_server.acquire_agent_server(
             layout,
             sandbox="host",
-            dev=tmp_path / "dist",
+            dev=dev,
             ui_base_url="https://ui.test",
         ):
             raise AssertionError("embedded host must not accept --dev")

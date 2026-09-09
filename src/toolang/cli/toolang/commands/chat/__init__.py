@@ -44,7 +44,7 @@ def chat_command(
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
+        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     allows: AllowOptions = None,
     limits: LimitOptions = None,

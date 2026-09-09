@@ -94,7 +94,7 @@ def run(
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
+        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,
@@ -221,7 +221,7 @@ def start(
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
+        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,

@@ -17,13 +17,18 @@ import typer
 from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
-from typer._click.parser import _OptionParser, _ParsingState
+from typer._click.parser import _ParsingState
 from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
 from toolang.common.errors import ToolangError
 from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
+from toolang.common.typer.options import (
+    OptionalValueCommand,
+    OptionalValueGroup,
+    OptionalValueParser,
+)
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
@@ -61,7 +66,7 @@ class _IncompleteRunnableInput(Exception):
     """A dynamic runnable command is missing required input."""
 
 
-class _RunnableParser(_OptionParser):
+class _RunnableParser(OptionalValueParser):
     """Parse native options and assignments only until the input boundary."""
 
     def _process_args_for_options(self, state: _ParsingState) -> None:
@@ -138,20 +143,16 @@ class _ScriptHelpContext(HelpContext):
     formatter_class = _ScriptHelpFormatter
 
 
-class _RunnableCommand(CliCommand):
+class _RunnableCommand(OptionalValueCommand, CliCommand):
     """Show runnable help when its collected call is incomplete."""
 
     context_class = _ScriptHelpContext
+    optional_values = {"dev": "."}
+    parser_class = _RunnableParser
 
     def __init__(self, *, flow: FlowDecl | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._flow = flow
-
-    def make_parser(self, ctx: Context) -> _OptionParser:
-        parser = _RunnableParser(ctx)
-        for param in self.get_params(ctx):
-            param.add_to_parser(parser, ctx)
-        return parser
 
     def collect_usage_pieces(self, ctx: Context) -> list[str]:
         pieces = [self.options_metavar] if self.options_metavar else []
@@ -179,10 +180,11 @@ class _RunnableCommand(CliCommand):
             ctx.exit(2)
 
 
-class _ScriptGroup(CliGroup):
+class _ScriptGroup(OptionalValueGroup, CliGroup):
     """List runnable descriptions before the script's options."""
 
     context_class = _ScriptHelpContext
+    optional_values = {"dev": "."}
 
     def resolve_command(
         self, ctx: Context, args: list[str]
@@ -345,7 +347,7 @@ def _runnable_command(
         ] = False,
         dev: Annotated[
             Path | None,
-            typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
+            typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
         ] = None,
         items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
     ) -> int:

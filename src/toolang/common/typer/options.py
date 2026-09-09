@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from typer._click import Context
+from typer._click import Command, Context
 from typer._click.parser import _Option, _OptionParser, _ParsingState, _normalize_opt
-from typer.core import TyperCommand, TyperOption
+from typer.core import TyperCommand, TyperGroup, TyperOption
 
 
 # Use with text options when the caller needs a distinct bare-selection marker.
@@ -15,7 +15,9 @@ from typer.core import TyperCommand, TyperOption
 BARE_VALUE = "\0"
 
 
-class _OptionalValueParser(_OptionParser):
+class OptionalValueParser(_OptionParser):
+    """Parse optional scalar values; subclasses may customize input boundaries."""
+
     def __init__(self, ctx: Context, optional_values: Mapping[str, str]) -> None:
         super().__init__(ctx)
         self.optional_values = optional_values
@@ -59,16 +61,19 @@ class _OptionalValueParser(_OptionParser):
         super()._match_short_opt(arg, state)
 
 
-class OptionalValueCommand(TyperCommand):
+class _OptionalValueSupport(Command):
     """Supply configured raw values for bare scalar options, by parameter name.
 
     Subclasses declare ``optional_values = {"parameter": "bare value"}`` and
     use an optional metavar such as ``[PATH]`` in the option declaration.
     Defaults, conversion, validation, callbacks, and completion remain native.
     Compose with an existing command class to retain its routing and help.
+    Override ``parser_class`` with an ``OptionalValueParser`` subclass when
+    the command also needs custom positional-input parsing.
     """
 
     optional_values: ClassVar[Mapping[str, str]] = {}
+    parser_class: ClassVar[type[OptionalValueParser]] = OptionalValueParser
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -90,7 +95,15 @@ class OptionalValueCommand(TyperCommand):
     def make_parser(self, ctx: Context) -> _OptionParser:
         if not self.optional_values:
             return super().make_parser(ctx)
-        parser = _OptionalValueParser(ctx, self.optional_values)
+        parser = self.parser_class(ctx, self.optional_values)
         for param in self.get_params(ctx):
             param.add_to_parser(parser, ctx)
         return parser
+
+
+class OptionalValueCommand(_OptionalValueSupport, TyperCommand):
+    """Opt a Typer command into configured optional scalar values."""
+
+
+class OptionalValueGroup(_OptionalValueSupport, TyperGroup):
+    """Opt a Typer group into configured optional scalar values."""
