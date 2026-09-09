@@ -136,12 +136,12 @@ def retry_command(
             help="Retry from this canonical or run-local step path",
         ),
     ] = None,
+    allows: AllowOptions = None,
+    limit: LimitOptions = None,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
-    allows: AllowOptions = None,
-    limit: LimitOptions = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
 
@@ -194,10 +194,6 @@ def rerun_command(
             help="Execute the new run in this sandbox",
         ),
     ] = None,
-    dev: Annotated[
-        Path | None,
-        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
-    ] = None,
     allows: AllowOptions = None,
     limit: LimitOptions = None,
     model: Annotated[
@@ -207,6 +203,10 @@ def rerun_command(
             help="Replace the persisted model identity or parameters",
             metavar="MODEL_SPEC",
         ),
+    ] = None,
+    dev: Annotated[
+        Path | None,
+        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
 ) -> None:
     """Start a new root run from one terminal source invocation."""

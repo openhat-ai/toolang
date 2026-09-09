@@ -39,14 +39,14 @@ def chat_command(
             help="Execute the session in this sandbox",
         ),
     ] = None,
-    dev: Annotated[
-        Path | None,
-        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
-    ] = None,
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    dev: Annotated[
+        Path | None,
+        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
+    ] = None,
 ) -> None:
     from .main import chat_command as run
 

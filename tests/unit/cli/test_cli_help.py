@@ -461,6 +461,12 @@ def test_help_uses_semantic_configuration_metavars(
     for option in options:
         row = next(line for line in output.splitlines() if option in line.split())
         assert metavars[option] in row.split()
+    if "--dev" in output:
+        option_rows = [
+            line for line in output.splitlines() if line.lstrip().startswith("-")
+        ]
+        assert "--dev" in option_rows[-2].split()
+        assert "--help" in option_rows[-1].split()
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])
