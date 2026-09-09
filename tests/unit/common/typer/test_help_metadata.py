@@ -416,6 +416,10 @@ class HelpMetadataTest(unittest.TestCase):
                 ("key=VALUE", "<key=VALUE>"),
                 ("<FIELD>=<VALUE>", "<FIELD>=<VALUE>"),
                 ("key=<VALUE>", "key=<VALUE>"),
+                ("<NAME>.json", "<NAME>.json"),
+                ("[NAME].json", "[NAME].json"),
+                ("prefix-<NAME>.json", "prefix-<NAME>.json"),
+                ("PART[]", "<PART[]>"),
                 ("ITEM...", "<ITEM>..."),
                 ("<ITEM>...", "<ITEM>..."),
             ):

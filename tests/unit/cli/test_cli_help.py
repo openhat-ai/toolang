@@ -225,6 +225,17 @@ def test_hidden_directory_uses_selected_help_output(theme, args, capsys):
     assert (style.color is not None) is (theme is UV)
 
 
+@pytest.mark.parametrize("args, status", [([], 0), (["--help"], 0), (["--unknown"], 2)])
+def test_channel_usage_spells_out_arguments(
+    args, status, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), "channel", *args]) == status
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.err if status else captured.out)
+    assert "Usage: too channel [OPTIONS] COMMAND [ARGUMENTS]" in output.splitlines()
+
+
 @pytest.mark.parametrize(
     ("arguments", "usage"),
     [

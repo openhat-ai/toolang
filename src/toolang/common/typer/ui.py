@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from inspect import cleandoc
 from itertools import zip_longest
+import re
 from typing import Any
 
 import typer
@@ -511,8 +512,8 @@ def _value_label(param: TyperOption, ctx: Context) -> str | None:
         # Only generated type names are uppercased, not literal choices or formats.
         label = label.upper()
     value = label.removesuffix("...")
-    # Declarations may bracket individual values, as in key=<VALUE> or [PATH].
-    if ("[" in value and value.endswith("]")) or ("<" in value and value.endswith(">")):
+    # Bracketed values may have literal prefixes or suffixes, as in <NAME>.json.
+    if re.search(r"<[^<>]+>|\[[^\[\]]+\]", value):
         return label
     return f"<{value}>{label[len(value) :]}"
 
