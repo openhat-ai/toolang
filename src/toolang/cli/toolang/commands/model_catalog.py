@@ -150,12 +150,14 @@ def providers_command(
             nl=False,
         )
         return
-    headers = ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "API", "ENV")
+    headers = ("PROVIDER", "AVAILABLE MODELS", "ADAPTERS", "API", "ENV")
     rows = [
         (
             item.id,
-            item.name,
-            f"{item.available_models}/{item.model_count}",
+            Text(
+                f"{item.available_models}/{item.model_count}",
+                style="red" if item.available_models == 0 else "",
+            ),
             _provider_adapters_cell(inspection, item),
             _provider_api_cell(item),
             _provider_env_cell(item),
@@ -290,7 +292,7 @@ def _provider_adapters_cell(
 def _provider_api_cell(provider: CatalogProviderView) -> Text:
     api = provider.api
     unavailable = api is None or (provider.local and provider.offline)
-    return Text(api or "-", style="dim" if unavailable else "")
+    return Text(api or "-", style="red" if unavailable else "")
 
 
 def _provider_env_cell(provider: CatalogProviderView) -> Text:
@@ -305,7 +307,7 @@ def _provider_env_cell(provider: CatalogProviderView) -> Text:
         for group_index, name in enumerate(names):
             if group_index:
                 cell.append(" + ")
-            cell.append(name, style="dim" if name in missing else None)
+            cell.append(name, style="red" if name in missing else None)
     return cell
 
 

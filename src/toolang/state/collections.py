@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from itertools import groupby
 
 from toolang.common.query import (
     CollectionDefinition,
@@ -51,6 +51,13 @@ _COLLECTION_BY_KIND: dict[EntryKind, str] = {
     "service": "services",
     "prompt": "prompts",
 }
+_CAP_COLUMNS = (
+    ColumnSpec("CAP", ("name",), "identity"),
+    ColumnSpec("DESCRIPTION", ("description",), "truncate"),
+    ColumnSpec("SCOPE", ("scope",)),
+    ColumnSpec("FORM", ("form",)),
+    ColumnSpec("SOURCE", ("source",)),
+)
 
 
 def cap_kind_definition(kind: EntryKind) -> CollectionDefinition[CapQueryView]:
@@ -68,13 +75,7 @@ def cap_kind_definition(kind: EntryKind) -> CollectionDefinition[CapQueryView]:
                 bound=(kind,),
             ),
             exclude=("record", "kind"),
-            columns=(
-                ColumnSpec(kind.upper(), ("name",), "identity-component"),
-                ColumnSpec("ORIGIN", ("origin",)),
-                ColumnSpec("FORM", ("form",)),
-                ColumnSpec("SCOPE", ("scope",)),
-                ColumnSpec("SOURCE", ("source",)),
-            ),
+            columns=_CAP_COLUMNS,
         )
     )
 
@@ -124,25 +125,16 @@ def cap_table(
     *,
     kind: EntryKind | None = None,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
-    """Render the unchanged combined or kind-specific cap table."""
+    """Render cap identities and metadata in the supplied order."""
 
     if kind is not None:
         dataset = cap_kind_definition(kind).dataset(tuple(views))
         return dataset.table()
-    return (
-        ("KIND", "CAP", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
-        tuple(
-            (
-                cast(str, view.kind),
-                view.name,
-                cast(str, view.origin),
-                cast(str, view.form),
-                cast(str, view.scope),
-                view.source,
-            )
-            for view in views
-        ),
-    )
+    rows: list[tuple[str, ...]] = []
+    for cap_kind, group in groupby(views, key=lambda view: view.kind):
+        dataset = cap_kind_definition(cap_kind).dataset(tuple(group))
+        rows.extend(dataset.table()[1])
+    return tuple(column.label for column in _CAP_COLUMNS), tuple(rows)
 
 
 def _cap_view(entry: StateCap, *, agent_name: str) -> CapQueryView:

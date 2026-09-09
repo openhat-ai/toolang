@@ -478,29 +478,40 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
     assert captured_headers == (
         "PROVIDER",
-        "NAME",
-        "AVAILABLE",
+        "AVAILABLE MODELS",
         "ADAPTERS",
         "API",
         "ENV",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
-    assert by_provider["ollama"][2] == "1/1"
-    assert by_provider["llama_cpp"][2] == "0/1"
-    llama_adapters = by_provider["llama_cpp"][3]
+    available = by_provider["ollama"][1]
+    unavailable = by_provider["llama_cpp"][1]
+    assert isinstance(available, Text)
+    assert available.plain == "1/1"
+    assert not _is_red(available, 0)
+    assert isinstance(unavailable, Text)
+    assert unavailable.plain == "0/1"
+    assert _is_red(unavailable, 0)
+    llama_adapters = by_provider["llama_cpp"][2]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
     assert not _is_dim(llama_adapters, 0)
-    llama_api = by_provider["llama_cpp"][4]
+    llama_api = by_provider["llama_cpp"][3]
     assert isinstance(llama_api, Text)
     assert llama_api.plain == "http://llama.test/v1"
-    assert _is_dim(llama_api, 0)
+    assert _is_red(llama_api, 0)
 
 
+@pytest.mark.parametrize("configured", [False, True])
 def test_providers_lists_resolved_api_and_model_adapters(
     tmp_path: Path,
     monkeypatch,
+    configured: bool,
 ) -> None:
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    monkeypatch.delenv("TEST_ALT_API_KEY", raising=False)
+    if configured:
+        monkeypatch.setenv("TEST_API_KEY", "test-key")
     catalog = tmp_path / "catalog.json"
     data = _catalog_data()
     provider_data = cast(dict[str, object], data["test"])
@@ -580,19 +591,23 @@ def test_providers_lists_resolved_api_and_model_adapters(
 
     assert styled_result.exit_code == 0, styled_result.stderr
     styled_row = next(row for row in captured_rows if row[0] == "test")
-    adapters = styled_row[3]
-    endpoint = styled_row[4]
-    env = styled_row[5]
+    available = styled_row[1]
+    assert isinstance(available, Text)
+    assert available.plain == ("2/2" if configured else "0/2")
+    assert _is_red(available, 0) is not configured
+    adapters = styled_row[2]
+    endpoint = styled_row[3]
+    env = styled_row[4]
     assert isinstance(adapters, Text)
     assert adapters.plain == "chat_completions,messages"
     assert not _is_dim(adapters, 0)
     assert isinstance(endpoint, Text)
-    assert not _is_dim(endpoint, 0)
+    assert not _is_red(endpoint, 0)
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY, TEST_ALT_API_KEY"
-    assert _is_dim(env, 0)
-    assert not _is_dim(env, env.plain.index(","))
-    assert _is_dim(env, env.plain.index("TEST_ALT_API_KEY"))
+    assert _is_red(env, 0) is not configured
+    assert not _is_red(env, env.plain.index(","))
+    assert _is_red(env, env.plain.index("TEST_ALT_API_KEY"))
 
     json_result = runner.invoke(
         cli.app,
@@ -612,6 +627,46 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert provider["api"] == "https://api.test/v1"
     assert provider["npm"] == "@ai-sdk/anthropic"
     assert "resolved" not in provider
+
+
+@pytest.mark.parametrize("available_models", [0, 1])
+def test_provider_api_and_counts_use_independent_availability(
+    tmp_path: Path, monkeypatch, available_models: int
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    provider["api"] = "${TEST_MISSING_API}"
+    monkeypatch.delenv("TEST_MISSING_API", raising=False)
+    monkeypatch.setenv("TEST_API_KEY", "test-key")
+    if available_models:
+        models = cast(dict[str, dict[str, object]], provider["models"])
+        models["one"]["provider"] = {"api": "https://one.test/v1"}
+    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _disable_local_discovery(monkeypatch)
+    rows: list[Sequence[str | Text]] = []
+    monkeypatch.setattr(
+        model_catalog_commands,
+        "echo_table",
+        lambda headers, values: rows.extend(values),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path / "root"), "providers", "--catalog", str(catalog)],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    available, api, env = rows[0][1], rows[0][3], rows[0][4]
+    assert isinstance(available, Text)
+    assert available.plain == f"{available_models}/2"
+    assert _is_red(available, 0) is (available_models == 0)
+    assert isinstance(api, Text)
+    assert api.plain == "-"
+    assert _is_red(api, 0)
+    assert isinstance(env, Text)
+    assert env.plain == "TEST_API_KEY"
+    assert not _is_red(env, 0)
 
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
@@ -841,6 +896,12 @@ def _disable_local_discovery(monkeypatch) -> None:
 
 def _is_dim(text: Text, offset: int) -> bool:
     return bool(text.get_style_at_offset(Console(color_system="standard"), offset).dim)
+
+
+def _is_red(text: Text, offset: int) -> bool:
+    style = text.get_style_at_offset(Console(color_system="standard"), offset)
+    assert not style.bold and not style.dim
+    return style.color is not None and style.color.name == "red"
 
 
 def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object]:

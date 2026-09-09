@@ -81,14 +81,16 @@ exposed separately as `definition_file`. When known, APIs may also include
 
 ## CLI List Projection
 
-The `caps list` and `caps <kind> list` commands present a compact user-facing
-view:
+The `too caps`, `caps list`, and kind-specific list commands share these columns
+in this order:
 
 | Column | Meaning |
 | --- | --- |
-| `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
-| `FORM` | Source form: `authored`, `inline`, `configured`, or `referenced` |
+| `CAP` | Qualified query identity, such as `skill/reviewer` |
+| `DESCRIPTION` | Cap description, or `-` when absent |
 | `SCOPE` | Runtime scope: `root`, `home`, or `here` |
+| `FORM` | Source form: `authored`, `inline`, `configured`, or `referenced` |
+| `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
 
 `FORM` uses the same values as the runtime source form. It is not remapped for
 display.
