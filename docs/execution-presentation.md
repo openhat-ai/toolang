@@ -322,8 +322,8 @@ and Step closure does not repeat the final output.
 Tool activity uses the persisted running description, replaced at completion:
 
 ```text
-› Executing search “Toolang plugin protocol” ...
-› Executed search “Toolang plugin protocol”
+› Searching for “Toolang plugin protocol”...
+› Searched for “Toolang plugin protocol”
 ```
 
 Completed traces contain the terminal description only. Tool-owned descriptions
@@ -334,9 +334,15 @@ can provide clearer wording and logical workspace labels:
 ✧ Loaded rules: repo:/src/AGENTS.md
 ✧ Loaded guidance: skill/python-testing
 › Wrote repo:/src/example.py
+› Read steps from run_abc
+› Read more steps
 › Failed to read repo:/missing.txt
   File not found
 ```
+
+History summaries name the requested threads, runs, steps, or output and any
+explicit thread/run reference. Cursor-only requests say `more threads`, `more
+runs`, or `more steps`; summaries neither decode nor display the cursor.
 
 Every Step begins after one unpainted blank line, including model output that
 follows a Tool Step. A preceding statement, iteration, or condition header can
@@ -431,7 +437,7 @@ are truncated rather than wrapped:
 ```text
 • Running · 3 active · 4/18 succeeded
   0 | #4 | • Thinking...
-  1 | #5 | › Executing search ...
+  1 | #5 | › Searching for “agent runtimes”...
   2 | #6 | • Source summary prepared
 ```
 
