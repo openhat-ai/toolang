@@ -44,7 +44,7 @@ from ...common.context import load_runtime_environ
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
 from ...common.parameters import DEVELOPMENT_WHEEL_HELP, AllowOptions, LimitOptions
-from ...common.runnable_parameters import RunnableArgument, runnable_parameters
+from ...common.runnable_parameters import runnable_parameters, runnable_usage
 
 if TYPE_CHECKING:
     import httpx
@@ -157,16 +157,7 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
 
     def collect_usage_pieces(self, ctx: Context) -> list[str]:
         pieces = [self.options_metavar] if self.options_metavar else []
-        names = {
-            param.name
-            for param in self.get_params(ctx)
-            if isinstance(param, RunnableArgument)
-        }
-        if names - {"_"}:
-            pieces.append("[ARGUMENTS]")
-        if "_" in names:
-            pieces.append("INPUT")
-        return pieces
+        return [*pieces, *runnable_usage(self.params)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         formatter.write_usage(
@@ -290,7 +281,7 @@ def _program_command(
         help=f"Run runnables from {source_label}",
         no_args_is_help=True,
         rich_markup_mode="rich",
-        subcommand_metavar="RUNNABLE",
+        subcommand_metavar="<RUNNABLE>",
     )
     for runnable in _public_runnables(program):
         group.add_command(
@@ -406,7 +397,7 @@ def _runnable_command(
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
         arguments = runnable_parameters(
             runnable,
-            input_help="- from stdin, -- starts input",
+            input_help="text after --, or stdin with - or a pipe",
             help_only=True,
         )
         command.params[-1:-1] = arguments

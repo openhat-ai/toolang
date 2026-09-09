@@ -519,7 +519,7 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "count=<ARGUMENT>" in output.out
+    assert "count=<COUNT>" in output.out
     assert "Run:" not in output.err
 
 
@@ -621,13 +621,16 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert "Usage: toolang demo.too demo [OPTIONS] [ARGUMENTS] INPUT" in normalized
+    assert (
+        "Usage: toolang demo.too demo [OPTIONS] [ARGUMENTS] [-- <INPUT> | -]"
+        in normalized
+    )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
-    assert "count=<ARGUMENT>" in stdout
-    assert "enabled=<ARGUMENT>" in stdout
+    assert "count=<COUNT>" in stdout
+    assert "enabled=<ENABLED>" in stdout
     assert "Optional." not in stdout
-    assert "* count=<ARGUMENT>" in stdout
+    assert "* count=<COUNT>" in stdout
     assert "[required]" not in stdout
     assert "PART[]" not in stdout
     assert "Input:" not in stdout
@@ -851,7 +854,7 @@ def test_script_help_groups_signature_categories(
     if arguments:
         expected += " [ARGUMENTS]"
     if input_type:
-        expected += " INPUT"
+        expected += " [-- <INPUT> | -]"
     assert usage == expected
     assert "---" not in output
     assert all(cell_len(line) <= width for line in output.splitlines())
@@ -860,9 +863,9 @@ def test_script_help_groups_signature_categories(
     assert bool(panel) == bool(arguments or input_type)
     assert "Input:" not in output
     positions = []
-    for name, _type_name, required in arguments:
-        label = f"{name}=<ARGUMENT>"
-        row = f"{label} Named input, or simply argument"
+    for name, type_name, required in arguments:
+        label = f"{name}=<{name.upper()}>"
+        row = f"{label} Named input ({type_name})"
         assert row in panel
         assert (f"* {row}" in panel) is required
         positions.append(panel.index(label))
@@ -870,10 +873,10 @@ def test_script_help_groups_signature_categories(
     assert "Arguments may appear" not in panel
     if input_type:
         label = "INPUT"
-        assert f"{label} Primary input, or simply input;" in panel
-        positions.append(panel.index(label))
+        assert f"{label} Primary input;" in panel
+        positions.append(panel.index(f"{label} Primary input;"))
         assert f"* {label}" in panel
-        assert "- from stdin, -- starts input" in panel
+        assert "text after --, or stdin with - or a pipe" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
@@ -1399,7 +1402,7 @@ flow pipeline:
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
+    assert f"Usage: {prog_name} {filename} [OPTIONS] <RUNNABLE>" in stdout
     assert "[ARGUMENTS]" not in stdout
     assert f"Run runnables from {filename}" in stdout
     assert stdout.index("Runnables:") < stdout.index("Options:")

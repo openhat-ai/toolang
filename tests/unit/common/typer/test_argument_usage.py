@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import typer
 from rich.console import Console
-from typer.core import TyperArgument, TyperGroup
+from typer.core import TyperArgument, TyperCommand, TyperGroup
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -38,7 +38,7 @@ class ArgumentUsageTest(unittest.TestCase):
         result = invoke(app, ui=ui, args=["groups", "--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
         self.assertIn(
-            "Usage: demo groups [OPTIONS] SOURCE DESTINATION [LABEL] [TAG...]\n",
+            "Usage: demo groups [OPTIONS] <SOURCE> <DESTINATION> [LABEL] [TAG...]\n",
             result.stdout,
         )
         self.assertIn("\n    tag\n", result.stdout)
@@ -48,7 +48,7 @@ class ArgumentUsageTest(unittest.TestCase):
     def test_help_missing_arguments_and_input_errors_use_the_same_usage(self):
         app = create_app()
         ui = make_ui()
-        _usage = "Usage: demo groups [OPTIONS] SOURCE DESTINATION [LABEL] [TAG...]"
+        _usage = "Usage: demo groups [OPTIONS] <SOURCE> <DESTINATION> [LABEL] [TAG...]"
         for args, code in (
             (["groups", "--help"], 0),
             (["groups"], 2),
@@ -92,7 +92,7 @@ class ArgumentUsageTest(unittest.TestCase):
         root.add_typer(child, name="data")
         ui = make_ui()
         prefix = ["my-workspace", "data", "my-dataset", "read"]
-        _usage = "Usage: demo WORKSPACE data DATASET read [OPTIONS] ENTRY..."
+        _usage = "Usage: demo <WORKSPACE> data <DATASET> read [OPTIONS] <ENTRY>..."
         for args in ([*prefix, "--help"], [*prefix, "--unknown"]):
             result = invoke(root, ui=ui, args=args, prog_name="demo")
             self.assertEqual(result.exit_code, 2 if "--unknown" in args else 0)
@@ -122,7 +122,7 @@ class ArgumentUsageTest(unittest.TestCase):
         result = invoke(app, ui=ui, args=["--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
         self.assertIn(
-            "Usage: demo [OPTIONS] STATUS COORDINATE COORDINATE [DESTINATION DESTINATION]\n",
+            "Usage: demo [OPTIONS] <STATUS> <COORDINATE> <COORDINATE> [DESTINATION DESTINATION]\n",
             result.stdout,
         )
         result = invoke(app, ui=ui, args=["fast", "1", "2", "3", "4"])
@@ -172,6 +172,31 @@ class ArgumentUsageTest(unittest.TestCase):
         self.assertEqual(child.params[0].metavar, "entry")
         self.assertFalse(child.params[0].required)
         self.assertEqual(child.params[0].nargs, -1)
+
+    def test_usage_preserves_bracketed_literals_and_normalizes_item_repetition(self):
+        for metavar, required, nargs, expected in (
+            ("<ENTRY>", True, 1, "<ENTRY>"),
+            ("[ENTRY]", False, 1, "[ENTRY]"),
+            ("entry=<ENTRY>", True, 1, "entry=<ENTRY>"),
+            ("entry=<ENTRY>", False, 1, "[entry=<ENTRY>]"),
+            ("<NAME>.json", True, 1, "<NAME>.json"),
+            ("[NAME].json", True, 1, "[NAME].json"),
+            ("Part[]", True, 1, "<PART[]>"),
+            ("FILES...", True, -1, "<FILES>..."),
+            ("<FILE>...", True, -1, "<FILE>..."),
+            ("[FILE...]", False, -1, "[FILE...]"),
+        ):
+            with self.subTest(metavar=metavar, required=required, nargs=nargs):
+                argument = TyperArgument(
+                    param_decls=["entry"],
+                    metavar=metavar,
+                    required=required,
+                    nargs=nargs,
+                )
+                command = TyperCommand("show", params=[argument])
+                ctx = typer.Context(command, info_name="demo")
+                self.assertEqual(_usage(ctx).plain, f"Usage: demo [OPTIONS] {expected}")
+                self.assertEqual(argument.metavar, metavar)
 
     def test_ui_runs_preserve_declarations_and_native_usage(self):
         app = create_app()

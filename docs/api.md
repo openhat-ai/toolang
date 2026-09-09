@@ -207,7 +207,7 @@ Foreground runtime port selection depends on the agent mode:
 A script run uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT RUNNABLE [OPTIONS] [ARGUMENTS] INPUT
+toolang <SCRIPT> <RUNNABLE> [OPTIONS] [ARGUMENTS] [-- <INPUT> | -]
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -225,20 +225,20 @@ Arguments:
   redirected stdin
 
 The synopsis omits `[ARGUMENTS]` when there are no named parameters and
-`INPUT` when the signature forbids primary input. Input is required whenever
-accepted; it has no brackets or ellipsis, even when supplied via stdin. The
-**Arguments** panel shows `name=<ARGUMENT>` metavars without a separate type label,
-with parameter doc comments or `Named input, or simply argument`. INPUT is last,
-with an authored description or `Primary input, or simply input`, followed by
-`- from stdin, -- starts input`. A `*` marks required parameters;
-`[ARGUMENTS]` does not make required named arguments optional.
+`[-- <INPUT> | -]` when the signature forbids primary input. The input group is
+optional on the command line because piped or redirected stdin can supply it.
+The **Arguments** panel shows per-name metavars such as `begin=<BEGIN>`, without a
+separate type label, with parameter doc comments or `Named input (Text)` using
+the authored type. INPUT is last, with an authored description or `Primary input`,
+followed by `text after --, or stdin with - or a pipe`. A `*` marks required
+parameters; brackets in Usage do not make required signature inputs optional.
 
 Below usage, runnable descriptions use `Run KIND NAME.` or
 `Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
 `The flow proceeds as follows:`, a blank line, and an outline aligned with the
 description text, in normal style with blank lines between sibling steps.
 Arguments and **Options** follow.
-Top-level Script help uses `[OPTIONS] RUNNABLE` and
+Top-level Script help uses `[OPTIONS] <RUNNABLE>` and
 `Run runnables from SCRIPT.` It lists **Runnables** before Options, with
 `agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
 `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.

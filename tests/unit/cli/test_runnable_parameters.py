@@ -14,13 +14,13 @@ from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, Span
     [
         ("", [("_", "INPUT", "PART[]", True)]),
         ("()", []),
-        ("(topic: Text)", [("topic", "topic=<ARGUMENT>", "TEXT", True)]),
+        ("(topic: Text)", [("topic", "topic=<TOPIC>", "TEXT", True)]),
         (
             "(_: Text, class: Number, enabled?: Boolean, items?: Part[])",
             [
-                ("class", "class=<ARGUMENT>", "NUMBER", True),
-                ("enabled", "enabled=<ARGUMENT>", "BOOLEAN", False),
-                ("items", "items=<ARGUMENT>", "PART[]", False),
+                ("class", "class=<CLASS>", "NUMBER", True),
+                ("enabled", "enabled=<ENABLED>", "BOOLEAN", False),
+                ("items", "items=<ITEMS>", "PART[]", False),
                 ("_", "INPUT", "TEXT", True),
             ],
         ),
@@ -41,10 +41,8 @@ def test_runnable_parameters_follow_the_authored_signature(
     ] == expected
     assert all(type(param) is TyperArgument for param in parameters)
     assert [param.help for param in parameters] == [
-        "Primary input, or simply input"
-        if name == "_"
-        else "Named input, or simply argument"
-        for name, *_ in expected
+        "Primary input" if name == "_" else f"Named input ({type_name.title()})"
+        for name, _, type_name, _ in expected
     ]
     assert all(not param.show_default for param in parameters)
 

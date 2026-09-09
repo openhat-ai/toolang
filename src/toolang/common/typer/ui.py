@@ -27,6 +27,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command
 
 _PREPARE = f"{__name__}.prepare"
+_BRACKETED_METAVAR = re.compile(r"<[^<>]+>|\[[^\[\]]+\]")
 
 PLAIN = Theme(
     {
@@ -408,6 +409,26 @@ def _command_description(command: Command, *, short: bool = True) -> str:
     return description
 
 
+def argument_usage(param: TyperArgument) -> str:
+    """Bracket argument operands without changing declared literal syntax."""
+    label = param.metavar or param.name or ""
+    if param.nargs != 1:
+        label = label.removesuffix("...")
+    if _BRACKETED_METAVAR.fullmatch(label):
+        label = label[1:-1]
+        if param.nargs != 1:
+            label = label.removesuffix("...")
+    elif not _BRACKETED_METAVAR.search(label):
+        label = label.upper()
+    if param.required and not _BRACKETED_METAVAR.search(label):
+        label = f"<{label}>"
+    if param.nargs == -1:
+        label += "..."
+    else:
+        label = " ".join([label] * param.nargs)
+    return label if param.required else f"[{label}]"
+
+
 def _usage(ctx: Context) -> Text:
     contexts = []
     current: Context | None = ctx
@@ -426,12 +447,7 @@ def _usage(ctx: Context) -> Text:
             text.append(" " + command.options_metavar)
         for param in command.get_params(current):
             if isinstance(param, TyperArgument):
-                name = (param.metavar or param.name or "").upper()
-                if param.nargs == -1:
-                    name += "..."
-                name = " ".join([name] * max(1, param.nargs))
-                text.append(" ")
-                text.append(name if param.required else f"[{name}]")
+                text.append(" " + argument_usage(param))
             else:
                 for part in param.get_usage_pieces(current):
                     text.append(" " + part)
@@ -513,7 +529,7 @@ def _value_label(param: TyperOption, ctx: Context) -> str | None:
         label = label.upper()
     value = label.removesuffix("...")
     # Bracketed values may have literal prefixes or suffixes, as in <NAME>.json.
-    if re.search(r"<[^<>]+>|\[[^\[\]]+\]", value):
+    if _BRACKETED_METAVAR.search(value):
         return label
     return f"<{value}>{label[len(value) :]}"
 

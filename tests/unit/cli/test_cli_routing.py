@@ -213,7 +213,7 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: pytest [OPTIONS] COMMAND [ARGUMENTS]" in stdout.splitlines()
+    assert "Usage: pytest [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
     assert "Run and manage Toolang agents" in stdout
     assert output.err == ""
 
@@ -271,7 +271,11 @@ def test_compact_help_lists_the_public_runnable_signature(
     output = strip_ansi(captured.out)
     assert "Compact a thread" in output and "NAME=VALUE" not in output
     assert "previous" not in output
-    positions = [output.index(f"{param.name}=<ARGUMENT>") for param in runnable.params]
+    assert "Usage: pytest <AGENT> compact [OPTIONS] [ARGUMENTS]" in output.splitlines()
+    positions = [
+        output.index(f"{param.name}=<{param.name.upper()}>")
+        for param in runnable.params
+    ]
     assert positions == sorted(positions)
     if extended:
         assert "History page size." in output
@@ -377,13 +381,13 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
+            "Usage: pytest clone [OPTIONS] <SOURCE> [TARGET]",
             "TARGET",
             "[TARGET]",
         ),
         (
             ["chat"],
-            "Usage: pytest AGENT chat [OPTIONS]",
+            "Usage: pytest <AGENT> chat [OPTIONS]",
             "AGENT",
             "{AGENT}",
         ),
@@ -395,19 +399,19 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         ),
         (
             ["inspect"],
-            "Usage: pytest AGENT inspect [OPTIONS] SUBJECT...",
+            "Usage: pytest <AGENT> inspect [OPTIONS] <SUBJECT>...",
             "SUBJECT",
             "SUBJECT...",
         ),
         (
             ["rewind"],
-            "Usage: pytest AGENT rewind [OPTIONS] RUN",
+            "Usage: pytest <AGENT> rewind [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
         (
             ["fork"],
-            "Usage: pytest AGENT fork [OPTIONS] RUN",
+            "Usage: pytest <AGENT> fork [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),

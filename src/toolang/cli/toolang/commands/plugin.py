@@ -23,7 +23,7 @@ from toolang.plugin.loading import list_plugin_infos
 
 channel_app = typer.Typer(
     help="List available channels",
-    subcommand_metavar="COMMAND [ARGUMENTS]",
+    subcommand_metavar="<COMMAND> [ARGUMENTS]",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,

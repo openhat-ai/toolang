@@ -396,7 +396,7 @@ class HelpMetadataTest(unittest.TestCase):
         ui = dict(theme=PLAIN, console=Console(width=140))
         result = invoke(app, ui=ui, args=["--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
-        self.assertIn("Usage: demo [OPTIONS] NAME [TAGS...]", result.stdout)
+        self.assertIn("Usage: demo [OPTIONS] <NAME> [TAGS...]", result.stdout)
         arguments = result.stdout.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual(
             [line.strip() for line in arguments.splitlines()], ["* NAME", "tags"]
