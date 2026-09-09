@@ -774,8 +774,8 @@ def test_script_runnable_description_uses_docs_or_kind(
     if kind == "flow":
         assert (
             output.index(f"Run {kind} demo")
-            < output.index("The flow proceeds as follows:")
             < output.index("Options:")
+            < output.index("The flow proceeds as follows:")
         )
         assert _flow_outline_lines(output) == ["[0] Set value to note"]
     else:
@@ -1113,16 +1113,12 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
 
 
 def _flow_outline_lines(output: str) -> list[str]:
-    block = (
-        strip_ansi(output)
-        .partition("The flow proceeds as follows:")[2]
-        .partition("Usage:")[0]
-    )
+    block = strip_ansi(output).partition("The flow proceeds as follows:")[2]
     return [line.rstrip() for line in block.splitlines() if line.strip()]
 
 
 @pytest.mark.parametrize("explicit_help", [False, True])
-def test_script_flow_help_shows_docs_then_aligned_descriptions(
+def test_script_flow_help_keeps_aligned_steps_in_the_epilog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, explicit_help: bool
 ) -> None:
     source = _write_source(
@@ -1167,10 +1163,13 @@ agic search:
     assert output.err == ""
     assert stdout.count("Research a topic from several sources.") == 1
     assert "research - Research a topic from several sources." in stdout
-    assert stdout.index("Research a topic") < stdout.index(
-        "The flow proceeds as follows:"
+    assert (
+        stdout.index("Research a topic")
+        < stdout.index("Usage:")
+        < stdout.index("Arguments:")
+        < stdout.index("Options:")
+        < stdout.index("The flow proceeds as follows:")
     )
-    assert stdout.index("The flow proceeds as follows:") < stdout.index("Arguments:")
     assert stdout.count("The flow proceeds as follows:") == 1
     outline_start = stdout.partition("The flow proceeds as follows:")[2].splitlines()
     assert not outline_start[1].strip()
@@ -1183,6 +1182,7 @@ agic search:
         "[2] Map each item with search, up to 4 at once",
         "[3] Keep the first item",
     ]
+    assert stdout.endswith("[3] Keep the first item\n")
 
 
 def test_script_flow_outline_expands_repeat_bodies_but_not_calls(
