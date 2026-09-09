@@ -274,8 +274,12 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
 @pytest.mark.parametrize(
     ("command", "description", "argument_help"),
     [
-        ("run", "Run an agent in the foreground", "Agent name, reference, or URL"),
-        ("serve", "Run an agent server", "Agent name"),
+        (
+            "run",
+            "Run an agent in the foreground",
+            "Agent name, .too file, reference, or URL",
+        ),
+        ("serve", "Run an agent server", "Local agent name"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
@@ -294,6 +298,90 @@ def test_real_and_virtual_agent_arguments_share_usage(
             " ".join(line.split()) for line in output.splitlines()
         ]
         assert output.endswith("Show this message and exit\n")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "new",
+        "remove",
+        "start",
+        "stop",
+        "serve",
+        "run",
+        "info",
+        "chat",
+        "inspect",
+        "steer",
+        "cancel",
+        "retry",
+        "rerun",
+        "fork",
+        "rewind",
+        "compact",
+        "workspace",
+        "workspace list",
+        "task",
+        "task list",
+        "chore",
+        "chore list",
+    ],
+)
+def test_agent_help_matches_target_scope(command, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), *command.split(), "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    row = next(
+        line for line in output.splitlines() if line.lstrip().startswith("* AGENT ")
+    )
+    if command == "new":
+        expected = "New local agent name"
+    elif command.split()[0] in {
+        "remove",
+        "start",
+        "stop",
+        "serve",
+        "workspace",
+        "task",
+        "chore",
+    }:
+        expected = "Local agent name"
+    else:
+        expected = "Agent name, .too file, reference, or URL"
+    assert " ".join(row.split()) == f"* AGENT {expected}"
+
+
+@pytest.mark.parametrize("main", [too_main, caps_main])
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+@pytest.mark.parametrize("command", ["new", "list"])
+def test_cap_agent_help_distinguishes_mutation_and_listing(
+    main, kind, command, tmp_path, capsys
+):
+    assert main(["--root", str(tmp_path), kind, command, "--help"]) == 0
+    output = " ".join(strip_ansi(capsys.readouterr().out).split())
+    expected = (
+        f"Modify the agent's home {kind}s; omit for root {kind}s"
+        if command == "new"
+        else f"Local agent name; omit for root {kind}s only"
+    )
+    assert f"AGENT {expected}" in output
+
+
+@pytest.mark.parametrize("main", [too_main, caps_main])
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+def test_template_help_omits_agent_scope(main, kind, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["too"])
+    for prefix in ([], ["a"]):
+        assert main(["--root", str(tmp_path), *prefix, kind, "template", "--help"]) == 0
+        captured = capsys.readouterr()
+        assert not captured.err
+        output = strip_ansi(captured.out)
+        assert f"Usage: too {kind} template [OPTIONS] [NAME]" in output.splitlines()
+        assert "NAME Template name" in " ".join(output.split())
+        assert "AGENT" not in output
+    assert main(["--root", str(tmp_path), kind, "template", "default"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out and not captured.err
+    assert "Usage:" not in captured.out
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])

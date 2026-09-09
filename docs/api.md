@@ -63,7 +63,7 @@ Cap commands:
 - `caps [AGENT] <kind> delete <name>`
 - `caps [AGENT] <kind> add <ref>`
 - `caps [AGENT] <kind> remove <name>`
-- `caps [AGENT] <kind> template [template-name]`
+- `caps <kind> template [template-name]`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.

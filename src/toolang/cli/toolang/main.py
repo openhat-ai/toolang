@@ -26,12 +26,12 @@ from ..common.help import CliCommand, CliGroup, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
+    LocalRuntimeAgentCommand,
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentModelsCommand,
     RequiredPrefixAgentCommand,
     RunAgentCommand,
     RuntimeAgentCommand,
-    StartAgentCommand,
     explicit_root,
     extract_root_args,
 )
@@ -97,11 +97,15 @@ class _RunCommand(OptionalValueCommand, RunAgentCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
-class _StartCommand(OptionalValueCommand, StartAgentCommand):
+class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
-class _ThreadRunCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
+class _TargetAgentCommand(RequiredPrefixAgentCommand):
+    argument_help = "Agent name, .too file, reference, or URL"
+
+
+class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
@@ -112,7 +116,7 @@ class _ChatCommand(_ThreadRunCommand):
     }
 
 
-class _CompactCommand(RequiredPrefixAgentCommand):
+class _CompactCommand(_TargetAgentCommand):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         from ..common.runnable_parameters import runnable_parameters
@@ -311,7 +315,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:stop",
     help="Stop an agent",
     no_args_is_help=True,
-    cls=RuntimeAgentCommand,
+    cls=LocalRuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(
@@ -341,7 +345,7 @@ _registered_command(
     "toolang.cli.toolang.commands.inspect:inspect_command",
     help="Inspect agent run history",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_TargetAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
@@ -349,7 +353,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:steer_command",
     help="Steer an active run",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_TargetAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(
@@ -357,7 +361,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:cancel_command",
     help="Cancel an active run",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_TargetAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(
@@ -389,7 +393,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:rewind_command",
     help="Rewind a thread to an earlier run",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_TargetAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(
@@ -397,7 +401,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:fork_command",
     help="Fork a thread from an earlier run",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_TargetAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 
