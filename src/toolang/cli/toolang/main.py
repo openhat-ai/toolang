@@ -72,7 +72,6 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "compact",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
-    "inspect",
     "caps",
     "tools",
     "models",
@@ -81,6 +80,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "adapters",
     "toolsets",
     "sandboxes",
+    "inspect",
 )
 _HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "serve", "channel")
 _VISIBLE_COMMAND_ORDER = (
