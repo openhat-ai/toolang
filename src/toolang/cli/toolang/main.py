@@ -552,7 +552,7 @@ def _run_target_help(
     group = CliGroup(
         name=target.selector,
         commands=commands,
-        help=f"Commands for {target.placement} agent {target.label}.",
+        help=f"Run and manage agent {target.label}.",
         no_args_is_help=True,
         rich_markup_mode="rich",
     )
