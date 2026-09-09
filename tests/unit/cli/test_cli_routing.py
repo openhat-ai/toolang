@@ -314,7 +314,6 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "compact",
         ),
         "Inspection Commands": (
-            "inspect",
             "caps",
             "tools",
             "models",
@@ -323,6 +322,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "adapters",
             "toolsets",
             "sandboxes",
+            "inspect",
         ),
     }
 
