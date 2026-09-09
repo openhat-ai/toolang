@@ -231,7 +231,7 @@ The **Arguments** panel shows per-name metavars such as `begin=<BEGIN>`, without
 separate type label, with parameter doc comments or `Named input (Text)` using
 the authored type. INPUT is last, with an authored description or a typed fallback
 such as `Primary input (Part[])`, followed by
-`use - to read stdin, or omit for piped input`. A `*` marks required
+`reads stdin with - or when input is omitted`. A `*` marks required
 parameters; brackets in Usage do not make required signature inputs optional.
 
 Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`

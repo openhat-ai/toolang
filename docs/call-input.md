@@ -215,7 +215,7 @@ metavars such as `begin=<BEGIN>`, without a separate type label. A `*` marks req
 parameters, and parameter doc comments appear in the help column. Missing docs use
 the authored type, for example `Named input (Text)` or `Primary input (Part[])`.
 The INPUT row is last when primary input is accepted, and appends
-`use - to read stdin, or omit for piped input` to its description. Arguments may be
+`reads stdin with - or when input is omitted` to its description. Arguments may be
 supplied in any order, interspersed with command options, before input.
 
 | Form | Behavior |

@@ -876,7 +876,7 @@ def test_script_help_groups_signature_categories(
         assert f"{label} Primary input ({input_type});" in panel
         positions.append(panel.index(f"{label} Primary input ({input_type});"))
         assert f"* {label}" in panel
-        assert "use - to read stdin, or omit for piped input" in panel
+        assert "reads stdin with - or when input is omitted" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)

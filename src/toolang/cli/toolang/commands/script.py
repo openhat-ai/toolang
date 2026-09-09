@@ -397,7 +397,7 @@ def _runnable_command(
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
         arguments = runnable_parameters(
             runnable,
-            input_help="use - to read stdin, or omit for piped input",
+            input_help="reads stdin with - or when input is omitted",
             help_only=True,
         )
         command.params[-1:-1] = arguments
