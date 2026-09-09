@@ -215,9 +215,7 @@ class HelpFormatter(TyperHelpFormatter):
             "Options",
             shared_columns=False,
         )
-        if epilog := cleandoc(command.epilog or "").rstrip():
-            self.write_paragraph()
-            self.write_text(epilog)
+        self.write_epilog(ctx)
 
     def write_description(self, ctx: Context) -> None:
         if description := _command_description(ctx.command, short=False):
@@ -229,6 +227,11 @@ class HelpFormatter(TyperHelpFormatter):
     def write_commands(self, ctx: Context) -> None:
         """Render a group's command directory without its Usage or options."""
         self._sections(self._command_rows(ctx), "Commands")
+
+    def write_epilog(self, ctx: Context) -> None:
+        if epilog := cleandoc(ctx.command.epilog or "").rstrip():
+            self.write_paragraph()
+            self.write_text(epilog)
 
     def write_error(self, message: str, ctx: Context | None) -> None:
         self.write_text(Text.assemble(("Error: ", "cli.error"), message))

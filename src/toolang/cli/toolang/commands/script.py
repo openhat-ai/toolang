@@ -144,13 +144,17 @@ class _ScriptHelpFormatter(UIHelpFormatter):
                 description.append(".")
             self.write_text(description)
             self.write_paragraph()
-        if command._flow is not None:
+
+    def write_epilog(self, ctx: Context) -> None:
+        super().write_epilog(ctx)
+        command = ctx.command
+        if isinstance(command, _RunnableCommand) and command._flow is not None:
+            self.write_paragraph()
             self.write_text("The flow proceeds as follows:")
             self.write_paragraph()
             for line in _flow_outline(command._flow).split("\n"):
                 line.truncate(max(1, self.width - 2), overflow="ellipsis")
                 self._write_line(line)
-            self.write_paragraph()
 
     def _command_rows(self, ctx: Context):
         if not isinstance(ctx.command, TyperGroup):
