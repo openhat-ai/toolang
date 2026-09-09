@@ -1,4 +1,4 @@
-"""Web-search toolset plugin."""
+"""Web toolset plugin."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DEFAULT_TIMEOUT = 15
 
 
 @dataclass(slots=True)
-class WebSearchToolset:
+class WebToolset:
     """Public-web search tools."""
 
     config: dict[str, Any]
@@ -106,7 +106,7 @@ def _summary(
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
     """Create the web toolset plugin."""
 
-    return WebSearchToolset(config=dict(config))
+    return WebToolset(config=dict(config))
 
 
 async def _run_search(

@@ -101,9 +101,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         create_toolset as create_service_use_tool,
     )
     from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
-    from toolang.plugin.toolsets.web_search import (
-        create_toolset as create_web_search_tool,
-    )
+    from toolang.plugin.toolsets.web import create_toolset as create_web_tool
     from toolang.execution.tools.agent_state import (
         create_toolset as create_agent_state_tool,
     )
@@ -118,7 +116,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         _FakeEntryPoint("math_add", create_math_add_toolset),
         _FakeEntryPoint("service", create_service_use_tool, distribution="toolang"),
         _FakeEntryPoint("shell", create_shell_tool, distribution="toolang"),
-        _FakeEntryPoint("web", create_web_search_tool, distribution="toolang"),
+        _FakeEntryPoint("web", create_web_tool, distribution="toolang"),
         _FakeEntryPoint("working_tree", create_working_tree_toolset),
     ]
     monkeypatch.setattr(

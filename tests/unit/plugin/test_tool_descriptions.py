@@ -9,7 +9,7 @@ from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.plugin.toolsets.filesystem import FilesystemToolset
 from toolang.plugin.toolsets.history import HistoryToolset
 from toolang.plugin.toolsets.shell import ShellToolset
-from toolang.plugin.toolsets.web_search import WebSearchToolset
+from toolang.plugin.toolsets.web import WebToolset
 
 
 @pytest.mark.parametrize(
@@ -129,8 +129,8 @@ def test_web_search_describes_query_without_running_search(
     def no_search(*args, **kwargs):
         raise AssertionError("summary must not perform a search")
 
-    monkeypatch.setattr("toolang.plugin.toolsets.web_search._run_search", no_search)
-    tool = WebSearchToolset({}).tools()["search"]
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", no_search)
+    tool = WebToolset({}).tools()["search"]
     result = (
         None
         if status == "running"

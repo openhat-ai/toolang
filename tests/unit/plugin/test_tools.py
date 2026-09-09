@@ -17,7 +17,7 @@ from toolang.plugin.toolsets.service_use import (
     create_toolset as create_service_use_tool,
 )
 from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
-from toolang.plugin.toolsets.web_search import create_toolset as create_web_search_tool
+from toolang.plugin.toolsets.web import create_toolset as create_web_tool
 
 
 def _tool_context(
@@ -194,7 +194,7 @@ def test_shell_interruption_stops_the_command(
 
 
 def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
-    tool = create_web_search_tool({}).tools()["search"]
+    tool = create_web_tool({}).tools()["search"]
 
     async def search(
         query: str,
@@ -217,7 +217,7 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
         ]
 
     monkeypatch.setattr(
-        "toolang.plugin.toolsets.web_search._run_search",
+        "toolang.plugin.toolsets.web._run_search",
         search,
     )
 
@@ -249,11 +249,11 @@ def test_web_search_worker_is_process_isolated_and_cancellable(
         return []
 
     monkeypatch.setattr(
-        "toolang.plugin.toolsets.web_search.to_process.run_sync",
+        "toolang.plugin.toolsets.web.to_process.run_sync",
         run_sync,
     )
 
-    from toolang.plugin.toolsets.web_search import _run_search, _search_text
+    from toolang.plugin.toolsets.web import _run_search, _search_text
 
     result = asyncio.run(_run_search("toolang", max_results=15, timeout=5))
 
@@ -269,7 +269,7 @@ def test_web_search_enforces_an_outer_timeout(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    plugin = create_web_search_tool({"timeout": 1})
+    plugin = create_web_tool({"timeout": 1})
     tool = plugin.tools()["search"]
 
     async def stalled(
@@ -283,7 +283,7 @@ def test_web_search_enforces_an_outer_timeout(
         return []
 
     monkeypatch.setattr(
-        "toolang.plugin.toolsets.web_search._run_search",
+        "toolang.plugin.toolsets.web._run_search",
         stalled,
     )
 
@@ -297,7 +297,7 @@ def test_web_search_enforces_an_outer_timeout(
 
 def test_web_search_validation_uses_the_canonical_toolset() -> None:
     with pytest.raises(ToolangError, match="^web integer argument is invalid$"):
-        create_web_search_tool({"top_k": "invalid"})
+        create_web_tool({"top_k": "invalid"})
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:
