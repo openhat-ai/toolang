@@ -28,7 +28,7 @@ def chat_command(
             click_type=TextType(),
             help=(
                 "Continue a thread (run id also accepted). Bare --thread resumes "
-                "the most recently updated thread; omit to start a new one."
+                "the most recently updated thread; omit to start a new one"
             ),
             metavar="[THREAD]",
         ),
@@ -39,7 +39,7 @@ def chat_command(
         typer.Option(
             "--sandbox",
             metavar="SANDBOX_SPEC",
-            help="Execute the session in this sandbox.",
+            help="Execute the session in this sandbox",
         ),
     ] = None,
     dev: Annotated[

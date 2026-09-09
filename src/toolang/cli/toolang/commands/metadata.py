@@ -1,6 +1,6 @@
 """Lightweight metadata shared by Toolang command entry points."""
 
-QUERY_HELP = """Show collection-query syntax and fields.
+QUERY_HELP = """Show collection-query syntax and fields
 
 QUERY = MATCH ("," MATCH)*
 MATCH = IDENTITY-PATTERN? PREDICATE-BLOCK?

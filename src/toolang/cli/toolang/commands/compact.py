@@ -76,7 +76,7 @@ def compact_command(
         typer.Option(
             "--model",
             metavar="MODEL_SPEC",
-            help="Override compact.model, including model parameters.",
+            help="Override compact.model, including model parameters",
         ),
     ] = None,
     limit: LimitOptions = None,

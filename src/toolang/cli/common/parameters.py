@@ -32,14 +32,14 @@ class SignatureType(StringParamType):
 
 RootOption = Annotated[
     Path | None,
-    typer.Option("--root", "-r", metavar="PATH", help="Use a custom Toolang root."),
+    typer.Option("--root", "-r", metavar="PATH", help="Use a custom Toolang root"),
 ]
 AllowOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--allow",
         metavar="RESOURCE=QUERY",
-        help="Set RESOURCE=QUERY. Repeat by resource category.",
+        help="Set RESOURCE=QUERY. Repeat by resource category",
     ),
 ]
 LimitOptions = Annotated[
@@ -47,7 +47,7 @@ LimitOptions = Annotated[
     typer.Option(
         "--limit",
         metavar="LIMIT=VALUE",
-        help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
+        help="Set a run limit, e.g. tokens=10000. Repeat for another limit",
     ),
 ]
 DefaultOptions = Annotated[
@@ -55,7 +55,7 @@ DefaultOptions = Annotated[
     typer.Option(
         "--default",
         metavar="SETTING=VALUE",
-        help="Set a default model or runnable. Repeat for another setting.",
+        help="Set a default model or runnable. Repeat for another setting",
     ),
 ]
 CompactModelOption = Annotated[
@@ -64,7 +64,7 @@ CompactModelOption = Annotated[
         "--compact-model",
         metavar="MODEL_SPEC",
         help=(
-            "Set an exact model (optional effort=LEVEL), or unset, for a new runtime."
+            "Set an exact model (optional effort=LEVEL), or unset, for a new runtime"
         ),
     ),
 ]

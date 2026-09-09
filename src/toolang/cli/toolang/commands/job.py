@@ -51,63 +51,63 @@ class _JobCommand:
 def _create_app(kind: JobKind, title: str) -> typer.Typer:
     commands = (
         _JobCommand(
-            "list", lambda kind: f"List {kind}s.", _list, RequiredPrefixAgentCommand
+            "list", lambda kind: f"List {kind}s", _list, RequiredPrefixAgentCommand
         ),
         _JobCommand(
-            "new", lambda kind: f"Create a {kind}.", _new, RequiredPrefixAgentCommand
+            "new", lambda kind: f"Create a {kind}", _new, RequiredPrefixAgentCommand
         ),
         _JobCommand(
             "clone",
-            lambda kind: f"Clone a {kind}.",
+            lambda kind: f"Clone a {kind}",
             _clone,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "edit",
-            lambda kind: f"Edit a {kind}.",
+            lambda kind: f"Edit a {kind}",
             _edit,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "delete",
-            lambda kind: f"Delete a {kind}.",
+            lambda kind: f"Delete a {kind}",
             _delete,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "draft",
-            lambda kind: f"Move a {kind} to drafts.",
+            lambda kind: f"Move a {kind} to drafts",
             _draft,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "ready",
-            lambda kind: f"Move a {kind} to ready.",
+            lambda kind: f"Move a {kind} to ready",
             _ready,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "archive",
-            lambda kind: f"Move a {kind} to archive.",
+            lambda kind: f"Move a {kind} to archive",
             _archive,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "cancel",
-            lambda kind: f"Cancel a {kind}.",
+            lambda kind: f"Cancel a {kind}",
             _cancel,
             RequiredPrefixAgentCommand,
             True,
         ),
         _JobCommand(
             "reopen",
-            lambda kind: f"Reopen a {kind}.",
+            lambda kind: f"Reopen a {kind}",
             _reopen,
             RequiredPrefixAgentCommand,
             True,
@@ -115,7 +115,7 @@ def _create_app(kind: JobKind, title: str) -> typer.Typer:
         _JobCommand(
             "run",
             lambda kind: (
-                "Trigger a chore run now." if kind == "chore" else f"Run a {kind}."
+                "Trigger a chore run now" if kind == "chore" else f"Run a {kind}"
             ),
             _run,
             RequiredPrefixAgentCommand,
@@ -124,7 +124,7 @@ def _create_app(kind: JobKind, title: str) -> typer.Typer:
     )
     app = typer.Typer(
         cls=PrefixAgentJobGroup,
-        help=f"Manage agent {kind}s.",
+        help=f"Manage agent {kind}s",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
@@ -146,13 +146,13 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
         drafts: Annotated[
-            bool, typer.Option("--drafts", help="List draft items.")
+            bool, typer.Option("--drafts", help="List draft items")
         ] = False,
         archived: Annotated[
-            bool, typer.Option("--archived", help="List archived items.")
+            bool, typer.Option("--archived", help="List archived items")
         ] = False,
         all_items: Annotated[
-            bool, typer.Option("--all", help="List ready, draft, and archived items.")
+            bool, typer.Option("--all", help="List ready, draft, and archived items")
         ] = False,
     ) -> None:
         require_prefix_agent(ctx)
@@ -266,7 +266,7 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
         draft: Annotated[
-            bool, typer.Option("--draft", help="Create the item in drafts.")
+            bool, typer.Option("--draft", help="Create the item in drafts")
         ] = False,
     ) -> None:
         agent = require_prefix_agent(ctx)

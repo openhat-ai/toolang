@@ -52,7 +52,7 @@ def new_agent(
     ],
     template: Annotated[
         str,
-        typer.Option("--template", "-t", metavar="NAME", help="Template name."),
+        typer.Option("--template", "-t", metavar="NAME", help="Template name"),
     ] = "default",
 ) -> None:
     root = context_root(ctx)
@@ -74,13 +74,13 @@ def clone_agent(
     source: Annotated[
         str,
         typer.Argument(
-            metavar="SOURCE", click_type=TextType(), help="Agent source selector."
+            metavar="SOURCE", click_type=TextType(), help="Agent source selector"
         ),
     ],
     target: Annotated[
         str | None,
         typer.Argument(
-            metavar="TARGET", click_type=TextType(), help="New local agent name."
+            metavar="TARGET", click_type=TextType(), help="New local agent name"
         ),
     ] = None,
 ) -> None:

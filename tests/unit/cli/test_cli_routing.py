@@ -68,7 +68,7 @@ def test_lazy_command_completes_options_using_typer_parameters() -> None:
         completions = command.shell_complete(ctx, "--tab")
 
     assert [item.value for item in completions] == ["--tab-size"]
-    assert completions[0].help == "Number of spaces per indentation level."
+    assert completions[0].help == "Number of spaces per indentation level"
 
 
 def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
@@ -212,21 +212,21 @@ def test_cli_no_args_still_shows_root_help(
 
     assert result == 0
     assert "Usage: pytest [OPTIONS] COMMAND [ARGS]" in stdout.splitlines()
-    assert "Run and manage Toolang agents." in stdout
+    assert "Run and manage Toolang agents" in stdout
     assert output.err == ""
 
 
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Start an interactive TUI.",
-        "steer": "Steer an active run.",
-        "cancel": "Cancel an active run.",
-        "retry": "Retry a run from a failed step.",
-        "rerun": "Rerun an earlier run as a new one.",
-        "rewind": "Rewind a thread to an earlier run.",
-        "fork": "Fork a thread from an earlier run.",
-        "compact": "Compact a thread.",
+        "chat": "Start an interactive TUI",
+        "steer": "Steer an active run",
+        "cancel": "Cancel an active run",
+        "retry": "Retry a run from a failed step",
+        "rerun": "Rerun an earlier run as a new one",
+        "rewind": "Rewind a thread to an earlier run",
+        "fork": "Fork a thread from an earlier run",
+        "compact": "Compact a thread",
     }
 
     assert isinstance(group, TyperGroup)
@@ -267,7 +267,7 @@ def test_compact_help_lists_the_public_runnable_signature(
     captured = capsys.readouterr()
     assert not captured.err
     output = strip_ansi(captured.out)
-    assert "Compact a thread." in output and "NAME=VALUE" not in output
+    assert "Compact a thread" in output and "NAME=VALUE" not in output
     assert "previous" not in output
     positions = [output.index(f"{param.name}=ARGUMENT") for param in runnable.params]
     assert positions == sorted(positions)
@@ -351,15 +351,15 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect execution subjects.",
-        "caps": "List caps.",
-        "models": "List models.",
-        "providers": "List model providers.",
-        "tools": "List tools.",
-        "catalogs": "List installed model catalogs.",
-        "adapters": "List installed model adapters.",
-        "toolsets": "List installed toolsets.",
-        "sandboxes": "List installed sandboxes.",
+        "inspect": "Inspect execution subjects",
+        "caps": "List caps",
+        "models": "List models",
+        "providers": "List model providers",
+        "tools": "List tools",
+        "catalogs": "List installed model catalogs",
+        "adapters": "List installed model adapters",
+        "toolsets": "List installed toolsets",
+        "sandboxes": "List installed sandboxes",
     }
 
     assert isinstance(group, TyperGroup)
@@ -559,7 +559,7 @@ def test_cli_incomplete_command_shows_help_before_target_validation(
     output = capsys.readouterr()
 
     assert "Usage:" in output.out + output.err
-    assert "Steer an active run." in output.out + output.err
+    assert "Steer an active run" in output.out + output.err
     assert "Agent alice not found" not in output.err
 
 
@@ -603,7 +603,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     )
 
     assert result == 0
-    assert stdout.startswith("Run and manage agent alice.\n")
+    assert stdout.startswith("Run and manage agent alice\n")
     assert "steer" in stdout
     assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
@@ -623,7 +623,7 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
 
     assert result == 0
     assert "Usage: pytest agent:alice" in stdout
-    assert stdout.startswith("Run and manage agent alice.\n")
+    assert stdout.startswith("Run and manage agent alice\n")
     assert "agent agent:alice" not in stdout
 
 
@@ -641,7 +641,7 @@ def test_cli_bare_visiting_target_shows_help_without_resolving_it(
     output = capsys.readouterr()
 
     assert result == 0
-    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev.\n")
+    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev\n")
     assert "chat" in output.out
     assert "No such command" not in output.err
 

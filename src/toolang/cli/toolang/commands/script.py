@@ -316,7 +316,7 @@ def _program_command(
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
-        help=f"Run runnables from {source_label}.",
+        help=f"Run runnables from {source_label}",
         no_args_is_help=True,
         rich_markup_mode="rich",
         subcommand_metavar="RUNNABLE",
@@ -349,7 +349,7 @@ def _runnable_command(
             typer.Option(
                 "--model",
                 metavar="MODEL_SPEC",
-                help="Set the model identity and parameters for this run.",
+                help="Set the model identity and parameters for this run",
             ),
         ] = None,
         sandbox: Annotated[
@@ -357,7 +357,7 @@ def _runnable_command(
             typer.Option(
                 "--sandbox",
                 metavar="SANDBOX_SPEC",
-                help="Execute this run in the selected sandbox.",
+                help="Execute this run in the selected sandbox",
             ),
         ] = None,
         save: Annotated[
@@ -366,13 +366,13 @@ def _runnable_command(
                 "--out",
                 "-o",
                 metavar="PATH",
-                help="Save the Run result to PATH, or use - for stdout.",
+                help="Save the Run result to PATH, or use - for stdout",
             ),
         ] = None,
         quiet: Annotated[
             bool,
             typer.Option(
-                "--quiet", "-q", help="Suppress prepare and execution progress."
+                "--quiet", "-q", help="Suppress prepare and execution progress"
             ),
         ] = False,
         dev: Annotated[
@@ -424,8 +424,8 @@ def _runnable_command(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
-            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}.",
-            short_help=doc or f"{kind.capitalize()} {name}.",
+            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}",
+            short_help=doc or f"{kind.capitalize()} {name}",
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",

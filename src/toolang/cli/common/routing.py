@@ -90,7 +90,7 @@ class PrefixAgentCommand(CliCommand):
     """Render one virtual prefix-agent argument in help output."""
 
     prefix_agent_metavar = "[AGENT]"
-    argument_help = "Apply to this agent's home caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -135,7 +135,7 @@ class RequiredPrefixAgentGroup(CliGroup):
             type=TextType(),
             required=True,
             expose_value=False,
-            help="Agent name.",
+            help="Agent name",
         )
         return [agent, *super().get_params(ctx)]
 
@@ -156,7 +156,7 @@ class OptionalPrefixAgentGroup(CliGroup):
     """Render optional AGENT between the runnable and command path."""
 
     prefix_agent_metavar = "[AGENT]"
-    argument_help = "Apply to this agent's home caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperGroup.get_params(self, ctx)
@@ -187,16 +187,16 @@ class OptionalPrefixAgentCommand(PrefixAgentCommand):
 
 
 class OptionalPrefixAgentListCommand(OptionalPrefixAgentCommand):
-    argument_help = "Also include this agent's home caps."
+    argument_help = "Also include this agent's home caps"
 
 
 class OptionalPrefixAgentModelsCommand(OptionalPrefixAgentCommand):
-    argument_help = "Use this agent's model catalog and configuration."
+    argument_help = "Use this agent's model catalog and configuration"
 
 
 class RequiredPrefixAgentCommand(PrefixAgentCommand):
     prefix_agent_metavar = "AGENT"
-    argument_help = "Agent name."
+    argument_help = "Agent name"
 
     def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
@@ -222,7 +222,7 @@ class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "AGENT"
-    argument_help = "Agent name."
+    argument_help = "Agent name"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -257,7 +257,7 @@ class RuntimeAgentCommand(CliCommand):
 
 
 class RunAgentCommand(RuntimeAgentCommand):
-    argument_help = "Agent name, reference, or URL."
+    argument_help = "Agent name, reference, or URL"
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []
@@ -268,7 +268,7 @@ class RunAgentCommand(RuntimeAgentCommand):
 
 
 class StartAgentCommand(RuntimeAgentCommand):
-    argument_help = "Existing local agent name."
+    argument_help = "Existing local agent name"
 
 
 class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
@@ -280,7 +280,7 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
             required=False,
             default=None,
             expose_value=False,
-            help="Template name.",
+            help="Template name",
         )
 
     def get_params(self, ctx: Context) -> list[Parameter]:

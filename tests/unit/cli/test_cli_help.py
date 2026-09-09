@@ -11,11 +11,11 @@ from rich.console import Console
 from rich.text import Text
 from typer._click import Context
 from typer._click.utils import strip_ansi
-from typer.core import TyperArgument, TyperCommand, TyperGroup
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.models import TyperPath
 from typer.testing import CliRunner
 
-from toolang.cli.caps.main import main as caps_main
+from toolang.cli.caps.main import app as caps_app, main as caps_main
 from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.cli.common.lazy import LazyCommand, lazy_typer_command
 from toolang.cli.common.parameters import PathType
@@ -74,6 +74,30 @@ def test_lazy_command_exposes_short_help_without_loading():
     output = group.get_help(group.context_class(group, info_name="demo"))
     assert "Explicit summary." in output
     assert "Detailed documentation." not in output
+
+
+@pytest.mark.parametrize("application", [app, caps_app])
+def test_declared_help_omits_final_period(application):
+    pending = [(typer.main.get_command(application), None)]
+    while pending:
+        command, parent = pending.pop()
+        if isinstance(command, LazyCommand):
+            command = command.load()
+        ctx = command.context_class(command, parent=parent, info_name=command.name)
+        summary = command.short_help or (command.help or "").split("\n\n", 1)[0]
+        assert not summary.endswith("."), (ctx.command_path, summary)
+        native_help = command.get_help_option(ctx)
+        for param in command.get_params(ctx):
+            if param is native_help:
+                continue
+            assert isinstance(param, (TyperArgument, TyperOption))
+            assert not (param.help or "").endswith("."), (
+                ctx.command_path,
+                param.name,
+                param.help,
+            )
+        if isinstance(command, TyperGroup):
+            pending.extend((child, ctx) for child in command.commands.values())
 
 
 @pytest.mark.parametrize(
@@ -160,7 +184,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
-    assert "serve Run an agent server." in " ".join(plain.split())
+    assert "serve Run an agent server" in " ".join(plain.split())
 
 
 @pytest.mark.parametrize(
@@ -201,8 +225,8 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
 @pytest.mark.parametrize(
     ("command", "description", "argument_help"),
     [
-        ("run", "Run an agent in the foreground.", "Agent name, reference, or URL."),
-        ("serve", "Run an agent server.", "Agent name."),
+        ("run", "Run an agent in the foreground", "Agent name, reference, or URL"),
+        ("serve", "Run an agent server", "Agent name"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
@@ -217,7 +241,9 @@ def test_real_and_virtual_agent_arguments_share_usage(
     assert f"Usage: too {command} [OPTIONS] AGENT" in output.splitlines()
     if status == 0:
         assert output.startswith(description + "\n")
-        assert f"* AGENT TEXT {argument_help}" in " ".join(output.split())
+        assert f"* AGENT TEXT {argument_help}" in [
+            " ".join(line.split()) for line in output.splitlines()
+        ]
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])

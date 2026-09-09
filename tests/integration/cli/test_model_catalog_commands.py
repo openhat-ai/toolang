@@ -33,7 +33,7 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     assert "adapters" in stdout
     assert "--catalog" not in stdout
     assert "--models" not in stdout
-    assert "List models." in stdout
+    assert "List models" in stdout
     assert "--model-catalog" not in stdout
 
     for command in (
@@ -80,12 +80,12 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "--query-help" not in models_help
     assert "--query-schema" not in models_help
     assert "too query" in models_help
-    assert "models'." in models_help
+    assert "models'" in models_help
     assert "--json" in models_help
-    assert "Write filtered models as JSON." in models_help
+    assert "Write filtered models as JSON" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
-    assert "Write catalog providers as JSON." in strip_ansi(providers_result.stdout)
+    assert "Write catalog providers as JSON" in strip_ansi(providers_result.stdout)
 
     for subcommand in ("inspect", "update"):
         result = runner.invoke(cli.app, ["models", subcommand])

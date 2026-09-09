@@ -52,7 +52,7 @@ def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
         f"{label.title().replace(' ', '')}ScopeCommand",
         (OptionalPrefixAgentCommand,),
         {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
         },
     )
 
@@ -61,7 +61,7 @@ def _kind_list_command_cls(label: str) -> type[OptionalPrefixAgentListCommand]:
     return type(
         f"{label.title().replace(' ', '')}ListScopeCommand",
         (OptionalPrefixAgentListCommand,),
-        {"argument_help": f"Also include this agent's home {label}."},
+        {"argument_help": f"Also include this agent's home {label}"},
     )
 
 
@@ -70,7 +70,7 @@ def _kind_template_command_cls(label: str) -> type[OptionalPrefixAgentTemplateCo
         f"{label.title().replace(' ', '')}TemplateScopeCommand",
         (OptionalPrefixAgentTemplateCommand,),
         {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
         },
     )
 
@@ -84,7 +84,7 @@ def _kind_group_cls(
         f"{label.title().replace(' ', '')}ScopeGroup",
         (group_cls,),
         {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
         },
     )
 
@@ -106,16 +106,16 @@ def create_cap_apps(
         "prompt": "prompts",
     }
     cap_group_help: dict[CapKind, str] = {
-        "psyche": "Manage psyche caps.",
-        "skill": "Manage skill caps.",
-        "service": "Manage service caps.",
-        "prompt": "Manage prompt caps.",
+        "psyche": "Manage psyche caps",
+        "skill": "Manage skill caps",
+        "service": "Manage service caps",
+        "prompt": "Manage prompt caps",
     }
     cap_list_help: dict[CapKind, str] = {
-        "psyche": "List psyches.",
-        "skill": "List skills.",
-        "service": "List services.",
-        "prompt": "List prompts.",
+        "psyche": "List psyches",
+        "skill": "List skills",
+        "service": "List services",
+        "prompt": "List prompts",
     }
 
     @dataclass(frozen=True, slots=True)
@@ -133,37 +133,37 @@ def create_cap_apps(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a file-backed {kind}.",
+            help=lambda kind: f"Create a file-backed {kind}",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a file-backed {kind}.",
+            help=lambda kind: f"Edit a file-backed {kind}",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a file-backed {kind}.",
+            help=lambda kind: f"Delete a file-backed {kind}",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Wire a {kind} ref.",
+            help=lambda kind: f"Wire a {kind} ref",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Unwire a {kind}.",
+            help=lambda kind: f"Unwire a {kind}",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="template",
-            help=lambda kind: f"Inspect {kind} templates.",
+            help=lambda kind: f"Inspect {kind} templates",
             factory=_make_template_command,
         ),
     )
@@ -208,7 +208,7 @@ def list_caps(
             "--query",
             "-q",
             metavar="QUERY",
-            help="Query cap collections. Repeat to add matches; see 'too query'.",
+            help="Query cap collections. Repeat to add matches; see 'too query'",
         ),
     ] = None,
 ) -> None:
@@ -246,9 +246,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 "--query",
                 "-q",
                 metavar="QUERY",
-                help=(
-                    f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'."
-                ),
+                help=(f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'"),
             ),
         ] = None,
     ) -> None:
@@ -284,7 +282,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ],
         template: Annotated[
             str,
-            typer.Option("--template", "-t", metavar="NAME", help="Template name."),
+            typer.Option("--template", "-t", metavar="NAME", help="Template name"),
         ] = "default",
     ) -> None:
         scope, agent_name = _target_scope(ctx)

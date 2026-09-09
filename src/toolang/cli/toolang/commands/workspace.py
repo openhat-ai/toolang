@@ -19,7 +19,7 @@ from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGro
 def workspace_app() -> typer.Typer:
     app = typer.Typer(
         cls=RequiredPrefixAgentGroup,
-        help="Manage agent workspaces.",
+        help="Manage agent workspaces",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
@@ -27,18 +27,18 @@ def workspace_app() -> typer.Typer:
     )
     app.command(
         "list",
-        help="List workspaces.",
+        help="List workspaces",
         cls=RequiredPrefixAgentCommand,
     )(list_workspaces)
     app.command(
         "add",
-        help="Add a workspace.",
+        help="Add a workspace",
         cls=RequiredPrefixAgentCommand,
         no_args_is_help=True,
     )(add_workspace)
     app.command(
         "remove",
-        help="Remove a workspace.",
+        help="Remove a workspace",
         cls=RequiredPrefixAgentCommand,
         no_args_is_help=True,
     )(remove_workspace)
@@ -50,13 +50,13 @@ def add_workspace(
     path: Annotated[
         Path,
         typer.Argument(
-            metavar="PATH", click_type=PathType(), help="Existing directory path."
+            metavar="PATH", click_type=PathType(), help="Existing directory path"
         ),
     ],
     name: Annotated[
         str | None,
         typer.Option(
-            "--name", metavar="NAME", help="Workspace name, normalized to kebab case."
+            "--name", metavar="NAME", help="Workspace name, normalized to kebab case"
         ),
     ] = None,
 ) -> None:
@@ -85,7 +85,7 @@ def remove_workspace(
     ctx: typer.Context,
     name: Annotated[
         str,
-        typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name."),
+        typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),
     ],
 ) -> None:
     require_prefix_agent(ctx)

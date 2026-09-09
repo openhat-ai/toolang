@@ -34,7 +34,7 @@ CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *commands.CAP_KINDS})
 
 app = typer.Typer(
     name="caps",
-    help="Manage composable agent primitives.",
+    help="Manage composable agent primitives",
     cls=OptionalPrefixAgentGroup,
     add_completion=False,
     invoke_without_command=True,
@@ -54,7 +54,7 @@ def callback(
             "--version",
             "-V",
             callback=_version_callback,
-            help="Show current version and exit.",
+            help="Show current version and exit",
             is_eager=True,
         ),
     ] = False,
@@ -71,7 +71,7 @@ def callback(
 
 app.command(
     "list",
-    help="Inspect available caps.",
+    help="Inspect available caps",
     cls=OptionalPrefixAgentListCommand,
 )(commands.list_caps)
 _cap_apps = commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)

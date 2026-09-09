@@ -646,10 +646,10 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save the Run result to PATH, or use - for stdout." in " ".join(
+    assert "Save the Run result to PATH, or use - for stdout" in " ".join(
         stdout.replace("│", " ").split()
     )
-    assert "stdout." in stdout
+    assert "stdout" in stdout
     assert "--verbose" not in stdout
     assert "-v" not in stdout
     _assert_common_options(stdout)
@@ -759,7 +759,7 @@ def test_script_runnable_description_uses_docs_or_kind(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo."
+    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo"
     assert " ".join(output.split()).count(summary) == 1
     assert (
         output.index(f"Run {kind} demo")
@@ -1397,7 +1397,7 @@ flow pipeline:
     assert result == 0
     assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
     assert "[ARGS]" not in stdout
-    assert f"Run runnables from {filename}." in stdout
+    assert f"Run runnables from {filename}" in stdout
     assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
@@ -1409,8 +1409,8 @@ flow pipeline:
     descriptions = _help_panel(stdout, "Runnables")
     assert "agic:visible Run the visible command." in descriptions
     assert "flow:pipeline Run the pipeline." in descriptions
-    assert "agic:undocumented Agic undocumented." in descriptions
-    assert "flow:undocumented_flow Flow undocumented_flow." in descriptions
+    assert "agic:undocumented Agic undocumented" in descriptions
+    assert "flow:undocumented_flow Flow undocumented_flow" in descriptions
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in stdout
@@ -1442,7 +1442,7 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     output = strip_ansi(capsys.readouterr().out)
     panel = _help_panel(output, "Runnables")
     assert "Documented." in panel
-    assert "Agic brief." in panel
+    assert "Agic brief" in panel
     assert "…" not in panel
     assert all(cell_len(line) <= width for line in output.splitlines())
 

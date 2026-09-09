@@ -66,7 +66,7 @@ def steer_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to steer. Thread id means its active run.",
+            help="Run id to steer. Thread id means its active run",
         ),
     ],
     message: Annotated[
@@ -74,7 +74,7 @@ def steer_command(
         typer.Argument(
             metavar="MESSAGE",
             click_type=TextType(),
-            help="Instruction to steer the run.",
+            help="Instruction to steer the run",
         ),
     ],
 ) -> None:
@@ -100,7 +100,7 @@ def cancel_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to cancel. Thread id means its active run.",
+            help="Run id to cancel. Thread id means its active run",
         ),
     ],
 ) -> None:
@@ -124,7 +124,7 @@ def retry_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to retry. Thread id means its latest visible root run.",
+            help="Run id to retry. Thread id means its latest visible root run",
         ),
     ],
     model_catalog: ModelCatalogOption = None,
@@ -133,7 +133,7 @@ def retry_command(
         typer.Option(
             "--anchor",
             metavar="STEP_PATH",
-            help="Retry from this canonical or run-local step path.",
+            help="Retry from this canonical or run-local step path",
         ),
     ] = None,
     dev: Annotated[
@@ -182,7 +182,7 @@ def rerun_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to rerun. Thread id means its latest visible root run.",
+            help="Run id to rerun. Thread id means its latest visible root run",
         ),
     ],
     model_catalog: ModelCatalogOption = None,
@@ -191,7 +191,7 @@ def rerun_command(
         typer.Option(
             "--sandbox",
             metavar="SANDBOX_SPEC",
-            help="Execute the new run in this sandbox.",
+            help="Execute the new run in this sandbox",
         ),
     ] = None,
     dev: Annotated[
@@ -204,7 +204,7 @@ def rerun_command(
         str | None,
         typer.Option(
             "--model",
-            help="Replace the persisted model identity or parameters.",
+            help="Replace the persisted model identity or parameters",
             metavar="MODEL_SPEC",
         ),
     ] = None,
@@ -251,11 +251,11 @@ def rewind_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to rewind before. Thread id means rewind before its latest root run.",
+            help="Run id to rewind before. Thread id means rewind before its latest root run",
         ),
     ],
     chat: Annotated[
-        bool, typer.Option("--chat", help="Open chat on the rewound thread.")
+        bool, typer.Option("--chat", help="Open chat on the rewound thread")
     ] = False,
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
@@ -282,11 +282,11 @@ def fork_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to fork through. Thread id means fork through its latest root run.",
+            help="Run id to fork through. Thread id means fork through its latest root run",
         ),
     ],
     chat: Annotated[
-        bool, typer.Option("--chat", help="Open chat on the forked thread.")
+        bool, typer.Option("--chat", help="Open chat on the forked thread")
     ] = False,
 ) -> None:
     """Fork one thread through a terminal anchor run."""
