@@ -25,6 +25,8 @@ from typer._types import TyperChoice
 from typer.core import TyperArgument, TyperGroup, TyperOption
 from typer.main import get_command
 
+_PREPARE = f"{__name__}.prepare"
+
 PLAIN = Theme(
     {
         "cli.heading": "bold",
@@ -136,6 +138,13 @@ def _format_help(ctx: Context, *, theme: Theme, console: Console | None = None) 
         return formatter.getvalue()
 
 
+def inherit_ui(command: Command, parent: Context | None) -> Command:
+    """Apply a parent's UI to a command loaded on demand, before parsing it."""
+    if parent is not None and (prepare := parent.meta.get(_PREPARE)) is not None:
+        return prepare(command)
+    return command
+
+
 class HelpFormatter(TyperHelpFormatter):
     """Native help sections and indentation, with styled definition lists."""
 
@@ -172,7 +181,7 @@ class HelpFormatter(TyperHelpFormatter):
             ),
             "Arguments",
         )
-        self._sections(self._command_rows(ctx), "Commands")
+        self.write_commands(ctx)
         self._sections(
             (
                 (param.rich_help_panel, self._option_row(param, ctx))
@@ -190,6 +199,10 @@ class HelpFormatter(TyperHelpFormatter):
         if description := _command_description(ctx.command, short=False):
             self.write_text(description)
             self.write_paragraph()
+
+    def write_commands(self, ctx: Context) -> None:
+        """Render a group's command directory without its Usage or options."""
+        self._sections(self._command_rows(ctx), "Commands")
 
     def write_error(self, message: str, ctx: Context | None) -> None:
         self.write_text(Text.assemble(("Error: ", "cli.error"), message))
@@ -359,6 +372,8 @@ def _public_help(value: str | None) -> str:
 
 def _command_description(command: Command, *, short: bool = True) -> str:
     description = _public_help((command.short_help if short else None) or command.help)
+    if short and not command.short_help:
+        description = description.split("\n\n", 1)[0]
     if command.deprecated:
         note = (
             f"DEPRECATED: {command.deprecated}"
@@ -512,6 +527,7 @@ def _prepare(
         return option
 
     def parse_args(ctx: Context, args: list[str]) -> list[str]:
+        ctx.meta[_PREPARE] = lambda child: _prepare(child, render_help, show_help)
         empty_group_help = (
             isinstance(command, TyperGroup)
             and not command.invoke_without_command

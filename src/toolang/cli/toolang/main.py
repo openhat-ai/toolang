@@ -14,7 +14,7 @@ from typer._click import Context
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
-from toolang.common.typer.ui import run
+from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
 from toolang.common.typer.options import BARE_VALUE, OptionalValueCommand
 
@@ -200,23 +200,25 @@ def hidden_commands(ctx: typer.Context) -> None:
             command = group.commands[name]
             assert isinstance(command, LazyCommand)
             command.hidden = False
-            command.rich_help_panel = "Advanced Commands"
+            command.rich_help_panel = "Hidden Commands"
             commands[name] = command
-    hidden = CliGroup(
-        name="hidden",
-        commands=commands,
-        help="Show commands hidden from the main help.",
-        epilog=f"Run with: {ctx.find_root().info_name} COMMAND [OPTIONS]",
-        add_help_option=False,
+    group.commands = commands
+    formatter = ctx.make_formatter()
+    assert isinstance(formatter, HelpFormatter)
+    formatter.write_description(ctx)
+    formatter.write_usage(ctx)
+    formatter.write_commands(Context(group))
+    formatter.write_paragraph()
+    formatter.write_text(
+        f"Run '{ctx.find_root().info_name} COMMAND --help' for details."
     )
-    help_ctx = hidden.context_class(hidden, info_name=ctx.command_path)
-    typer.echo(hidden.get_help(help_ctx), color=help_ctx.color)
+    typer.echo(formatter.getvalue(), nl=False, color=ctx.color)
 
 
 _registered_command(
     "hidden",
     "toolang.cli.toolang.main:hidden_commands",
-    help="Show hidden commands.",
+    help="Show commands hidden from the main help.",
     hidden=True,
 )
 

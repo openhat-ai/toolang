@@ -89,7 +89,7 @@ class OutputWidthTest(unittest.TestCase):
         self.assertEqual(console.width, 180)
         self.assertEqual(error_console.width, 160)
 
-    def test_command_descriptions_keep_sentences_paragraphs_and_explicit_summaries(
+    def test_command_summaries_keep_first_paragraph_and_explicit_summaries(
         self,
     ):
         full = DESCRIPTION + " Second sentence.\n\nAnother paragraph."
@@ -123,7 +123,10 @@ class OutputWidthTest(unittest.TestCase):
                 name: _command_description(item)
                 for name, item in command.commands.items()
             }
-        self.assertEqual(descriptions["full-help"], full)
+        self.assertEqual(descriptions["full-help"], full.split("\n\n", 1)[0])
+        self.assertEqual(
+            _command_description(command.commands["full-help"], short=False), full
+        )
         self.assertEqual(
             descriptions["explicit"], summary + " (DEPRECATED: Use full-help.)"
         )

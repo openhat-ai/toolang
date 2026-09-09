@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-import typer
 from rich.text import Text
 from typer._click import Context, HelpFormatter, Parameter
 from typer._click.exceptions import MissingParameter
@@ -13,7 +12,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .context import CliContext
 from .parameters import TextType
-from .help import CliCommand, CliGroup, parameter_usage, write_usage
+from .help import CliCommand, CliGroup, parameter_usage, show_help, write_usage
 
 
 def extract_root_args(
@@ -114,8 +113,7 @@ class PrefixAgentCommand(CliCommand):
         try:
             return TyperCommand.parse_args(self, ctx, args)
         except MissingParameter:
-            typer.echo(ctx.get_help())
-            ctx.exit()
+            show_help(ctx)
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
@@ -216,8 +214,7 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
         if not state.agent and not any(name in args for name in ctx.help_option_names):
-            typer.echo(ctx.get_help())
-            ctx.exit()
+            show_help(ctx)
         return PrefixAgentCommand.parse_args(self, ctx, args)
 
 

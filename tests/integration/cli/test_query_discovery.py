@@ -24,6 +24,7 @@ def test_query_is_hidden_but_direct_help_explains_the_grammar() -> None:
     assert "query" not in strip_ansi(root.stdout)
     assert hidden.exit_code == 0, hidden.stderr
     assert "query" in strip_ansi(hidden.stdout)
+    assert "QUERY = MATCH" not in strip_ansi(hidden.stdout)
     assert query.exit_code == 0, query.stderr
     assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(query.stdout)
     assert "models, tools, psyches, skills, services, prompts" in strip_ansi(

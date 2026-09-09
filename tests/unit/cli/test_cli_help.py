@@ -1,6 +1,7 @@
 """Help output follows the same operand conventions across CLI entry points."""
 
 from enum import Enum
+from io import StringIO
 from pathlib import Path
 from typing import Annotated
 
@@ -15,10 +16,64 @@ from typer.models import TyperPath
 from typer.testing import CliRunner
 
 from toolang.cli.caps.main import main as caps_main
-from toolang.cli.common.help import CliCommand
-from toolang.cli.common.lazy import LazyCommand
+from toolang.cli.common.help import CliCommand, CliGroup
+from toolang.cli.common.lazy import LazyCommand, lazy_typer_command
 from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
+from toolang.common.typer.ui import PLAIN, UV, run
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize(
+    ("arguments", "status"),
+    [
+        (["--help"], 0),
+        (["prompt", "--help"], 0),
+        (["prompt", "new", "--help"], 0),
+        (["prompt", "new", "--template", "default"], 0),
+        (["prompt", "new", "--unknown"], 2),
+    ],
+)
+def test_lazy_commands_inherit_theme_and_output(
+    theme, arguments, status, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    stdout, stderr = StringIO(), StringIO()
+    console = Console(file=stdout, force_terminal=True, color_system="standard")
+    error_console = Console(file=stderr, force_terminal=True, color_system="standard")
+    assert (
+        run(
+            app,
+            args=["--root", str(tmp_path), *arguments],
+            prog_name="too",
+            theme=theme,
+            console=console,
+            error_console=error_console,
+        )
+        == status
+    )
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err
+    output = Text.from_ansi(stderr.getvalue() if status else stdout.getvalue())
+    assert "Usage: too" in output.plain
+    style = output.get_style_at_offset(console, output.plain.index("Usage:"))
+    assert style.bold
+    assert (style.color is not None) is (theme is UV)
+
+
+def test_lazy_command_exposes_short_help_without_loading():
+    command = lazy_typer_command(
+        "future",
+        "not_imported:future",
+        help="Detailed documentation.\n\nMore information.",
+        short_help="Explicit summary.",
+    )
+    group = CliGroup(name="demo", commands={"future": command})
+    output = group.get_help(group.context_class(group, info_name="demo"))
+    assert "Explicit summary." in output
+    assert "Detailed documentation." not in output
 
 
 @pytest.mark.parametrize(
@@ -100,8 +155,11 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert too_main(["hidden"]) == 0
     output = capsys.readouterr().out
     assert "\x1b[1;32m" in output
-    assert "Advanced Commands:" in strip_ansi(output)
-    assert "Run with: too COMMAND [OPTIONS]" in strip_ansi(output)
+    plain = strip_ansi(output)
+    assert "Hidden Commands:" in plain
+    assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
+    assert "Run 'too COMMAND --help' for details." in plain
+    assert "QUERY = MATCH" not in plain
 
 
 @pytest.mark.parametrize(

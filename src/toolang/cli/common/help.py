@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
+import typer
 from rich.text import Text
 from typer._click import (
     Command,
@@ -52,6 +53,15 @@ def write_usage(formatter: NativeHelpFormatter, path: str | Text, args: str) -> 
         formatter.write_usage(path, args)
     else:
         formatter.write_usage(str(path), args)
+
+
+def show_help(ctx: Context) -> NoReturn:
+    """Use the command's help callback, including any active UI renderer."""
+    option = ctx.command.get_help_option(ctx)
+    if option is not None and option.callback is not None:
+        option.callback(ctx, option, True)
+    typer.echo(ctx.get_help(), color=ctx.color)
+    ctx.exit()
 
 
 def _format_help(ctx: Context, formatter: NativeHelpFormatter) -> None:
