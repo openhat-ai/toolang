@@ -93,7 +93,7 @@ toolang stop <agent>                 # Stop a running agent
 
 # Inspection
 toolang models                       # List model catalog entries and availability
-toolang <agent> models                # Inspect models using a resident agent's config
+toolang <agent> models                # Inspect models using an agent's config
 toolang providers                    # List catalog providers
 toolang tools                        # List tools
 toolang catalogs                     # List installed model catalogs
@@ -105,7 +105,7 @@ toolang sandboxes                    # List installed sandboxes
 caps [agent] psyche add <ref>        # Add a psyche
 caps [agent] skill add <ref>         # Add a skill
 caps [agent] service add <ref>       # Add an MCP server
-caps [agent] prompt add <ref>        # Add a slash command
+caps [agent] prompt add <ref>        # Add a reusable prompt
 caps [agent] skill list              # List skills
 caps [agent] list                    # List all caps
 ```
