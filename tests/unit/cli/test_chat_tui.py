@@ -2676,8 +2676,9 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     )
     rendered = _render_text(block.render(), width=80)
 
-    assert "████           ██" in rendered
-    assert "⬤   ⬤" in rendered
+    assert "████        ██" in rendered
+    assert " ██  ⬤  ⬤   ██" in rendered
+    assert " ██        ███" in rendered
     assert "Toolang" in rendered
     assert "0.1.0" in rendered
     assert "v0.1.0" in rendered
@@ -2946,7 +2947,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     ]
     separators = [segment for segment in segments if "·" in segment.text]
 
-    assert sum(segment.text.count("█") for segment in logo_blocks) == 16
+    assert sum(segment.text.count("█") for segment in logo_blocks) == 15
     assert all(
         segment.style is not None
         and segment.style.color is not None

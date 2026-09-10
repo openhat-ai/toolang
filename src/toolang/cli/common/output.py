@@ -34,9 +34,9 @@ _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
 
 TOOLANG_LOGO_TEXT = """
-████           ██
- ██   ⬤   ⬤    ██
- ██          ████
+████        ██
+ ██  ⬤  ⬤   ██
+ ██        ███
 """.strip("\n")
 TOOLANG_COLOR = "bright_cyan"
 
