@@ -20,9 +20,9 @@ from toolang.cli.common.output import (
 
 
 EXPECTED_INFO_AVATAR = """\
-████           ██
- ██   ⬤   ⬤    ██
- ██          ████"""
+████        ██
+ ██  ⬤  ⬤   ██
+ ██        ███"""
 
 
 def test_table_preserves_explicit_cell_styles(monkeypatch) -> None:
