@@ -115,14 +115,23 @@ workspace declarations are self-closing and need no body.
 
 Workspace tags have no body or revision. Internally, hash the captured name/root
 binding, not the whole State; hide host paths and avoid filesystem probes.
-At each model call, reconcile visible/pending declarations in name order against
-adopted State. Emit missing or changed bindings, retract removed bindings, and suppress
-unchanged ones. Re-present current bindings after compaction or `recall = none`;
-do not restore omitted historical guidance. Each child uses its own adopted State.
+Message assembly must make every currently available workspace visible before
+each model call, including the first; no discovery tool call is required.
+Reconcile visible/pending declarations in name order against the executor-supplied
+adopted bindings. Emit missing/changed bindings, retract removed ones, and suppress
+unchanged ones. Re-present bindings after compaction or `recall = none`.
+Each child uses its own adopted State. Assembly does not scan or load rules.
 
-Removal/remapping also retracts old scoped rules; normal preflight loads applicable
-new rules without eager scanning. Withdrawal does not delete files or undo started
-tools. Filesystem errors are not binding removals. Watcher edits alone do not emit
+Before workspace reads or writes, preflight ensures applicable rules are current
+and visible to the model. Missing/stale visibility triggers honor/recall instead
+of the requested operation; deliver rules to the model before it retries. Loading rules
+alone is not visibility, and loading failure must not allow the operation.
+Workspace visibility does not imply rules visibility; no applicable rules means
+no rules-loading requirement.
+
+Removal/remapping retracts old scoped rules; preflight discovers new applicable
+rules only when needed. Withdrawal does not delete files or undo started tools.
+Filesystem errors are not binding removals. Watcher edits alone do not emit
 declarations or wake idle runs.
 
 ## Implementation boundaries
@@ -132,9 +141,10 @@ declarations or wake idle runs.
 - `assembly/prompting.py`: render instructions and build adapter-ready
   `ModelCall` from finished messages, structured tool definitions, schema,
   continuation, and budget. Adapters own provider-specific serialization.
-- `assembly/history.py`: history selection and message/control/recall framing;
-  `utils.py`: pure helpers. Keep steer/cancel wording inline here and output
-  repair in the agic run, not separate prompt files.
+- `assembly/history.py`: history selection and message/control/recall framing,
+  including required workspace declarations; no rules discovery. `utils.py`:
+  pure helpers. Keep steer/cancel wording inline here and output repair in the
+  agic run, not separate prompt files.
 - Executor frame/model-step boundaries own runtime facts, State reconciliation,
   and tool policy. Extend recall types/codecs with trigger targets and
   `WorkspaceRecallTarget(ref, kind="workspace")`; reuse existing recall controls,
@@ -168,6 +178,10 @@ Extend existing offline execution unit/integration and architecture tests:
 - Bodyless, self-closing workspace declarations and their visibility/deduplication;
   add/remove/remap/re-add, unchanged bindings, child runs, scoped rules, hidden
   host paths, `recall = none`, and compaction.
+- All current workspaces are visible on the first call without a discovery tool;
+  assembly does not eagerly load rules. Read/write preflight blocks when applicable
+  rules are not current and visible, or loading fails. Model delivery precedes
+  retry, with no early operation and no duplicate effect.
 - Steer/cancel role, order, and input; exact replay across restart, reload,
   interruption, retry, compaction, and legacy framing, without flattened Parts.
 
