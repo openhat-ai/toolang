@@ -5,8 +5,8 @@ from itertools import product
 import pytest
 
 from toolang.common.template import render_text_template
-from toolang.execution import prompts
-from toolang.execution.prompting import (
+from toolang.execution.assembly import prompts
+from toolang.execution.assembly.prompting import (
     render_instructions,
     render_tool_instructions,
 )

@@ -1,4 +1,4 @@
-"""Execution-local messages and their pending durable templates."""
+"""Execution-local message sequence and pending durable message deltas."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from collections.abc import Callable, Sequence
 
 from toolang.base.types.message import Message, MessageRole
 
-from ..message_delta import literal_delta, render_delta
-from ..prompting import control_message
+from ..assembly.messages import literal_delta, render_delta
+from ..assembly.prompting import control_message
 from ..recall import recall_revisions
 from ..records import ControlRecord, RecallControlPayload, SteerControlPayload
 from ..types import (

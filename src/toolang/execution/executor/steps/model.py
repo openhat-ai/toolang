@@ -37,7 +37,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...assembly import assemble_messages
+from ...assembly.messages import assemble_messages
 from ...records import ControlRecord
 from ...types import (
     Local,
@@ -52,7 +52,7 @@ from ...types import (
     StepRef,
     RunRef,
 )
-from .._messages import _MessageBuffer
+from ..message_buffer import _MessageBuffer
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target

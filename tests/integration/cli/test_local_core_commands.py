@@ -38,7 +38,7 @@ from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
 from toolang.execution.executor import RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     RetryControlPayload,
@@ -851,7 +851,7 @@ def test_inspect_human_collection_uses_one_focused_run_snapshot(
             "focused Run inspection must not build history summaries"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     result = _invoke(root, "alice", "inspect", "runs")
 
@@ -1016,7 +1016,7 @@ def test_inspect_projects_complete_persisted_model_call(
             "model call projection must not load a structural snapshot"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     projected = _invoke(
         root,
@@ -1387,7 +1387,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             "tool call projection must not load a structural snapshot"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     projected = _invoke(root, "alice", "inspect", str(path), "call", "--json")
     human = _invoke(root, "alice", "inspect", str(path), "call")

@@ -27,18 +27,19 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
-from .message_delta import literal_delta, render_delta
-from .prompting import control_message
-from .run_view import RunView
-from .assembly import (
+from .assembly.prompting import control_message
+from .inspection.views import RunView, ThreadView, _ThreadProjection
+from .assembly.messages import (
     MessageHistory,
     active_steps,
     adopted_horizon,
     assemble_messages,
+    literal_delta,
+    render_delta,
     starts_sequence,
     tail_delta,
 )
-from .tool_results import workspace_reply_from_step
+from .assembly.tool_results import workspace_reply_from_step
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -116,7 +117,6 @@ from .types import (
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
-from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
 _SCHEMA_VERSION = 43

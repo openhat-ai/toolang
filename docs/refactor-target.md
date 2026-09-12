@@ -273,20 +273,31 @@ The target execution package is:
 ```text
 execution/
 ├── types.py                # execution lifecycle vocabulary
-├── records.py              # durable thread, run, control, and step truth
+├── records.py              # durable records and codecs, including message deltas
 ├── schemas.py              # protocol types and pure record conversion
-├── history.py              # caller-facing durable run history
+├── inspection/
+│   ├── __init__.py         # lightweight inspection vocabulary exports
+│   ├── types.py            # focused inspection facts and ordering helpers
+│   ├── history.py          # caller-facing durable run history
+│   ├── views.py            # Run/Thread views and branch projection
+│   └── trees.py            # execution-tree projection
 ├── events.py               # RunEvent, RunTracer, and thread events
 ├── store.py                # RunStore
 ├── threads.py              # ThreadManager
-├── prompting.py            # prompt rendering and control-message framing
-├── prompts/                # static prompts and defaults/
+├── assembly/               # model-call content shared by execution and replay
+│   ├── prompting.py        # prompt rendering and control-message framing
+│   ├── messages.py         # message history, composition, and delta rendering
+│   ├── tool_results.py     # control receipts and intercepted-call replies
+│   └── prompts/            # static prompts and defaults/
 ├── tools/                  # agent-specific built-in tools
+│   ├── _toolang.py         # _toolang toolset
+│   └── me/                 # me toolset
 └── executor/               # RunExecutor and execution implementation helpers
     ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
     ├── executor.py         # public run contract and private per-run _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── frame.py            # bound resources and runtime facts to an agic frame
+    ├── message_buffer.py   # live message sequence and pending delta
     ├── diagnostics.py      # bounded model and tool diagnostics
     ├── _persist.py         # private run-event projection
     ├── runs/               # agic and flow run bodies

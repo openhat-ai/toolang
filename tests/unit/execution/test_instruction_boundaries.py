@@ -6,7 +6,7 @@ from html import unescape
 import pytest
 
 from toolang.common.template import render_text_template
-from toolang.execution.prompting import render_context, render_instructions
+from toolang.execution.assembly.prompting import render_context, render_instructions
 from toolang.lang import Program
 
 

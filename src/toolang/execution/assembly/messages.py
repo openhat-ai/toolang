@@ -1,22 +1,24 @@
-"""Control-driven message assembly shared by live execution and replay."""
+"""Message history, sequence composition, and deltas shared by execution and replay."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from copy import deepcopy
 from typing import cast
 
 from toolang.base.types.message import (
     Message,
     MessageRole,
+    Part,
+    TextPart,
     ToolCallPart,
     ToolResultPart,
 )
 
-from .message_delta import literal_delta, render_delta
-from .recall import recall_revisions
+from ..recall import recall_revisions
 from .prompting import control_message
-from .records import (
+from ..records import (
     CompactControlPayload,
     ControlRecord,
     ExecuteControlPayload,
@@ -25,7 +27,7 @@ from .records import (
     StepRecord,
     StoredModelStepGiven,
 )
-from .types import (
+from ..types import (
     ControlRef,
     FieldRef,
     Local,
@@ -35,9 +37,76 @@ from .types import (
     RecallTarget,
     ToolStepGiven,
     TypedRef,
+    validate_runtime_value,
 )
-from .values import parts_from_local
+from ..values import parts_from_local
 from .tool_results import workspace_reply_from_step
+
+
+_PART_NAMES = {
+    "Part",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "DocumentPart",
+    "ToolCallPart",
+    "ToolResultPart",
+}
+
+
+def literal_delta(messages: Sequence[Message]) -> MessageDelta:
+    """Record already-rendered content without guessing its provenance."""
+
+    return MessageDelta(
+        messages=tuple(
+            MessageTemplate(
+                message.role,
+                tuple(
+                    part.text if isinstance(part, TextPart) else deepcopy(part)
+                    for part in message.parts
+                ),
+            )
+            for message in messages
+        )
+    )
+
+
+def render_delta(
+    delta: MessageDelta, resolve: Callable[[TypedRef], object]
+) -> tuple[Message, ...]:
+    """Expand a delta using live or durable values under the same format rules."""
+
+    if delta.version != 1:
+        raise ValueError(f"unsupported message delta version: {delta.version}")
+    return tuple(
+        Message(
+            role=message.role,
+            parts=tuple(
+                part
+                for segment in message.segments
+                for part in _render_segment(segment, resolve)
+            ),
+        )
+        for message in delta.messages
+    )
+
+
+def _render_segment(
+    segment: str | Part | TypedRef, resolve: Callable[[TypedRef], object]
+) -> tuple[Part, ...]:
+    if isinstance(segment, str):
+        return (TextPart(segment),)
+    if isinstance(segment, Part):
+        return (deepcopy(segment),)
+    if segment.type != "Text" and segment.type.removesuffix("[]") not in _PART_NAMES:
+        raise ValueError(f"message segment requires Text or Parts: {segment}")
+    value = resolve(segment)
+    validate_runtime_value(value, segment.type)
+    if segment.type == "Text":
+        return (TextPart(cast(str, value)),)
+    if segment.type.endswith("[]"):
+        return deepcopy(tuple(cast(Sequence[Part], value)))
+    return (deepcopy(cast(Part, value)),)
 
 
 def active_steps(

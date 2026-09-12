@@ -14,7 +14,7 @@ from tests.support.execution_fixtures import (
     project_step,
 )
 from toolang.base.types.message import Message, TextPart
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.types import Pointer, StepRef

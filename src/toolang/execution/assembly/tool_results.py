@@ -1,4 +1,4 @@
-"""Runtime control receipts and replies for intercepted workspace calls."""
+"""Model-visible control receipts and intercepted workspace-call replies."""
 
 from collections.abc import Callable
 from dataclasses import asdict
@@ -13,13 +13,13 @@ from toolang.base.schemas import (
 from toolang.base.types.message import ToolCallPart, ToolResultPart
 from toolang.base.types.run import ToolCall
 
-from .records import (
+from ..records import (
     CompactControlPayload,
     RecallControlPayload,
     ReloadControlPayload,
     StepRecord,
 )
-from .types import (
+from ..types import (
     ControlRef,
     RulesRecallTarget,
     ToolStepGiven,

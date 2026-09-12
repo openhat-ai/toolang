@@ -38,7 +38,7 @@ from toolang.execution.executor.common import (
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.resources import resolve_agent_resources
 from toolang.execution.executor.runs import agic as agic_run
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     ForkControlPayload,
     RunControlPayload,

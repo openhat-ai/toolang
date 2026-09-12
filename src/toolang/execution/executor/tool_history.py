@@ -8,7 +8,7 @@ from pydantic import TypeAdapter
 
 from toolang.base.protocols.tool import ToolHistory
 
-from ..history import RunHistory
+from ..inspection.history import RunHistory
 from toolang.lang.types import Value
 
 from ..records import (
@@ -20,10 +20,10 @@ from ..records import (
     SteerControlPayload,
     StepRecord,
 )
-from ..run_view import RunView
+from ..inspection.views import RunView
 from ..schemas import HistoryToolCursor, Record, record_to_data
 from ..store import RunStore
-from ..thread_view import ThreadView
+from ..inspection.views import ThreadView
 from ..types import ContentRef, RunRef, StepRef, ThreadRef, output_to_protocol_data
 
 

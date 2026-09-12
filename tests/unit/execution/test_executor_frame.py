@@ -34,8 +34,8 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.frame import build_agic_frame
-from toolang.execution.assembly import recall_sources
-from toolang.execution.history import RunHistory
+from toolang.execution.assembly.messages import recall_sources
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     StoredModelStepGiven,

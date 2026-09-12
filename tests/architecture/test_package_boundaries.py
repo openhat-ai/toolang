@@ -191,7 +191,7 @@ def test_schema_modules_do_not_depend_on_runtime_services() -> None:
 
 def test_runtime_toolset_depends_only_on_base_contracts() -> None:
     violations: list[str] = []
-    path = SOURCE_ROOT / "execution" / "tools" / "runtime.py"
+    path = SOURCE_ROOT / "execution" / "tools" / "_toolang.py"
     context = _module_context(path)
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
@@ -214,7 +214,12 @@ def test_runtime_toolset_depends_only_on_base_contracts() -> None:
 
 def test_primitive_execution_inspection_does_not_depend_on_trees() -> None:
     violations: list[str] = []
-    for name in ("inspection.py", "store.py"):
+    for name in (
+        "inspection/__init__.py",
+        "inspection/types.py",
+        "inspection/views.py",
+        "store.py",
+    ):
         path = SOURCE_ROOT / "execution" / name
         context = _module_context(path)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -222,12 +227,78 @@ def test_primitive_execution_inspection_does_not_depend_on_trees() -> None:
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             for target in _import_targets(node, context):
-                if target == "toolang.execution.trees":
+                if target == "toolang.execution.inspection.trees":
                     violations.append(f"{name}:{node.lineno}")
 
     assert not violations, (
         "Primitive inspection must remain usable without tree projection: "
         + ", ".join(violations)
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "records.py",
+        "inspection/__init__.py",
+        "inspection/types.py",
+        "inspection/views.py",
+    ],
+)
+def test_execution_record_and_view_types_have_no_runtime_dependencies(
+    name: str,
+) -> None:
+    allowed = {
+        "toolang.execution.types",
+        "toolang.execution.records",
+        "toolang.execution.inspection.types",
+    }
+    path = SOURCE_ROOT / "execution" / name
+    context = _module_context(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node, context):
+            if target.startswith("toolang.execution.") and target not in allowed:
+                violations.append(f"{name}:{node.lineno} -> {target}")
+
+    assert not violations, (
+        "Record codecs and inspection primitives must not import message rendering, "
+        "queries, or runtime owners:\n" + "\n".join(violations)
+    )
+
+
+def test_model_call_assembly_does_not_depend_on_runtime_owners() -> None:
+    allowed = {
+        "toolang.execution.records",
+        "toolang.execution.types",
+        "toolang.execution.recall",
+        "toolang.execution.values",
+    }
+    violations: list[str] = []
+    for path in sorted((SOURCE_ROOT / "execution" / "assembly").rglob("*.py")):
+        context = _module_context(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for target in _import_targets(node, context):
+                if (
+                    not target.startswith("toolang.execution.")
+                    or target == "toolang.execution.assembly"
+                    or target.startswith("toolang.execution.assembly.")
+                    or target in allowed
+                ):
+                    continue
+                violations.append(
+                    f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} -> {target}"
+                )
+
+    assert not violations, (
+        "Model-call assembly must consume data without importing runtime owners:\n"
+        + "\n".join(violations)
     )
 
 

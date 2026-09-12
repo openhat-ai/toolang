@@ -18,13 +18,13 @@ from toolang.lang.input import (
 )
 
 from . import prompts
-from .records import (
+from ..records import (
     CancelControlPayload,
     ControlRecord,
     RecallControlPayload,
     SteerControlPayload,
 )
-from .types import FieldRef, MessageTemplate, RulesRecallTarget, TypedRef, value_type
+from ..types import FieldRef, MessageTemplate, RulesRecallTarget, TypedRef, value_type
 
 _PROTOCOL_TEMPLATE = prompts.load("protocol.md")
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("defaults/instruct.md")

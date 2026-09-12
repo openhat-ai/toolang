@@ -226,17 +226,34 @@ The implementation is divided by semantic level:
 - `steps/` owns execution step boundaries and their `StepBegin`, part, and
   `StepEnd` events.
 
-`execution/prompting.py` renders instructions, context, authored messages,
-control messages, and output-repair requests. Static text lives in
-`execution/prompts/`; its `defaults/` directory contains the default instruct,
-context, and compact program.
+`execution/assembly/` groups model-call content assembly:
+
+- `prompting.py` renders instructions, context, authored messages, control
+  messages, and output-repair requests;
+- `messages.py` composes message history and renders deltas for execution and
+  replay;
+- `tool_results.py` builds control receipts and intercepted-call replies;
+- `prompts/` holds static text; `prompts/defaults/` contains the default
+  instruct, context, and compact program.
+
+Assembly consumes prepared data and records; it does not execute tools or read
+the store. `executor/message_buffer.py` holds the live message sequence and
+pending delta; `execution/records.py` owns delta serialization.
+
+`execution/inspection/` groups durable history queries, inspection types,
+Run/Thread views, and execution-tree projections. Its package facade exposes
+only lightweight types and helpers, so basic inspection does not load tree
+projection. Persistence and model-call reconstruction remain in `RunStore`.
+
+Built-in tool modules match their registered toolset names:
+`execution/tools/_toolang.py` and `execution/tools/me/`.
 
 `build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
 `ModelTarget` and one normalized `ModelCall` per model step.
-There is no loop plugin or public run-context protocol, and there are no
-separate effective-resource, invocation, model-call assembly, or tool-snapshot
-layers.
+Assembly helpers add no separate execution state or model-call lifecycle.
+There is no loop plugin, public run-context protocol, or separate
+effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,

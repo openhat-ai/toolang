@@ -21,12 +21,12 @@ from toolang.setup.models import select_compact_model
 from toolang.state.builtin import prepare_builtin_state
 from toolang.state.state import AgentState
 
-from ..history import RunHistory
+from ..inspection.history import RunHistory
 from ..schemas import CompactionOutput
 from ..records import CompactControlPayload
-from ..tool_results import control_summary
+from ..assembly.tool_results import control_summary
 from ..types import FieldRef, RunRef, StepRef, ThreadRef
-from .. import prompts
+from ..assembly import prompts
 
 if TYPE_CHECKING:
     from ..store import RunStore

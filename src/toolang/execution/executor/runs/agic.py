@@ -37,9 +37,9 @@ from ..common import (
 )
 
 from ..limits import _ModelAccounting
-from .._messages import _MessageBuffer
+from ..message_buffer import _MessageBuffer
 from ..budget import InputEstimate
-from ...prompting import output_repair_message
+from ...assembly.prompting import output_repair_message
 from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step

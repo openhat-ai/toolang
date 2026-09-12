@@ -11,7 +11,7 @@ def load(name: str) -> str:
     """Load one bundled execution prompt."""
 
     return (
-        files("toolang.execution.prompts")
+        files("toolang.execution.assembly.prompts")
         .joinpath(name)
         .read_text(encoding="utf-8")
         .strip()

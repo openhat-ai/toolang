@@ -20,9 +20,9 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.trees import build_execution_tree
+from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import FieldRef, StepRef, ThreadPrefix, ToolStepGiven
 from toolang.execution.values import parts_from_local
 

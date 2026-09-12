@@ -40,7 +40,7 @@ from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.frame import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
-from toolang.execution.executor._messages import _MessageBuffer
+from toolang.execution.executor.message_buffer import _MessageBuffer
 from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload

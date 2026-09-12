@@ -7,5 +7,5 @@ from toolang.common.layout import AgentLayout
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class AgentStateToolContext(ToolContext):
+class MeToolContext(ToolContext):
     layout: AgentLayout

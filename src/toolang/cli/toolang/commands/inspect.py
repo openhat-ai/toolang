@@ -27,7 +27,7 @@ from toolang.cli.common.execution_progress.facts import (
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
 from toolang.execution.accounting import token_meter_quantity
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
     ChildOccurrenceTotals,
     InspectedRun,
@@ -228,7 +228,7 @@ def _project_tool_call(_store: RunStore, source: _InspectSubject) -> object:
 
 
 def _project_structural_tree(store: RunStore, source: _InspectSubject) -> object:
-    from toolang.execution.trees import build_execution_tree, tree_to_data
+    from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
 
     if source.selection is None:
         raise RuntimeError("structural projection has no record selection")
@@ -351,7 +351,7 @@ def _render_execution_tree(
     _subject: _InspectSubject,
     value: object,
 ) -> None:
-    from toolang.execution.trees import ExecutionTree
+    from toolang.execution.inspection.trees import ExecutionTree
 
     if not isinstance(value, ExecutionTree):
         raise TypeError("structural projector returned an invalid tree")

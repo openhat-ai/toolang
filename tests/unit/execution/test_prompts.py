@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.execution import prompts
+from toolang.execution.assembly import prompts
 from toolang.execution.executor.compact import compact_state
 from toolang.lang.input import coerce_output
 

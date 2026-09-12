@@ -102,15 +102,13 @@ def _patch_tool_entry_points(monkeypatch) -> None:
     )
     from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
     from toolang.plugin.toolsets.web import create_toolset as create_web_tool
-    from toolang.execution.tools.agent_state import (
-        create_toolset as create_agent_state_tool,
-    )
-    from toolang.execution.tools.runtime import create_toolset as create_runtime_tool
+    from toolang.execution.tools.me import create_toolset as create_me_tool
+    from toolang.execution.tools._toolang import create_toolset as create_toolang_tool
     from toolang.base.examples.tools import create_working_tree_toolset
 
     entries = [
-        _FakeEntryPoint("_toolang", create_runtime_tool, distribution="toolang"),
-        _FakeEntryPoint("me", create_agent_state_tool, distribution="toolang"),
+        _FakeEntryPoint("_toolang", create_toolang_tool, distribution="toolang"),
+        _FakeEntryPoint("me", create_me_tool, distribution="toolang"),
         _FakeEntryPoint("echo", create_echo_toolset),
         _FakeEntryPoint("fs", create_filesystem_tool, distribution="toolang"),
         _FakeEntryPoint("math_add", create_math_add_toolset),

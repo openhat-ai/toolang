@@ -1,4 +1,4 @@
-"""Runtime toolset: argument validation and per-call runtime operations."""
+"""The _toolang toolset: validation and per-call runtime operations."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ TOOLSET_NAME = "_toolang"
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeTool(Tool):
+class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
     name: Literal["reload", "run", "execute", "pick", "honor", "compact"]
@@ -160,7 +160,7 @@ class RuntimeTool(Tool):
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeToolset(Toolset):
+class ToolangToolset(Toolset):
     name: str = TOOLSET_NAME
     description: str | None = "Run, transfer, reload, and recall guidance."
 
@@ -171,7 +171,7 @@ class RuntimeToolset(Toolset):
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
     """Register runtime tools through the standard toolset factory."""
 
-    return RuntimeToolset()
+    return ToolangToolset()
 
 
 _RUN_PARAMETERS: dict[str, object] = {
@@ -195,7 +195,7 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
-    RuntimeTool(
+    ToolangTool(
         "compact",
         "Compact a complete history prefix before the next model call.",
         {
@@ -209,7 +209,7 @@ _TOOLS = (
             "additionalProperties": False,
         },
     ),
-    RuntimeTool(
+    ToolangTool(
         "honor",
         "Recall applicable workspace rules before a path-aware operation.",
         {
@@ -233,7 +233,7 @@ _TOOLS = (
             "additionalProperties": False,
         },
     ),
-    RuntimeTool(
+    ToolangTool(
         "pick",
         "Recall allowed skill or service guidance from its exact catalog ref. "
         "Pick applicable guidance missing from the visible messages. "
@@ -248,21 +248,21 @@ _TOOLS = (
             "additionalProperties": False,
         },
     ),
-    RuntimeTool(
+    ToolangTool(
         "run",
         "Run an authorized hand as a child Run, wait for its result, then continue. "
         "Call it only when its result is required now. Read the target input "
         "signature and do not invent missing values.",
         _RUN_PARAMETERS,
     ),
-    RuntimeTool(
+    ToolangTool(
         "execute",
         "Transfer the remainder of this Run to an authorized handoff target. "
         "The caller never resumes, and this must be the only tool call in the "
         "Model Call. Prefer run when either behavior would satisfy the intent.",
         _RUN_PARAMETERS,
     ),
-    RuntimeTool(
+    ToolangTool(
         "reload",
         "Apply the newest valid Agent State when this Run must observe authored "
         "changes now. A future root Run uses the latest valid State without reload.",
