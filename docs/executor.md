@@ -220,7 +220,8 @@ The implementation is divided by semantic level:
   directives to the selected resource base;
 - `frame.py` builds an agic's execution frame from bound resources and runtime
   facts; it does not materialize Agent State;
-- `runs/agic.py` owns the fixed model-tool cycle for one agic;
+- `runs/agic.py` owns the fixed model-tool cycle and output-repair requests for
+  one agic;
 - `runs/flow.py` advances through lowered flow statements and updates locals;
 - `stmts/` implements lowered statement semantics and chooses a step type;
 - `steps/` owns execution step boundaries and their `StepBegin`, part, and
@@ -228,11 +229,12 @@ The implementation is divided by semantic level:
 
 `execution/assembly/` groups model-call content assembly:
 
-- `prompting.py` renders instructions, context, authored messages, control
-  messages, and output-repair requests;
-- `messages.py` composes message history and renders deltas for execution and
-  replay;
-- `tool_results.py` builds control receipts and intercepted-call replies;
+- `prompting.py` renders instructions, context, authored messages, and control
+  messages;
+- `history.py` selects, reconstructs, and composes historical model context;
+- `tool_replies.py` builds control receipts and intercepted-call replies;
+- `utils.py` handles text escaping, Part normalization, and delta
+  generation/rendering without selecting history or loading prompts;
 - `prompts/` holds static text; `prompts/defaults/` contains the default
   instruct, context, and compact program.
 

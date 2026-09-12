@@ -18,7 +18,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
-from toolang.execution.assembly import messages as execution_messages
+from toolang.execution.assembly import history as execution_history
 from toolang.execution.records import (
     ControlRecord,
     RunControlPayload,
@@ -495,7 +495,7 @@ def test_each_call_records_context_without_rerendering_history(
     reads = []
     renderings = []
     read = harness.store.list_steps_for_runs
-    render = execution_messages.render_delta
+    render = execution_history.render_delta
 
     def read_steps(*, run_ids):
         reads.append(tuple(run_ids))
@@ -513,7 +513,7 @@ def test_each_call_records_context_without_rerendering_history(
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
             monkeypatch.setattr(harness.store, "list_steps_for_runs", read_steps)
-            monkeypatch.setattr(execution_messages, "render_delta", render_history)
+            monkeypatch.setattr(execution_history, "render_delta", render_history)
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             assert reads == [(first.id, second.id)]
@@ -550,7 +550,7 @@ def test_each_call_records_context_without_rerendering_history(
 
     asyncio.run(scenario())
     monkeypatch.setattr(
-        execution_messages,
+        execution_history,
         "control_message",
         lambda _control: pytest.fail("replay must use saved templates"),
     )

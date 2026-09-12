@@ -286,8 +286,9 @@ execution/
 ├── threads.py              # ThreadManager
 ├── assembly/               # model-call content shared by execution and replay
 │   ├── prompting.py        # prompt rendering and control-message framing
-│   ├── messages.py         # message history, composition, and delta rendering
-│   ├── tool_results.py     # control receipts and intercepted-call replies
+│   ├── history.py          # historical model context selection and composition
+│   ├── tool_replies.py     # control receipts and intercepted-call replies
+│   ├── utils.py            # text/Part helpers and delta generation/rendering
 │   └── prompts/            # static prompts and defaults/
 ├── tools/                  # agent-specific built-in tools
 │   ├── _toolang.py         # _toolang toolset

@@ -24,7 +24,7 @@ from toolang.state.state import AgentState
 from ..inspection.history import RunHistory
 from ..schemas import CompactionOutput
 from ..records import CompactControlPayload
-from ..assembly.tool_results import control_summary
+from ..assembly.tool_replies import control_summary
 from ..types import FieldRef, RunRef, StepRef, ThreadRef
 from ..assembly import prompts
 

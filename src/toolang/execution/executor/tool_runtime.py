@@ -14,7 +14,7 @@ from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.state.state import entry_ref
 
 from ..records import RecallControlPayload
-from ..assembly.tool_results import control_summary
+from ..assembly.tool_replies import control_summary
 
 from ..runnables import (
     AgicRoutes,

@@ -33,7 +33,7 @@ from toolang.state.state import (
     state_program_source,
 )
 
-from ..assembly.messages import recall_sources
+from ..assembly.history import recall_sources
 from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
 from ..assembly.prompting import (

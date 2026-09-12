@@ -302,6 +302,25 @@ def test_model_call_assembly_does_not_depend_on_runtime_owners() -> None:
     )
 
 
+def test_assembly_utils_depend_only_on_message_vocabulary() -> None:
+    allowed = {"toolang.base.types.message", "toolang.execution.types"}
+    path = SOURCE_ROOT / "execution" / "assembly" / "utils.py"
+    context = _module_context(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node, context):
+            if target.startswith("toolang.") and target not in allowed:
+                violations.append(f"{node.lineno} -> {target}")
+
+    assert not violations, (
+        "Assembly utilities must not depend on prompts, history, or runtime owners:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_external_click_is_confined_to_the_editor() -> None:
     editor = SOURCE_ROOT / "cli" / "common" / "editor.py"
     violations: list[str] = []

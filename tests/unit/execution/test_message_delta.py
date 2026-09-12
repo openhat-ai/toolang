@@ -17,7 +17,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall
 from toolang.execution.events import StepBegin, run_event_from_data, run_event_to_data
 from toolang.execution.executor.message_buffer import _MessageBuffer
-from toolang.execution.assembly.messages import literal_delta, render_delta
+from toolang.execution.assembly.utils import literal_delta, render_delta
 from toolang.execution.records import delta_from_data, delta_to_data
 from toolang.execution.types import (
     FieldRef,

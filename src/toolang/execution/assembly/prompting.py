@@ -18,13 +18,20 @@ from toolang.lang.input import (
 )
 
 from . import prompts
+from .utils import escape_markup_value, join_parts, strip_parts, text_block
 from ..records import (
     CancelControlPayload,
     ControlRecord,
     RecallControlPayload,
     SteerControlPayload,
 )
-from ..types import FieldRef, MessageTemplate, RulesRecallTarget, TypedRef, value_type
+from ..types import (
+    FieldRef,
+    MessageTemplate,
+    RulesRecallTarget,
+    TypedRef,
+    value_type,
+)
 
 _PROTOCOL_TEMPLATE = prompts.load("protocol.md")
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("defaults/instruct.md")
@@ -74,7 +81,7 @@ def render_messages(
             )
             for invocation in resolution.prompts
         )
-        rendered.append((block, _strip_parts(resolution.parts)))
+        rendered.append((block, strip_parts(resolution.parts)))
     return tuple(rendered), tuple(invocations)
 
 
@@ -83,12 +90,10 @@ def render_instructions(
     agic: AgicDecl,
     context: dict[str, object],
 ) -> str:
-    markup_context = {
-        key: _escape_markup_value(value) for key, value in context.items()
-    }
+    markup_context = {key: escape_markup_value(value) for key, value in context.items()}
     protocol = render_text_template(_PROTOCOL_TEMPLATE, markup_context).strip()
     instruct = _render_selected_instruct(program, agic, context)
-    agent = _text_block("agent-instructions", instruct)
+    agent = text_block("agent-instructions", instruct)
     psyches = render_text_template(_PSYCHES_TEMPLATE, markup_context).strip()
     catalog = (
         render_text_template(_CAPABILITY_CATALOG_TEMPLATE, markup_context).strip()
@@ -96,24 +101,6 @@ def render_instructions(
         else ""
     )
     return "\n\n".join(part for part in (protocol, agent, psyches, catalog) if part)
-
-
-def _escape_markup_value(value: object) -> object:
-    """Escape bundled template values without changing authored rendering."""
-
-    if isinstance(value, str):
-        return escape(value, quote=True)
-    if isinstance(value, Mapping):
-        return {key: _escape_markup_value(item) for key, item in value.items()}
-    if isinstance(value, tuple | list):
-        return [_escape_markup_value(item) for item in value]
-    return value
-
-
-def _text_block(tag: str, content: str) -> str:
-    """Keep rendered text inside a runtime-owned instruction or data block."""
-
-    return f"<{tag}>\n{escape(content, quote=False)}\n</{tag}>" if content else ""
 
 
 def _render_selected_instruct(
@@ -160,7 +147,7 @@ def render_context(
     content = (
         render_text_template(template, context).strip() if template.strip() else ""
     )
-    return _text_block("context", content)
+    return text_block("context", content)
 
 
 def _run_message(
@@ -175,14 +162,14 @@ def _run_message(
         for block, parts in rendered
         if block.role == "user" and not block.explicit
     )
-    authored = _join_parts(*implicit)
+    authored = join_parts(*implicit)
     references_primary = any(
         block.role == "user"
         and not block.explicit
         and _PRIMARY_REFERENCE_RE.search(block.content) is not None
         for block in agic.messages
     )
-    parts = _join_parts(
+    parts = join_parts(
         (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
         authored,
         primary if (not authored or not references_primary) else (),
@@ -216,7 +203,7 @@ def _authored_messages(
     messages: list[Message] = []
     for index, (block, parts) in enumerate(blocks):
         if index == last_user and prompt_context.strip():
-            parts = _join_parts((TextPart(prompt_context.strip()),), parts)
+            parts = join_parts((TextPart(prompt_context.strip()),), parts)
         if not parts:
             continue
         try:
@@ -257,34 +244,6 @@ def initial_messages(
         prompt_context=prompt_context,
         fallback=fallback,
     )
-
-
-def _strip_parts(parts: tuple[Part, ...]) -> tuple[Part, ...]:
-    result = list(parts)
-    if result and isinstance(result[0], TextPart):
-        result[0] = TextPart(result[0].text.lstrip())
-    if result and isinstance(result[-1], TextPart):
-        result[-1] = TextPart(result[-1].text.rstrip())
-    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
-
-
-def _join_parts(*groups: tuple[Part, ...]) -> tuple[Part, ...]:
-    result: list[Part] = []
-    for group in groups:
-        if not group:
-            continue
-        if result:
-            _append_part(result, TextPart("\n\n"))
-        for part in group:
-            _append_part(result, part)
-    return tuple(result)
-
-
-def _append_part(parts: list[Part], part: Part) -> None:
-    if isinstance(part, TextPart) and parts and isinstance(parts[-1], TextPart):
-        parts[-1] = TextPart(parts[-1].text + part.text)
-    else:
-        parts.append(part)
 
 
 def control_message(control: ControlRecord) -> MessageTemplate | None:
@@ -331,14 +290,4 @@ def control_message(control: ControlRecord) -> MessageTemplate | None:
     opening = f'<{tag} description="{description}"'
     return MessageTemplate(
         "user", (opening + ">", *content, f"</{tag}>") if content else (opening + "/>",)
-    )
-
-
-def output_repair_message(type_name: str | None) -> Message:
-    """Request one corrected response without changing its output contract."""
-
-    if type_name is None:  # pragma: no cover - guarded by _can_repair_output
-        raise ValueError("output repair requires a declared type")
-    return Message.user(
-        render_text_template(prompts.load("output-repair.md"), {"type": type_name})
     )

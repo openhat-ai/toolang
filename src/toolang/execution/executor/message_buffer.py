@@ -6,8 +6,8 @@ from collections.abc import Callable, Sequence
 
 from toolang.base.types.message import Message, MessageRole
 
-from ..assembly.messages import literal_delta, render_delta
 from ..assembly.prompting import control_message
+from ..assembly.utils import literal_delta, render_delta
 from ..recall import recall_revisions
 from ..records import ControlRecord, RecallControlPayload, SteerControlPayload
 from ..types import (

@@ -13,6 +13,7 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelContinuation, ModelUsage
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.template import render_text_template
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
@@ -39,7 +40,7 @@ from ..common import (
 from ..limits import _ModelAccounting
 from ..message_buffer import _MessageBuffer
 from ..budget import InputEstimate
-from ...assembly.prompting import output_repair_message
+from ...assembly import prompts
 from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
@@ -273,7 +274,7 @@ async def execute(
     except ToolangOutputError:
         if not _can_repair_output(state, output_type):
             raise
-        state.messages.append(output_repair_message(output_type))
+        state.messages.append(_output_repair_message(output_type))
         state.repairing_output = True
         try:
             message = await _execute(state)
@@ -297,6 +298,16 @@ def _can_repair_output(state: _AgicState, type_name: str | None) -> bool:
         return False
     limit = state.limits.agic_model_calls
     return limit is None or state.model_calls < limit
+
+
+def _output_repair_message(type_name: str | None) -> Message:
+    """Request one corrected response without changing its output contract."""
+
+    if type_name is None:  # pragma: no cover - guarded by _can_repair_output
+        raise ValueError("output repair requires a declared type")
+    return Message.user(
+        render_text_template(prompts.load("output-repair.md"), {"type": type_name})
+    )
 
 
 async def _execute(state: _AgicState) -> Message | None:

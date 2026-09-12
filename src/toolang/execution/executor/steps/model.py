@@ -37,7 +37,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...assembly.messages import assemble_messages
+from ...assembly.history import assemble_messages
 from ...records import ControlRecord
 from ...types import (
     Local,

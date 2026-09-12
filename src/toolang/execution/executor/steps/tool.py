@@ -32,7 +32,7 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
-from ...assembly.tool_results import workspace_reply, workspace_reply_from_step
+from ...assembly.tool_replies import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
 from ...tools.me.types import MeToolContext
 from ...types import (
