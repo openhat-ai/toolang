@@ -39,6 +39,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.frame import _AgicFrame
+from toolang.execution.assembly.types import PreparedPrompt
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.executor.message_buffer import _MessageBuffer
 from toolang.lang.types import Array
@@ -2842,7 +2843,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=_MessageBuffer(prepared.messages),
+                messages=_MessageBuffer(prepared.prompt.messages),
             )
         )
     )
@@ -2892,7 +2893,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
             CallInput({"_": Array("Part[]", tuple(steer.parts))})
         ),
     )
-    original_messages = list(prepared.messages)
+    original_messages = list(prepared.prompt.messages)
 
     async def emit(_event: RunEvent) -> None:
         assert state.messages.messages == original_messages
@@ -3247,9 +3248,12 @@ def _prepared_agic(
         ),
         model=model,
         adapter=provider,
-        instructions="",
-        prompt_context="",
-        messages=(Message.user("hello"),),
+        prompt=PreparedPrompt(
+            instructions="",
+            instructions_with_tools="",
+            context="",
+            messages=(Message.user("hello"),),
+        ),
         tools={tool.name: tool},
         routes=AgicRoutes(),
         services=(),
@@ -3267,7 +3271,7 @@ def _run_agic(prepared: _AgicFrame) -> Message | None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=_MessageBuffer(prepared.messages),
+                messages=_MessageBuffer(prepared.prompt.messages),
             )
         )
     )

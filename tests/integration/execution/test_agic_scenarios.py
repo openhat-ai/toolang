@@ -192,15 +192,23 @@ agic decide(_: Text) -> Boolean:
             assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
-            protocol, _ = initial.instructions.split("</runtime-instructions>", 1)
+            # Tool-use guidance is inside protocol, but unavailable on repair.
+            protocol, tool_guidance = initial.instructions.split(
+                "\n\nThe inner runtime tools are available", 1
+            )
+            assert tool_guidance.endswith("</runtime-instructions>")
             assert protocol.startswith("<runtime-instructions>")
-            assert repair.instructions == protocol + "</runtime-instructions>"
+            assert repair.instructions == protocol + "\n</runtime-instructions>"
             assert "<agent-instructions>" not in repair.instructions
             assert repair.output_schema == initial.output_schema
             assert repair.messages[-1].role == "user"
             repair_part = repair.messages[-1].parts[0]
             assert isinstance(repair_part, TextPart)
-            assert "Return only a corrected Boolean value" in repair_part.text
+            assert repair_part.text == (
+                "Your previous response did not satisfy the required Boolean output "
+                "contract. Return only a corrected Boolean value. Do not explain the "
+                "value, add a preface, or wrap it in Markdown code fences."
+            )
             assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())

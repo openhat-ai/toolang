@@ -23,6 +23,21 @@ _PART_NAMES = {
 }
 
 
+def assemble_messages(
+    far: str,
+    near: Sequence[Message],
+    now: Sequence[Message],
+    recall: Sequence[str],
+) -> list[Message]:
+    """Join selected history and live messages without rendering them again."""
+
+    return [
+        *([Message.user(far)] if far and "far" in recall else []),
+        *(near if "near" in recall else ()),
+        *now,
+    ]
+
+
 def literal_delta(messages: Sequence[Message]) -> MessageDelta:
     """Record already-rendered content without guessing its provenance."""
 

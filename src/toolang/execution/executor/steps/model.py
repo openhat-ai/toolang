@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -31,13 +30,12 @@ from toolang.base.types.run import (
     ModelPartStart,
     ToolCall,
 )
-from toolang.base.types.tool import ToolDefinition
 from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...assembly.history import assemble_messages
+from ...assembly.prompting import build_model_call
 from ...records import ControlRecord
 from ...types import (
     Local,
@@ -88,9 +86,9 @@ def _candidate(
     )
     messages = state.messages.copy()
     if not messages.started:
-        messages.initialize(prepared.messages)
-    elif prepared.prompt_context:
-        messages.append(Message.user(prepared.prompt_context))
+        messages.initialize(prepared.prompt.messages)
+    elif prepared.prompt.context:
+        messages.append(Message.user(prepared.prompt.context))
     if (
         not messages.started
         and state.execution is not None
@@ -99,15 +97,15 @@ def _candidate(
         messages.prepend(*state.execution.message_history().tail(prepared.run.horizon))
     for control in preceding:
         messages.append_control(control)
-    request = ModelCall(
-        instructions=_model_instructions(state, prepared),
-        messages=assemble_messages(
-            prepared.far, prepared.near, messages.messages, prepared.recall
-        ),
-        tools=_model_tools(prepared)
-        if prepared.model.tools and not state.repairing_output
-        else (),
-        output_schema=deepcopy(state.output_binding.output_schema),
+    request = build_model_call(
+        prepared.prompt,
+        messages=messages.messages,
+        far=prepared.far,
+        near=prepared.near,
+        recall=prepared.recall,
+        tools=prepared.tools,
+        tools_enabled=prepared.model.tools and not state.repairing_output,
+        output_schema=state.output_binding.output_schema,
         continuation=state.continuation,
         max_output_tokens=prepared.output_budget,
     )
@@ -369,26 +367,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
     )
-
-
-def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
-    """Append tool guidance only when the model can use tools."""
-
-    tools = (
-        prepared.tool_instructions
-        if prepared.model.tools and not state.repairing_output
-        else ""
-    )
-    if prepared.instructions and tools:
-        return f"{prepared.instructions}\n\n{tools}"
-    return prepared.instructions or tools
-
-
-def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
-    """Expose the selected registered tools at the adapter boundary."""
-
-    definitions = {name: tool.definition() for name, tool in prepared.tools.items()}
-    return tuple(definitions[name] for name in sorted(definitions))
 
 
 async def _emit_response_parts(

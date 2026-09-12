@@ -229,14 +229,29 @@ The implementation is divided by semantic level:
 
 `execution/assembly/` groups model-call content assembly:
 
-- `prompting.py` renders instructions, context, authored messages, and control
-  messages;
+- `prompting.py` builds complete, provider-neutral `ModelCall` inputs for
+  adapters. `prepare_prompt()` renders instructions, context, and initial
+  messages for the frame cache; `build_model_call()` adds live messages,
+  selected history, tool definitions, output schema, continuation, and output
+  budget;
+- `types.py` defines the cached `PreparedPrompt` value;
 - `history.py` selects, reconstructs, and composes historical model context;
 - `tool_replies.py` builds control receipts and intercepted-call replies;
-- `utils.py` handles text escaping, Part normalization, and delta
-  generation/rendering without selecting history or loading prompts;
+- `utils.py` handles text escaping, Part normalization, message joining, and
+  delta generation/rendering without selecting history or loading prompts;
 - `prompts/` holds static text; `prompts/defaults/` contains the default
   instruct, context, and compact program.
+
+Tool-use guidance belongs to `prompts/protocol.md`, with conditional sections
+for selected tools. Tool definitions remain structured `ToolDefinition` values;
+adapters choose their provider-specific API representation. The model step
+decides whether tools are enabled, including during output repair.
+
+Authored messages are resolved before reusable prompt preparation so the frame
+can record prompt invocations before rendering instructions and context.
+Control-message framing and its short steer/cancel descriptions live in
+`prompting.py` for live input and replay. Output-repair wording lives directly
+beside its policy in `executor/runs/agic.py`.
 
 Assembly consumes prepared data and records; it does not execute tools or read
 the store. `executor/message_buffer.py` holds the live message sequence and

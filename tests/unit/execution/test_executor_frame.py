@@ -312,16 +312,16 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
     assert prepared.adapter is adapter
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
-    assert "You are the alice Toolang agent." in prepared.instructions
-    assert f"toolang_version: {toolang_version()}" in prepared.instructions
-    assert "sandbox: docker:python:3.13-slim" in prepared.instructions
-    assert "system: Linux 6.0 (aarch64)" in prepared.instructions
-    assert "working_directory: /workspace" in prepared.instructions
-    assert "date: 2026-01-01" in prepared.prompt_context
-    assert "timezone: UTC" in prepared.prompt_context
-    assert "agent_name: alice" in prepared.prompt_context
-    assert [message_text(message.parts) for message in prepared.messages] == [
-        prepared.prompt_context + "\n\nAnswer: hello; focus=events",
+    assert "You are the alice Toolang agent." in prepared.prompt.instructions
+    assert f"toolang_version: {toolang_version()}" in prepared.prompt.instructions
+    assert "sandbox: docker:python:3.13-slim" in prepared.prompt.instructions
+    assert "system: Linux 6.0 (aarch64)" in prepared.prompt.instructions
+    assert "working_directory: /workspace" in prepared.prompt.instructions
+    assert "date: 2026-01-01" in prepared.prompt.context
+    assert "timezone: UTC" in prepared.prompt.context
+    assert "agent_name: alice" in prepared.prompt.context
+    assert [message_text(message.parts) for message in prepared.prompt.messages] == [
+        prepared.prompt.context + "\n\nAnswer: hello; focus=events",
     ]
 
 
@@ -409,8 +409,8 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
         },
     )
 
-    assert "<output-contract>" not in prepared.instructions
-    assert "type: Text[]" not in prepared.instructions
+    assert "<output-contract>" not in prepared.prompt.instructions
+    assert "type: Text[]" not in prepared.prompt.instructions
 
 
 def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
@@ -490,8 +490,8 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
         },
     )
 
-    assert prepared.messages[-1].parts == (
-        TextPart(prepared.prompt_context + "\n\nReview this diagram "),
+    assert prepared.prompt.messages[-1].parts == (
+        TextPart(prepared.prompt.context + "\n\nReview this diagram "),
         image,
         TextPart(" with "),
         document,

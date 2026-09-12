@@ -28,13 +28,12 @@ from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.prompting import control_message
-from .assembly.utils import literal_delta, render_delta
+from .assembly.utils import assemble_messages, literal_delta, render_delta
 from .inspection.views import RunView, ThreadView, _ThreadProjection
 from .assembly.history import (
     MessageHistory,
     active_steps,
     adopted_horizon,
-    assemble_messages,
     starts_sequence,
     tail_delta,
 )

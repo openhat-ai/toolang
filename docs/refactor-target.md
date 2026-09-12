@@ -285,7 +285,8 @@ execution/
 ├── store.py                # RunStore
 ├── threads.py              # ThreadManager
 ├── assembly/               # model-call content shared by execution and replay
-│   ├── prompting.py        # prompt rendering and control-message framing
+│   ├── prompting.py        # complete adapter-facing ModelCall assembly
+│   ├── types.py            # cached PreparedPrompt content
 │   ├── history.py          # historical model context selection and composition
 │   ├── tool_replies.py     # control receipts and intercepted-call replies
 │   ├── utils.py            # text/Part helpers and delta generation/rendering

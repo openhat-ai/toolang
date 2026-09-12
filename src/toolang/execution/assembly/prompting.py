@@ -1,13 +1,21 @@
-"""Render prepared execution data into model instructions and messages."""
+"""Prepare provider-neutral ModelCalls for adapters.
+
+build_model_call combines cached prompt content with per-call messages, tool
+definitions, and output settings. Adapters own provider-specific serialization.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import replace
 from html import escape
 import re
 
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, Part, TextPart
+from toolang.base.types.run import ModelCall, ModelContinuation
+from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.template import render_text_template
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Program
@@ -18,7 +26,14 @@ from toolang.lang.input import (
 )
 
 from . import prompts
-from .utils import escape_markup_value, join_parts, strip_parts, text_block
+from .types import PreparedPrompt
+from .utils import (
+    assemble_messages,
+    escape_markup_value,
+    join_parts,
+    strip_parts,
+    text_block,
+)
 from ..records import (
     CancelControlPayload,
     ControlRecord,
@@ -44,8 +59,72 @@ _CAPABILITY_CATALOG_TEMPLATE = (
     + "\n</capability-catalog>"
 )
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("defaults/context.md")
-_TOOLS_TEMPLATE = prompts.load("tools.md")
 _PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
+
+
+def build_model_call(
+    prompt: PreparedPrompt,
+    *,
+    messages: Sequence[Message],
+    far: str,
+    near: Sequence[Message],
+    recall: Sequence[str],
+    tools: Mapping[str, Tool],
+    tools_enabled: bool,
+    output_schema: dict[str, object] | None,
+    continuation: ModelContinuation | None,
+    max_output_tokens: int,
+) -> ModelCall:
+    """Build the complete adapter input without applying runtime policy.
+
+    The caller selects history and decides whether tools are enabled, including
+    during output repair. Tool schemas stay structured, never prompt text.
+    """
+
+    return ModelCall(
+        instructions=prompt.instructions_with_tools
+        if tools_enabled
+        else prompt.instructions,
+        messages=assemble_messages(far, near, messages, recall),
+        tools=_tool_definitions(tools) if tools_enabled else (),
+        output_schema=deepcopy(output_schema),
+        continuation=continuation,
+        max_output_tokens=max_output_tokens,
+    )
+
+
+def prepare_prompt(
+    program: Program,
+    agic: AgicDecl,
+    context: dict[str, object],
+    *,
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    primary: tuple[Part, ...],
+    runnable_instructions: str,
+    filesystem: bool,
+) -> PreparedPrompt:
+    """Render reusable frame content after authored provenance is recorded."""
+
+    prompt_context = _render_context(program, agic, context)
+    messages = _initial_messages(
+        agic=agic,
+        rendered=rendered,
+        prompt_context=prompt_context,
+        primary=primary,
+    )
+    instructions = _render_instructions(program, agic, context)
+    with_tools = (
+        _render_instructions(
+            program,
+            agic,
+            context,
+            runnable_instructions=runnable_instructions,
+            filesystem=filesystem,
+        )
+        if runnable_instructions or filesystem
+        else instructions
+    )
+    return PreparedPrompt(instructions, with_tools, prompt_context, messages)
 
 
 def render_messages(
@@ -59,6 +138,8 @@ def render_messages(
     tuple[tuple[AstMessage, tuple[Part, ...]], ...],
     tuple[PromptInvocation, ...],
 ]:
+    """Resolve authored input so the caller can record prompt provenance first."""
+
     rendered: list[tuple[AstMessage, tuple[Part, ...]]] = []
     invocations: list[PromptInvocation] = []
     for block in blocks:
@@ -85,13 +166,76 @@ def render_messages(
     return tuple(rendered), tuple(invocations)
 
 
-def render_instructions(
+def control_message(control: ControlRecord) -> MessageTemplate | None:
+    """Describe a control fact; the caller decides when it is visible."""
+
+    payload = control.payload
+    if isinstance(payload, RecallControlPayload):
+        target = payload.target
+        attrs = (
+            {"workspace": target.workspace, "path": target.path}
+            if isinstance(target, RulesRecallTarget)
+            else {"ref": target.ref}
+        )
+        attrs["revision"] = payload.revision
+        attributes = " ".join(
+            f'{key}="{escape(value, quote=True)}"' for key, value in attrs.items()
+        )
+        return MessageTemplate(
+            "user",
+            (
+                f"<{target.kind} {attributes}>",
+                TypedRef(FieldRef.from_path(control.ref, "payload", "content"), "Text"),
+                f"</{target.kind}>",
+            ),
+        )
+    if not isinstance(payload, SteerControlPayload | CancelControlPayload):
+        return None
+    primary = payload.input.get("_")
+    content = (
+        (
+            TypedRef(
+                FieldRef.from_path(control.ref, "payload", "input", "_"),
+                primary.type if isinstance(primary, TypedRef) else value_type(primary),
+            ),
+        )
+        if primary is not None
+        else ()
+    )
+    tag, description = (
+        ("steer", "The user supplied updated input for the current task.")
+        if isinstance(payload, SteerControlPayload)
+        else ("cancel", "The user canceled this run.")
+    )
+    opening = f'<{tag} description="{description}"'
+    return MessageTemplate(
+        "user", (opening + ">", *content, f"</{tag}>") if content else (opening + "/>",)
+    )
+
+
+def _tool_definitions(tools: Mapping[str, Tool]) -> tuple[ToolDefinition, ...]:
+    definitions = {name: tool.definition() for name, tool in tools.items()}
+    return tuple(definitions[name] for name in sorted(definitions))
+
+
+def _render_instructions(
     program: Program,
     agic: AgicDecl,
     context: dict[str, object],
+    *,
+    runnable_instructions: str = "",
+    filesystem: bool = False,
 ) -> str:
     markup_context = {key: escape_markup_value(value) for key, value in context.items()}
-    protocol = render_text_template(_PROTOCOL_TEMPLATE, markup_context).strip()
+    protocol = render_text_template(
+        _PROTOCOL_TEMPLATE,
+        {
+            **markup_context,
+            # Runtime-framed routes are already escaped; do not reinterpret them.
+            "runnable_instructions": runnable_instructions,
+            "filesystem": filesystem,
+        },
+    ).strip()
     instruct = _render_selected_instruct(program, agic, context)
     agent = text_block("agent-instructions", instruct)
     psyches = render_text_template(_PSYCHES_TEMPLATE, markup_context).strip()
@@ -125,7 +269,7 @@ def _render_selected_instruct(
     return render_text_template(template, context).strip() if template.strip() else ""
 
 
-def render_context(
+def _render_context(
     program: Program,
     agic: AgicDecl,
     context: dict[str, object],
@@ -148,6 +292,28 @@ def render_context(
         render_text_template(template, context).strip() if template.strip() else ""
     )
     return text_block("context", content)
+
+
+def _initial_messages(
+    *,
+    agic: AgicDecl,
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    prompt_context: str,
+    primary: tuple[Part, ...],
+) -> tuple[Message, ...]:
+    """Combine authored messages with context and the primary input."""
+
+    fallback = _run_message(
+        agic=agic,
+        rendered=rendered,
+        prompt_context=prompt_context,
+        primary=primary,
+    )
+    return _authored_messages(
+        rendered=rendered,
+        prompt_context=prompt_context,
+        fallback=fallback,
+    )
 
 
 def _run_message(
@@ -213,81 +379,3 @@ def _authored_messages(
     if last_user is None and prompt_context.strip():
         messages.insert(0, Message.user(prompt_context.strip()))
     return tuple(messages) if messages else (fallback,)
-
-
-def render_tool_instructions(runnable: str, *, filesystem: bool) -> str:
-    """Join already framed tool guidance without escaping it again."""
-
-    instructions = (runnable, prompts.load("filesystem.md") if filesystem else "")
-    return render_text_template(
-        _TOOLS_TEMPLATE, {"instructions": [item for item in instructions if item]}
-    ).strip()
-
-
-def initial_messages(
-    *,
-    agic: AgicDecl,
-    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
-    prompt_context: str,
-    primary: tuple[Part, ...],
-) -> tuple[Message, ...]:
-    """Combine authored messages with context and the primary input."""
-
-    fallback = _run_message(
-        agic=agic,
-        rendered=rendered,
-        prompt_context=prompt_context,
-        primary=primary,
-    )
-    return _authored_messages(
-        rendered=rendered,
-        prompt_context=prompt_context,
-        fallback=fallback,
-    )
-
-
-def control_message(control: ControlRecord) -> MessageTemplate | None:
-    """Describe a control fact; the caller decides when it is visible."""
-
-    payload = control.payload
-    if isinstance(payload, RecallControlPayload):
-        target = payload.target
-        attrs = (
-            {"workspace": target.workspace, "path": target.path}
-            if isinstance(target, RulesRecallTarget)
-            else {"ref": target.ref}
-        )
-        attrs["revision"] = payload.revision
-        attributes = " ".join(
-            f'{key}="{escape(value, quote=True)}"' for key, value in attrs.items()
-        )
-        return MessageTemplate(
-            "user",
-            (
-                f"<{target.kind} {attributes}>",
-                TypedRef(FieldRef.from_path(control.ref, "payload", "content"), "Text"),
-                f"</{target.kind}>",
-            ),
-        )
-    if not isinstance(payload, SteerControlPayload | CancelControlPayload):
-        return None
-    primary = payload.input.get("_")
-    content = (
-        (
-            TypedRef(
-                FieldRef.from_path(control.ref, "payload", "input", "_"),
-                primary.type if isinstance(primary, TypedRef) else value_type(primary),
-            ),
-        )
-        if primary is not None
-        else ()
-    )
-    tag, description = (
-        ("steer", prompts.load("steer.md"))
-        if isinstance(payload, SteerControlPayload)
-        else ("cancel", prompts.load("cancel.md"))
-    )
-    opening = f'<{tag} description="{description}"'
-    return MessageTemplate(
-        "user", (opening + ">", *content, f"</{tag}>") if content else (opening + "/>",)
-    )

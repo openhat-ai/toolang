@@ -198,19 +198,6 @@ def recall_sources(values: Sequence[str] = ()) -> tuple[str, ...]:
     return ("far", "near") if not values or "auto" in values else tuple(values)
 
 
-def assemble_messages(
-    far: str,
-    near: Sequence[Message],
-    now: Sequence[Message],
-    recall: Sequence[str],
-) -> list[Message]:
-    return [
-        *([Message.user(far)] if far and "far" in recall else []),
-        *(near if "near" in recall else ()),
-        *now,
-    ]
-
-
 def adopted_horizon(
     horizon: FieldRef | None, controls: Sequence[ControlRecord], run: RunRef
 ) -> FieldRef | None:

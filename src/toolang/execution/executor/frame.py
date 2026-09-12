@@ -37,12 +37,10 @@ from ..assembly.history import recall_sources
 from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
 from ..assembly.prompting import (
-    initial_messages,
-    render_context,
-    render_instructions,
+    prepare_prompt,
     render_messages,
-    render_tool_instructions,
 )
+from ..assembly.types import PreparedPrompt
 from .resources import resource_caps, resource_tools
 from .resources import snapshot_model_selection
 from ..runnables import AgicRoutes, render_runnable_instructions, resolve_agic_routes
@@ -61,13 +59,10 @@ class _AgicFrame:
     agic: AgicDecl
     model: ModelTarget
     adapter: ModelAdapter
-    instructions: str
-    prompt_context: str
-    messages: tuple[Message, ...]
+    prompt: PreparedPrompt
     tools: dict[str, Tool]
     routes: AgicRoutes
     services: tuple[ToolService, ...]
-    tool_instructions: str = ""
     recall: tuple[str, ...] = ("far", "near")
     far: str = ""
     near: tuple[Message, ...] = ()
@@ -156,16 +151,15 @@ def build_agic_frame(
     )
     if prompt_invocations:
         context.record_prompt_invocations(run, prompt_invocations)
-    prompt_context = render_context(program, agic, system_runtime)
-    messages = initial_messages(
-        agic=agic,
+    prompt = prepare_prompt(
+        program,
+        agic,
+        system_runtime,
         rendered=rendered,
-        prompt_context=prompt_context,
         primary=_primary_parts(agic, variables),
-    )
-    instructions = render_instructions(program, agic, system_runtime)
-    tool_instructions = render_tool_instructions(
-        render_runnable_instructions(run.state, routes) if runtime_tools else "",
+        runnable_instructions=render_runnable_instructions(run.state, routes)
+        if runtime_tools
+        else "",
         filesystem=any(
             getattr(tool, "plugin_name", None) == "fs" for tool in tools.values()
         ),
@@ -179,10 +173,7 @@ def build_agic_frame(
         agic=agic,
         model=model,
         adapter=adapter,
-        instructions=instructions,
-        tool_instructions=tool_instructions,
-        prompt_context=prompt_context,
-        messages=messages,
+        prompt=prompt,
         tools=tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
@@ -361,13 +352,13 @@ def _log_frame(prepared: _AgicFrame) -> None:
         "prompt.instructions thread=%s run=%s text=%s",
         run.thread,
         run.run_id,
-        prepared.instructions,
+        prepared.prompt.instructions,
     )
     _LOGGER.debug(
         "prompt.context thread=%s run=%s text=%s",
         run.thread,
         run.run_id,
-        prepared.prompt_context,
+        prepared.prompt.context,
     )
     _LOGGER.debug(
         "prompt.messages thread=%s run=%s messages=%s",
@@ -376,7 +367,7 @@ def _log_frame(prepared: _AgicFrame) -> None:
         json.dumps(
             [
                 {"role": message.role, "text": message_text(message.parts)}
-                for message in prepared.messages
+                for message in prepared.prompt.messages
             ],
             ensure_ascii=False,
         ),

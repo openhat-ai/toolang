@@ -6,7 +6,10 @@ from html import unescape
 import pytest
 
 from toolang.common.template import render_text_template
-from toolang.execution.assembly.prompting import render_context, render_instructions
+from toolang.execution.assembly.prompting import (
+    _render_context as render_context,
+    _render_instructions as render_instructions,
+)
 from toolang.lang import Program
 
 
