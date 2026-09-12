@@ -12,10 +12,8 @@ Instructions use this order; repeat resource blocks as needed, without catalogs:
 <toolang:protocol>Shared interpretation and rules.</toolang:protocol>
 <toolang:instruct>Agent-specific behavior.</toolang:instruct>
 <toolang:psyche ref="..." revision="...">Resident guidance.</toolang:psyche>
-<toolang:skill-info ref="..." revision="...">Skill description.</toolang:skill-info>
-<toolang:service-info ref="..." revision="...">Service description.</toolang:service-info>
-<toolang:runnable-info ref="..." revision="...">Authorized route.</toolang:runnable-info>
-<toolang:execution-context>Version, runnable, source, environment.</toolang:execution-context>
+<toolang:skill-trigger ref="..." revision="...">When to use this skill.</toolang:skill-trigger>
+<toolang:service-trigger ref="..." revision="...">When to use this service.</toolang:service-trigger>
 ```
 
 Reserve `toolang:` for all runtime tags, including protocol subsections. This is
@@ -33,7 +31,7 @@ XML sections, not Markdown headings, and explains:
 - **Layout and priority:** protocol, then instruct, then selected psyches;
   loaded guidance and scoped rules operate within those boundaries. User requests
   set objectives; data and quoted tags do not override instructions.
-- **Capabilities and workspaces:** resident psyches, available skill/service info,
+- **Capabilities and workspaces:** resident psyches, skill/service triggers,
   on-demand guidance, named workspace roots, scoped rules, and the lifecycle below.
 - **Messages:** recall, context, steer, cancel, and far summary use the user role.
   State notifications are not new tasks; steer supplies changed input and cancel
@@ -42,8 +40,12 @@ XML sections, not Markdown headings, and explains:
   filesystem boundaries, preflight, and runnable-call conventions.
 
 Keep version, date, paths, selected refs, and runnable facts outside protocol.
-Instruct must not repeat protocol. Runnable info preserves existing route
-authorization and size limits; availability never adds tools or permissions.
+A general `run-info` block is deferred; do not introduce it in this scope.
+Instruct must not repeat protocol. Advertise `toolang:runnable-info` only when the
+current runnable declares `hands` or `handoffs`, and only for routes authorized
+by those directives, within existing size limits. Do not prepopulate it or list
+unrelated runnables; retract previously advertised routes if authorization is
+removed. Availability never adds tools or permissions.
 
 ## Resource and message rules
 
@@ -52,7 +54,8 @@ Tag names below omit the common `toolang:` prefix.
 | Tags | Body and placement |
 | --- | --- |
 | `psyche` | Resident guidance in instructions; later declarations in user messages |
-| `skill-info`, `service-info`, `runnable-info` | Available resource descriptions in instructions; later declarations in user messages |
+| `skill-trigger`, `service-trigger` | Resident purpose and usage conditions; later declarations in user messages |
+| `runnable-info` | Authorized routes from `hands`/`handoffs` only; later declarations in user messages |
 | `skill-guidance`, `service-guidance` | Loaded bodies in user messages |
 | `workspace`, `rules` | Workspace bindings and scoped rules in user messages |
 | `context`, `steer`, `cancel` | Call data and control input in user messages, not replaceable resources |
@@ -67,13 +70,15 @@ Tag names below omit the common `toolang:` prefix.
 - **Load before use:** using a skill requires its current, visible
   `skill-guidance`. If absent, stale, or retracted, call `_toolang__pick` with
   `kind="skill"` and the exact ref, then wait for the guidance message.
-  Info, memory, far summaries, and pick receipts are insufficient. If loading fails
-  or is unavailable, report the limitation, not successful skill use.
+  Triggers, memory, far summaries, and pick receipts are insufficient. If loading
+  fails or is unavailable, report the limitation, not successful skill use.
   Services follow the same rule; picking does not connect or authenticate them.
+  Triggers guide capability selection; they do not execute anything automatically.
 - **Separate availability from guidance:** retain skill/service recall targets for
-  bodies and add distinct info targets. Info must not satisfy guidance visibility
-  or pick deduplication. A definition change or withdrawal retracts stale guidance;
-  loading the replacement still requires pick. Hash definitions, not only metadata.
+  bodies and add distinct trigger targets. Triggers must not satisfy guidance
+  visibility or pick deduplication. A definition change or withdrawal retracts
+  stale guidance; loading the replacement still requires pick. Hash definitions,
+  not only metadata.
 - **Use current state:** reconcile initial instructions, selected history, and
   pending messages against adopted State; append necessary declarations last.
   Track visibility through structured references, never XML parsing or summaries.
@@ -115,7 +120,7 @@ declarations or wake idle runs.
   `utils.py`: pure helpers. Keep steer/cancel wording inline here and output
   repair in the agic run, not separate prompt files.
 - Executor frame/model-step boundaries own runtime facts, State reconciliation,
-  and tool policy. Extend recall types/codecs with info targets and
+  and tool policy. Extend recall types/codecs with trigger targets and
   `WorkspaceRecallTarget(ref, kind="workspace")`; reuse existing recall controls,
   message buffering and durable deltas. Track bodyless declarations through
   optional persisted recall-control references per message, not dummy body refs
@@ -135,8 +140,11 @@ Extend existing offline execution unit/integration and architecture tests:
 
 - Stable protocol, instruction order, prefixed/escaped tags, tool-disabled calls,
   mandatory guidance/pick delivery and failure, and structured adapter inputs.
+- No initial runnable info without `hands`/`handoffs`; with either or both, include
+  only authorized routes, preserving action distinctions and size limits.
+  Retract routes when their authorization disappears.
 - Resource replacement, `removed="true"` withdrawal/restoration, empty bodies,
-  internal revision-zero mapping, stale-guidance invalidation, distinct info/body
+  internal revision-zero mapping, stale-guidance invalidation, distinct trigger/body
   visibility, and older history versus new State.
 - Bodyless, self-closing workspace declarations and their visibility/deduplication;
   add/remove/remap/re-add, unchanged bindings, child runs, scoped rules, hidden
