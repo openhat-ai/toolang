@@ -33,21 +33,21 @@ from toolang.state.state import (
     state_program_source,
 )
 
-from ..assembly.history import recall_sources
+from ..assembly.messages import recall_sources
 from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
 from ..assembly.prompting import (
+    PreparedPrompt,
     prepare_prompt,
     render_messages,
 )
-from ..assembly.types import PreparedPrompt
 from .resources import (
     workspace_declarations,
     cap_revision,
     resource_caps,
     resource_tools,
+    snapshot_model_selection,
 )
-from .resources import snapshot_model_selection
 from ..runnables import AgicRoutes, runnable_descriptions, resolve_agic_routes
 from ..records import RecallControlPayload
 

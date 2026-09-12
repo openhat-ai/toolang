@@ -1,14 +1,14 @@
 """Prepare provider-neutral, adapter-ready model calls.
 
-Prompt resources define static content. History owns message composition;
-adapters own provider-specific serialization.
+Prompt resources define static content; messages owns composition and history.
+Adapters own provider-specific serialization.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 from typing import cast
@@ -27,8 +27,7 @@ from toolang.lang.input import (
 )
 
 from . import prompts
-from .history import initial_messages
-from .types import PreparedPrompt
+from .messages import initial_messages
 from .utils import resource_text, strip_parts, text_block
 from ..records import RecallControlPayload
 from ..types import (
@@ -46,6 +45,16 @@ _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("defaults/instruct.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("defaults/context.md")
 _SKILL_TEMPLATE = prompts.load("skills.md")
 _SERVICE_TEMPLATE = prompts.load("services.md")
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedPrompt:
+    """Rendered once per frame; live messages and tool policy remain per-call."""
+
+    instructions: str
+    context: str
+    messages: tuple[Message, ...]
+    declarations: tuple[RecallControlPayload, ...] = ()
 
 
 def build_model_call(

@@ -9,7 +9,7 @@ from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.assembly import prompting, prompts
-from toolang.execution.assembly.history import assemble_messages
+from toolang.execution.assembly.messages import assemble_messages
 from toolang.execution.assembly.prompting import (
     _render_instructions as render_instructions,
     build_model_call,

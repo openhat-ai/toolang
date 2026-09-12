@@ -140,7 +140,7 @@ declarations or wake idle runs.
 - `assembly/prompting.py`: render instructions and build adapter-ready
   `ModelCall` from finished messages, structured tool definitions, schema,
   continuation, and budget. Adapters own provider-specific serialization.
-- `assembly/history.py`: history selection and message/control/recall framing,
+- `assembly/messages.py`: history selection and message/control/recall framing,
   including required workspace declarations; no rules discovery. `utils.py`:
   pure helpers. Keep steer/cancel wording inline here and output repair in the
   agic run, not separate prompt files.

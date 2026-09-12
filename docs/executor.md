@@ -232,11 +232,12 @@ The implementation is divided by semantic level:
 - `prompting.py` builds complete, provider-neutral `ModelCall` inputs for
   adapters. `prepare_prompt()` renders instructions, context, and initial
   messages for the frame cache; `build_model_call()` accepts finished messages
-  and adds structured tool definitions, output schema, continuation, and budget;
-- `types.py` defines the cached `PreparedPrompt` value;
-- `history.py` selects and composes messages, frames controls, and reconciles
-  supplied resource declarations without I/O;
-- `tool_replies.py` builds control receipts and intercepted-call replies;
+  and adds structured tool definitions, output schema, continuation, and budget.
+  It also owns the cached `PreparedPrompt` value;
+- `messages.py` constructs and orders messages, selects and reconstructs history,
+  frames controls, and reconciles supplied resource declarations without I/O;
+- `tool_replies.py` constructs individual control receipts and intercepted-call
+  replies, shared by live delivery and history reconstruction;
 - `utils.py` handles text escaping, Part normalization, message joining, and
   delta generation/rendering without selecting history or loading prompts;
 - `prompts/` holds static text; `prompts/defaults/` contains the default
@@ -250,7 +251,7 @@ provider-specific representation. The model step decides whether tools are enabl
 Authored messages are resolved before reusable prompt preparation so the frame
 can record prompt invocations before rendering instructions and context.
 Control-message framing and its short steer/cancel descriptions live in
-`history.py`; replay uses recorded templates, not current wording. Output-repair wording lives directly
+`messages.py`; replay uses recorded templates, not current wording. Output-repair wording lives directly
 beside its policy in `executor/runs/agic.py`.
 
 Assembly consumes prepared data and records; it does not execute tools or read

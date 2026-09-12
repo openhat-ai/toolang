@@ -35,7 +35,7 @@ from ..types import (
     local_to_protocol_data,
 )
 from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
-from ..assembly.history import required_declarations
+from ..assembly.messages import required_declarations
 from .resources import cap_revision, resource_caps, workspace_declarations
 from .rules import load_rules
 

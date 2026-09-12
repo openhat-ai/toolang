@@ -39,7 +39,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.frame import _AgicFrame
-from toolang.execution.assembly.types import PreparedPrompt
+from toolang.execution.assembly.prompting import PreparedPrompt
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.executor.message_buffer import _MessageBuffer
 from toolang.lang.types import Array

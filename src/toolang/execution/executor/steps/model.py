@@ -36,7 +36,7 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...assembly.prompting import build_model_call
-from ...assembly.history import assemble_messages, required_declarations
+from ...assembly.messages import assemble_messages, required_declarations
 from ...records import ControlRecord
 from ...types import (
     Local,

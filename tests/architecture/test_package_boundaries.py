@@ -302,6 +302,35 @@ def test_model_call_assembly_does_not_depend_on_runtime_owners() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "module,allowed",
+    [
+        ("prompting", {"messages", "utils", "prompts"}),
+        ("messages", {"tool_replies", "utils"}),
+        ("tool_replies", set()),
+        ("utils", set()),
+    ],
+)
+def test_assembly_modules_have_one_way_dependencies(module, allowed) -> None:
+    package = "toolang.execution.assembly"
+    path = SOURCE_ROOT / "execution" / "assembly" / f"{module}.py"
+    context = _module_context(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    dependencies = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node, context):
+            if target == package and isinstance(node, ast.ImportFrom):
+                dependencies.update(alias.name for alias in node.names)
+            elif target.startswith(package + "."):
+                dependencies.add(target.removeprefix(package + ".").split(".")[0])
+
+    assert dependencies <= allowed, (
+        f"{module} has misplaced dependencies: {dependencies - allowed}"
+    )
+
+
 def test_assembly_utils_depend_only_on_message_vocabulary() -> None:
     allowed = {"toolang.base.types.message", "toolang.execution.types"}
     path = SOURCE_ROOT / "execution" / "assembly" / "utils.py"

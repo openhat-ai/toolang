@@ -50,7 +50,7 @@ from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
-from ..assembly.history import MessageHistory, adopted_horizon
+from ..assembly.messages import MessageHistory, adopted_horizon
 from ..recall import canonical_recall
 from ..calls import (
     IncludeResolver,

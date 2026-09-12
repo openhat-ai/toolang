@@ -1,4 +1,4 @@
-"""Model-visible control receipts and intercepted workspace-call replies."""
+"""Construct individual runtime tool replies for live delivery and replay."""
 
 from collections.abc import Callable
 from dataclasses import asdict

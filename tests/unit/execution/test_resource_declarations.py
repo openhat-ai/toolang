@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from toolang.base.types.message import ImagePart, TextPart
-from toolang.execution.assembly.history import control_message, required_declarations
+from toolang.execution.assembly.messages import control_message, required_declarations
 from toolang.execution.assembly.utils import render_delta, resource_text
 from toolang.execution.recall import recall_revisions
 from toolang.execution.records import (
