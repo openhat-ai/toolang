@@ -47,6 +47,22 @@ by those directives, within existing size limits. Do not prepopulate it or list
 unrelated runnables; retract previously advertised routes if authorization is
 removed. Availability never adds tools or permissions.
 
+Keep the existing `You are the {{agent.name}} Toolang agent.` in
+`defaults/instruct.md`; agent identity is stable and does not belong in context
+or the shared protocol. `defaults/context.md` contains only:
+
+```text
+date: {{date}}
+timezone: {{timezone}}
+model_provider: {{model.provider}}
+model_name: {{model.name}}
+```
+
+Remove `agent_home` from protocol and default context; use available `me` tools
+for agent-home operations instead of exposing its path. Remove `model_family`
+without introducing a replacement label. Preserve authored instruct/context
+selection, including `none`; this changes defaults, not template selection.
+
 ## Resource and message rules
 
 Tag names below omit the common `toolang:` prefix.
@@ -140,6 +156,9 @@ Extend existing offline execution unit/integration and architecture tests:
 
 - Stable protocol, instruction order, prefixed/escaped tags, tool-disabled calls,
   mandatory guidance/pick delivery and failure, and structured adapter inputs.
+- Default instructions contain agent identity; default context contains only
+  date, timezone, model provider, and model name. Neither exposes agent home or
+  model family. Preserve custom and `none` instruct/context selection.
 - No initial runnable info without `hands`/`handoffs`; with either or both, include
   only authorized routes, preserving action distinctions and size limits.
   Retract routes when their authorization disappears.
