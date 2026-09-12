@@ -218,15 +218,20 @@ The implementation is divided by semantic level:
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
 - `resources.py` builds and filters `AgentResources`, then applies runnable
   directives to the selected resource base;
-- `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
-  adapter in one pass;
+- `frame.py` builds an agic's execution frame from bound resources and runtime
+  facts; it does not materialize Agent State;
 - `runs/agic.py` owns the fixed model-tool cycle for one agic;
 - `runs/flow.py` advances through lowered flow statements and updates locals;
 - `stmts/` implements lowered statement semantics and chooses a step type;
 - `steps/` owns execution step boundaries and their `StepBegin`, part, and
   `StepEnd` events.
 
-Preparation produces one private `_AgicFrame` consumed directly by the agic
+`execution/prompting.py` renders instructions, context, authored messages,
+control messages, and output-repair requests. Static text lives in
+`execution/prompts/`; its `defaults/` directory contains the default instruct,
+context, and compact program.
+
+`build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
 `ModelTarget` and one normalized `ModelCall` per model step.
 There is no loop plugin or public run-context protocol, and there are no

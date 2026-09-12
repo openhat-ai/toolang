@@ -28,7 +28,7 @@ from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .message_delta import literal_delta, render_delta
-from .control_messages import control_message
+from .prompting import control_message
 from .run_view import RunView
 from .assembly import (
     MessageHistory,

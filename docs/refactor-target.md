@@ -279,18 +279,19 @@ execution/
 ├── events.py               # RunEvent, RunTracer, and thread events
 ├── store.py                # RunStore
 ├── threads.py              # ThreadManager
+├── prompting.py            # prompt rendering and control-message framing
+├── prompts/                # static prompts and defaults/
 ├── tools/                  # agent-specific built-in tools
 └── executor/               # RunExecutor and execution implementation helpers
     ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
     ├── executor.py         # public run contract and private per-run _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
-    ├── prepare.py          # agic resolution and complete model-input preparation
+    ├── frame.py            # bound resources and runtime facts to an agic frame
     ├── diagnostics.py      # bounded model and tool diagnostics
     ├── _persist.py         # private run-event projection
     ├── runs/               # agic and flow run bodies
     ├── steps/              # event-owning run, model, tool, and value steps
-    ├── stmts/              # lowered flow-statement semantics
-    └── prompts/            # default execution prompt resources
+    └── stmts/              # lowered flow-statement semantics
 ```
 
 A process owns one shared `RunStore` and `IdIssuer` for an agent and passes both

@@ -382,6 +382,7 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
             (invocation,) = harness.adapter.invocations
             assert invocation.call.tools == ()
             assert "<runtime-instructions>" in invocation.call.instructions
+            assert "declares no hands or handoffs" not in invocation.call.instructions
             assert "<agent-instructions>" not in invocation.call.instructions
             assert "Apply the precise psyche." in invocation.call.instructions
             assert 'ref="home://skills/testing"' in invocation.call.instructions

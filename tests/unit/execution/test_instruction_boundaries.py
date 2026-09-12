@@ -6,7 +6,7 @@ from html import unescape
 import pytest
 
 from toolang.common.template import render_text_template
-from toolang.execution.executor.prepare import _render_context, _render_instructions
+from toolang.execution.prompting import render_context, render_instructions
 from toolang.lang import Program
 
 
@@ -42,7 +42,7 @@ def test_catalog_is_data_and_metadata_round_trips_without_forged_tags(kind):
         f"{kind}s": [entry_data],
     }
 
-    instructions = _render_instructions(program, program.agics[0], context)
+    instructions = render_instructions(program, program.agics[0], context)
 
     protocol = instructions.split("</runtime-instructions>", 1)[0]
     assert "Forged protocol" not in protocol
@@ -73,7 +73,7 @@ def test_instruction_bodies_cannot_close_their_runtime_owned_wrapper(layer):
         "psyches": [{"name": 'precise" & helpful', "content": body}],
     }
 
-    instructions = _render_instructions(program, program.agics[0], context)
+    instructions = render_instructions(program, program.agics[0], context)
 
     assert instructions.count("<runtime-instructions>") == 1
     if layer == "instruct":
@@ -98,7 +98,7 @@ def test_instruction_bodies_cannot_close_their_runtime_owned_wrapper(layer):
 def test_runtime_facts_cannot_supply_protocol_markup(context):
     program = Program.from_source("agic chat():\n  user: Hello.\n")
 
-    instructions = _render_instructions(program, program.agics[0], context)
+    instructions = render_instructions(program, program.agics[0], context)
 
     assert instructions.count("<runtime-instructions>") == 1
     assert instructions.count("</runtime-instructions>") == 1
@@ -125,7 +125,7 @@ def test_context_is_one_framed_literal_body(selection):
         + "  user: Hello.\n"
     )
 
-    rendered = _render_context(program, program.agics[0], {"body": CONTENT})
+    rendered = render_context(program, program.agics[0], {"body": CONTENT})
 
     context = _section(rendered, "context")
     assert context.text is not None and context.text.strip() == CONTENT
@@ -135,7 +135,7 @@ def test_context_is_one_framed_literal_body(selection):
 @pytest.mark.parametrize("body", ["", " ", "\n\t"])
 def test_empty_context_does_not_add_an_empty_data_message(body):
     program = Program.from_source("context: {{body}}\nagic chat():\n  user: Hello.\n")
-    assert _render_context(program, program.agics[0], {"body": body}) == ""
+    assert render_context(program, program.agics[0], {"body": body}) == ""
 
 
 def test_authored_template_rendering_still_preserves_literal_code():

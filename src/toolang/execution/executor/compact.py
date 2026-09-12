@@ -26,7 +26,7 @@ from ..schemas import CompactionOutput
 from ..records import CompactControlPayload
 from ..tool_results import control_summary
 from ..types import FieldRef, RunRef, StepRef, ThreadRef
-from . import prompts
+from .. import prompts
 
 if TYPE_CHECKING:
     from ..store import RunStore
@@ -91,7 +91,7 @@ async def permit(path: Path) -> AsyncIterator[None]:
 
 @lru_cache(maxsize=1)
 def compact_state() -> AgentState:
-    return prepare_builtin_state(prompts.load("compact.too"))
+    return prepare_builtin_state(prompts.load("defaults/compact.too"))
 
 
 @lru_cache(maxsize=1)

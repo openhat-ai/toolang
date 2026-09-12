@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from toolang.base.types.message import Message, MessageRole
 
 from ..message_delta import literal_delta, render_delta
-from ..control_messages import control_message
+from ..prompting import control_message
 from ..recall import recall_revisions
 from ..records import ControlRecord, RecallControlPayload, SteerControlPayload
 from ..types import (

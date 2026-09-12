@@ -39,7 +39,8 @@ from ..common import (
 from ..limits import _ModelAccounting
 from .._messages import _MessageBuffer
 from ..budget import InputEstimate
-from ..prepare import _AgicFrame, prepare_agic
+from ...prompting import output_repair_message
+from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 from ...runnables import (
@@ -209,7 +210,7 @@ async def execute(
                 module=binding.module,
             )
         )
-        prepared = prepare_agic(
+        prepared = build_agic_frame(
             execution,
             replace(current_binding, horizon=horizon),
             candidate,
@@ -272,7 +273,7 @@ async def execute(
     except ToolangOutputError:
         if not _can_repair_output(state, output_type):
             raise
-        state.messages.append(_output_repair_message(output_type))
+        state.messages.append(output_repair_message(output_type))
         state.repairing_output = True
         try:
             message = await _execute(state)
@@ -296,16 +297,6 @@ def _can_repair_output(state: _AgicState, type_name: str | None) -> bool:
         return False
     limit = state.limits.agic_model_calls
     return limit is None or state.model_calls < limit
-
-
-def _output_repair_message(type_name: str | None) -> Message:
-    if type_name is None:  # pragma: no cover - guarded by _can_repair_output
-        raise ValueError("output repair requires a declared type")
-    return Message.user(
-        f"Your previous response did not satisfy the required {type_name} output "
-        f"contract. Return only a corrected {type_name} value. Do not explain the "
-        "value, add a preface, or wrap it in Markdown code fences."
-    )
 
 
 async def _execute(state: _AgicState) -> Message | None:

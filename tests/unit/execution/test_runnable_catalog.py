@@ -13,7 +13,7 @@ from toolang.execution.runnables import (
     RUNNABLE_CATALOG_MAX_ENTRIES,
     RUNNABLE_DOCUMENTATION_MAX_CHARS,
     render_runnable_catalog,
-    render_runtime_instructions,
+    render_runnable_instructions,
     resolve_agic_routes,
 )
 from toolang.lang import Program
@@ -180,12 +180,12 @@ agic caller:
     }
 
 
-def test_runtime_instructions_omit_catalog_without_authored_routes() -> None:
+def test_runnable_instructions_omit_catalog_without_authored_routes() -> None:
     state = _state("agic caller:\n  Call.")
     caller = state.modules["agent"].find_agic("caller")
     assert caller is not None
 
-    rendered = render_runtime_instructions(
+    rendered = render_runnable_instructions(
         state,
         resolve_agic_routes(state, caller),
     )

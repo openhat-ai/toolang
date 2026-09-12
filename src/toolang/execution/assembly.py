@@ -15,7 +15,7 @@ from toolang.base.types.message import (
 
 from .message_delta import literal_delta, render_delta
 from .recall import recall_revisions
-from .control_messages import control_message
+from .prompting import control_message
 from .records import (
     CompactControlPayload,
     ControlRecord,

@@ -6,7 +6,7 @@ import pytest
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunLimits
-from toolang.execution.control_messages import control_message
+from toolang.execution.prompting import control_message
 from toolang.execution.message_delta import render_delta
 from toolang.execution.records import (
     CancelControlPayload,

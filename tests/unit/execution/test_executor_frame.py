@@ -33,7 +33,7 @@ from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
-from toolang.execution.executor.prepare import prepare_agic
+from toolang.execution.executor.frame import build_agic_frame
 from toolang.execution.assembly import recall_sources
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
@@ -211,7 +211,7 @@ def test_recall_values_map_to_current_history_only_when_near_is_selected() -> No
         assert ("near" in recall_sources(values)) is expected
 
 
-def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
+def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     provider = _provider()
@@ -296,7 +296,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,
@@ -325,7 +325,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     ]
 
 
-def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
+def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -399,7 +399,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,
@@ -413,7 +413,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
     assert "type: Text[]" not in prepared.instructions
 
 
-def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
+def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     provider = _provider()
     adapter = _Adapter()
@@ -480,7 +480,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,

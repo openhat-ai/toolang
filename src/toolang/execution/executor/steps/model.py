@@ -60,7 +60,7 @@ from ..limits import _ModelAccounting
 from . import tool as tool_step
 
 if TYPE_CHECKING:
-    from ..prepare import _AgicFrame
+    from ..frame import _AgicFrame
     from ..runs.agic import _AgicState
 
 _LOGGER = logging.getLogger(__name__)
@@ -372,16 +372,16 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
 
 def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
-    """Combine authored and runtime protocol only for an effective tool call."""
+    """Append tool guidance only when the model can use tools."""
 
-    runtime = (
-        prepared.runtime_instructions
+    tools = (
+        prepared.tool_instructions
         if prepared.model.tools and not state.repairing_output
         else ""
     )
-    if prepared.instructions and runtime:
-        return f"{prepared.instructions}\n\n{runtime}"
-    return prepared.instructions or runtime
+    if prepared.instructions and tools:
+        return f"{prepared.instructions}\n\n{tools}"
+    return prepared.instructions or tools
 
 
 def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:

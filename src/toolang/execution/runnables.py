@@ -310,7 +310,7 @@ def runnable_binding_defaults(
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
 
 
-def render_runtime_instructions(state: AgentState, routes: AgicRoutes) -> str:
+def render_runnable_instructions(state: AgentState, routes: AgicRoutes) -> str:
     """Render runtime guidance, adding a catalog only for authored routes."""
 
     if not routes.hands and not routes.handoffs:
