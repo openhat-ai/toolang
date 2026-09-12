@@ -1,7 +1,7 @@
 {{#has_psyches}}
 <capability-instructions>
 <psyches>
-<instruction>Apply these selected psyche prompts as agent behavior guidance.</instruction>
+<instruction>Use the selected psyches as behavior guidance.</instruction>
 <available>
 {{#psyches}}
 <psyche name="{{name}}">

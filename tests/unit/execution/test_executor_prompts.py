@@ -25,10 +25,10 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
 def test_bundled_protocol_requires_guidance_recall_before_use() -> None:
     prompt = prompts.load("protocol.default.md")
 
-    assert "Catalog metadata is only a selection index" in prompt
+    assert "Catalogs are an index, not loaded guidance" in prompt
     assert "call `_toolang__pick`" in prompt
     assert "only after that message is visible" in prompt
-    assert "service guidance is not a service connection" in prompt
+    assert "Picking a service does not connect" in prompt
 
 
 @pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])

@@ -1,18 +1,14 @@
 <filesystem>
-The fs tools accept workspace URIs: workspace://{name}/{path}. The path is relative to
-the named workspace root, independent of its physical host or container location.
-When fs.list is available, use path="workspace://" to discover current workspaces.
-The list can change when a new State publication takes effect. An earlier list
-does not grant access to a workspace that is no longer available.
-Percent-encode special characters in URI paths. Reuse the URIs returned by fs
-tools. Do not combine a workspace URI with the workspace argument.
-Plain paths require an explicit workspace argument. Agent home and the process
-working directory are not implicit filesystem roots; use me tools for agent state.
-These URIs are specific to fs tools; shell commands do not recognize them.
-A missing workspace or filesystem refusal is an authority boundary. Do not bypass
-it with parent traversal, an absolute host path, shell redirection, or a shell
-command; ask for an authorized workspace or use the current-agent tools instead.
-Workspace rules are recalled by runtime preflight. If rules were just loaded and
-an operation was not executed, check the supplied rules and retry if it complies.
-Continue directly without narrating routine rule loading; report real blockers.
+Use fs tools with workspace://{name}/{path}; paths are relative to the named workspace.
+If fs.list is available, use path="workspace://" to list current workspaces.
+Access follows the current State, not an earlier listing.
+Reuse returned URIs and percent-encode special path characters. Do not combine
+a workspace URI with a workspace argument. Plain paths require that argument.
+Agent home and the working directory are not implicit fs roots; use me tools for agent state.
+Shell commands do not resolve workspace URIs.
+If a workspace is missing or access is refused, ask for an authorized workspace
+or use current-agent tools. Do not bypass the boundary with traversal, host paths,
+redirection, or shell commands.
+When preflight loads rules without running an operation, check them and retry if allowed.
+Report blockers; skip routine rule-loading updates.
 </filesystem>
