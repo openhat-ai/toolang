@@ -1,291 +1,150 @@
-# Model input protocol and resource declarations
+# Model input protocol
 
-## Status and scope
+Design draft; implementation awaits human confirmation. Make model inputs clear
+and cache-friendly while preserving authorization, State adoption, recall, and
+recorded-call reconstruction. Only this document changes in this revision.
 
-Feature definition, awaiting human confirmation. No implementation is included.
-This consolidates the XML vocabulary, adapter-input ownership, and shared
-resource declaration/retraction semantics.
+## Layout
 
-The goal is one readable protocol that tells a Toolang agent what it is, how to
-interpret its instructions and messages, and when guidance is actually loaded.
-Keep stable instructions ahead of changing facts. Preserve provider interfaces,
-tool authorization, State adoption, recall selection, and exact recorded-call
-reconstruction.
-
-Current implementation uses `runtime-instructions`, overlapping capability
-wrappers, and the same skill/service names for catalogs and recalled bodies.
-Workspace mappings already come from each Tool Step's captured State, but are
-not recall targets. Far summaries are unframed user-role messages.
-
-This definition extends [workspace URIs](fs-workspace-uris.md) with recalled
-workspace descriptions and retains [message recording](model-message-recording.md).
-Do not add catalogs, update messages, action attributes, provider-specific
-prompt formats, or a separate notification subsystem.
-
-## Instructions
-
-`prompting.py` assembles the adapter's instructions in this order:
+Instructions use this order; repeat resource blocks as needed, without catalogs:
 
 ```xml
-<protocol>Shared rules and interpretation of the following sections.</protocol>
-<instruct>Agent-specific behavior.</instruct>
-<psyche ref="home://psyches/careful" revision="a1">Resident guidance.</psyche>
-<skill-info ref="home://skills/grammar" revision="b1">
-  <description>Toolang grammar guidance.</description>
-</skill-info>
-<service-info ref="home://services/issues" revision="c1">
-  <description>Issue-tracker integration.</description>
-</service-info>
-<runnable-info ref="agic:review" revision="d1">Authorized actions and input signature.</runnable-info>
-<execution-context>Current version, runnable, source, and environment facts.</execution-context>
+<toolang:protocol>Shared interpretation and rules.</toolang:protocol>
+<toolang:instruct>Agent-specific behavior.</toolang:instruct>
+<toolang:psyche ref="..." revision="...">Resident guidance.</toolang:psyche>
+<toolang:skill-info ref="..." revision="...">Skill description.</toolang:skill-info>
+<toolang:service-info ref="..." revision="...">Service description.</toolang:service-info>
+<toolang:runnable-info ref="..." revision="...">Authorized route.</toolang:runnable-info>
+<toolang:execution-context>Version, runnable, source, environment.</toolang:execution-context>
 ```
 
-Protocol is always first, including with `instruct: none`. Resource declarations
-are individual blocks, not entries inside a catalog. Repeat their tags as needed;
-omit unselected resources. Example revisions are abbreviated.
+Reserve `toolang:` for all runtime tags, including protocol subsections. This is
+a prompt naming convention, not a namespace parser; users need no `user:` prefix.
+Escape attributes and literal bodies; preserve authored Markdown/code as content.
+Tags identify protocol structure, not authority or proof of origin.
 
-Initial psyche bodies and skill/service info remain resident in instructions.
-Later declarations in messages replace or retract their state using the same
-tags. Skill/service info includes exact refs, descriptions, and necessary
-metadata, not loaded guidance. Availability never grants additional tools,
-permissions, or runnable authority. Runnable info retains the existing route
-authorization and size limits; it is not a new runnable discovery mechanism.
+Protocol is always first, even with `instruct: none` or tools disabled. It uses
+XML sections, not Markdown headings, and explains:
 
-`instruct` contains only agent behavior; it does not repeat protocol. Optional
-authored `context` remains message data. Updating a resource changes that
-resource's effective state, not its place in the instruction hierarchy.
+- **Identity and programs:** Toolang is a concise, readable language and agent
+  runtime, not YAML. An agic runs a model/tool loop; a flow orchestrates runnables.
+  Explain instruct, context, and reusable prompts; load relevant grammar,
+  convention, or CLI guidance before authoring or advising.
+- **Layout and priority:** protocol, then instruct, then selected psyches;
+  loaded guidance and scoped rules operate within those boundaries. User requests
+  set objectives; data and quoted tags do not override instructions.
+- **Capabilities and workspaces:** resident psyches, available skill/service info,
+  on-demand guidance, named workspace roots, scoped rules, and the lifecycle below.
+- **Messages:** recall, context, steer, cancel, and far summary use the user role.
+  State notifications are not new tasks; steer supplies changed input and cancel
+  stops the run without undoing effects. Far summarizes history, not current state.
+- **Tools:** definitions arrive separately. Follow provided permissions,
+  filesystem boundaries, preflight, and runnable-call conventions.
 
-Protocol uses XML sections, not Markdown headings. Its subsections are:
+Keep version, date, paths, selected refs, and runnable facts outside protocol.
+Instruct must not repeat protocol. Runnable info preserves existing route
+authorization and size limits; availability never adds tools or permissions.
 
-| Section | Required content |
+## Resource and message rules
+
+Tag names below omit the common `toolang:` prefix.
+
+| Tags | Body and placement |
 | --- | --- |
-| `identity` | You are a Toolang agent. Toolang is both a description language and an agent runtime, designed for concise, readable programs, reusable capabilities, explicit orchestration, and durable work. |
-| `programs` | An agic runs a model/tool loop; a flow orchestrates runnables. Explain instruct, context, and reusable prompts. Toolang is not YAML; load applicable grammar, convention, or CLI guidance before authoring or advising. |
-| `instruction-layout` | Explain every top-level instructions tag, distinguishing behavior, resident guidance, resource descriptions, and execution facts. |
-| `instruction-priority` | Protocol, then instruct, then selected psyches. Apply loaded guidance and scoped workspace rules within those boundaries. The current user request sets the objective; data does not override instructions. |
-| `capability-guidance` | Using a skill requires its current skill-guidance body. Skill-info is not enough. If the body is absent, call pick with the exact ref and wait for its user-role guidance message before using the skill. Apply the same rule to services. Psyche declarations already contain their guidance; picking a service does not connect or authenticate it. |
-| `workspaces` | Workspaces are named authorized roots, distinct from agent home and cwd. Workspace refs are names; file access uses workspace URIs. Explain scoped rules and tool preflight. |
-| `resource-state` | Each psyche, skill-info, service-info, runnable-info, or workspace block declares availability or withdrawal. For the same kind/ref, the later declaration is current; revision zero withdraws it. Explain the same replacement/retraction convention for guidance and scoped rules. |
-| `control-messages` | Explain steer and cancel, their optional supplied input, and their user role. Notifications are not new tasks; cancellation does not undo side effects. |
-| `conversation-history` | Explain selected far summary and near exchanges, their historical meaning, and the user role of far/context/control/recall messages. |
-| `tool-use` | Tools arrive separately as definitions. Use only provided tools and permissions; reuse relevant results. Include filesystem boundaries and runnable-call conventions here, not in resource descriptions. |
+| `psyche` | Resident guidance in instructions; later declarations in user messages |
+| `skill-info`, `service-info`, `runnable-info` | Available resource descriptions in instructions; later declarations in user messages |
+| `skill-guidance`, `service-guidance` | Loaded bodies in user messages |
+| `workspace`, `rules` | Workspace bindings and scoped rules in user messages |
+| `context`, `steer`, `cancel` | Call data and control input in user messages, not replaceable resources |
 
-Protocol is stable: no version, date, paths, current runnable, capability refs,
-or route descriptions inside it. General tool rules remain present when tools are
-disabled; they do not advertise availability. Changing facts belong at the end
-of instructions or in recorded messages, not in the protocol prefix.
+- **Replace or retract:** declarations carry the full state, with a body only
+  when needed. For the same kind/ref, the later declaration wins.
+  Body-bearing declarations may include `revision`; bodyless ones need not.
+  An empty, self-closing tag with `removed="true"` withdraws a resource;
+  omit `revision` on withdrawals. Without `removed`, it remains available even
+  without a body. Later declarations can restore availability; omission is not
+  withdrawal. No catalogs, patches, or separate update messages.
+- **Load before use:** using a skill requires its current, visible
+  `skill-guidance`. If absent, stale, or retracted, call `_toolang__pick` with
+  `kind="skill"` and the exact ref, then wait for the guidance message.
+  Info, memory, far summaries, and pick receipts are insufficient. If loading fails
+  or is unavailable, report the limitation, not successful skill use.
+  Services follow the same rule; picking does not connect or authenticate them.
+- **Separate availability from guidance:** retain skill/service recall targets for
+  bodies and add distinct info targets. Info must not satisfy guidance visibility
+  or pick deduplication. A definition change or withdrawal retracts stale guidance;
+  loading the replacement still requires pick. Hash definitions, not only metadata.
+- **Use current state:** reconcile initial instructions, selected history, and
+  pending messages against adopted State; append necessary declarations last.
+  Track visibility through structured references, never XML parsing or summaries.
+  Ordinary conversation, tool messages, and multimodal Parts retain their forms.
 
-XML labels express meaning, not a Toolang/runtime organizational hierarchy or
-additional authority. Escape metadata and literal instruction/context bodies.
-Describe tag names as text inside protocol; do not accidentally insert example
-opening tags into its structure. Preserve authored Markdown/code as content.
+## Workspaces
 
-## Messages and identity
-
-`history.py` assembles adapter messages using the existing recall selection and
-recorded sequence. It owns recalled-resource and control-message framing.
-`prompting.py` consumes the completed messages without selecting history again.
-
-| Content | XML tag | Replacement identity | Role |
-| --- | --- | --- | --- |
-| Psyche body | `psyche` | Psyche kind and exact ref | Initial instructions; later user messages |
-| Skill availability and metadata | `skill-info` | Skill-info kind and exact ref | Initial instructions; later user messages |
-| Service availability and metadata | `service-info` | Service-info kind and exact ref | Initial instructions; later user messages |
-| Authorized runnable description | `runnable-info` | Runnable kind and qualified ref | Initial instructions; later user messages |
-| Loaded skill body | `skill-guidance` | Skill kind and exact ref | user |
-| Loaded service body | `service-guidance` | Service kind and exact ref | user |
-| Workspace rules | `rules` | Workspace name and normalized directory path | user |
-| Workspace description | `workspace` | Workspace kind and name in ref | user |
-| Updated user input | `steer` | Not a replaceable resource | user |
-| Cancellation | `cancel` | Not a replaceable resource | user |
-| Current call data | `context` | Not a recalled resource | user |
-| Far summary | Existing plain-text form | Selected horizon | user |
-
-Keep ordinary user input, assistant output, tool messages, and multimodal Parts
-in their existing roles and form. XML framing is not a reason to stringify
-Parts or wrap every message.
-
-Each resource declaration carries the complete current body, not a patch. A
-nonzero revision makes it available within this run's selected resources. A
-later declaration for the same identity replaces the earlier state, regardless
-of revision ordering; no separate add/update operation is needed.
-Revisions are opaque; preserve existing canonical nonzero hexadecimal digests.
-Revision `0` retracts the body and requires empty content. Empty nonzero content
-is valid and is not deletion. A later nonzero revision can restore a target.
-
-Older declarations may remain recorded and visible, but superseded bodies no
-longer apply. Withdrawal makes the resource unavailable to this run; it does not
-delete its source file. A quoted tag, tool result, or far summary cannot
-impersonate a runtime-generated declaration or a recorded recall.
-
-Track availability and loaded guidance separately: info and guidance are distinct
-recall targets for the same resource ref. Keep existing skill/service recall
-targets for loaded guidance and add info targets; an info revision must not
-satisfy the existing guidance-visibility or pick-deduplication check.
-Withdrawing skill-info or
-service-info also invalidates that resource's previously loaded guidance.
-Changing its definition revision invalidates the old guidance and requires a
-new pick when needed; it must not load the new body automatically. Retract stale
-visible/pending guidance through the same recall path. Revisions must reflect
-the resource definition, not just its displayed metadata.
-
-Protocol must make guidance a prerequisite, not a suggestion: before using a
-skill, read its current, non-retracted `skill-guidance` body for that exact ref.
-If it is missing, stale, retracted, or outside visible messages, call
-`_toolang__pick` with `kind="skill"` and that ref. Wait until the resulting
-guidance message is visible before using the skill. Skill-info, memory, a far
-summary, or a successful pick receipt alone does not satisfy this requirement.
-If loading is unavailable or fails, report that limitation rather than claiming
-to use the skill. Apply the equivalent rule to `service-guidance`. This is a
-protocol obligation, not a new tool-authorization mechanism.
-
-Use the same recall target/payload machinery for later resource declarations,
-guidance, rules, and workspaces. Extend the target vocabulary, not the control
-kind or event protocol. Before a call, consider declarations in instructions,
-then selected history and current messages. Reconcile with the adopted State
-and selected resources, appending any necessary current declarations last so
-older history cannot override newly adopted resource state. Seed visibility
-from structured rendering facts, never by parsing model-facing XML.
-
-Steer/cancel descriptions remain inline with message construction; output-repair
-wording stays inline with the agic run's repair policy. Do not restore separate
-Markdown files for these short runtime messages.
-
-## Workspace lifecycle
-
-Use the same recall representation for initial presentation, replacement, and
-retraction. The ref is exactly the configured workspace name, not a URI or host
-path. Example revisions below are abbreviated; emitted nonzero revisions use
-the existing normalized 64-digit hexadecimal format.
+A workspace is an authorized named root, distinct from cwd and agent home.
+Its ref is the configured name; file access uses
+[workspace URIs](fs-workspace-uris.md). Rules use workspace name and normalized
+directory path as their identity. Protocol explains URI addressing once;
+workspace declarations are self-closing and need no body.
 
 ```xml
-<workspace ref="project" revision="a1">
-  Workspace root: workspace://project/
-</workspace>
-<workspace ref="project" revision="a2">
-  Workspace root: workspace://project/
-</workspace>
-<workspace ref="project" revision="0"></workspace>
+<toolang:workspace ref="project"/>
+<toolang:workspace ref="project" removed="true"/>
 ```
 
-- Add `WorkspaceRecallTarget(ref: str, kind="workspace")` to the existing recall
-  target union. Reuse `RecallControlPayload`, visibility, deduplication,
-  revision-zero retraction, and message deltas; add no new control kind.
-  Keep the content `TypedRef` even for empty retractions: current visibility
-  tracking depends on that reference. Paired empty tags avoid a special
-  self-closing-message path; their removal meaning is identical.
-- Derive a nonzero revision from the canonical name/root mapping captured in
-  State, not the whole State revision. Include the root in the digest so a
-  same-name remapping changes revision even when the displayed URI is unchanged.
-  The body contains the canonical workspace URI; do not expose the host root,
-  invent metadata, or probe the filesystem to construct the message.
-- Before a Model Step observes an adopted State, reconcile its workspaces with
-  visible and pending workspace recalls, in name order. Publish missing or
-  changed current entries; retract previously advertised active names absent
-  from that State. Unrelated State changes must not repeat unchanged entries.
-- Initial presentation uses those same per-workspace recalls. A currently empty
-  set needs only retractions for previously advertised names, not an empty
-  catalog or a new snapshot protocol. Unmentioned names are not implicitly
-  removed; only a revision-zero message retracts an advertised entry.
-- On removal or remapping, retract visible or pending rules belonging to the
-  old binding before further path-aware work relies on them. Load applicable
-  rules for the new binding through normal honor/preflight, without eagerly
-  scanning directories. Existing tool-level authorization remains decisive.
-- Re-present current entries when their bodies leave visible history, including
-  after compaction or with `recall = none`. These are current State facts, not
-  permission to restore omitted historical guidance. A far summary is never a
-  visibility baseline.
-- Emit only for State actually adopted by the run, not merely a watcher event
-  or an edit. Children reconcile against their own call boundary. Do not wake
-  idle agents or start new runs just to deliver these messages.
-- Record workspace recalls and consumed deltas through existing execution
-  boundaries before adapter invocation. Repeated preparation, interrupted
-  begins, and retries must not lose or duplicate notifications. No synthetic
-  Tool Step should be required to present a workspace.
+Workspace tags have no body or revision. Internally, hash the captured name/root
+binding, not the whole State; hide host paths and avoid filesystem probes.
+At each model call, reconcile visible/pending declarations in name order against
+adopted State. Emit missing or changed bindings, retract removed bindings, and suppress
+unchanged ones. Re-present current bindings after compaction or `recall = none`;
+do not restore omitted historical guidance. Each child uses its own adopted State.
 
-A removal means the binding is unavailable for later operations; it does not
-delete files or undo a started operation. An unavailable directory and a removed
-configuration binding are different: actual filesystem availability remains a
-tool result, not a fabricated workspace retraction.
+Removal/remapping also retracts old scoped rules; normal preflight loads applicable
+new rules without eager scanning. Withdrawal does not delete files or undo started
+tools. Filesystem errors are not binding removals. Watcher edits alone do not emit
+declarations or wake idle runs.
 
-## Assembly ownership and reconstruction
+## Implementation boundaries
 
-- `assembly/prompts/`: protocol, psyche/resource-info templates, execution-context,
-  and `defaults/{instruct.md,context.md,compact.too}`. No tools template;
-  filesystem and runnable conventions belong to protocol.
-- `assembly/prompting.py`: render reusable instructions and build the complete
-  provider-neutral `ModelCall` from those instructions, finished messages,
-  `ToolDefinition` values, output schema, continuation, and output budget.
-- `assembly/history.py`: select/reconstruct historical context and compose
-  messages, including recall/control framing. Preserve initial authored-message
-  and context behavior while bringing message composition under this owner.
-- `assembly/utils.py`: pure text/Part/delta helpers, not recall policy.
-- `executor/frame.py` and model-step boundaries: resolve concrete resources,
-  runtime facts, adopted State, workspace recall reconciliation, and tool policy.
-  Assembly does not read State stores or decide when State becomes effective.
-- `executor/message_buffer.py`, `recall.py`, and `records.py`: live pending
-  deltas, recall identities/visibility, and durable codecs respectively.
-- Adapters alone translate tool definitions and messages into provider APIs.
-  Do not generate prompt text from tool schemas.
+- `assembly/prompts/`: static protocol/resource/context content and
+  `defaults/{instruct.md,context.md,compact.too}`; no `tools.md`.
+- `assembly/prompting.py`: render instructions and build adapter-ready
+  `ModelCall` from finished messages, structured tool definitions, schema,
+  continuation, and budget. Adapters own provider-specific serialization.
+- `assembly/history.py`: history selection and message/control/recall framing;
+  `utils.py`: pure helpers. Keep steer/cancel wording inline here and output
+  repair in the agic run, not separate prompt files.
+- Executor frame/model-step boundaries own runtime facts, State reconciliation,
+  and tool policy. Extend recall types/codecs with info targets and
+  `WorkspaceRecallTarget(ref, kind="workspace")`; reuse existing recall controls,
+  message buffering and durable deltas. Track bodyless declarations through
+  optional persisted recall-control references per message, not dummy body refs
+  or parsed XML. Retain legacy body-reference lookup for old records.
+  No new event kind or synthetic Tool Step.
+- Keep canonical 64-digit revisions and revision zero for internal recall and
+  persistence. Render zero as `removed="true"`, not `revision="0"`; omit revision
+  for bodyless declarations. Internal revisions still distinguish workspace remaps.
+- Record framing before invocation; retries/interruption must not lose or duplicate
+  deltas. Follow [message recording](model-message-recording.md): replay stored
+  templates, never current State or new renderers. Explain legacy skill/service
+  tags as guidance. Far stays existing plain user-role text; new framing is deferred.
 
-Record new XML framing as literal template segments while retaining referenced
-recall bodies. Never rerender old message templates with new tag names or read
-current resource configuration during reconstruction. Historic skill/service
-recall wrappers retain their recorded meaning; protocol should explain them as
-historical equivalents of the new guidance tags, not as resource-info blocks.
+## Acceptance
 
-Far remains a leading user-role text message when selected and nonempty. This
-definition does not add a far-summary wrapper: its current framing is not stored
-in each delta, so silently changing it would alter reconstructed older calls.
-A separate persisted-format decision is required before changing that framing.
+Extend existing offline execution unit/integration and architecture tests:
 
-## Implementation touchpoints
+- Stable protocol, instruction order, prefixed/escaped tags, tool-disabled calls,
+  mandatory guidance/pick delivery and failure, and structured adapter inputs.
+- Resource replacement, `removed="true"` withdrawal/restoration, empty bodies,
+  internal revision-zero mapping, stale-guidance invalidation, distinct info/body
+  visibility, and older history versus new State.
+- Bodyless, self-closing workspace declarations and their visibility/deduplication;
+  add/remove/remap/re-add, unchanged bindings, child runs, scoped rules, hidden
+  host paths, `recall = none`, and compaction.
+- Steer/cancel role, order, and input; exact replay across restart, reload,
+  interruption, retry, compaction, and legacy framing, without flattened Parts.
 
-Likely changes are limited to execution assembly and its prompt resources;
-`runnables.py` for data-only runnable descriptions; executor frame, message buffer,
-model-step and recall production; execution recall types/codecs; and Store
-reconstruction imports. Update `docs/executor.md` after implementation.
-
-Extend existing tests in `tests/unit/execution/` for prompting, framing, recall,
-and record codecs; `tests/integration/execution/` for guidance loading, rules,
-workspace URIs, model assembly, State reload, compaction, and Step commitment;
-and architecture tests for assembly boundaries. Keep all tests offline.
-
-## Acceptance and risks
-
-- Instructions have the declared order; XML framing is unambiguous and escaped.
-  Protocol is identical across changing agent/runtime facts, selected resources,
-  and tool-disabled/output-repair calls. No Markdown section headings are used
-  inside protocol. Instruct selection never removes protocol.
-- Resource info cannot be mistaken for loaded guidance. Test initial declarations,
-  later replacements/retractions, restoration, pick delivery, stale guidance
-  invalidation, empty nonzero bodies, and refs containing markup characters.
-  Old history must not override new initial declarations. No catalog or update
-  wrapper is emitted.
-- Protocol explicitly requires current skill-guidance before skill use. Verify
-  that pick delivers the exact requested body into the next call's user messages;
-  info-only presence, pick receipts, and summarized or retracted guidance are
-  not treated as loaded bodies. Cover unavailable/failed pick without claiming
-  successful loading.
-- Workspace add, remove, same-name remap, remove/re-add, unchanged binding,
-  independent child runs, `recall = none`, and compaction use the same recall
-  path. Ref is the name, URI encoding is canonical, and host roots stay hidden.
-- Rules for removed/remapped workspaces are not reused; already-started tools
-  retain existing prepared-operation semantics. Denial cannot be bypassed by
-  workspace notifications, stale summaries, cwd, or agent home.
-- Steer/cancel retain roles, ordering, optional input, and cancellation behavior.
-  Far remains historical user-role content, not current instructions or recall.
-- Compare adapter requests with durable reconstruction before and after restart,
-  reload, interrupted boundaries, retry, and compaction, including legacy
-  framing. No duplicate deltas, live-State reads in replay, or Parts flattened
-  into text. Tool definitions and output contracts remain structured.
-- Run Ruff, Ruff format, ty, and the complete default pytest suite; verify bundled
-  prompt resources in the built wheel. Live-provider tests remain opt-in.
-
-The principal risks are stale workspace/rules visibility, treating user-role
-notifications as new tasks, accidental elevation of resource metadata, and replay
-drift. The acceptance cases above are required, not optional cleanup.
-
-Open decision: human confirmation of this consolidated definition before
-implementation. New far-summary framing is explicitly deferred, not an implied
-implementation choice.
+Run Ruff, format checks, ty, and default pytest; verify packaged prompt resources.
+After implementation, update `docs/executor.md`. Main risks are stale resource/rule
+state, metadata mistaken for guidance, notifications mistaken for tasks, and replay
+drift. Human confirmation remains required before implementation.
