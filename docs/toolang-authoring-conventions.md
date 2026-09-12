@@ -53,6 +53,92 @@ flow research:
   Write an answer supported by the strongest findings.
 ```
 
+## Stable Grouping
+
+Keep adjacent declarations or directive-like statements together by category.
+Within a category, use no blank lines and preserve the author's original order;
+do not alphabetize or otherwise sort the entries. Separate categories with at
+most one blank line when the distinction improves readability.
+
+```too
+with psyche briceyan/concise
+with psyche briceyan/safety
+
+with skill briceyan/review
+with skill briceyan/verification
+```
+
+Apply the same stable grouping to resource directives inside an agic. Do not
+move executable flow statements across one another merely to make groups.
+
+## Default Capabilities
+
+Psyches, skills, and services available to an agic are not normally repeated
+inside it. Omit the corresponding directives when the default set is correct.
+Declare `psyches`, `skills`, or `services` only to narrow or deliberately
+change that selection.
+
+```too
+agic diagnose:
+  tools = fs/read, shell/execute
+
+  Diagnose {{_}} using the available Toolang guidance.
+```
+
+Here the tool boundary is intentional; repeating every available psyche and
+skill would add noise without changing the runnable.
+
+## Context And Instruct Declarations
+
+Prefer top-level `context` and `instruct` declarations over inline blocks. This
+keeps reusable data and agent behavior separate from runnable resources and
+messages.
+
+When the program has only one declaration of a kind, it may be unnamed. The
+unnamed declaration is the program default, so an agic that uses it does not
+need a selector:
+
+```too
+context:
+  The current project belongs to {{agent.name}}.
+
+instruct:
+  Review evidence carefully and distinguish facts from assumptions.
+
+agic review:
+  Review {{_}} and return prioritized findings.
+```
+
+Name declarations and select them with `context: name` or `instruct: name`
+when the program offers multiple choices or the name clarifies a reusable
+role.
+
+Use an inline `context:` or `instruct:` only when it is short, specific to one
+agic, and a name would add indirection without clarifying ownership. Do not
+duplicate the same inline body across runnables.
+
+## Messages
+
+Write a message on the same line as its role when its content fits on one line:
+
+```too
+agic continue_conversation:
+  user: Review the current conclusion.
+  assistant: The conclusion needs stronger evidence.
+  user: Revise it using {{_}}.
+```
+
+When an agic has only one user message, omit the role and write the message
+directly. Toolang treats it as the runnable's user request:
+
+```too
+agic review:
+  Review {{_}} and return prioritized findings.
+```
+
+Use an explicit role when multiple messages form a conversation or an
+`assistant` turn must be represented.
+
 ## Type Annotations
 
 Omit parameter and return types when Toolang's defaults already express the
