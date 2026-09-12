@@ -22,6 +22,7 @@ from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
 from toolang.common.template import render_text_template
+from toolang.common.version import toolang_version
 from toolang.lang.ast import (
     AgicDecl,
     Message as AstMessage,
@@ -55,7 +56,9 @@ if TYPE_CHECKING:
     from .executor import _Execution
 
 _LOGGER = logging.getLogger(__name__)
+_PROTOCOL_TEMPLATE = prompts.load("protocol.default.md")
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
+_CAPABILITY_INSTRUCTIONS_TEMPLATE = prompts.load("capabilities.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
 _PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
 
@@ -255,6 +258,22 @@ def _render_instructions(
     agic: AgicDecl,
     context: dict[str, object],
 ) -> str:
+    protocol = render_text_template(_PROTOCOL_TEMPLATE, context).strip()
+    instruct = _render_selected_instruct(program, agic, context)
+    agent = (
+        f"<agent-instructions>\n{instruct}\n</agent-instructions>" if instruct else ""
+    )
+    capabilities = render_text_template(
+        _CAPABILITY_INSTRUCTIONS_TEMPLATE, context
+    ).strip()
+    return "\n\n".join(part for part in (protocol, agent, capabilities) if part)
+
+
+def _render_selected_instruct(
+    program: Program,
+    agic: AgicDecl,
+    context: dict[str, object],
+) -> str:
     name = agic.instruct
     if name == "none":
         return ""
@@ -386,6 +405,7 @@ def _runtime_context(
     runtime: dict[str, object] = {
         "date": context.date,
         "timezone": context.timezone,
+        "toolang": {"version": toolang_version()},
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,

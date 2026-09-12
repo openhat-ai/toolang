@@ -631,3 +631,11 @@ authored agic messages and current primary input
 Runtime protocol cannot be overridden by an agic. Context remains data rather
 than instructions and is prepended to the final user content. Tool definitions
 remain structured model API input rather than prompt text.
+
+The runtime protocol is always present, including when an agic selects a named
+or inline `instruct`, declares a program-default `instruct`, or uses
+`instruct: none`. An instruct changes only the agent-specific layer. Selected
+psyches remain capability instructions, while skill and service catalogs and
+their guidance-loading rules remain in the runtime protocol. Catalog metadata
+does not contain a skill or service body; the model must recall applicable
+guidance through the runtime pick tool before using it.

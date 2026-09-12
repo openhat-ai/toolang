@@ -9,6 +9,9 @@ tools. Do not combine a workspace URI with the workspace argument.
 Plain paths require an explicit workspace argument. Agent home and the process
 working directory are not implicit filesystem roots; use me tools for agent state.
 These URIs are specific to fs tools; shell commands do not recognize them.
+A missing workspace or filesystem refusal is an authority boundary. Do not bypass
+it with parent traversal, an absolute host path, shell redirection, or a shell
+command; ask for an authorized workspace or use the current-agent tools instead.
 Workspace rules are recalled by runtime preflight. If rules were just loaded and
 an operation was not executed, check the supplied rules and retry if it complies.
 Continue directly without narrating routine rule loading; report real blockers.

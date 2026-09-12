@@ -28,6 +28,7 @@ from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.common.version import toolang_version
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
@@ -312,6 +313,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
     assert "You are the alice Toolang agent." in prepared.instructions
+    assert f"toolang_version: {toolang_version()}" in prepared.instructions
     assert "sandbox: docker:python:3.13-slim" in prepared.instructions
     assert "system: Linux 6.0 (aarch64)" in prepared.instructions
     assert "working_directory: /workspace" in prepared.instructions

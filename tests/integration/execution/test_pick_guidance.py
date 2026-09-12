@@ -71,7 +71,14 @@ def _answer():
     return ModelCallResult(message=Message.assistant("done"))
 
 
-def _harness(tmp_path, responses, *, source=SOURCE, content=GUIDANCE):
+def _harness(
+    tmp_path,
+    responses,
+    *,
+    source=SOURCE,
+    content=GUIDANCE,
+    psyche: str | None = None,
+):
     layout = AgentLayout.resident(tmp_path, "alice")
     skill = layout.home / "skills/testing/SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -83,6 +90,10 @@ def _harness(tmp_path, responses, *, source=SOURCE, content=GUIDANCE):
     service.parent.mkdir(parents=True)
     _write_guidance(service, content)
     _write_guidance(service.with_name("private.md"), "Unselected service guidance.")
+    if psyche is not None:
+        psyche_path = layout.home / "psyches/precise.md"
+        psyche_path.parent.mkdir(parents=True)
+        psyche_path.write_text(psyche, encoding="utf-8")
     layout.program.write_text(source, encoding="utf-8")
     watcher = StateWatcher(layout)
     harness = ExecutionHarness.create(
@@ -125,6 +136,74 @@ def _assert_replay_without_state(harness, tracer, monkeypatch):
 
     monkeypatch.setattr(StateCap, "read_content", forbidden)
     assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_custom_instruct_preserves_runtime_protocol_and_guidance_catalog(
+    tmp_path: Path,
+) -> None:
+    harness, _ = _harness(
+        tmp_path,
+        [_answer()],
+        source="""
+instruct:
+  Diagnose Toolang problems precisely.
+
+agic chat() -> Text:
+  context: none
+  user: Complete the task.
+""",
+        psyche="Apply the precise psyche.",
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                )
+            )
+            assert run.status == "succeeded", run.error
+            instructions = harness.adapter.invocations[0].call.instructions
+            assert "<runtime-instructions>" in instructions
+            assert "Diagnose Toolang problems precisely." in instructions
+            assert "<agent-instructions>" in instructions
+            assert "Apply the precise psyche." in instructions
+            assert 'ref="home://skills/testing"' in instructions
+            assert 'ref="home://services/github"' in instructions
+            assert "_toolang__pick" in instructions
+
+    asyncio.run(scenario())
+
+
+def test_instruct_none_removes_only_agent_specific_instructions(tmp_path: Path) -> None:
+    harness, _ = _harness(
+        tmp_path,
+        [_answer()],
+        source="""
+agic chat() -> Text:
+  instruct: none
+  context: none
+  user: Complete the task.
+""",
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                )
+            )
+            assert run.status == "succeeded", run.error
+            instructions = harness.adapter.invocations[0].call.instructions
+            assert "<runtime-instructions>" in instructions
+            assert "<agent-instructions>" not in instructions
+            assert 'ref="home://skills/testing"' in instructions
+            assert 'ref="home://services/github"' in instructions
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("kind", ["skill", "service"])
