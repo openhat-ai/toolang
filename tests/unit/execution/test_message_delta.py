@@ -16,13 +16,9 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall
 from toolang.execution.events import StepBegin, run_event_from_data, run_event_to_data
-from toolang.execution.executor._messages import _MessageBuffer
-from toolang.execution.message_delta import (
-    delta_from_data,
-    delta_to_data,
-    literal_delta,
-    render_delta,
-)
+from toolang.execution.executor.message_buffer import _MessageBuffer
+from toolang.execution.assembly.utils import literal_delta, render_delta
+from toolang.execution.records import delta_from_data, delta_to_data
 from toolang.execution.types import (
     FieldRef,
     Local,
@@ -138,7 +134,7 @@ def test_adopted_values_do_not_share_mutable_tool_data() -> None:
 def test_buffer_only_renders_additions_and_groups_unsaved_tool_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import toolang.execution.executor._messages as module
+    import toolang.execution.executor.message_buffer as module
 
     buffer = _MessageBuffer((Message.user("start"),))
     assert len(buffer.take_delta().messages) == 1

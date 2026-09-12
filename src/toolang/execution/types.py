@@ -1369,6 +1369,8 @@ class MessageTemplate:
 
     role: MessageRole
     segments: tuple[str | Part | TypedRef, ...]
+    recall: ControlRef | None = None
+    escape_text: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1895,8 +1897,45 @@ class ServiceRecallTarget:
     kind: Literal["service"] = field(default="service", init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class PsycheRecallTarget:
+    ref: str
+    kind: Literal["psyche"] = field(default="psyche", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SkillTriggerRecallTarget:
+    ref: str
+    kind: Literal["skill-trigger"] = field(default="skill-trigger", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceTriggerRecallTarget:
+    ref: str
+    kind: Literal["service-trigger"] = field(default="service-trigger", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableRecallTarget:
+    ref: str
+    kind: Literal["runnable-info"] = field(default="runnable-info", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRecallTarget:
+    ref: str
+    kind: Literal["workspace"] = field(default="workspace", init=False)
+
+
 RecallTarget = Annotated[
-    RulesRecallTarget | SkillRecallTarget | ServiceRecallTarget,
+    RulesRecallTarget
+    | SkillRecallTarget
+    | ServiceRecallTarget
+    | PsycheRecallTarget
+    | SkillTriggerRecallTarget
+    | ServiceTriggerRecallTarget
+    | RunnableRecallTarget
+    | WorkspaceRecallTarget,
     Field(discriminator="kind"),
 ]
 ControlTiming = Literal["immediate", "next_step", "next_call"]

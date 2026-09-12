@@ -17,11 +17,11 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
 from toolang.base.types.run import ModelCall
 from toolang.execution.errors import HistoryChangedError
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, RunRecord, StepRecord
-from toolang.execution.run_view import RunView
+from toolang.execution.inspection.views import RunView
 from toolang.execution.store import RunStore
-from toolang.execution.thread_view import ThreadView
+from toolang.execution.inspection.views import ThreadView
 from toolang.execution.values import parts_from_local
 from toolang.execution.types import (
     Output,

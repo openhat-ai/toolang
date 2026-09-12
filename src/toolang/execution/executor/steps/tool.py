@@ -32,9 +32,9 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
-from ...tool_results import workspace_reply, workspace_reply_from_step
+from ...assembly.tool_replies import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
-from ...tools.agent_state.types import AgentStateToolContext
+from ...tools.me.types import MeToolContext
 from ...types import (
     ControlRef,
     ErrorMessage,
@@ -787,5 +787,5 @@ def _tool_context(
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":
-        return AgentStateToolContext(*args, layout=layout)
+        return MeToolContext(*args, layout=layout)
     return ToolContext(*args)

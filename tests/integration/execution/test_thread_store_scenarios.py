@@ -21,7 +21,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     StepRecord,
     StoredModelStepGiven,

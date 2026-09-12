@@ -32,9 +32,9 @@ from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
-from toolang.execution.executor.prepare import prepare_agic
-from toolang.execution.assembly import recall_sources
-from toolang.execution.history import RunHistory
+from toolang.execution.executor.frame import build_agic_frame
+from toolang.execution.assembly.messages import recall_sources
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     StoredModelStepGiven,
@@ -210,7 +210,7 @@ def test_recall_values_map_to_current_history_only_when_near_is_selected() -> No
         assert ("near" in recall_sources(values)) is expected
 
 
-def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
+def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     provider = _provider()
@@ -255,6 +255,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -295,7 +296,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,
@@ -311,19 +312,20 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert prepared.adapter is adapter
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
-    assert "You are the alice Toolang agent." in prepared.instructions
-    assert "sandbox: docker:python:3.13-slim" in prepared.instructions
-    assert "system: Linux 6.0 (aarch64)" in prepared.instructions
-    assert "working_directory: /workspace" in prepared.instructions
-    assert "date: 2026-01-01" in prepared.prompt_context
-    assert "timezone: UTC" in prepared.prompt_context
-    assert "agent_name: alice" in prepared.prompt_context
-    assert [message_text(message.parts) for message in prepared.messages] == [
-        prepared.prompt_context + "\n\nAnswer: hello; focus=events",
+    assert "You are the alice Toolang agent." in prepared.prompt.instructions
+    assert "toolang_version:" not in prepared.prompt.instructions
+    assert "sandbox: docker:python:3.13-slim" not in prepared.prompt.instructions
+    assert "system: Linux 6.0 (aarch64)" not in prepared.prompt.instructions
+    assert "working_directory: /workspace" not in prepared.prompt.instructions
+    assert "date: 2026-01-01" in prepared.prompt.context
+    assert "timezone: UTC" in prepared.prompt.context
+    assert "model_provider: test" in prepared.prompt.context
+    assert [message_text(message.parts) for message in prepared.prompt.messages] == [
+        prepared.prompt.context + "\n\nAnswer: hello; focus=events",
     ]
 
 
-def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
+def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -358,6 +360,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -397,7 +400,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,
@@ -407,11 +410,11 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         },
     )
 
-    assert "<output-contract>" not in prepared.instructions
-    assert "type: Text[]" not in prepared.instructions
+    assert "<output-contract>" not in prepared.prompt.instructions
+    assert "type: Text[]" not in prepared.prompt.instructions
 
 
-def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
+def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     provider = _provider()
     adapter = _Adapter()
@@ -444,6 +447,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -478,7 +482,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         ),
     )
 
-    prepared = prepare_agic(
+    prepared = build_agic_frame(
         context,
         run,
         agic,
@@ -488,8 +492,8 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         },
     )
 
-    assert prepared.messages[-1].parts == (
-        TextPart(prepared.prompt_context + "\n\nReview this diagram "),
+    assert prepared.prompt.messages[-1].parts == (
+        TextPart(prepared.prompt.context + "\n\nReview this diagram "),
         image,
         TextPart(" with "),
         document,
@@ -546,6 +550,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             program=Program(agics=(agic,), span=Span(1)),
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             root_config={},
             home_config={},
             revision="0" * 64,

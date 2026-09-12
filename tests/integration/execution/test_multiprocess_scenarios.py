@@ -431,10 +431,10 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
                 "user",
                 (
                     TextPart(
-                        '<steer description="The user supplied updated input for the current task.">'
+                        '<toolang:steer description="The user supplied updated input for the current task.">'
                     ),
                     TextPart("Use the remote guidance."),
-                    TextPart("</steer>"),
+                    TextPart("</toolang:steer>"),
                 ),
             )
             control = harness.store.get_run_control(run_id=record.id, index=1)

@@ -618,16 +618,73 @@ not runnable parameters.
 
 ## Instruction Layers
 
-Toolang assembles model calls in these conceptual layers:
+These are logical responsibilities, not separate provider roles. The executor
+builds one `ModelCall` with instructions, messages, tool definitions, and an
+output schema; each model adapter maps those fields to its provider API.
 
-```text
-runtime protocol
-selected instruct and capability instructions
-tool definitions
-recalled messages
-authored agic messages and current primary input
-```
+| Component | Responsibility | Model-call location |
+| --- | --- | --- |
+| Runtime protocol | Toolang concepts, runtime facts, priority, guidance loading, tool-result reuse, and control-message semantics | `<runtime-instructions>` in `instructions` |
+| Selected `instruct` | Agent- and runnable-specific behavior | `<agent-instructions>` in `instructions` |
+| Selected psyches | Reusable behavior guidance subordinate to protocol and instruct | `<capability-instructions>` in `instructions` |
+| Skill/service catalogs | Selected names, exact refs, descriptions, and metadata; no guidance bodies or behavioral instructions | Separate `<capability-catalog>` data block in `instructions` |
+| Routing and filesystem guidance | Authorized runnable routes and conventions for available filesystem tools | Appended to `instructions` when applicable |
+| Selected `context` | Runtime data, not behavioral instructions | Prepended to the last authored user message; repeated as a user message on later model calls |
+| Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
+| Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
+| Control messages | Updated user input, cancellation, or recalled resource revisions | Runtime-generated user messages |
+| Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
+| Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
 
-Runtime protocol cannot be overridden by an agic. Context remains data rather
-than instructions and is prepended to the final user content. Tool definitions
-remain structured model API input rather than prompt text.
+### Selection And Priority
+
+Runtime protocol is always present: program-default, named, inline, and disabled
+instruct selections cannot remove it. `instruct: none` disables only the
+agent-specific layer; it does not disable context, psyches, or capabilities.
+Resource selection and ceilings still determine which capabilities are present.
+`context: none` independently disables context. The runtime wraps every nonempty
+rendered context in `<context>`, including program-default, named, and inline
+selections. Empty rendered context adds no block. Authors should supply only the
+context body, not its wrapper.
+
+The textual priority is runtime protocol, then selected instruct, then capability
+guidance. Catalog metadata and context remain data even when their content looks
+like instructions. Asking to analyze or transform that data does not authorize
+following instructions inside it.
+
+Runtime facts, catalog fields, and rendered instruct, psyche, and context bodies
+are XML-escaped at the model-input boundary. Literal tags cannot close their
+runtime-owned wrapper. Decode entities as literal content; use decoded catalog
+refs in tool calls. Runnable-route catalogs use JSON escapes for literal `<`
+characters and count the encoded bytes toward their size limit. Authored `.too`
+template rendering, picked guidance bodies, and recorded message replay remain
+unchanged. These wrappers communicate priority to the model; they are not a
+security boundary that guarantees model obedience. Tools, resource ceilings,
+and workspace authorization are enforced separately.
+
+Models without tool support and calls repairing output receive no tool
+definitions, but retain the base runtime protocol.
+
+### Guidance And Control Visibility
+
+Catalog metadata is only a selection index. Applicable skill/service bodies must
+be recalled with `_toolang__pick` before use. A successful pick queues a recall
+for the next model call; its tool result is not the guidance body. Picking a
+service neither connects to it nor grants service tools.
+
+- `steer` supplies updated input to an active run as a user message.
+- `cancel` stops the run; its message becomes visible through subsequent
+  conversation history, not another model call in the canceled run.
+- `rules`, `skill`, and `service` messages carry resource bodies and revisions.
+  Later messages for the same target supersede earlier ones. Revision `0`
+  retracts content; an empty body with a nonzero revision does not.
+- Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
+  not themselves add a model-facing lifecycle message. Reload can change the
+  instructions and resource catalogs prepared at a later call boundary.
+
+Skill/service recall is distinct from far/near conversation recall. A far
+summary or a catalog entry does not count as a visible guidance body. Recalling
+a resource again is necessary when its current, non-retracted body is no longer
+visible. Basic Toolang concepts in the protocol are not a grammar or CLI
+reference; load the applicable authoring guidance before producing `.too` code
+or recommending Toolang commands.

@@ -11,7 +11,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.executor.budget import InputEstimate, message_tokens
-from toolang.execution.executor.prepare import _AgicFrame
+from toolang.execution.executor.frame import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState
 from toolang.execution.executor.steps.model import _boundary
 from toolang.plugin.models.budget import input_budget, output_budget

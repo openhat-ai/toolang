@@ -18,7 +18,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
-from toolang.execution import assembly
+from toolang.execution.assembly import messages as execution_messages
 from toolang.execution.records import (
     ControlRecord,
     RunControlPayload,
@@ -79,6 +79,101 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
         ),
         tracer=tracer,
     )
+
+
+@pytest.mark.parametrize(
+    "declarations,selection,expected",
+    [
+        pytest.param("", "", "model_provider: test", id="bundled"),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "",
+            "Private context for alice.",
+            id="program-default",
+        ),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "  context: default\n",
+            "Private context for alice.",
+            id="explicit-default",
+        ),
+        pytest.param(
+            "context: Unselected context.\ncontext report: Private context for {{agent.name}}.\n",
+            "  context: report\n",
+            "Private context for alice.",
+            id="named",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context:\n    Private context for {{agent.name}}.\n",
+            "Private context for alice.",
+            id="inline",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context: none\n",
+            None,
+            id="none",
+        ),
+    ],
+)
+def test_context_selection_keeps_data_and_current_input_out_of_instructions(
+    tmp_path: Path, declarations, selection, expected
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            declarations
+            + "instruct: Agent behavior.\n"
+            + "agic chat(_: Text) -> Text:\n"
+            + selection
+            + "  user: {{_}}\n"
+        ),
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("Current user objective."),),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            (invocation,) = harness.adapter.invocations
+            call = invocation.call
+            assert call.instructions.startswith("<toolang:protocol>")
+            assert (
+                "<toolang:instruct>\nAgent behavior.\n</toolang:instruct>"
+                in call.instructions
+            )
+            assert "Current user objective." not in call.instructions
+            assert "Unselected context." not in call.instructions
+            (message,) = call.messages
+            assert message.role == "user"
+            text = message_text(message.parts)
+            assert text.endswith("Current user objective.")
+            assert text.count("Current user objective.") == 1
+            assert "Agent behavior." not in text and "Unselected context." not in text
+            if expected is None:
+                assert message == Message.user("Current user objective.")
+            else:
+                assert expected not in call.instructions
+                assert text.count(expected) == 1
+                assert text.startswith("<toolang:context>\n")
+                assert (
+                    text.count("<toolang:context>")
+                    == text.count("</toolang:context>")
+                    == 1
+                )
+                assert text.endswith("</toolang:context>\n\nCurrent user objective.")
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
 
 
 def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
@@ -404,7 +499,7 @@ def test_each_call_records_context_without_rerendering_history(
     reads = []
     renderings = []
     read = harness.store.list_steps_for_runs
-    render = assembly.render_delta
+    render = execution_messages.render_delta
 
     def read_steps(*, run_ids):
         reads.append(tuple(run_ids))
@@ -422,7 +517,7 @@ def test_each_call_records_context_without_rerendering_history(
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
             monkeypatch.setattr(harness.store, "list_steps_for_runs", read_steps)
-            monkeypatch.setattr(assembly, "render_delta", render_history)
+            monkeypatch.setattr(execution_messages, "render_delta", render_history)
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             assert reads == [(first.id, second.id)]
@@ -439,7 +534,9 @@ def test_each_call_records_context_without_rerendering_history(
             for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
-                        message_text(message.parts).count(context or "<context>")
+                        message_text(message.parts).count(
+                            context or "<toolang:context>"
+                        )
                         for message in messages
                     )
                     == count
@@ -448,7 +545,7 @@ def test_each_call_records_context_without_rerendering_history(
                 if isinstance(step.given, StoredModelStepGiven):
                     assert (
                         sum(
-                            segment.count(context or "<context>")
+                            segment.count(context or "<toolang:context>")
                             for message in step.given.call.delta.messages
                             for segment in message.segments
                             if isinstance(segment, str)
@@ -459,7 +556,7 @@ def test_each_call_records_context_without_rerendering_history(
 
     asyncio.run(scenario())
     monkeypatch.setattr(
-        assembly,
+        execution_messages,
         "control_message",
         lambda _control: pytest.fail("replay must use saved templates"),
     )

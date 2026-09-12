@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.tool import ToolResult
-from toolang.execution.tools.runtime import RuntimeToolset
+from toolang.execution.tools._toolang import ToolangToolset
 from toolang.plugin.toolsets.filesystem import FilesystemToolset
 from toolang.plugin.toolsets.history import HistoryToolset
 from toolang.plugin.toolsets.shell import ShellToolset
@@ -175,7 +175,7 @@ def test_history_describes_the_target_without_displaying_cursors_or_records(
 
 
 def test_honor_only_describes_rule_files_when_result_supplies_them():
-    tool = RuntimeToolset().tools()["honor"]
+    tool = ToolangToolset().tools()["honor"]
     arguments = {"paths": [{"workspace": "repo", "path": "/src/file"}]}
     assert tool.summary(arguments) == "Loading rules..."
     assert tool.summary(arguments, ToolResult(error="failed")) == "Failed to load rules"
@@ -220,13 +220,13 @@ def test_pick_uses_a_display_label_without_changing_the_resource_ref(
         "failed": f"Failed to load guidance: {kind}/testing",
     }
     assert (
-        RuntimeToolset().tools()["pick"].summary(arguments, result) == wording[status]
+        ToolangToolset().tools()["pick"].summary(arguments, result) == wording[status]
     )
     assert arguments == {"kind": kind, "ref": f"{scope}://{kind}s/testing"}
 
 
 def test_pick_keeps_remote_resource_identity_in_its_label():
     arguments = {"kind": "skill", "ref": "https://example.com/team/testing"}
-    assert RuntimeToolset().tools()["pick"].summary(arguments, ToolResult()) == (
+    assert ToolangToolset().tools()["pick"].summary(arguments, ToolResult()) == (
         "Loaded guidance: skill/https://example.com/team/testing"
     )

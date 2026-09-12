@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,13 @@ from toolang.execution.types import ToolStepGiven
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.base.types.tool import RuntimeToolContext, ToolResult
+
+
+@pytest.mark.parametrize("name", ["_toolang", "me"])
+def test_builtin_toolset_module_matches_registered_name(name: str) -> None:
+    (entry,) = entry_points(group="toolang.toolset", name=name)
+    assert entry.value == f"toolang.execution.tools.{name}:create_toolset"
+    assert entry.load()({}).name == name
 
 
 def test_installed_runtime_toolset_has_no_old_aliases() -> None:

@@ -50,7 +50,7 @@ from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
-from ..assembly import MessageHistory, adopted_horizon
+from ..assembly.messages import MessageHistory, adopted_horizon
 from ..recall import canonical_recall
 from ..calls import (
     IncludeResolver,
@@ -70,7 +70,7 @@ from ..records import (
     StepRecord,
 )
 from ..store import RunStore
-from ..tool_results import control_summary
+from ..assembly.tool_replies import control_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     value_for_type,
@@ -1589,14 +1589,15 @@ class _Execution:
 
     def recall(
         self,
-        step: StepRef,
+        step: StepRef | RunRef,
         payload: RecallControlPayload,
         visible: Mapping[RecallTarget, str],
     ) -> tuple[ControlRef, ...]:
         """Reuse pending work or record one new presentation of a resource."""
 
+        run_id = step.run_id if isinstance(step, StepRef) else str(step)
         payload = canonical_recall(payload)
-        for pending in reversed(self.runtime_controls(step.run_id, refresh=False)):
+        for pending in reversed(self.runtime_controls(run_id, refresh=False)):
             if (
                 not isinstance(pending.payload, RecallControlPayload)
                 or pending.payload.target != payload.target
@@ -1609,12 +1610,14 @@ class _Execution:
             if visible.get(payload.target) == payload.revision:
                 return ()
         control = self.store.accept_recall_control(
-            run_id=step.run_id,
+            run_id=run_id,
             payload=payload,
-            triggered_by=step,
+            triggered_by=step if isinstance(step, StepRef) else None,
             created_at=utc_now(),
         )
-        self._runtime_controls[step.run_id][control.index] = control
+        # Advance the read cursor before a model boundary consumes this fact.
+        # Otherwise its next refresh would redeliver our already-adopted recall.
+        self.runtime_controls(run_id)
         return (control.ref,)
 
     def next_step(self, run_id: str) -> int:

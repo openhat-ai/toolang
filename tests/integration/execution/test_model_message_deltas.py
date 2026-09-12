@@ -32,9 +32,9 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
-from toolang.execution.executor._messages import _MessageBuffer
-from toolang.execution.history import RunHistory
-from toolang.execution.message_delta import delta_to_data
+from toolang.execution.executor.message_buffer import _MessageBuffer
+from toolang.execution.inspection.history import RunHistory
+from toolang.execution.records import delta_to_data
 from toolang.execution.values import parts_from_local
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
@@ -404,7 +404,7 @@ def test_interrupted_model_end_preserves_referenced_output(
                     thread_id=str(root.thread)
                 )
                 assert messages[-1] == Message.user(
-                    '<cancel description="The user canceled this run."/>'
+                    '<toolang:cancel description="The user canceled this run."/>'
                 )
             if interruption == "cancel" and requests:
                 canceled_tools = [

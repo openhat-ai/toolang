@@ -8,7 +8,7 @@ from typing import Protocol
 from toolang.base.types.message import Message
 from toolang.execution.events import RunTracer
 from toolang.execution.executor import LocalRunHandle, RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
     ControlInfo,

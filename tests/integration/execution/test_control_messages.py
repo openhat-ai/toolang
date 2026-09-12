@@ -102,7 +102,12 @@ agic chat(_: Part[]) -> Part[]:
                         ),
                         tracer=tracer,
                     )
-                messages = harness.adapter.invocations[-1].call.messages
+                first, following = (item.call for item in harness.adapter.invocations)
+                assert first.instructions.startswith("<toolang:protocol>")
+                assert "<toolang:messages>" in first.instructions
+                assert "<toolang:instruct>" not in first.instructions
+                assert following.instructions == first.instructions
+                messages = following.messages
                 assert [item.role for item in messages] == [
                     "user",
                     "assistant",
@@ -111,7 +116,9 @@ agic chat(_: Part[]) -> Part[]:
                     *(["user"] if action == "cancel" else []),
                 ]
                 marker = messages[3]
-                assert message_text(marker.parts).startswith(f'<{action} description="')
+                assert message_text(marker.parts).startswith(
+                    f'<toolang:{action} description="'
+                )
                 assert record.id not in message_text(marker.parts)
                 if action == "cancel":
                     assert message_text(marker.parts).endswith("/>")
@@ -184,7 +191,7 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
                 "tool",
                 "user",
             ]
-            assert message_text(history[-1].parts).startswith("<cancel ")
+            assert message_text(history[-1].parts).startswith("<toolang:cancel ")
 
     asyncio.run(scenario())
 
@@ -248,18 +255,24 @@ agic chat(_: Part[]) -> Part[]:
                 recalled = [
                     message
                     for message in call.messages
-                    if message_text(message.parts).startswith(f"<{target.kind} ")
+                    if message_text(message.parts).startswith(
+                        f"<toolang:{target.kind + '-guidance' if target.kind in {'skill', 'service'} else target.kind} "
+                    )
                 ]
-                assert len(recalled) == 2
+                assert len(recalled) == 3
+                assert 'removed="true"' in message_text(recalled[-1].parts)
                 assert "&amp;&quot;" in message_text(recalled[0].parts)
-                assert recalled[1].parts[1] == TextPart("new <content>")
+                assert recalled[1].parts[1] == TextPart("new &lt;content&gt;")
             model_events = [
                 event
                 for event in tracer.events
                 if isinstance(event, StepBegin)
                 and isinstance(event.given, ModelStepGiven)
             ]
-            assert model_events[1].preceded_by == tuple(item.ref for item in recalls)
+            assert model_events[1].preceded_by == (
+                *(item.ref for item in recalls),
+                harness.store.list_run_controls(run_id=run.id)[-1].ref,
+            )
             assert model_events[2].preceded_by == ()
             recall_refs = [item.ref for item in recalls]
             for event, expected in zip(model_events, ([], recall_refs, [])):
@@ -279,7 +292,7 @@ agic chat(_: Part[]) -> Part[]:
             assert calls[0].messages == calls[2].messages[: len(calls[0].messages)]
             assert (
                 sum(
-                    message_text(message.parts).count("<context>")
+                    message_text(message.parts).count("<toolang:context>")
                     for message in calls[2].messages
                 )
                 == 3
@@ -343,14 +356,16 @@ agic chat(_: Part[]) -> Part[]:
             call = harness.adapter.invocations[-1].call
             adopted = call.messages[3:]
             assert [message.parts[0] for message in adopted] == [
-                TextPart('<skill ref="testing" revision="old">'),
+                TextPart('<toolang:skill-guidance ref="testing" revision="old">'),
                 steer_message("new direction").parts[0],
-                TextPart('<skill ref="testing" revision="new">'),
+                TextPart('<toolang:skill-guidance ref="testing" revision="new">'),
+                TextPart('<toolang:skill-guidance ref="testing" removed="true"/>'),
             ]
             assert harness.store.list_steps(run_id=run.id)[-1].preceded_by == (
                 first.ref,
                 steer.ref,
                 last.ref,
+                harness.store.list_run_controls(run_id=run.id)[-1].ref,
             )
             assert harness.store.recent_conversation_messages(thread_id=thread) == [
                 *call.messages,

@@ -6,14 +6,14 @@ from dataclasses import dataclass
 
 from toolang.lang import format_statement_head
 
-from .records import (
+from ..records import (
     ControlRecord,
     RunControlPayload,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
 )
-from .types import StepRef, ToolStepGiven
+from ..types import StepRef, ToolStepGiven
 
 
 @dataclass(frozen=True, slots=True)

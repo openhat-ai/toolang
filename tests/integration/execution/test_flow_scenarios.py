@@ -27,14 +27,14 @@ from toolang.base.types.policy import RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunExecutor, RunLimits
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.store import RunStore
-from toolang.execution.trees import build_execution_tree
+from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import (
     Output,
     CollectionStepNoted,

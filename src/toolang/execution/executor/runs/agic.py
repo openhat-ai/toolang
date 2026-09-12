@@ -37,9 +37,9 @@ from ..common import (
 )
 
 from ..limits import _ModelAccounting
-from .._messages import _MessageBuffer
+from ..message_buffer import _MessageBuffer
 from ..budget import InputEstimate
-from ..prepare import _AgicFrame, prepare_agic
+from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 from ...runnables import (
@@ -209,7 +209,7 @@ async def execute(
                 module=binding.module,
             )
         )
-        prepared = prepare_agic(
+        prepared = build_agic_frame(
             execution,
             replace(current_binding, horizon=horizon),
             candidate,
@@ -299,6 +299,8 @@ def _can_repair_output(state: _AgicState, type_name: str | None) -> bool:
 
 
 def _output_repair_message(type_name: str | None) -> Message:
+    """Request one corrected response without changing its output contract."""
+
     if type_name is None:  # pragma: no cover - guarded by _can_repair_output
         raise ValueError("output repair requires a declared type")
     return Message.user(

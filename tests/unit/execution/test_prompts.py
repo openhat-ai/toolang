@@ -3,9 +3,24 @@ from __future__ import annotations
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.execution.executor import prompts
+from toolang.execution.assembly import prompts
 from toolang.execution.executor.compact import compact_state
 from toolang.lang.input import coerce_output
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "protocol.md",
+        "skills.md",
+        "services.md",
+        "defaults/instruct.md",
+        "defaults/context.md",
+        "defaults/compact.too",
+    ],
+)
+def test_bundled_prompt_resources_are_loadable(name: str) -> None:
+    assert prompts.load(name).strip()
 
 
 def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
@@ -15,11 +30,23 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
     monkeypatch.setattr(prompts, "__package__", None)
 
     try:
-        prompt = prompts.load("instruct.default.md")
+        prompt = prompts.load("protocol.md")
     finally:
         prompts.load.cache_clear()
 
-    assert prompt.startswith("<runtime-instructions>")
+    assert prompt.startswith("<toolang:protocol>")
+
+
+def test_bundled_protocol_requires_guidance_recall_before_use() -> None:
+    prompt = prompts.load("protocol.md")
+
+    assert (
+        "Triggers, names, memory, far summaries, and pick receipts are not loaded guidance"
+        in prompt
+    )
+    assert "call _toolang__pick" in prompt
+    assert "then wait for the guidance user message" in prompt
+    assert "Picking a service does not connect" in prompt
 
 
 @pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])

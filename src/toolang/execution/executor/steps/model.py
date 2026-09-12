@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -31,13 +30,13 @@ from toolang.base.types.run import (
     ModelPartStart,
     ToolCall,
 )
-from toolang.base.types.tool import ToolDefinition
 from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...assembly import assemble_messages
+from ...assembly.prompting import build_model_call
+from ...assembly.messages import assemble_messages, required_declarations
 from ...records import ControlRecord
 from ...types import (
     Local,
@@ -52,7 +51,7 @@ from ...types import (
     StepRef,
     RunRef,
 )
-from .._messages import _MessageBuffer
+from ..message_buffer import _MessageBuffer
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
@@ -60,7 +59,7 @@ from ..limits import _ModelAccounting
 from . import tool as tool_step
 
 if TYPE_CHECKING:
-    from ..prepare import _AgicFrame
+    from ..frame import _AgicFrame
     from ..runs.agic import _AgicState
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,9 +87,9 @@ def _candidate(
     )
     messages = state.messages.copy()
     if not messages.started:
-        messages.initialize(prepared.messages)
-    elif prepared.prompt_context:
-        messages.append(Message.user(prepared.prompt_context))
+        messages.initialize(prepared.prompt.messages)
+    elif prepared.prompt.context:
+        messages.append(Message.user(prepared.prompt.context))
     if (
         not messages.started
         and state.execution is not None
@@ -99,15 +98,43 @@ def _candidate(
         messages.prepend(*state.execution.message_history().tail(prepared.run.horizon))
     for control in preceding:
         messages.append_control(control)
-    request = ModelCall(
-        instructions=_model_instructions(state, prepared),
+    if state.execution is not None:
+        resident = (
+            state.prepared.prompt.declarations
+            if state.messages.started
+            else prepared.prompt.declarations
+        )
+        visible = {item.target: item.revision for item in resident}
+        if "near" in prepared.recall:
+            visible.update(
+                state.execution.message_history().recalls(prepared.run.horizon)
+            )
+        visible.update(messages.recalls)
+        additions = required_declarations(
+            (*prepared.prompt.declarations, *prepared.workspaces),
+            visible,
+        )
+        for payload in additions:
+            state.execution.recall(RunRef(prepared.run.run_id), payload, visible)
+        preceding_refs = {item.ref for item in preceding}
+        new_controls = tuple(
+            control
+            for control in state.execution.runtime_controls(
+                prepared.run.run_id, refresh=False
+            )
+            if control.ref not in preceding_refs
+        )
+        for control in new_controls:
+            messages.append_control(control)
+        preceding = (*preceding, *new_controls)
+    request = build_model_call(
+        prepared.prompt,
         messages=assemble_messages(
             prepared.far, prepared.near, messages.messages, prepared.recall
         ),
-        tools=_model_tools(prepared)
-        if prepared.model.tools and not state.repairing_output
-        else (),
-        output_schema=deepcopy(state.output_binding.output_schema),
+        tools=prepared.tools,
+        tools_enabled=prepared.model.tools and not state.repairing_output,
+        output_schema=state.output_binding.output_schema,
         continuation=state.continuation,
         max_output_tokens=prepared.output_budget,
     )
@@ -245,11 +272,13 @@ async def execute(state: _AgicState) -> ModelCallResult:
     def adopt_begin() -> None:
         state.prepared = prepared
         state.messages = next_messages
-        state.visible_recalls = (
-            dict(state.execution.message_history().recalls(prepared.run.horizon))
-            if state.execution is not None and "near" in prepared.recall
-            else {}
-        )
+        state.visible_recalls = {
+            item.target: item.revision for item in prepared.prompt.declarations
+        }
+        if state.execution is not None and "near" in prepared.recall:
+            state.visible_recalls.update(
+                state.execution.message_history().recalls(prepared.run.horizon)
+            )
         state.visible_recalls.update(next_messages.recalls)
         state.claimed_inputs = ()
         state.next_model_inputs = None
@@ -369,26 +398,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
     )
-
-
-def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
-    """Combine authored and runtime protocol only for an effective tool call."""
-
-    runtime = (
-        prepared.runtime_instructions
-        if prepared.model.tools and not state.repairing_output
-        else ""
-    )
-    if prepared.instructions and runtime:
-        return f"{prepared.instructions}\n\n{runtime}"
-    return prepared.instructions or runtime
-
-
-def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
-    """Expose the selected registered tools at the adapter boundary."""
-
-    definitions = {name: tool.definition() for name, tool in prepared.tools.items()}
-    return tuple(definitions[name] for name in sorted(definitions))
 
 
 async def _emit_response_parts(

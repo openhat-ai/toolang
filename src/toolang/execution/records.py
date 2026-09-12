@@ -15,6 +15,7 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     MessageRole,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -31,9 +32,9 @@ from toolang.lang.input import (
     validate_runnable_input_names,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
-from .message_delta import delta_from_data, delta_to_data
 from .types import (
     MessageDelta,
+    MessageTemplate,
     CollectionStepNoted,
     ControlRef,
     RecallTarget,
@@ -81,6 +82,66 @@ from .types import (
     validate_step_given,
     validate_step_noted,
 )
+
+
+def delta_to_data(delta: MessageDelta) -> dict[str, object]:
+    """Serialize only top-level segments as references or canonical Parts."""
+
+    return {
+        "version": delta.version,
+        "messages": [
+            {
+                "role": message.role,
+                "segments": [
+                    segment
+                    if isinstance(segment, str)
+                    else {"?": str(segment)}
+                    if isinstance(segment, TypedRef)
+                    else segment.to_data()
+                    for segment in message.segments
+                ],
+                **({"recall": str(message.recall)} if message.recall else {}),
+                **({"escape_text": True} if message.escape_text else {}),
+            }
+            for message in delta.messages
+        ],
+    }
+
+
+def delta_from_data(data: Mapping[str, object]) -> MessageDelta:
+    """Decode a stored delta without interpreting literal text or nested data."""
+
+    if data["version"] != 1:
+        raise ValueError(f"unsupported message delta version: {data['version']}")
+    messages = cast(Sequence[Mapping[str, object]], data["messages"])
+    return MessageDelta(
+        version=cast(int, data["version"]),
+        messages=tuple(
+            MessageTemplate(
+                role=cast(MessageRole, message["role"]),
+                segments=tuple(
+                    _segment_from_data(segment)
+                    for segment in cast(
+                        Sequence[str | Mapping[str, Any]], message["segments"]
+                    )
+                ),
+                recall=ControlRef.parse(str(message["recall"]))
+                if message.get("recall") is not None
+                else None,
+                escape_text=message.get("escape_text") is True,
+            )
+            for message in messages
+        ),
+    )
+
+
+def _segment_from_data(data: str | Mapping[str, Any]) -> str | Part | TypedRef:
+    if isinstance(data, str):
+        return data
+    if set(data) == {"?"}:
+        return TypedRef.parse(data["?"])
+    return part_from_data(data)
+
 
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 

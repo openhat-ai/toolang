@@ -1,12 +1,11 @@
-"""Prepare one agic's model, prompt, messages, tools, and services."""
+"""Build an agic execution frame from its bound resources and runtime facts."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from toolang.base.protocols.model import ModelAdapter
@@ -21,17 +20,8 @@ from toolang.base.types.model import ModelTarget
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
-from toolang.common.template import render_text_template
-from toolang.lang.ast import (
-    AgicDecl,
-    Message as AstMessage,
-    Program,
-)
-from toolang.lang.input import (
-    PromptDefinitionIdentity,
-    PromptInvocation,
-    resolve_input_parts_with_provenance,
-)
+from toolang.common.version import toolang_version
+from toolang.lang.ast import AgicDecl
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
@@ -43,21 +33,28 @@ from toolang.state.state import (
     state_program_source,
 )
 
-from . import prompts
-from ..assembly import recall_sources
+from ..assembly.messages import recall_sources
 from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
-from .resources import resource_caps, resource_tools
-from .resources import snapshot_model_selection
-from ..runnables import AgicRoutes, render_runtime_instructions, resolve_agic_routes
+from ..assembly.prompting import (
+    PreparedPrompt,
+    prepare_prompt,
+    render_messages,
+)
+from .resources import (
+    workspace_declarations,
+    cap_revision,
+    resource_caps,
+    resource_tools,
+    snapshot_model_selection,
+)
+from ..runnables import AgicRoutes, runnable_descriptions, resolve_agic_routes
+from ..records import RecallControlPayload
 
 if TYPE_CHECKING:
     from .executor import _Execution
 
 _LOGGER = logging.getLogger(__name__)
-_DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
-_DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
-_PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +65,11 @@ class _AgicFrame:
     agic: AgicDecl
     model: ModelTarget
     adapter: ModelAdapter
-    instructions: str
-    prompt_context: str
-    messages: tuple[Message, ...]
+    prompt: PreparedPrompt
     tools: dict[str, Tool]
     routes: AgicRoutes
     services: tuple[ToolService, ...]
-    runtime_instructions: str = ""
+    workspaces: tuple[RecallControlPayload, ...] = ()
     recall: tuple[str, ...] = ("far", "near")
     far: str = ""
     near: tuple[Message, ...] = ()
@@ -82,7 +77,7 @@ class _AgicFrame:
     input_budget: int | None = None
 
 
-def prepare_agic(
+def build_agic_frame(
     context: _Execution,
     run: BoundRun,
     agic: AgicDecl,
@@ -91,7 +86,7 @@ def prepare_agic(
     far: str = "",
     near: Sequence[Message] = (),
 ) -> _AgicFrame:
-    """Resolve runtime resources and render the complete model input."""
+    """Resolve the model-call resources and delegate prompt rendering."""
 
     resources = run.resources
     if resources is None:
@@ -149,7 +144,7 @@ def prepare_agic(
             "has_services": bool(services),
         }
     )
-    rendered, prompt_invocations = _render_messages(
+    rendered, prompt_invocations = render_messages(
         program,
         agic.messages,
         values=body_variables,
@@ -163,28 +158,14 @@ def prepare_agic(
     )
     if prompt_invocations:
         context.record_prompt_invocations(run, prompt_invocations)
-    prompt_context = _render_context(program, agic, system_runtime)
-    fallback = _run_message(
-        agic=agic,
+    prompt = prepare_prompt(
+        program,
+        agic,
+        system_runtime,
         rendered=rendered,
-        prompt_context=prompt_context,
         primary=_primary_parts(agic, variables),
+        runnables=runnable_descriptions(run.state, routes) if runtime_tools else (),
     )
-    messages = _authored_messages(
-        rendered=rendered,
-        prompt_context=prompt_context,
-        fallback=fallback,
-    )
-    instructions = _render_instructions(program, agic, system_runtime)
-    runtime_instructions = (
-        render_runtime_instructions(run.state, routes) if runtime_tools else ""
-    )
-    if any(getattr(tool, "plugin_name", None) == "fs" for tool in tools.values()):
-        runtime_instructions = "\n\n".join(
-            part
-            for part in (runtime_instructions, prompts.load("filesystem.md"))
-            if part
-        )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -194,13 +175,11 @@ def prepare_agic(
         agic=agic,
         model=model,
         adapter=adapter,
-        instructions=instructions,
-        runtime_instructions=runtime_instructions,
-        prompt_context=prompt_context,
-        messages=messages,
+        prompt=prompt,
         tools=tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
+        workspaces=workspace_declarations(run.state.workspaces),
         recall=recall_sources(
             next((item.values for item in agic.directives if item.name == "recall"), ())
         ),
@@ -209,154 +188,8 @@ def prepare_agic(
         output_budget=output,
         input_budget=input_budget(entry.info, output),
     )
-    _log_prepared(prepared)
+    _log_frame(prepared)
     return prepared
-
-
-def _render_messages(
-    program: Program,
-    blocks: tuple[AstMessage, ...],
-    *,
-    values: Mapping[str, object],
-    types: Mapping[str, str],
-    definitions: Mapping[str, PromptDefinitionIdentity],
-) -> tuple[
-    tuple[tuple[AstMessage, tuple[Part, ...]], ...],
-    tuple[PromptInvocation, ...],
-]:
-    rendered: list[tuple[AstMessage, tuple[Part, ...]]] = []
-    invocations: list[PromptInvocation] = []
-    for block in blocks:
-        resolution = resolve_input_parts_with_provenance(
-            block.content,
-            program=program,
-            values=values,
-            types=types,
-            prompt_definitions=definitions,
-        )
-        offset = len(invocations)
-        invocations.extend(
-            replace(
-                invocation,
-                parent=(
-                    invocation.parent + offset
-                    if invocation.parent is not None
-                    else None
-                ),
-            )
-            for invocation in resolution.prompts
-        )
-        rendered.append((block, _strip_parts(resolution.parts)))
-    return tuple(rendered), tuple(invocations)
-
-
-def _render_instructions(
-    program: Program,
-    agic: AgicDecl,
-    context: dict[str, object],
-) -> str:
-    name = agic.instruct
-    if name == "none":
-        return ""
-    if name is None or name == "default":
-        template = (
-            item.body
-            if (item := program.find_instruct("default")) is not None
-            else _DEFAULT_INSTRUCT_TEMPLATE
-        )
-    else:
-        item = program.find_instruct(name)
-        if item is None:
-            raise ToolangError(f"Instruct not found: {name}")
-        template = item.body
-    return render_text_template(template, context).strip() if template.strip() else ""
-
-
-def _render_context(
-    program: Program,
-    agic: AgicDecl,
-    context: dict[str, object],
-) -> str:
-    name = agic.context
-    if name == "none":
-        return ""
-    if name is None or name == "default":
-        template = (
-            item.body
-            if (item := program.find_context("default")) is not None
-            else _DEFAULT_CONTEXT_TEMPLATE
-        )
-    else:
-        item = program.find_context(name)
-        if item is None:
-            raise ToolangError(f"Context not found: {name}")
-        template = item.body
-    return render_text_template(template, context).strip() if template.strip() else ""
-
-
-def _run_message(
-    *,
-    agic: AgicDecl,
-    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
-    prompt_context: str,
-    primary: tuple[Part, ...],
-) -> Message:
-    implicit = tuple(
-        parts
-        for block, parts in rendered
-        if block.role == "user" and not block.explicit
-    )
-    authored = _join_parts(*implicit)
-    references_primary = any(
-        block.role == "user"
-        and not block.explicit
-        and _PRIMARY_REFERENCE_RE.search(block.content) is not None
-        for block in agic.messages
-    )
-    parts = _join_parts(
-        (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
-        authored,
-        primary if (not authored or not references_primary) else (),
-    )
-    if parts == primary:
-        return Message(role="user", parts=primary)
-    return Message(role="user", parts=parts)
-
-
-def _authored_messages(
-    *,
-    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
-    prompt_context: str,
-    fallback: Message,
-) -> tuple[Message, ...]:
-    blocks = tuple(
-        (block, parts)
-        for block, parts in rendered
-        if block.role in {"user", "assistant", "tool"}
-    )
-    if not any(block.explicit for block, _parts in blocks):
-        return (fallback,)
-    last_user = next(
-        (
-            index
-            for index in range(len(blocks) - 1, -1, -1)
-            if blocks[index][0].role == "user"
-        ),
-        None,
-    )
-    messages: list[Message] = []
-    for index, (block, parts) in enumerate(blocks):
-        if index == last_user and prompt_context.strip():
-            parts = _join_parts((TextPart(prompt_context.strip()),), parts)
-        if not parts:
-            continue
-        try:
-            messages.append(Message(role=block.role, parts=parts))
-        except ValueError as exc:
-            raise ToolangError(str(exc)) from exc
-    if last_user is None and prompt_context.strip():
-        messages.insert(0, Message.user(prompt_context.strip()))
-    return tuple(messages) if messages else (fallback,)
 
 
 def _body_variables(
@@ -386,6 +219,7 @@ def _runtime_context(
     runtime: dict[str, object] = {
         "date": context.date,
         "timezone": context.timezone,
+        "toolang": {"version": toolang_version()},
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,
@@ -436,13 +270,15 @@ def _model_context(model: ModelTarget) -> dict[str, object]:
 
 def _cap_context(context: _Execution, entry: StateCap) -> dict[str, object]:
     description = entry.meta.get("description")
+    content = entry.read_content() if entry.kind == "psyche" else ""
     return {
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
         "ref": cap_store.entry_ref(entry, agent_name=context.layout.name),
         "description": str(description) if description is not None else None,
-        "content": entry.read_content() or None if entry.kind == "psyche" else None,
+        "content": content if entry.kind == "psyche" else None,
+        "revision": cap_revision(entry),
         "metadata": mutable_data(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
         "scope": cap_store.entry_scope(entry, agent_name=context.layout.name),
@@ -483,34 +319,6 @@ def _primary_parts(
     return parts if parts is not None else (TextPart(value_text(value)),)
 
 
-def _strip_parts(parts: tuple[Part, ...]) -> tuple[Part, ...]:
-    result = list(parts)
-    if result and isinstance(result[0], TextPart):
-        result[0] = TextPart(result[0].text.lstrip())
-    if result and isinstance(result[-1], TextPart):
-        result[-1] = TextPart(result[-1].text.rstrip())
-    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
-
-
-def _join_parts(*groups: tuple[Part, ...]) -> tuple[Part, ...]:
-    result: list[Part] = []
-    for group in groups:
-        if not group:
-            continue
-        if result:
-            _append_part(result, TextPart("\n\n"))
-        for part in group:
-            _append_part(result, part)
-    return tuple(result)
-
-
-def _append_part(parts: list[Part], part: Part) -> None:
-    if isinstance(part, TextPart) and parts and isinstance(parts[-1], TextPart):
-        parts[-1] = TextPart(parts[-1].text + part.text)
-    else:
-        parts.append(part)
-
-
 def _tool_services(
     entries: tuple[StateCap, ...], environ: Mapping[str, str]
 ) -> tuple[ToolService, ...]:
@@ -533,7 +341,7 @@ def _tool_services(
     return tuple(result)
 
 
-def _log_prepared(prepared: _AgicFrame) -> None:
+def _log_frame(prepared: _AgicFrame) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     run = prepared.run
@@ -549,13 +357,13 @@ def _log_prepared(prepared: _AgicFrame) -> None:
         "prompt.instructions thread=%s run=%s text=%s",
         run.thread,
         run.run_id,
-        prepared.instructions,
+        prepared.prompt.instructions,
     )
     _LOGGER.debug(
         "prompt.context thread=%s run=%s text=%s",
         run.thread,
         run.run_id,
-        prepared.prompt_context,
+        prepared.prompt.context,
     )
     _LOGGER.debug(
         "prompt.messages thread=%s run=%s messages=%s",
@@ -564,7 +372,7 @@ def _log_prepared(prepared: _AgicFrame) -> None:
         json.dumps(
             [
                 {"role": message.role, "text": message_text(message.parts)}
-                for message in prepared.messages
+                for message in prepared.prompt.messages
             ],
             ensure_ascii=False,
         ),

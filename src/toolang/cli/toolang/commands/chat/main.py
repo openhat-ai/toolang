@@ -23,7 +23,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
 from toolang.execution.policy import merge_run_overrides
 from toolang.execution.types import (
