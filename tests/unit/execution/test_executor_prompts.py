@@ -28,7 +28,7 @@ def test_bundled_protocol_requires_guidance_recall_before_use() -> None:
     assert "Catalog metadata is only a selection index" in prompt
     assert "call `_toolang__pick`" in prompt
     assert "only after that message is visible" in prompt
-    assert "not loaded guidance or a connection" in prompt
+    assert "service guidance is not a service connection" in prompt
 
 
 @pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])

@@ -559,9 +559,10 @@ def _reachable_structs(
 
 
 def _canonical_json(value: object) -> str:
+    # The JSON is embedded in a runtime-owned markup block, including for sizing.
     return json.dumps(
         value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
-    )
+    ).replace("<", "\\u003c")

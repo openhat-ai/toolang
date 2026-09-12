@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from html import escape
 import json
 import logging
 import re
@@ -59,6 +60,7 @@ _LOGGER = logging.getLogger(__name__)
 _PROTOCOL_TEMPLATE = prompts.load("protocol.default.md")
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _CAPABILITY_INSTRUCTIONS_TEMPLATE = prompts.load("capabilities.default.md")
+_CAPABILITY_CATALOG_TEMPLATE = prompts.load("catalog.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
 _PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
 
@@ -258,15 +260,41 @@ def _render_instructions(
     agic: AgicDecl,
     context: dict[str, object],
 ) -> str:
-    protocol = render_text_template(_PROTOCOL_TEMPLATE, context).strip()
+    markup_context = {
+        key: _escape_markup_value(value) for key, value in context.items()
+    }
+    protocol = render_text_template(_PROTOCOL_TEMPLATE, markup_context).strip()
     instruct = _render_selected_instruct(program, agic, context)
-    agent = (
-        f"<agent-instructions>\n{instruct}\n</agent-instructions>" if instruct else ""
-    )
+    agent = _text_block("agent-instructions", instruct)
     capabilities = render_text_template(
-        _CAPABILITY_INSTRUCTIONS_TEMPLATE, context
+        _CAPABILITY_INSTRUCTIONS_TEMPLATE, markup_context
     ).strip()
-    return "\n\n".join(part for part in (protocol, agent, capabilities) if part)
+    catalog = (
+        render_text_template(_CAPABILITY_CATALOG_TEMPLATE, markup_context).strip()
+        if context.get("has_skills") or context.get("has_services")
+        else ""
+    )
+    return "\n\n".join(
+        part for part in (protocol, agent, capabilities, catalog) if part
+    )
+
+
+def _escape_markup_value(value: object) -> object:
+    """Escape bundled template values without changing authored rendering."""
+
+    if isinstance(value, str):
+        return escape(value, quote=True)
+    if isinstance(value, Mapping):
+        return {key: _escape_markup_value(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_escape_markup_value(item) for item in value]
+    return value
+
+
+def _text_block(tag: str, content: str) -> str:
+    """Keep rendered text inside a runtime-owned instruction or data block."""
+
+    return f"<{tag}>\n{escape(content, quote=False)}\n</{tag}>" if content else ""
 
 
 def _render_selected_instruct(
@@ -310,7 +338,10 @@ def _render_context(
         if item is None:
             raise ToolangError(f"Context not found: {name}")
         template = item.body
-    return render_text_template(template, context).strip() if template.strip() else ""
+    content = (
+        render_text_template(template, context).strip() if template.strip() else ""
+    )
+    return _text_block("context", content)
 
 
 def _run_message(

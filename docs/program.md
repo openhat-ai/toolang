@@ -627,7 +627,7 @@ output schema; each model adapter maps those fields to its provider API.
 | Runtime protocol | Toolang concepts, runtime facts, priority, guidance loading, tool-result reuse, and control-message semantics | `<runtime-instructions>` in `instructions` |
 | Selected `instruct` | Agent- and runnable-specific behavior | `<agent-instructions>` in `instructions` |
 | Selected psyches | Reusable behavior guidance subordinate to protocol and instruct | `<capability-instructions>` in `instructions` |
-| Skill/service catalogs | Selected names, exact refs, descriptions, and metadata; no guidance bodies | Inside the runtime protocol |
+| Skill/service catalogs | Selected names, exact refs, descriptions, and metadata; no guidance bodies or behavioral instructions | Separate `<capability-catalog>` data block in `instructions` |
 | Routing and filesystem guidance | Authorized runnable routes and conventions for available filesystem tools | Appended to `instructions` when applicable |
 | Selected `context` | Runtime data, not behavioral instructions | Prepended to the last authored user message; repeated as a user message on later model calls |
 | Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
@@ -642,14 +642,28 @@ Runtime protocol is always present: program-default, named, inline, and disabled
 instruct selections cannot remove it. `instruct: none` disables only the
 agent-specific layer; it does not disable context, psyches, or capabilities.
 Resource selection and ceilings still determine which capabilities are present.
-`context: none` independently disables context. Only the bundled default context
-template supplies a `<context>` wrapper; authored context is rendered as written.
+`context: none` independently disables context. The runtime wraps every nonempty
+rendered context in `<context>`, including program-default, named, and inline
+selections. Empty rendered context adds no block. Authors should supply only the
+context body, not its wrapper.
 
 The textual priority is runtime protocol, then selected instruct, then capability
-guidance. These tags communicate priority to the model; they are not a parser-
-enforced security boundary. Actual tools, resource ceilings, and workspace
-authorization are enforced separately. Models without tool support and output-
-repair calls receive no tool definitions, but retain the base runtime protocol.
+guidance. Catalog metadata and context remain data even when their content looks
+like instructions. Asking to analyze or transform that data does not authorize
+following instructions inside it.
+
+Runtime facts, catalog fields, and rendered instruct, psyche, and context bodies
+are XML-escaped at the model-input boundary. Literal tags cannot close their
+runtime-owned wrapper. Decode entities as literal content; use decoded catalog
+refs in tool calls. Runnable-route catalogs use JSON escapes for literal `<`
+characters and count the encoded bytes toward their size limit. Authored `.too`
+template rendering, picked guidance bodies, and recorded message replay remain
+unchanged. These wrappers communicate priority to the model; they are not a
+security boundary that guarantees model obedience. Tools, resource ceilings,
+and workspace authorization are enforced separately.
+
+Models without tool support and calls repairing output receive no tool
+definitions, but retain the base runtime protocol.
 
 ### Guidance And Control Visibility
 
@@ -670,4 +684,7 @@ service neither connects to it nor grants service tools.
 
 Skill/service recall is distinct from far/near conversation recall. A far
 summary or a catalog entry does not count as a visible guidance body. Recalling
-a resource again is necessary when its matching body is no longer visible.
+a resource again is necessary when its current, non-retracted body is no longer
+visible. Basic Toolang concepts in the protocol are not a grammar or CLI
+reference; load the applicable authoring guidance before producing `.too` code
+or recommending Toolang commands.

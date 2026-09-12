@@ -164,6 +164,9 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
             else:
                 assert expected not in call.instructions
                 assert text.count(expected) == 1
+                assert text.startswith("<context>\n")
+                assert text.count("<context>") == text.count("</context>") == 1
+                assert text.endswith("</context>\n\nCurrent user objective.")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
