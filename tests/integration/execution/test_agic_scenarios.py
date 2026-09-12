@@ -192,14 +192,9 @@ agic decide(_: Text) -> Boolean:
             assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
-            # Tool-use guidance is inside protocol, but unavailable on repair.
-            protocol, tool_guidance = initial.instructions.split(
-                "\n\nThe inner runtime tools are available", 1
-            )
-            assert tool_guidance.endswith("</runtime-instructions>")
-            assert protocol.startswith("<runtime-instructions>")
-            assert repair.instructions == protocol + "\n</runtime-instructions>"
-            assert "<agent-instructions>" not in repair.instructions
+            # Protocol stays stable; the adapter receives no tools on repair.
+            assert repair.instructions == initial.instructions
+            assert "<toolang:instruct>" not in repair.instructions
             assert repair.output_schema == initial.output_schema
             assert repair.messages[-1].role == "user"
             repair_part = repair.messages[-1].parts[0]

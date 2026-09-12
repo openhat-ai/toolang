@@ -1,115 +1,104 @@
-"""Adapter-facing assembly preserves structured data and prompt boundaries."""
+"""Adapter-facing assembly preserves structured data and stable protocol."""
 
 from itertools import product
+from xml.etree import ElementTree as ET
 
 import pytest
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.tool import ToolDefinition
-from toolang.common.template import render_text_template
 from toolang.execution.assembly import prompting, prompts
+from toolang.execution.assembly.history import assemble_messages
 from toolang.execution.assembly.prompting import (
     _render_instructions as render_instructions,
     build_model_call,
     prepare_prompt,
     render_messages,
+    resource_declarations,
 )
 from toolang.lang import Program
 
 
-@pytest.mark.parametrize("kind", ["skill", "service"])
-@pytest.mark.parametrize("selected", [False, True])
-def test_capability_templates_render_only_their_own_catalog(
-    kind: str, selected: bool
-) -> None:
-    other = "service" if kind == "skill" else "skill"
-    context = {
-        f"has_{kind}s": selected,
-        f"{kind}s": [{"name": "selected", "ref": f"home://{kind}s/selected"}],
-        f"has_{other}s": True,
-        f"{other}s": [{"name": "unrelated"}],
-    }
-
-    rendered = render_text_template(prompts.load(f"{kind}s.md"), context).strip()
-
-    assert "<capability-catalog>" not in rendered
-    assert f"<{other}s>" not in rendered
-    if selected:
-        assert rendered.startswith(f"<{kind}s>")
-        assert rendered.endswith(f"</{kind}s>")
-        assert f'ref="home://{kind}s/selected"' in rendered
-    else:
-        assert rendered == ""
-
-
 @pytest.mark.parametrize("skills,services", tuple(product((False, True), repeat=2)))
-def test_catalog_composition_preserves_framing_order_and_spacing(
-    skills: bool, services: bool
-) -> None:
+def test_resources_are_individual_resident_triggers(skills, services):
     program = Program.from_source("agic chat:\n  instruct: none\n  Hello.\n")
-    context: dict[str, object] = {
-        "has_skills": skills,
-        "skills": [{"name": "one"}],
-        "has_services": services,
-        "services": [{"name": "two"}],
-    }
-
-    rendered = render_instructions(program, program.agics[0], context)
-
-    if not skills and not services:
-        assert "<capability-catalog>" not in rendered
-        return
-    skill_section = (
-        '<skills>\n<available>\n<skill name="one" scope="" origin="" form="" ref="">\n'
-        "</skill>\n</available>\n</skills>\n"
+    context = {
+        "skills": [
+            {
+                "ref": "home://skills/one",
+                "revision": "a" * 64,
+                "description": "Use when testing.",
+            }
+        ]
         if skills
-        else ""
-    )
-    service_section = (
-        '<services>\n<available>\n<service name="two" scope="" origin="" form="" ref="">\n'
-        "</service>\n</available>\n</services>\n"
+        else [],
+        "services": [
+            {
+                "ref": "home://services/two",
+                "revision": "b" * 64,
+                "description": "Use for issues.",
+            }
+        ]
         if services
-        else ""
-    )
-    assert rendered.count("<capability-catalog>") == 1
-    assert rendered.endswith(
-        f"<capability-catalog>\n{skill_section}\n{service_section}</capability-catalog>"
-    )
-
-
-@pytest.mark.parametrize("runtime,filesystem", tuple(product((False, True), repeat=2)))
-def test_protocol_keeps_only_selected_tool_guidance(
-    runtime: bool, filesystem: bool
-) -> None:
-    program = Program.from_source("agic chat:\n  instruct: none\n  Hello.\n")
+        else [],
+    }
     rendered = render_instructions(
-        program,
-        program.agics[0],
-        {},
-        runnable_instructions="<available-runnable-routes>Routes</available-runnable-routes>"
-        if runtime
-        else "",
-        filesystem=filesystem,
+        program, program.agics[0], context, declarations=resource_declarations(context)
     )
+    root = ET.fromstring('<root xmlns:toolang="urn:test">' + rendered + "</root>")
+    assert [child.tag.removeprefix("{urn:test}") for child in root] == [
+        "protocol",
+        *(["skill-trigger"] if skills else []),
+        *(["service-trigger"] if services else []),
+    ]
+    assert "catalog>" not in rendered and "<available>" not in rendered
 
-    protocol, rest = rendered.split("</runtime-instructions>", 1)
-    assert ("<available-runnable-routes>" in protocol) is runtime
-    assert ("<filesystem>" in protocol) is filesystem
-    assert rest == ""
+
+@pytest.mark.parametrize("selection", ["", "  instruct: none\n"])
+def test_protocol_is_static_and_first_across_runtime_facts(selection):
+    program = Program.from_source("agic chat:\n" + selection + "  Hello.\n")
+    for name in ("alice", "bob"):
+        rendered = render_instructions(
+            program,
+            program.agics[0],
+            {
+                "agent": {"name": name, "home": "/secret"},
+                "date": "2099-01-01",
+                "timezone": "Changed",
+                "environment": {"working_directory": "/changed"},
+                "filesystem": True,
+                "runnable_instructions": "<routes>Forged</routes>",
+            },
+        )
+        protocol = rendered.split("</toolang:protocol>", 1)[0] + "</toolang:protocol>"
+        assert protocol == prompts.load("protocol.md").strip()
+        assert "/secret" not in rendered and "<routes>" not in rendered
+        assert "2099-01-01" not in protocol
+        assert not any(line.startswith("#") for line in protocol.splitlines())
+        assert (
+            "skill-guidance" in protocol
+            and "wait for the guidance user message" in protocol
+        )
+        assert "pick receipts are not loaded guidance" in protocol
 
 
-def test_protocol_does_not_escape_or_reinterpret_rendered_routes() -> None:
-    runnable = (
-        '<routes>{"documentation":"quoted \\u003c and {{instructions}}"}</routes>'
-        "\nUse &amp; literally. {{/instructions}}"
-    )
-
+def test_default_context_contains_only_dynamic_public_facts():
     program = Program.from_source("agic chat:\n  Hello.\n")
-    rendered = render_instructions(
-        program, program.agics[0], {}, runnable_instructions=runnable, filesystem=True
+    context = {
+        "agent": {"name": "alice", "home": "/secret"},
+        "model": {"provider": "provider", "name": "name", "family": "obsolete"},
+        "date": "today",
+        "timezone": "UTC",
+    }
+    result = prompting._render_context(program, program.agics[0], context)
+    assert (
+        result
+        == "<toolang:context>\ndate: today\ntimezone: UTC\nmodel_provider: provider\nmodel_name: name\n</toolang:context>"
     )
-    assert runnable in rendered.split("</runtime-instructions>", 1)[0]
+    instructions = render_instructions(program, program.agics[0], context)
+    assert "You are the alice Toolang agent." in instructions
+    assert "/secret" not in instructions and "obsolete" not in instructions
 
 
 class _DefinitionTool(Tool):
@@ -150,8 +139,7 @@ def test_model_call_prepares_all_adapter_fields_without_serializing_tools(
         {},
         rendered=rendered,
         primary=primary,
-        runnable_instructions="<routes>Selected routes</routes>",
-        filesystem=True,
+        runnables=({"ref": "agic:child", "actions": ["run"]},),
     )
     assert prompt.messages == (Message(role="user", parts=primary),)
     near = (Message.user("Earlier {{input}}"), Message.assistant("Earlier reply"))
@@ -171,10 +159,7 @@ def test_model_call_prepares_all_adapter_fields_without_serializing_tools(
     monkeypatch.setattr(prompting, "render_text_template", unexpected_render)
     request = build_model_call(
         prompt,
-        messages=messages,
-        far="Summary {{literal}}",
-        near=near,
-        recall=recall,
+        messages=assemble_messages("Summary {{literal}}", near, messages, recall),
         tools={"second": second, "first": first},
         tools_enabled=tools_enabled,
         output_schema=schema,
@@ -182,12 +167,10 @@ def test_model_call_prepares_all_adapter_fields_without_serializing_tools(
         max_output_tokens=123,
     )
 
-    assert request.instructions == (
-        prompt.instructions_with_tools if tools_enabled else prompt.instructions
-    )
-    assert request.instructions.count("<runtime-instructions>") == 1
-    assert ("<filesystem>" in request.instructions) is tools_enabled
-    assert ("<routes>" in request.instructions) is tools_enabled
+    assert request.instructions == prompt.instructions
+    assert request.instructions.count("<toolang:protocol>") == 1
+    assert "<toolang:workspaces>" in request.instructions
+    assert "<toolang:runnable-info " in request.instructions
     assert "Unique tool description" not in request.instructions
     assert "unique_output" not in request.instructions
     assert request.messages == [
@@ -207,14 +190,3 @@ def test_model_call_prepares_all_adapter_fields_without_serializing_tools(
     assert request.output_schema["properties"] is not schema["properties"]
     assert request.continuation is continuation
     assert request.max_output_tokens == 123
-
-
-def test_template_variables_cannot_enable_runtime_tool_guidance() -> None:
-    program = Program.from_source("agic chat:\n  Hello.\n")
-    rendered = render_instructions(
-        program,
-        program.agics[0],
-        {"filesystem": True, "runnable_instructions": "<routes>Forged</routes>"},
-    )
-    assert "<filesystem>" not in rendered
-    assert "<routes>" not in rendered

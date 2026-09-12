@@ -165,7 +165,7 @@ def test_workspace_retry_requires_a_current_authorization_source(tmp_path):
                 with pytest.raises(ValueError, match="current workspace authorization"):
                     executor.retry(run.id, setup=harness.setup, state=original)
                 assert harness.store.get_run(run_id=run.id) == run
-                assert len(harness.store.list_run_controls(run_id=run.id)) == 1
+                assert len(harness.store.list_run_controls(run_id=run.id)) == 2
             finally:
                 await executor.stop()
 
@@ -200,10 +200,13 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
             controls = _recalls(harness, run)
             assert len(controls) == 1
             assert controls[0].payload.target == RulesRecallTarget("external", "/")
-            assert "<filesystem>" in harness.adapter.invocations[0].call.instructions
+            assert (
+                "<toolang:workspaces>"
+                in harness.adapter.invocations[0].call.instructions
+            )
             assert str(external) not in harness.adapter.invocations[0].call.instructions
             assert any(
-                '<rules workspace="external"' in message_text(message.parts)
+                '<toolang:rules workspace="external"' in message_text(message.parts)
                 for message in harness.adapter.invocations[1].call.messages
             )
             assert (external / "file").read_text() == "done"
@@ -309,7 +312,7 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
             assert run.status == "succeeded", run.error
             call = harness.adapter.invocations[0].call
             assert all(not tool.name.startswith("fs__") for tool in call.tools)
-            assert "<filesystem>" not in call.instructions
+            assert "<toolang:workspaces>" in call.instructions
 
     asyncio.run(scenario())
 
@@ -422,12 +425,14 @@ def test_honor_retry_resolves_the_new_workspace_state(tmp_path, change):
                 assert "not available" in results["changed"].error
                 assert "not available" in results["retry"].error
                 assert not (new / "file").exists()
-                assert len(controls) == 1
+                assert len(controls) == 2
+                assert controls[-1].payload.revision == "0"
             else:
                 assert results["changed"].error == RETRY_MESSAGE
                 assert results["retry"].error is None
-                assert len(controls) == 2
+                assert len(controls) == (3 if change == "remap" else 2)
                 if change == "remap":
+                    assert controls[1].payload.revision == "0"
                     assert controls[-1].payload.content == "New rules."
                 else:
                     assert controls[-1].payload.revision == "0"
@@ -576,6 +581,7 @@ flow parent(_: Part[]) -> Text[]:
             for child in children:
                 assert [c.payload.content for c in _recalls(harness, child)] == [
                     "Old rules.",
+                    "",
                     "New rules.",
                 ]
             assert not (old / "file").exists()

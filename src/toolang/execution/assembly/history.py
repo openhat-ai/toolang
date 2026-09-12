@@ -4,20 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+import re
 from typing import cast
 
 from toolang.base.types.message import (
     Message,
     MessageRole,
+    Part,
+    TextPart,
     ToolCallPart,
     ToolResultPart,
 )
 
+from toolang.lang.ast import AgicDecl, Message as AstMessage
+from toolang.common.errors import ToolangError
+
 from ..recall import recall_revisions
-from .prompting import control_message
-from .utils import literal_delta, render_delta
+from .utils import literal_delta, render_delta, resource_frame, join_parts
 from ..records import (
     CompactControlPayload,
+    CancelControlPayload,
+    RecallControlPayload,
+    SteerControlPayload,
     ControlRecord,
     ExecuteControlPayload,
     RunControlPayload,
@@ -33,11 +41,51 @@ from ..types import (
     MessageTemplate,
     RunRef,
     RecallTarget,
+    RulesRecallTarget,
+    SkillRecallTarget,
+    ServiceRecallTarget,
+    SkillTriggerRecallTarget,
+    ServiceTriggerRecallTarget,
+    WorkspaceRecallTarget,
     ToolStepGiven,
     TypedRef,
+    value_type,
 )
 from ..values import parts_from_local
 from .tool_replies import workspace_reply_from_step
+
+
+def required_declarations(
+    declarations: Sequence[RecallControlPayload],
+    visible: Mapping[RecallTarget, str],
+) -> tuple[RecallControlPayload, ...]:
+    """Reconcile supplied current facts with selected history, without I/O."""
+    current = {item.target: item for item in declarations}
+    result: list[RecallControlPayload] = []
+    for target, revision in visible.items():
+        if revision == "0":
+            continue
+        if isinstance(target, SkillRecallTarget | ServiceRecallTarget):
+            trigger = (
+                SkillTriggerRecallTarget
+                if isinstance(target, SkillRecallTarget)
+                else ServiceTriggerRecallTarget
+            )(target.ref)
+            stale = trigger not in current or current[trigger].revision != revision
+        elif isinstance(target, RulesRecallTarget):
+            workspace = WorkspaceRecallTarget(target.workspace)
+            stale = (
+                workspace not in current
+                or visible.get(workspace) != current[workspace].revision
+            )
+        else:
+            stale = target not in current
+        if stale:
+            result.append(RecallControlPayload(target, "0", ""))
+    result.extend(
+        item for item in declarations if visible.get(item.target) != item.revision
+    )
+    return tuple(result)
 
 
 def active_steps(
@@ -335,3 +383,153 @@ class MessageHistory:
             delta = self._load_tail(pending)
             self._tails[pending] = delta, render_delta(delta, self._resolve)
         return self._tails[pending]
+
+
+_PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
+
+
+def assemble_messages(
+    far: str,
+    near: Sequence[Message],
+    now: Sequence[Message],
+    recall: Sequence[str],
+) -> list[Message]:
+    """Join selected history and live messages without rendering them again."""
+
+    return [
+        *([Message.user(far)] if far and "far" in recall else []),
+        *(near if "near" in recall else ()),
+        *now,
+    ]
+
+
+def control_message(control: ControlRecord) -> MessageTemplate | None:
+    """Describe a control fact; the caller decides when it is visible."""
+
+    payload = control.payload
+    if isinstance(payload, RecallControlPayload):
+        opening, closing = resource_frame(
+            payload.target, payload.revision, payload.content
+        )
+        segments = (
+            (
+                opening,
+                TypedRef(FieldRef.from_path(control.ref, "payload", "content"), "Text"),
+                closing,
+            )
+            if closing
+            else (opening,)
+        )
+        return MessageTemplate("user", segments, recall=control.ref, escape_text=True)
+    if not isinstance(payload, SteerControlPayload | CancelControlPayload):
+        return None
+    primary = payload.input.get("_")
+    content = (
+        (
+            TypedRef(
+                FieldRef.from_path(control.ref, "payload", "input", "_"),
+                primary.type if isinstance(primary, TypedRef) else value_type(primary),
+            ),
+        )
+        if primary is not None
+        else ()
+    )
+    tag, description = (
+        ("steer", "The user supplied updated input for the current task.")
+        if isinstance(payload, SteerControlPayload)
+        else ("cancel", "The user canceled this run.")
+    )
+    tag = f"toolang:{tag}"
+    opening = f'<{tag} description="{description}"'
+    return MessageTemplate(
+        "user",
+        (opening + ">", *content, f"</{tag}>") if content else (opening + "/>",),
+        escape_text=True,
+    )
+
+
+def initial_messages(
+    *,
+    agic: AgicDecl,
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    prompt_context: str,
+    primary: tuple[Part, ...],
+) -> tuple[Message, ...]:
+    """Combine authored messages with context and the primary input."""
+
+    fallback = _run_message(
+        agic=agic,
+        rendered=rendered,
+        prompt_context=prompt_context,
+        primary=primary,
+    )
+    return _authored_messages(
+        rendered=rendered,
+        prompt_context=prompt_context,
+        fallback=fallback,
+    )
+
+
+def _run_message(
+    *,
+    agic: AgicDecl,
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    prompt_context: str,
+    primary: tuple[Part, ...],
+) -> Message:
+    implicit = tuple(
+        parts
+        for block, parts in rendered
+        if block.role == "user" and not block.explicit
+    )
+    authored = join_parts(*implicit)
+    references_primary = any(
+        block.role == "user"
+        and not block.explicit
+        and _PRIMARY_REFERENCE_RE.search(block.content) is not None
+        for block in agic.messages
+    )
+    parts = join_parts(
+        (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
+        authored,
+        primary if (not authored or not references_primary) else (),
+    )
+    if parts == primary:
+        return Message(role="user", parts=primary)
+    return Message(role="user", parts=parts)
+
+
+def _authored_messages(
+    *,
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    prompt_context: str,
+    fallback: Message,
+) -> tuple[Message, ...]:
+    blocks = tuple(
+        (block, parts)
+        for block, parts in rendered
+        if block.role in {"user", "assistant", "tool"}
+    )
+    if not any(block.explicit for block, _parts in blocks):
+        return (fallback,)
+    last_user = next(
+        (
+            index
+            for index in range(len(blocks) - 1, -1, -1)
+            if blocks[index][0].role == "user"
+        ),
+        None,
+    )
+    messages: list[Message] = []
+    for index, (block, parts) in enumerate(blocks):
+        if index == last_user and prompt_context.strip():
+            parts = join_parts((TextPart(prompt_context.strip()),), parts)
+        if not parts:
+            continue
+        try:
+            messages.append(Message(role=block.role, parts=parts))
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
+    if last_user is None and prompt_context.strip():
+        messages.insert(0, Message.user(prompt_context.strip()))
+    return tuple(messages) if messages else (fallback,)

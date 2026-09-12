@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from html import escape
 from typing import cast
@@ -10,6 +10,7 @@ from typing import cast
 from toolang.base.types.message import Message, Part, TextPart
 
 from ..types import MessageDelta, MessageTemplate, TypedRef, validate_runtime_value
+from ..types import RecallTarget, RulesRecallTarget, WorkspaceRecallTarget
 
 
 _PART_NAMES = {
@@ -21,21 +22,6 @@ _PART_NAMES = {
     "ToolCallPart",
     "ToolResultPart",
 }
-
-
-def assemble_messages(
-    far: str,
-    near: Sequence[Message],
-    now: Sequence[Message],
-    recall: Sequence[str],
-) -> list[Message]:
-    """Join selected history and live messages without rendering them again."""
-
-    return [
-        *([Message.user(far)] if far and "far" in recall else []),
-        *(near if "near" in recall else ()),
-        *now,
-    ]
 
 
 def literal_delta(messages: Sequence[Message]) -> MessageDelta:
@@ -68,7 +54,9 @@ def render_delta(
             parts=tuple(
                 part
                 for segment in message.segments
-                for part in _render_segment(segment, resolve)
+                for part in _render_segment(
+                    segment, resolve, escape_text=message.escape_text
+                )
             ),
         )
         for message in delta.messages
@@ -76,7 +64,10 @@ def render_delta(
 
 
 def _render_segment(
-    segment: str | Part | TypedRef, resolve: Callable[[TypedRef], object]
+    segment: str | Part | TypedRef,
+    resolve: Callable[[TypedRef], object],
+    *,
+    escape_text: bool = False,
 ) -> tuple[Part, ...]:
     if isinstance(segment, str):
         return (TextPart(segment),)
@@ -87,22 +78,47 @@ def _render_segment(
     value = resolve(segment)
     validate_runtime_value(value, segment.type)
     if segment.type == "Text":
-        return (TextPart(cast(str, value)),)
+        text = cast(str, value)
+        return (TextPart(escape(text, quote=False) if escape_text else text),)
     if segment.type.endswith("[]"):
-        return deepcopy(tuple(cast(Sequence[Part], value)))
-    return (deepcopy(cast(Part, value)),)
+        parts = deepcopy(tuple(cast(Sequence[Part], value)))
+    else:
+        parts = (deepcopy(cast(Part, value)),)
+    return tuple(
+        TextPart(escape(part.text, quote=False))
+        if escape_text and isinstance(part, TextPart)
+        else part
+        for part in parts
+    )
 
 
-def escape_markup_value(value: object) -> object:
-    """Escape bundled template values without changing authored rendering."""
+def resource_frame(
+    target: RecallTarget, revision: str, content: str
+) -> tuple[str, str]:
+    """Frame a declaration without exposing internal bodyless revision markers."""
+    tag = "toolang:" + {"skill": "skill-guidance", "service": "service-guidance"}.get(
+        target.kind, target.kind
+    )
+    attrs = (
+        {"workspace": target.workspace, "path": target.path}
+        if isinstance(target, RulesRecallTarget)
+        else {"ref": target.ref}
+    )
+    if revision == "0":
+        attrs["removed"] = "true"
+    elif content and not isinstance(target, WorkspaceRecallTarget):
+        attrs["revision"] = revision
+    attributes = " ".join(
+        f'{key}="{escape(value, quote=True)}"' for key, value in attrs.items()
+    )
+    if revision == "0" or not content or isinstance(target, WorkspaceRecallTarget):
+        return f"<{tag} {attributes}/>", ""
+    return f"<{tag} {attributes}>", f"</{tag}>"
 
-    if isinstance(value, str):
-        return escape(value, quote=True)
-    if isinstance(value, Mapping):
-        return {key: escape_markup_value(item) for key, item in value.items()}
-    if isinstance(value, tuple | list):
-        return [escape_markup_value(item) for item in value]
-    return value
+
+def resource_text(target: RecallTarget, revision: str, content: str) -> str:
+    opening, closing = resource_frame(target, revision, content)
+    return opening + (escape(content, quote=False) + closing if closing else "")
 
 
 def text_block(tag: str, content: str) -> str:

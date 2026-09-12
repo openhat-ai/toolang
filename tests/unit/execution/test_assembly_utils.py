@@ -4,31 +4,10 @@ import pytest
 
 from toolang.base.types.message import ImagePart, TextPart
 from toolang.execution.assembly.utils import (
-    escape_markup_value,
     join_parts,
     strip_parts,
     text_block,
 )
-
-
-def test_escape_markup_value_copies_nested_values_without_interpolation() -> None:
-    value = {
-        "text": '<code x="a&b">',
-        "nested": ("{{literal}}", {"text": "</code>"}),
-        "count": 2,
-        "enabled": True,
-        "missing": None,
-    }
-
-    assert escape_markup_value(value) == {
-        "text": "&lt;code x=&quot;a&amp;b&quot;&gt;",
-        "nested": ["{{literal}}", {"text": "&lt;/code&gt;"}],
-        "count": 2,
-        "enabled": True,
-        "missing": None,
-    }
-    assert value["text"] == '<code x="a&b">'
-    assert value["nested"] == ("{{literal}}", {"text": "</code>"})
 
 
 @pytest.mark.parametrize(

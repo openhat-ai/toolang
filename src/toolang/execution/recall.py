@@ -33,6 +33,13 @@ def recall_revisions(
         for message in delta.messages:
             if message.role != "user":
                 continue
+            if message.recall is not None:
+                record = control(message.recall)
+                if record.status == "applied" and isinstance(
+                    record.payload, RecallControlPayload
+                ):
+                    revisions[record.payload.target] = record.payload.revision
+                continue
             for segment in message.segments:
                 if (
                     isinstance(segment, TypedRef)

@@ -404,7 +404,7 @@ def test_interrupted_model_end_preserves_referenced_output(
                     thread_id=str(root.thread)
                 )
                 assert messages[-1] == Message.user(
-                    '<cancel description="The user canceled this run."/>'
+                    '<toolang:cancel description="The user canceled this run."/>'
                 )
             if interruption == "cancel" and requests:
                 canceled_tools = [

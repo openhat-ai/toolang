@@ -231,31 +231,59 @@ The implementation is divided by semantic level:
 
 - `prompting.py` builds complete, provider-neutral `ModelCall` inputs for
   adapters. `prepare_prompt()` renders instructions, context, and initial
-  messages for the frame cache; `build_model_call()` adds live messages,
-  selected history, tool definitions, output schema, continuation, and output
-  budget;
+  messages for the frame cache; `build_model_call()` accepts finished messages
+  and adds structured tool definitions, output schema, continuation, and budget;
 - `types.py` defines the cached `PreparedPrompt` value;
-- `history.py` selects, reconstructs, and composes historical model context;
+- `history.py` selects and composes messages, frames controls, and reconciles
+  supplied resource declarations without I/O;
 - `tool_replies.py` builds control receipts and intercepted-call replies;
 - `utils.py` handles text escaping, Part normalization, message joining, and
   delta generation/rendering without selecting history or loading prompts;
 - `prompts/` holds static text; `prompts/defaults/` contains the default
   instruct, context, and compact program.
 
-Tool-use guidance belongs to `prompts/protocol.md`, with conditional sections
-for selected tools. Tool definitions remain structured `ToolDefinition` values;
-adapters choose their provider-specific API representation. The model step
-decides whether tools are enabled, including during output repair.
+Tool-use conventions belong to the static `prompts/protocol.md`. Protocol stays
+first and unchanged across tool selection, `instruct: none`, and output repair.
+Tool definitions remain structured `ToolDefinition` values; adapters choose their
+provider-specific representation. The model step decides whether tools are enabled.
 
 Authored messages are resolved before reusable prompt preparation so the frame
 can record prompt invocations before rendering instructions and context.
 Control-message framing and its short steer/cancel descriptions live in
-`prompting.py` for live input and replay. Output-repair wording lives directly
+`history.py`; replay uses recorded templates, not current wording. Output-repair wording lives directly
 beside its policy in `executor/runs/agic.py`.
 
 Assembly consumes prepared data and records; it does not execute tools or read
 the store. `executor/message_buffer.py` holds the live message sequence and
 pending delta; `execution/records.py` owns delta serialization.
+
+Instructions contain `toolang:protocol`, optional `toolang:instruct`, resident
+`toolang:psyche` bodies, and `toolang:skill-trigger`/`toolang:service-trigger`
+descriptions. Triggers advertise availability, not loaded guidance.
+Using a skill or service requires its current visible `skill-guidance` or
+`service-guidance` user message; `_toolang__pick` loads it on demand.
+Revisions derive from immutable definition fingerprints and metadata, without
+reading skill/service bodies during assembly.
+
+Resource declarations use replacement by kind/ref and self-closing
+`removed="true"` withdrawals. Capability changes retract stale guidance.
+The executor reconciles adopted State with resident, historical, and pending
+declarations at model-call boundaries; watcher changes alone do not wake runs.
+New control templates escape literal text while preserving nontext Parts.
+Optional persisted recall references track bodyless declarations; old deltas
+retain their original framing and body-reference visibility semantics.
+
+Every model call sees the available workspaces, including its first call:
+`<toolang:workspace ref="project"/>`. Names are the refs; host roots and binding
+revisions stay internal. Assembly does not scan rules. Preflight blocks a
+path-aware operation until applicable rules are current and model-visible.
+On a remap, honor withdraws old scoped rules and presents the new binding before
+new rules; loading failure never permits the original operation. Compaction and
+`recall = none` re-present bindings when the previous declarations are no longer visible.
+
+Default instruct retains the agent name. Default context contains only date,
+timezone, model provider, and model name. Authored instruct/context selection
+remains unchanged; no default agent-home path, model-family label, or run-info is emitted.
 
 `execution/inspection/` groups durable history queries, inspection types,
 Run/Thread views, and execution-tree projections. Its package facade exposes
@@ -276,10 +304,12 @@ The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,
 `_toolang__execute`, `_toolang__reload`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
 execute targets; they do not select definitions. All tools use plugin registration
-and the same Tool Step lifecycle. A bounded route catalog lists
-the authored routes and resolved union as model hints only when `hands` or
-`handoffs` is present; with neither directive, instructions state that no
-target is authorized and omit the catalog. Runtime calls in one model batch
+and the same Tool Step lifecycle. Bounded `toolang:runnable-info` declarations
+describe authorized targets only when `hands` or `handoffs` is present,
+preserving run/execute distinctions. With neither directive, no runnable-info
+is emitted. The limit is 64 entries and 32,768 UTF-8 bytes, including escaped
+framing. Removed authorization retracts previously presented routes.
+Runtime calls in one model batch
 use that Model Call's captured routes, even if reload and ordinary tools adopt
 new State between calls. The next Model Call captures the new routes.
 

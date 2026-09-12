@@ -12,7 +12,6 @@ from toolang.lang.input import coerce_output
     "name",
     [
         "protocol.md",
-        "psyches.md",
         "skills.md",
         "services.md",
         "defaults/instruct.md",
@@ -35,15 +34,18 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
     finally:
         prompts.load.cache_clear()
 
-    assert prompt.startswith("<runtime-instructions>")
+    assert prompt.startswith("<toolang:protocol>")
 
 
 def test_bundled_protocol_requires_guidance_recall_before_use() -> None:
     prompt = prompts.load("protocol.md")
 
-    assert "Catalogs are an index, not loaded guidance" in prompt
-    assert "call `_toolang__pick`" in prompt
-    assert "only after that message is visible" in prompt
+    assert (
+        "Triggers, names, memory, far summaries, and pick receipts are not loaded guidance"
+        in prompt
+    )
+    assert "call _toolang__pick" in prompt
+    assert "then wait for the guidance user message" in prompt
     assert "Picking a service does not connect" in prompt
 
 

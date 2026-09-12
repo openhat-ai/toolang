@@ -36,6 +36,7 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...assembly.prompting import build_model_call
+from ...assembly.history import assemble_messages, required_declarations
 from ...records import ControlRecord
 from ...types import (
     Local,
@@ -97,12 +98,40 @@ def _candidate(
         messages.prepend(*state.execution.message_history().tail(prepared.run.horizon))
     for control in preceding:
         messages.append_control(control)
+    if state.execution is not None:
+        resident = (
+            state.prepared.prompt.declarations
+            if state.messages.started
+            else prepared.prompt.declarations
+        )
+        visible = {item.target: item.revision for item in resident}
+        if "near" in prepared.recall:
+            visible.update(
+                state.execution.message_history().recalls(prepared.run.horizon)
+            )
+        visible.update(messages.recalls)
+        additions = required_declarations(
+            (*prepared.prompt.declarations, *prepared.workspaces),
+            visible,
+        )
+        for payload in additions:
+            state.execution.recall(RunRef(prepared.run.run_id), payload, visible)
+        preceding_refs = {item.ref for item in preceding}
+        new_controls = tuple(
+            control
+            for control in state.execution.runtime_controls(
+                prepared.run.run_id, refresh=False
+            )
+            if control.ref not in preceding_refs
+        )
+        for control in new_controls:
+            messages.append_control(control)
+        preceding = (*preceding, *new_controls)
     request = build_model_call(
         prepared.prompt,
-        messages=messages.messages,
-        far=prepared.far,
-        near=prepared.near,
-        recall=prepared.recall,
+        messages=assemble_messages(
+            prepared.far, prepared.near, messages.messages, prepared.recall
+        ),
         tools=prepared.tools,
         tools_enabled=prepared.model.tools and not state.repairing_output,
         output_schema=state.output_binding.output_schema,
@@ -243,11 +272,13 @@ async def execute(state: _AgicState) -> ModelCallResult:
     def adopt_begin() -> None:
         state.prepared = prepared
         state.messages = next_messages
-        state.visible_recalls = (
-            dict(state.execution.message_history().recalls(prepared.run.horizon))
-            if state.execution is not None and "near" in prepared.recall
-            else {}
-        )
+        state.visible_recalls = {
+            item.target: item.revision for item in prepared.prompt.declarations
+        }
+        if state.execution is not None and "near" in prepared.recall:
+            state.visible_recalls.update(
+                state.execution.message_history().recalls(prepared.run.horizon)
+            )
         state.visible_recalls.update(next_messages.recalls)
         state.claimed_inputs = ()
         state.next_model_inputs = None

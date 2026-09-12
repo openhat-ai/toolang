@@ -1,8 +1,7 @@
 # Model input protocol
 
-Design draft; implementation awaits human confirmation. Make model inputs clear
-and cache-friendly while preserving authorization, State adoption, recall, and
-recorded-call reconstruction. Only this document changes in this revision.
+Approved for implementation. Make model inputs clear and cache-friendly while
+preserving authorization, State adoption, recall, and recorded-call reconstruction.
 
 ## Layout
 
@@ -188,4 +187,4 @@ Extend existing offline execution unit/integration and architecture tests:
 Run Ruff, format checks, ty, and default pytest; verify packaged prompt resources.
 After implementation, update `docs/executor.md`. Main risks are stale resource/rule
 state, metadata mistaken for guidance, notifications mistaken for tasks, and replay
-drift. Human confirmation remains required before implementation.
+drift.

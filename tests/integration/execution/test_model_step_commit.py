@@ -232,17 +232,21 @@ def test_controls_received_before_model_begin_enter_that_call(
                 Message(
                     "user",
                     (
-                        TextPart('<skill ref="testing" revision="v1">'),
+                        TextPart(
+                            '<toolang:skill-guidance ref="testing" revision="v1">'
+                        ),
                         TextPart("Use tests."),
-                        TextPart("</skill>"),
+                        TextPart("</toolang:skill-guidance>"),
                     ),
                 ),
+                Message.user('<toolang:skill-guidance ref="testing" removed="true"/>'),
             ]
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.index == 0
             assert step.preceded_by == (
                 ControlRef.for_run(run.id, 0),
                 *(control.ref for control in expected_controls),
+                harness.store.list_run_controls(run_id=run.id)[-1].ref,
             )
             for control in expected_controls:
                 saved = harness.store.get_run_control(
@@ -419,7 +423,10 @@ flow parent() -> Text:
                 if child
                 else (entry, steer.ref, reload.ref, recall.ref)
             )
-            assert step.preceded_by == expected
+            assert step.preceded_by == (
+                *expected,
+                harness.store.list_run_controls(run_id=model_run_id)[-1].ref,
+            )
             assert step.state == reload.ref
             (call,) = harness.adapter.invocations
             assert "updated instructions" in call.call.instructions

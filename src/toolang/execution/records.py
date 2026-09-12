@@ -100,6 +100,8 @@ def delta_to_data(delta: MessageDelta) -> dict[str, object]:
                     else segment.to_data()
                     for segment in message.segments
                 ],
+                **({"recall": str(message.recall)} if message.recall else {}),
+                **({"escape_text": True} if message.escape_text else {}),
             }
             for message in delta.messages
         ],
@@ -123,6 +125,10 @@ def delta_from_data(data: Mapping[str, object]) -> MessageDelta:
                         Sequence[str | Mapping[str, Any]], message["segments"]
                     )
                 ),
+                recall=ControlRef.parse(str(message["recall"]))
+                if message.get("recall") is not None
+                else None,
+                escape_text=message.get("escape_text") is True,
             )
             for message in messages
         ),

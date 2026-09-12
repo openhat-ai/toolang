@@ -6,7 +6,7 @@ import pytest
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunLimits
-from toolang.execution.assembly.prompting import control_message
+from toolang.execution.assembly.history import control_message
 from toolang.execution.assembly.utils import render_delta
 from toolang.execution.records import (
     CancelControlPayload,
@@ -55,9 +55,9 @@ def test_control_description_is_an_attribute(
     template = control_message(control)
     assert template is not None
     (message,) = render_delta(MessageDelta(messages=(template,)), lambda _: reason)
-    opening = f'<{kind} description="{description}"'
+    opening = f'<toolang:{kind} description="{description}"'
     assert message.parts == (
-        (TextPart(opening + ">"), TextPart(reason), TextPart(f"</{kind}>"))
+        (TextPart(opening + ">"), TextPart(reason), TextPart(f"</toolang:{kind}>"))
         if reason is not None
         else (TextPart(opening + "/>"),)
     )

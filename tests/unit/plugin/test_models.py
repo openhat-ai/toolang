@@ -2853,10 +2853,10 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         "user",
         (
             TextPart(
-                '<steer description="The user supplied updated input for the current task.">'
+                '<toolang:steer description="The user supplied updated input for the current task.">'
             ),
             *steer.parts,
-            TextPart("</steer>"),
+            TextPart("</toolang:steer>"),
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
@@ -3250,7 +3250,6 @@ def _prepared_agic(
         adapter=provider,
         prompt=PreparedPrompt(
             instructions="",
-            instructions_with_tools="",
             context="",
             messages=(Message.user("hello"),),
         ),

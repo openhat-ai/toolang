@@ -41,9 +41,15 @@ from ..assembly.prompting import (
     render_messages,
 )
 from ..assembly.types import PreparedPrompt
-from .resources import resource_caps, resource_tools
+from .resources import (
+    workspace_declarations,
+    cap_revision,
+    resource_caps,
+    resource_tools,
+)
 from .resources import snapshot_model_selection
-from ..runnables import AgicRoutes, render_runnable_instructions, resolve_agic_routes
+from ..runnables import AgicRoutes, runnable_descriptions, resolve_agic_routes
+from ..records import RecallControlPayload
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -63,6 +69,7 @@ class _AgicFrame:
     tools: dict[str, Tool]
     routes: AgicRoutes
     services: tuple[ToolService, ...]
+    workspaces: tuple[RecallControlPayload, ...] = ()
     recall: tuple[str, ...] = ("far", "near")
     far: str = ""
     near: tuple[Message, ...] = ()
@@ -157,12 +164,7 @@ def build_agic_frame(
         system_runtime,
         rendered=rendered,
         primary=_primary_parts(agic, variables),
-        runnable_instructions=render_runnable_instructions(run.state, routes)
-        if runtime_tools
-        else "",
-        filesystem=any(
-            getattr(tool, "plugin_name", None) == "fs" for tool in tools.values()
-        ),
+        runnables=runnable_descriptions(run.state, routes) if runtime_tools else (),
     )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
@@ -177,6 +179,7 @@ def build_agic_frame(
         tools=tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
+        workspaces=workspace_declarations(run.state.workspaces),
         recall=recall_sources(
             next((item.values for item in agic.directives if item.name == "recall"), ())
         ),
@@ -267,13 +270,15 @@ def _model_context(model: ModelTarget) -> dict[str, object]:
 
 def _cap_context(context: _Execution, entry: StateCap) -> dict[str, object]:
     description = entry.meta.get("description")
+    content = entry.read_content() if entry.kind == "psyche" else ""
     return {
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
         "ref": cap_store.entry_ref(entry, agent_name=context.layout.name),
         "description": str(description) if description is not None else None,
-        "content": entry.read_content() or None if entry.kind == "psyche" else None,
+        "content": content if entry.kind == "psyche" else None,
+        "revision": cap_revision(entry),
         "metadata": mutable_data(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
         "scope": cap_store.entry_scope(entry, agent_name=context.layout.name),

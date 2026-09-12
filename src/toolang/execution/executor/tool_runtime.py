@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -36,7 +35,8 @@ from ..types import (
     local_to_protocol_data,
 )
 from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
-from .resources import resource_caps
+from ..assembly.history import required_declarations
+from .resources import cap_revision, resource_caps, workspace_declarations
 from .rules import load_rules
 
 if TYPE_CHECKING:
@@ -87,11 +87,11 @@ class _ToolRuntime(ToolRuntime):
             None,
         )
         if cap is None:
-            raise ToolangError(f"{kind} is not in the available catalog: {ref}")
+            raise ToolangError(f"{kind} is not available: {ref}")
         content = cap.read_content()
         payload = RecallControlPayload(
             SkillRecallTarget(ref) if kind == "skill" else ServiceRecallTarget(ref),
-            sha256(content.encode("utf-8")).hexdigest(),
+            cap_revision(cap),
             content,
         )
         controls = execution.recall(self.step, payload, self.state.visible_recalls)
@@ -110,14 +110,26 @@ class _ToolRuntime(ToolRuntime):
             workspaces={name: Path(path) for name, path in captured.workspaces.items()},
         )
         pending = execution.runtime_controls(self.step.run_id)
-        known = set(self.state.visible_recalls) | {
-            c.payload.target
+        visible = dict(self.state.visible_recalls)
+        visible.update(
+            (c.payload.target, c.payload.revision)
             for c in pending
             if isinstance(c.payload, RecallControlPayload)
-        }
+        )
+        # A reload may precede honor in the same tool batch. Retire the old
+        # binding's rules before freshly loaded rules enter the next call.
+        for payload in required_declarations(
+            workspace_declarations(captured.workspaces),
+            {
+                target: revision
+                for target, revision in visible.items()
+                if target.kind in {"workspace", "rules"}
+            },
+        ):
+            execution.recall(self.step, payload, self.state.visible_recalls)
         summaries = {
             ref: control_summary(ref, payload)
-            for payload in load_rules(context, paths, known)
+            for payload in load_rules(context, paths, set(visible))
             for ref in execution.recall(self.step, payload, self.state.visible_recalls)
         }
         return ToolResult(

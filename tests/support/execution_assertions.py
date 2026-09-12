@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from html import escape
 from toolang.base.types.message import Message, TextPart
 
 from toolang.execution.events import (
@@ -47,10 +48,13 @@ def steer_message(value: str | Message) -> Message:
         "user",
         (
             TextPart(
-                '<steer description="The user supplied updated input for the current task.">'
+                '<toolang:steer description="The user supplied updated input for the current task.">'
             ),
-            *message.parts,
-            TextPart("</steer>"),
+            *(
+                TextPart(escape(p.text, quote=False)) if isinstance(p, TextPart) else p
+                for p in message.parts
+            ),
+            TextPart("</toolang:steer>"),
         ),
     )
 

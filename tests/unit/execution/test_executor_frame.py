@@ -28,7 +28,6 @@ from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.common.version import toolang_version
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
@@ -256,6 +255,7 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -313,13 +313,13 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
     assert "You are the alice Toolang agent." in prepared.prompt.instructions
-    assert f"toolang_version: {toolang_version()}" in prepared.prompt.instructions
-    assert "sandbox: docker:python:3.13-slim" in prepared.prompt.instructions
-    assert "system: Linux 6.0 (aarch64)" in prepared.prompt.instructions
-    assert "working_directory: /workspace" in prepared.prompt.instructions
+    assert "toolang_version:" not in prepared.prompt.instructions
+    assert "sandbox: docker:python:3.13-slim" not in prepared.prompt.instructions
+    assert "system: Linux 6.0 (aarch64)" not in prepared.prompt.instructions
+    assert "working_directory: /workspace" not in prepared.prompt.instructions
     assert "date: 2026-01-01" in prepared.prompt.context
     assert "timezone: UTC" in prepared.prompt.context
-    assert "agent_name: alice" in prepared.prompt.context
+    assert "model_provider: test" in prepared.prompt.context
     assert [message_text(message.parts) for message in prepared.prompt.messages] == [
         prepared.prompt.context + "\n\nAnswer: hello; focus=events",
     ]
@@ -360,6 +360,7 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -446,6 +447,7 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             revision="0" * 64,
         ),
     )
@@ -548,6 +550,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             program=Program(agics=(agic,), span=Span(1)),
             program_source="agents/alice/agent.too",
             caps=(),
+            workspaces={},
             root_config={},
             home_config={},
             revision="0" * 64,

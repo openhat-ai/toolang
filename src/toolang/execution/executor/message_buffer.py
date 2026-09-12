@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 
 from toolang.base.types.message import Message, MessageRole
 
-from ..assembly.prompting import control_message
+from ..assembly.history import control_message
 from ..assembly.utils import literal_delta, render_delta
 from ..recall import recall_revisions
 from ..records import ControlRecord, RecallControlPayload, SteerControlPayload

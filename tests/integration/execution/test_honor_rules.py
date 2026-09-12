@@ -119,6 +119,7 @@ def _recalls(harness, run):
         c
         for c in harness.store.list_run_controls(run_id=run.id)
         if isinstance(c.payload, RecallControlPayload)
+        and isinstance(c.payload.target, RulesRecallTarget)
     ]
 
 
@@ -235,7 +236,9 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
             messages = call.messages
             tool_positions = [i for i, m in enumerate(messages) if m.role == "tool"]
             rule_positions = [
-                i for i, m in enumerate(messages) if "<rules " in message_text(m.parts)
+                i
+                for i, m in enumerate(messages)
+                if "<toolang:rules " in message_text(m.parts)
             ]
             assert len(rule_positions) == 2 and min(rule_positions) > max(
                 tool_positions
@@ -766,10 +769,11 @@ def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
             assert [p.content for p in payloads] == [
                 "Root rules.",
                 "Scoped rules.",
-                "New root rules.",
                 "",
+                "",
+                "New root rules.",
             ]
-            assert payloads[-1].revision == "0"
+            assert all(p.revision == "0" for p in payloads[2:4])
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

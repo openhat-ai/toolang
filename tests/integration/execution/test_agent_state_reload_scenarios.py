@@ -456,8 +456,8 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             calls = harness.store.rebuild_model_calls(child_steps)
             by_instruction = {
                 calls[step.ref]
-                .instructions.partition("<agent-instructions>\n")[2]
-                .partition("\n</agent-instructions>")[0]: step.state
+                .instructions.partition("<toolang:instruct>\n")[2]
+                .partition("\n</toolang:instruct>")[0]: step.state
                 for step in child_steps
             }
             assert by_instruction == {

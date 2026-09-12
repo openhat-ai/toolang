@@ -6,7 +6,7 @@ from hashlib import sha256
 import pytest
 
 from toolang.execution.assembly.history import MessageHistory
-from toolang.execution.assembly.prompting import control_message
+from toolang.execution.assembly.history import control_message
 from toolang.execution.executor.message_buffer import _MessageBuffer
 from toolang.execution.recall import canonical_recall, recall_revisions
 from toolang.execution.records import ControlRecord, RecallControlPayload

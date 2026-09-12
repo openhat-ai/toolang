@@ -84,7 +84,7 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
 @pytest.mark.parametrize(
     "declarations,selection,expected",
     [
-        pytest.param("", "", "agent_name: alice", id="bundled"),
+        pytest.param("", "", "model_provider: test", id="bundled"),
         pytest.param(
             "context: Private context for {{agent.name}}.\n",
             "",
@@ -146,9 +146,9 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
             assert run.status == "succeeded", run.error
             (invocation,) = harness.adapter.invocations
             call = invocation.call
-            assert call.instructions.startswith("<runtime-instructions>")
+            assert call.instructions.startswith("<toolang:protocol>")
             assert (
-                "<agent-instructions>\nAgent behavior.\n</agent-instructions>"
+                "<toolang:instruct>\nAgent behavior.\n</toolang:instruct>"
                 in call.instructions
             )
             assert "Current user objective." not in call.instructions
@@ -164,9 +164,13 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
             else:
                 assert expected not in call.instructions
                 assert text.count(expected) == 1
-                assert text.startswith("<context>\n")
-                assert text.count("<context>") == text.count("</context>") == 1
-                assert text.endswith("</context>\n\nCurrent user objective.")
+                assert text.startswith("<toolang:context>\n")
+                assert (
+                    text.count("<toolang:context>")
+                    == text.count("</toolang:context>")
+                    == 1
+                )
+                assert text.endswith("</toolang:context>\n\nCurrent user objective.")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -530,7 +534,9 @@ def test_each_call_records_context_without_rerendering_history(
             for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
-                        message_text(message.parts).count(context or "<context>")
+                        message_text(message.parts).count(
+                            context or "<toolang:context>"
+                        )
                         for message in messages
                     )
                     == count
@@ -539,7 +545,7 @@ def test_each_call_records_context_without_rerendering_history(
                 if isinstance(step.given, StoredModelStepGiven):
                     assert (
                         sum(
-                            segment.count(context or "<context>")
+                            segment.count(context or "<toolang:context>")
                             for message in step.given.call.delta.messages
                             for segment in message.segments
                             if isinstance(segment, str)

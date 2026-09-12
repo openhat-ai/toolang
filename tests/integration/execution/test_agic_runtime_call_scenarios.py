@@ -122,13 +122,13 @@ agic child(_: Text) -> Text:
             assert result.tool_call_id == "call-run"
             assert result.output["run_id"] == children[0].id
             assert persisted_result == result
-            assert "<available-runnable-routes>" in (
+            assert "<toolang:runnable-info " in (
                 harness.adapter.invocations[0].call.instructions
             )
-            assert "<available-runnable-routes>" not in (
+            assert "<toolang:runnable-info " not in (
                 harness.adapter.invocations[1].call.instructions
             )
-            assert "declares no hands or handoffs" in (
+            assert "Without authorized routes, do not call run or execute" in (
                 harness.adapter.invocations[1].call.instructions
             )
             assert {
@@ -479,8 +479,13 @@ flow outer(_: Text) -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
-            assert isinstance(result, ToolResultPart)
+            result = next(
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__run"
+            )
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
             )
@@ -572,7 +577,13 @@ flow -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = next(
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__run"
+            )
             assert isinstance(result, ToolResultPart)
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
@@ -815,7 +826,13 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             reload_control = next(item for item in controls if item.kind == "reload")
             assert reload_control.status == "applied"
             second_call = harness.adapter.invocations[1].call
-            reload_result = second_call.messages[-1].parts[0]
+            reload_result = next(
+                part
+                for message in second_call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__reload"
+            )
             assert isinstance(reload_result, ToolResultPart)
             assert reload_result.error is None
             assert isinstance(reload_control.payload, ReloadControlPayload)
@@ -832,7 +849,10 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             assert isinstance(dynamic.given, ToolStepGiven)
             assert dynamic.given.call.input["runnable"] == "flow:new_flow"
             assert reload_control.triggered_by == steps[1].ref
-            assert steps[2].preceded_by == (reload_control.ref,)
+            (declaration,) = [
+                control for control in controls if control.kind == "recall"
+            ]
+            assert steps[2].preceded_by == (reload_control.ref, declaration.ref)
             assert [
                 harness.store.rebuild_model_call(step)
                 for step in steps
@@ -1684,9 +1704,12 @@ agic caller() -> Text:
                 "_toolang__reload",
                 "_toolang__run",
             }
-            assert "<available-runnable-routes>" not in first_call.instructions
+            assert "<toolang:runnable-info " not in first_call.instructions
             assert '"runnables"' not in first_call.instructions
-            assert "declares no hands or handoffs" in first_call.instructions
+            assert (
+                "Without authorized routes, do not call run or execute"
+                in first_call.instructions
+            )
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
