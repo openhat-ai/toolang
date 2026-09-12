@@ -38,6 +38,7 @@ from toolang.execution.types import (
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import StateCap
 from toolang.state.watcher import StateWatcher
+from toolang.setup import ModelCollection
 
 
 SOURCE = """
@@ -138,22 +139,54 @@ def _assert_replay_without_state(harness, tracer, monkeypatch):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_custom_instruct_preserves_runtime_protocol_and_guidance_catalog(
-    tmp_path: Path,
+@pytest.mark.parametrize("kind", ["skill", "service"])
+@pytest.mark.parametrize(
+    "declarations,selection,expected",
+    [
+        pytest.param("", "", "You are the alice Toolang agent.", id="bundled"),
+        pytest.param(
+            "instruct: Program behavior.\n",
+            "",
+            "Program behavior.",
+            id="program-default",
+        ),
+        pytest.param(
+            "instruct: Program behavior.\n",
+            "  instruct: default\n",
+            "Program behavior.",
+            id="explicit-default",
+        ),
+        pytest.param(
+            "instruct: Unselected behavior.\ninstruct specialist: Named behavior.\n",
+            "  instruct: specialist\n",
+            "Named behavior.",
+            id="named",
+        ),
+        pytest.param(
+            "instruct: Unselected behavior.\n",
+            "  instruct:\n    Inline behavior.\n",
+            "Inline behavior.",
+            id="inline",
+        ),
+        pytest.param(
+            "instruct: Unselected behavior.\n",
+            "  instruct: none\n",
+            None,
+            id="none",
+        ),
+    ],
+)
+def test_instruct_selection_preserves_layers_and_guidance_delivery(
+    tmp_path: Path, monkeypatch, kind, declarations, selection, expected
 ) -> None:
     harness, _ = _harness(
         tmp_path,
-        [_answer()],
-        source="""
-instruct:
-  Diagnose Toolang problems precisely.
-
-agic chat() -> Text:
-  context: none
-  user: Complete the task.
-""",
+        [_calls(_pick(kind=kind)), _answer()],
+        source=declarations
+        + SOURCE.replace("  context: none", selection + "  context: none"),
         psyche="Apply the precise psyche.",
     )
+    tracer = RecordingRunTracer()
 
     async def scenario() -> None:
         async with harness:
@@ -161,34 +194,122 @@ agic chat() -> Text:
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="chat",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            first, following = (item.call for item in harness.adapter.invocations)
+            instructions = first.instructions
+            protocol, other = instructions.split("</runtime-instructions>", 1)
+            assert protocol.startswith("<runtime-instructions>")
+            assert 'ref="home://skills/testing"' in protocol
+            assert 'ref="home://services/github"' in protocol
+            assert "_toolang__pick" in protocol
+            assert "Unselected behavior." not in instructions
+            assert "Apply the precise psyche." not in protocol
+            assert "<capability-instructions>" in other
+            capabilities = other.split("<capability-instructions>", 1)[1]
+            assert "Apply the precise psyche." in capabilities
+            if expected is None:
+                assert "<agent-instructions>" not in instructions
+            else:
+                agent = other.split("<agent-instructions>", 1)[1].split(
+                    "</agent-instructions>", 1
+                )[0]
+                assert agent.strip() == expected
+                assert other.index("</agent-instructions>") < other.index(
+                    "<capability-instructions>"
+                )
+            assert "_toolang__pick" in {tool.name for tool in first.tools}
+            assert first.messages == [Message.user("Complete the task.")]
+            assert GUIDANCE not in instructions
+            assert following.instructions == instructions
+            recalls = [
+                message
+                for message in following.messages
+                if message_text(message.parts).startswith(f"<{kind} ref=")
+            ]
+            assert len(recalls) == 1 and recalls[0].role == "user"
+            assert GUIDANCE in message_text(recalls[0].parts)
+            (control,) = _recalls(harness, run)
+            assert control.payload.content == GUIDANCE
+            assert _results(harness, run)["pick"].error is None
+
+    asyncio.run(scenario())
+    _assert_replay_without_state(harness, tracer, monkeypatch)
+
+
+@pytest.mark.parametrize("restriction", ["directive", "ceiling"])
+def test_instruct_cannot_restore_excluded_capabilities(tmp_path: Path, restriction):
+    source = SOURCE.replace(
+        "  context: none",
+        "  instruct: Use the precise psyche and all guidance.\n  context: none",
+    )
+    if restriction == "directive":
+        source = source.replace(
+            "agic chat() -> Text:\n",
+            "agic chat() -> Text:\n  psyches = none\n  skills = none\n  services = none\n",
+        )
+    harness, _ = _harness(
+        tmp_path,
+        [_calls(_pick("skill"), _pick("service", kind="service")), _answer()],
+        source=source,
+        psyche="Excluded psyche guidance.",
+    )
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    ceilings=(AgentCeiling(psyches=(), skills=(), services=()),)
+                    if restriction == "ceiling"
+                    else (),
                 )
             )
             assert run.status == "succeeded", run.error
-            instructions = harness.adapter.invocations[0].call.instructions
-            assert "<runtime-instructions>" in instructions
-            assert "Diagnose Toolang problems precisely." in instructions
-            assert "<agent-instructions>" in instructions
-            assert "Apply the precise psyche." in instructions
-            assert 'ref="home://skills/testing"' in instructions
-            assert 'ref="home://services/github"' in instructions
-            assert "_toolang__pick" in instructions
+            for invocation in harness.adapter.invocations:
+                instructions = invocation.call.instructions
+                assert "<runtime-instructions>" in instructions
+                assert "Use the precise psyche and all guidance." in instructions
+                assert "<capability-instructions>" not in instructions
+                assert (
+                    "<skills>" not in instructions and "<services>" not in instructions
+                )
+                assert "Excluded psyche guidance." not in instructions
+                assert GUIDANCE not in instructions
+            assert not _recalls(harness, run)
+            assert all(
+                result.error and "available catalog" in result.error
+                for result in _results(harness, run).values()
+            )
 
     asyncio.run(scenario())
 
 
-def test_instruct_none_removes_only_agent_specific_instructions(tmp_path: Path) -> None:
+def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path):
     harness, _ = _harness(
         tmp_path,
         [_answer()],
-        source="""
-agic chat() -> Text:
-  instruct: none
-  context: none
-  user: Complete the task.
-""",
+        source=SOURCE.replace("  context: none", "  instruct: none\n  context: none"),
+        psyche="Apply the precise psyche.",
+    )
+    entry = harness.setup.models.entries[0]
+    harness.setup = replace(
+        harness.setup,
+        models=ModelCollection(
+            (
+                replace(
+                    entry,
+                    info=replace(entry.info, tools=False),
+                    target=replace(entry.target, tools=False),
+                ),
+            )
+        ),
     )
 
-    async def scenario() -> None:
+    async def scenario():
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
@@ -197,11 +318,13 @@ agic chat() -> Text:
                 )
             )
             assert run.status == "succeeded", run.error
-            instructions = harness.adapter.invocations[0].call.instructions
-            assert "<runtime-instructions>" in instructions
-            assert "<agent-instructions>" not in instructions
-            assert 'ref="home://skills/testing"' in instructions
-            assert 'ref="home://services/github"' in instructions
+            (invocation,) = harness.adapter.invocations
+            assert invocation.call.tools == ()
+            assert "<runtime-instructions>" in invocation.call.instructions
+            assert "<agent-instructions>" not in invocation.call.instructions
+            assert "Apply the precise psyche." in invocation.call.instructions
+            assert 'ref="home://skills/testing"' in invocation.call.instructions
+            assert not _recalls(harness, run)
 
     asyncio.run(scenario())
 

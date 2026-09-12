@@ -192,6 +192,10 @@ agic decide(_: Text) -> Boolean:
             assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
+            protocol, _ = initial.instructions.split("</runtime-instructions>", 1)
+            assert protocol.startswith("<runtime-instructions>")
+            assert repair.instructions == protocol + "</runtime-instructions>"
+            assert "<agent-instructions>" not in repair.instructions
             assert repair.output_schema == initial.output_schema
             assert repair.messages[-1].role == "user"
             repair_part = repair.messages[-1].parts[0]

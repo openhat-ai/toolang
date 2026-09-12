@@ -618,24 +618,56 @@ not runnable parameters.
 
 ## Instruction Layers
 
-Toolang assembles model calls in these conceptual layers:
+These are logical responsibilities, not separate provider roles. The executor
+builds one `ModelCall` with instructions, messages, tool definitions, and an
+output schema; each model adapter maps those fields to its provider API.
 
-```text
-runtime protocol
-selected instruct and capability instructions
-tool definitions
-recalled messages
-authored agic messages and current primary input
-```
+| Component | Responsibility | Model-call location |
+| --- | --- | --- |
+| Runtime protocol | Toolang concepts, runtime facts, priority, guidance loading, tool-result reuse, and control-message semantics | `<runtime-instructions>` in `instructions` |
+| Selected `instruct` | Agent- and runnable-specific behavior | `<agent-instructions>` in `instructions` |
+| Selected psyches | Reusable behavior guidance subordinate to protocol and instruct | `<capability-instructions>` in `instructions` |
+| Skill/service catalogs | Selected names, exact refs, descriptions, and metadata; no guidance bodies | Inside the runtime protocol |
+| Routing and filesystem guidance | Authorized runnable routes and conventions for available filesystem tools | Appended to `instructions` when applicable |
+| Selected `context` | Runtime data, not behavioral instructions | Prepended to the last authored user message; repeated as a user message on later model calls |
+| Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
+| Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
+| Control messages | Updated user input, cancellation, or recalled resource revisions | Runtime-generated user messages |
+| Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
+| Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
 
-Runtime protocol cannot be overridden by an agic. Context remains data rather
-than instructions and is prepended to the final user content. Tool definitions
-remain structured model API input rather than prompt text.
+### Selection And Priority
 
-The runtime protocol is always present, including when an agic selects a named
-or inline `instruct`, declares a program-default `instruct`, or uses
-`instruct: none`. An instruct changes only the agent-specific layer. Selected
-psyches remain capability instructions, while skill and service catalogs and
-their guidance-loading rules remain in the runtime protocol. Catalog metadata
-does not contain a skill or service body; the model must recall applicable
-guidance through the runtime pick tool before using it.
+Runtime protocol is always present: program-default, named, inline, and disabled
+instruct selections cannot remove it. `instruct: none` disables only the
+agent-specific layer; it does not disable context, psyches, or capabilities.
+Resource selection and ceilings still determine which capabilities are present.
+`context: none` independently disables context. Only the bundled default context
+template supplies a `<context>` wrapper; authored context is rendered as written.
+
+The textual priority is runtime protocol, then selected instruct, then capability
+guidance. These tags communicate priority to the model; they are not a parser-
+enforced security boundary. Actual tools, resource ceilings, and workspace
+authorization are enforced separately. Models without tool support and output-
+repair calls receive no tool definitions, but retain the base runtime protocol.
+
+### Guidance And Control Visibility
+
+Catalog metadata is only a selection index. Applicable skill/service bodies must
+be recalled with `_toolang__pick` before use. A successful pick queues a recall
+for the next model call; its tool result is not the guidance body. Picking a
+service neither connects to it nor grants service tools.
+
+- `steer` supplies updated input to an active run as a user message.
+- `cancel` stops the run; its message becomes visible through subsequent
+  conversation history, not another model call in the canceled run.
+- `rules`, `skill`, and `service` messages carry resource bodies and revisions.
+  Later messages for the same target supersede earlier ones. Revision `0`
+  retracts content; an empty body with a nonzero revision does not.
+- Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
+  not themselves add a model-facing lifecycle message. Reload can change the
+  instructions and resource catalogs prepared at a later call boundary.
+
+Skill/service recall is distinct from far/near conversation recall. A far
+summary or a catalog entry does not count as a visible guidance body. Recalling
+a resource again is necessary when its matching body is no longer visible.

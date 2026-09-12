@@ -81,6 +81,94 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
     )
 
 
+@pytest.mark.parametrize(
+    "declarations,selection,expected",
+    [
+        pytest.param("", "", "agent_name: alice", id="bundled"),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "",
+            "Private context for alice.",
+            id="program-default",
+        ),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "  context: default\n",
+            "Private context for alice.",
+            id="explicit-default",
+        ),
+        pytest.param(
+            "context: Unselected context.\ncontext report: Private context for {{agent.name}}.\n",
+            "  context: report\n",
+            "Private context for alice.",
+            id="named",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context:\n    Private context for {{agent.name}}.\n",
+            "Private context for alice.",
+            id="inline",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context: none\n",
+            None,
+            id="none",
+        ),
+    ],
+)
+def test_context_selection_keeps_data_and_current_input_out_of_instructions(
+    tmp_path: Path, declarations, selection, expected
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            declarations
+            + "instruct: Agent behavior.\n"
+            + "agic chat(_: Text) -> Text:\n"
+            + selection
+            + "  user: {{_}}\n"
+        ),
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("Current user objective."),),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            (invocation,) = harness.adapter.invocations
+            call = invocation.call
+            assert call.instructions.startswith("<runtime-instructions>")
+            assert (
+                "<agent-instructions>\nAgent behavior.\n</agent-instructions>"
+                in call.instructions
+            )
+            assert "Current user objective." not in call.instructions
+            assert "Unselected context." not in call.instructions
+            (message,) = call.messages
+            assert message.role == "user"
+            text = message_text(message.parts)
+            assert text.endswith("Current user objective.")
+            assert text.count("Current user objective.") == 1
+            assert "Agent behavior." not in text and "Unselected context." not in text
+            if expected is None:
+                assert message == Message.user("Current user objective.")
+            else:
+                assert expected not in call.instructions
+                assert text.count(expected) == 1
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
 def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,

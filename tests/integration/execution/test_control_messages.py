@@ -102,7 +102,12 @@ agic chat(_: Part[]) -> Part[]:
                         ),
                         tracer=tracer,
                     )
-                messages = harness.adapter.invocations[-1].call.messages
+                first, following = (item.call for item in harness.adapter.invocations)
+                assert first.instructions.startswith("<runtime-instructions>")
+                assert "<control-messages>" in first.instructions
+                assert "<agent-instructions>" not in first.instructions
+                assert following.instructions == first.instructions
+                messages = following.messages
                 assert [item.role for item in messages] == [
                     "user",
                     "assistant",
