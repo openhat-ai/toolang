@@ -269,10 +269,10 @@ agic caller:
     assert target is not None and caller is not None
     signature = runnable_signature(state, "agent", target)
     assert signature == {
-        "input": {"optional": False, "type": "Text"},
+        "input": {"documentation": "", "optional": False, "type": "Text"},
         "parameters": [
-            {"name": "count", "optional": False, "type": "Number"},
-            {"name": "note", "optional": True, "type": "Text"},
+            {"documentation": "", "name": "count", "optional": False, "type": "Number"},
+            {"documentation": "", "name": "note", "optional": True, "type": "Text"},
         ],
         "output": "Result",
         "structs": [
@@ -308,3 +308,146 @@ def test_dual_authorization_counts_both_declarations_in_byte_budget(
     assert caller is not None
     with pytest.raises(ToolangError, match="Narrow hands or handoffs"):
         _render(state, resolve_agic_routes(state, caller))
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("authored_name", ["main", ""])
+@pytest.mark.parametrize("as_state", [False, True])
+@pytest.mark.parametrize("preferred", ["chat", "task", "chore"])
+def test_main_fallback_preserves_the_selected_kind(
+    kind, as_state, preferred, authored_name
+):
+    from toolang.execution.runnables import runnable_binding_defaults
+
+    state = _state(f"{kind} {authored_name}:\n  pass\n")
+    program = state if as_state else state.modules["agent"]
+    expected = ("main", None) if kind == "agic" else (None, "main")
+    assert runnable_binding_defaults(program, None, fallback_agic=preferred) == expected
+
+    state = _state(f"{kind} {authored_name}:\n  pass\n\n{kind} {preferred}:\n  pass\n")
+    program = state if as_state else state.modules["agent"]
+    expected = (preferred, None) if kind == "agic" else (None, preferred)
+    assert runnable_binding_defaults(program, None, fallback_agic=preferred) == expected
+    explicit = ("main", None) if kind == "agic" else (None, "main")
+    assert (
+        runnable_binding_defaults(program, f"{kind}:main", fallback_agic=preferred)
+        == explicit
+    )
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("authored_name", ["main", ""])
+def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
+    kind, authored_name, capsys
+):
+    from dataclasses import replace
+    from io import StringIO
+    from pathlib import Path
+
+    from toolang.cli.toolang.commands.script import _program_command
+    from toolang.execution.runnables import runnable_signature
+    from toolang.state.runnable_collections import runnable_dataset
+
+    state = _state(f"""
+## Handle the general request.
+{kind} {authored_name}(_: Part[], topic?: Text):
+  pass
+
+agic caller:
+  hands = main
+  handoffs = main
+
+  Choose a route.
+""")
+    program = state.modules["agent"]
+    target = next(
+        item
+        for item in (*program.agics, *program.flows)
+        if item.name == (authored_name or None)
+    )
+    assert target.input is not None
+    input_doc = "Primary request."
+    parameter_doc = "Topic details. " * 80
+    target = replace(
+        target,
+        input=replace(target.input, doc=input_doc),
+        params=(replace(target.params[0], doc=parameter_doc),),
+    )
+    program = replace(
+        program,
+        agics=tuple(
+            target if item.name == (authored_name or None) and kind == "agic" else item
+            for item in program.agics
+        ),
+        flows=tuple(
+            target if item.name == (authored_name or None) and kind == "flow" else item
+            for item in program.flows
+        ),
+    )
+    state = replace(state, modules={"agent": program})
+    caller = program.find_agic("caller")
+    assert caller is not None
+    routes = resolve_agic_routes(state, caller)
+    (entry,) = runnable_descriptions(state, routes)
+    contract = runnable_signature(state, "agent", target)
+    assert entry["ref"] == f"{kind}:main"
+    assert entry["actions"] == ["run", "execute"]
+    assert entry["documentation"] == "Handle the general request."
+    assert (
+        entry["input"]
+        == contract["input"]
+        == {"documentation": input_doc, "optional": False, "type": "Part[]"}
+    )
+    assert (
+        entry["parameters"]
+        == contract["parameters"]
+        == [
+            {
+                "documentation": parameter_doc[:512],
+                "name": "topic",
+                "optional": True,
+                "type": "Text",
+            }
+        ]
+    )
+    item = next(item for item in runnable_dataset(state).items if item.name == "main")
+    assert item.description == entry["documentation"]
+    rendered = _document(_render(state, routes))
+    assert {item["tag"] for item in rendered} == {"hands", "handoffs"}
+    assert all(item["input"] == contract["input"] for item in rendered)
+    assert all(item["parameters"] == contract["parameters"] for item in rendered)
+
+    command = _program_command(
+        program, source_path=Path("demo.too"), source_label="demo.too", stdin=StringIO()
+    )
+    command.main(
+        args=["main", "--help"], prog_name="too run demo.too", standalone_mode=False
+    )
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert input_doc in help_text
+    assert " ".join(parameter_doc.split()) in help_text
+    assert entry["documentation"] in help_text
+
+
+@pytest.mark.parametrize("binding", [None, "flow:chat"])
+def test_fallback_keeps_an_exported_flows_public_name(binding):
+    from dataclasses import replace
+
+    from toolang.execution.runnables import runnable_binding_defaults
+
+    state = _state("agic:\n  General request.\n")
+    flow = Program.from_source("flow:\n  pass\n")
+    state = replace(
+        state,
+        modules={"_flow_chat": flow, **state.modules},
+        module_sources={**state.module_sources, "_flow_chat": "flows/chat.too"},
+        module_digests={
+            **state.module_digests,
+            "_flow_chat": sha256(b"chat").hexdigest(),
+        },
+        module_caps={**state.module_caps, "_flow_chat": ()},
+    )
+    assert runnable_binding_defaults(state, binding, fallback_agic="chat") == (
+        None,
+        "chat",
+    )

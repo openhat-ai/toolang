@@ -190,10 +190,26 @@ not prompt calls nested inside another prompt call.
 
 ## Script Runnable Calls
 
+Use `too run FILE [RUNNABLE]` for a local `.too` file; `too FILE [RUNNABLE]`
+remains a shorthand. Omitting the selector executes authored `main`. Without
+`main`, omitting arguments shows file help. Bare words in the selector position
+are runnable names, so default-entry text uses `--`, `-`, or redirected stdin:
+
+```sh
+too run app.too -- "Handle this request"
+too run app.too topic=demo -- "Handle this request"
+too run app.too review -- "Review this request"
+```
+
+`too run FILE --help` shows file help; `too run FILE main --help` shows the
+main signature. Help does not read stdin or prepare an agent. Explicit `run`
+can select a runnable whose name is a CLI command, such as `serve`.
+Global `--root` / `-r` overrides are not supported in Script mode.
+
 Runnable help summarizes the available input categories:
 
 ```text
-Usage: too app.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
+Usage: too run app.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
 ```
 
 `[NAME=VALUE...]` appears when the signature declares at least one named parameter.
@@ -227,8 +243,10 @@ supplied in any order, interspersed with command options, before input.
 
 When primary input is forbidden, its row and instructions are absent. Empty
 signatures omit Arguments entirely. **Options** follows Arguments. Top-level
-Script help says `Run runnables from SCRIPT.` and lists **Runnables** before
-Options, using `agic:NAME` and `flow:NAME` labels with authored descriptions or
+Script file help says `Execute a runnable from SCRIPT.` and shows RUNNABLE in
+**Arguments**, with `[default: main]` when available or a required marker otherwise.
+It then lists **Runnables** before Options, using `agic:NAME` and `flow:NAME`
+labels with authored descriptions or
 `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names are
 valid runnable selectors.
 

@@ -461,3 +461,28 @@ def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
         asyncio.run(scenario())
     finally:
         harness.store.close()
+
+
+@pytest.mark.parametrize("job_kind", ["task", "chore"])
+@pytest.mark.parametrize("runnable_kind", ["agic", "flow"])
+@pytest.mark.parametrize("specialized", [False, True])
+def test_job_selects_its_kind_before_authored_main(
+    tmp_path, job_kind, runnable_kind, specialized
+):
+    source = f"{runnable_kind} main:\n  pass\n"
+    if specialized:
+        source += f"\n{runnable_kind} {job_kind}:\n  pass\n"
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
+    _create_job(
+        AuthoredJobs(harness.setup.layout.home),
+        job_kind,
+        "entry",
+        "Handle this request.",
+    )
+    try:
+        (job,) = load_ready_jobs(harness.setup.layout)
+        spec = _scheduler(harness)._build_spec(job)
+        expected = job_kind if specialized else "main"
+        assert spec.bindings.runnable == f"{runnable_kind}:{expected}"
+    finally:
+        harness.store.close()

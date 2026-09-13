@@ -214,7 +214,7 @@ def test_cli_no_args_still_shows_root_help(
 
     assert result == 0
     assert "Usage: pytest [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
-    assert "Run and manage Toolang agents" in stdout
+    assert "Toolang is a language and runtime for agents and humans." in stdout
     assert output.err == ""
 
 
@@ -228,7 +228,6 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "rerun": "Rerun an earlier run as a new one",
         "fork": "Fork a thread from an earlier run",
         "rewind": "Rewind a thread to an earlier run",
-        "compact": "Compact a thread",
     }
 
     assert isinstance(group, TyperGroup)
@@ -307,7 +306,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "remove",
             "list",
             "info",
-            "run",
+            "serve",
             "start",
             "stop",
         ),
@@ -321,7 +320,6 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "rerun",
             "fork",
             "rewind",
-            "compact",
         ),
         "Inspection Commands": (
             "caps",
@@ -334,6 +332,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "sandboxes",
             "inspect",
         ),
+        "Script Commands": ("init", "run"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -615,6 +614,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
         sorted(stdout.index(panel) for panel in panels)
     )
     assert "channel" not in stdout
+    assert "compact" not in stdout
     assert "No such command" not in output.err
 
 
@@ -1257,7 +1257,7 @@ def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
 @pytest.mark.parametrize(
     ("command", "module", "callback", "operands"),
     [
-        ("run", "runtime", "run", []),
+        ("serve", "runtime", "run", []),
         ("start", "runtime", "start", []),
         ("chat", "chat", "chat_command", []),
         ("retry", "thread", "retry_command", ["run_example"]),
@@ -1304,7 +1304,7 @@ def test_cli_dev_states_reach_each_lazy_command(
         assert isinstance(captured["dev"], Path)
 
 
-@pytest.mark.parametrize("command", ["run", "start", "chat", "retry", "rerun"])
+@pytest.mark.parametrize("command", ["serve", "start", "chat", "retry", "rerun"])
 def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
     assert (
         cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2

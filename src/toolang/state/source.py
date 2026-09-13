@@ -12,12 +12,11 @@ from typing import Literal, cast
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
-from ..lang.ast import Program, Span
+from ..lang.ast import Program
 
 SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 3
 LEGACY_SOURCE_SCHEMA = 2
-_AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -423,12 +422,7 @@ class ProgramSource:
     digest: str
 
     def parse(self) -> Program:
-        source = _parseable_program_source(self.source_text)
-        return (
-            Program.from_source(source)
-            if source.strip()
-            else Program(span=Span(line=1))
-        )
+        return Program.from_source(self.source_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,15 +483,11 @@ class SourceSnapshot:
             kind="agent",
             authored_path="agent.too",
             source_path=source_path,
-            source_text=(
-                program_file.read_text()
-                if program_file is not None
-                else f"agent {self.agent_name}\n"
-            ),
+            source_text=program_file.read_text() if program_file is not None else "",
             digest=(
                 program_file.digest
                 if program_file is not None
-                else sha256(f"agent {self.agent_name}\n".encode()).hexdigest()
+                else sha256(b"").hexdigest()
             ),
         )
         return source
@@ -650,18 +640,6 @@ def source_path_scope(
     ):
         return "home", agent_relative.as_posix()
     return None
-
-
-def _parseable_program_source(source_text: str) -> str:
-    lines = source_text.splitlines()
-    for index, line in enumerate(lines):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if _AGENT_HEADER_RE.match(line.strip()):
-            lines[index] = ""
-        break
-    rendered = "\n".join(lines)
-    return f"{rendered}\n" if source_text.endswith("\n") else rendered
 
 
 def _authored_source(

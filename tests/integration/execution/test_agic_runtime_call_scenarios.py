@@ -13,6 +13,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
     last_tool_result,
     route_snapshots,
+    without_route_snapshots,
 )
 from tests.support.execution_harness import (
     ExecutionHarness,
@@ -42,6 +43,85 @@ from toolang.execution.types import (
 from toolang.lang.input import resolve_input_parts
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("directive", ["hands", "handoffs"])
+def test_unnamed_main_can_be_called_through_authorized_routes(
+    tmp_path: Path, kind: str, directive: str
+) -> None:
+    target = (
+        "agic() -> Text:\n  recall = none\n  context: none\n  user: Main.\n"
+        if kind == "agic"
+        else "flow() -> Text:\n  run helper\n"
+    )
+    source = f"""
+agic caller() -> Text:
+  recall = none
+  {directive} = {kind}:main
+  user: Caller.
+
+agic helper() -> Text:
+  recall = none
+  context: none
+  user: Main.
+
+## Use this entry for the general request.
+{target}
+"""
+    action = "run" if directive == "hands" else "execute"
+    responses = [
+        ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "main-call",
+                    "main-call",
+                    f"_toolang__{action}",
+                    {"runnable": f"{kind}:main"},
+                ),
+            )
+        ),
+        ModelCallResult(message=Message.assistant("main output")),
+    ]
+    if directive == "hands":
+        responses.append(ModelCallResult(message=Message.assistant("caller output")))
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            targets = route_snapshots(harness.adapter.invocations[0].call)[directive]
+            assert len(targets) == 1
+            assert targets[0]["ref"] == f"{kind}:main"
+            assert (
+                targets[0]["documentation"] == "Use this entry for the general request."
+            )
+            child_call = harness.adapter.invocations[1].call
+            assert route_snapshots(child_call) == {"hands": [], "handoffs": []}
+            assert without_route_snapshots(child_call.messages) == [
+                Message.user("Main.")
+            ]
+            controls = [
+                control
+                for run in harness.store.list_run_tree(root_run_id=root.id)
+                for control in harness.store.list_run_controls(run_id=run.id)
+            ]
+            assert any(
+                isinstance(control.payload, (RunControlPayload, ExecuteControlPayload))
+                and control.payload.runnable == f"agent${kind}:main"
+                for control in controls
+            )
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.local.value) == (
+                "caller output" if directive == "hands" else "main output"
+            )
+
+    asyncio.run(scenario())
 
 
 def test_agic_dynamic_run_is_one_tool_step_and_one_child(tmp_path: Path) -> None:
@@ -276,12 +356,13 @@ flow check(_: Text, threshold: Number) -> Text:
                 "code": "invalid_runnable_input",
                 "runnable": "flow:check",
                 "expected": {
-                    "input": {"optional": False, "type": "Text"},
+                    "input": {"optional": False, "type": "Text", "documentation": ""},
                     "parameters": [
                         {
                             "name": "threshold",
                             "optional": False,
                             "type": "Number",
+                            "documentation": "",
                         }
                     ],
                     "structs": [],
@@ -2253,8 +2334,10 @@ agic target() -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("unnamed", [False, True])
 def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
     tmp_path: Path,
+    unnamed: bool,
 ) -> None:
     source = """
 flow outer(_: Text) -> Text:
@@ -2273,8 +2356,14 @@ agic target(_: Text) -> Text:
   context: none
   instruct:
     old target state
+    bound route {{runnable.name}}
   user: {{_}}
 """
+    target = "main" if unnamed else "target"
+    if unnamed:
+        source = source.replace("agic target(", "agic(").replace(
+            "agic:target", "agic:main"
+        )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")
@@ -2295,7 +2384,7 @@ agic target(_: Text) -> Text:
                         call_id="provider-run-public-target",
                         name="_toolang__run",
                         input={
-                            "runnable": "agic:target",
+                            "runnable": f"agic:{target}",
                             "input": {"_": "topic"},
                         },
                     ),
@@ -2351,5 +2440,7 @@ agic target(_: Text) -> Text:
             }
             assert "old target state" in before_reload.instructions
             assert "new target state" in after_reload.instructions
+            assert f"bound route {target}" in before_reload.instructions
+            assert f"bound route {target}" in after_reload.instructions
 
     asyncio.run(scenario())

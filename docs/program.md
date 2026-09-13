@@ -45,8 +45,8 @@ flows declared in another file.
 
 The agent module publicly exports all of its agics and flows. A flow module
 exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
-`<name>` exactly matches its filename stem. An unnamed Flow keeps its local
-name `main` but uses the filename as its public name, so renaming the file also
+`<name>` exactly matches its filename stem. State binds an unnamed Flow locally as
+`main` and uses the filename as its public name, so renaming the file also
 renames the public Flow. Other declarations in that module are private static
 helpers.
 
@@ -167,22 +167,30 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-An omitted agic name means `default`; an omitted flow name means `main`:
+In the agent or Script module, State binds an omitted agic or flow name to `main`:
 
 ```too
 agic:
   Reply directly.
 
-agic default:
+agic main:
   Reply directly.
 
 flow:
   pass
 ```
 
-The two agic declarations have the same runnable name and therefore cannot
-appear together. In a home flow module, the unnamed Flow's public name is
-instead bound from the filename as described above.
+These examples bind to the same name and cannot appear together in one module.
+The AST preserves omitted names as `None`; State rejects the name collision when
+building its indexes. Script help uses the same binding rules. Explicitly named
+`main` has the same entry behavior, and named helpers may coexist. Explicit
+`default` remains an ordinary authored name and takes precedence over the
+synthetic runtime fallback. In a home flow module, State binds the unnamed Flow's
+public name from the filename as described above.
+
+State's entry names do not add source declarations. Flow statements must reference
+explicitly named runnables or use inline agics; `run main` cannot target an unnamed
+declaration.
 
 
 ### Primary Input
@@ -591,12 +599,15 @@ catalog-owned frontmatter format.
 Surfaces resolve a default runnable by name:
 
 ```text
-script  explicit name, else default
-chat    chat, else default
-task    task, else default
-chore   chore, else default
-file    file, else default
+script  explicit name, else authored main, else file help
+chat    chat, else authored main, else runtime default
+task    task, else authored main, else runtime default
+chore   chore, else authored main, else runtime default
 ```
+
+Explicit selections take precedence over these fallbacks. The chosen entry may
+be an agic or a flow. Script exposes authored declarations only; it never selects
+the runtime-generated `agic:default`.
 
 Every run surface must resolve one `RunnableInput`, including all required named
 inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for

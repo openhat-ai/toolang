@@ -68,11 +68,11 @@ def test_source_manifest_detects_content_change_with_preserved_metadata(
     source = tmp_path / "source"
     source.mkdir()
     program = source / "agent.too"
-    program.write_bytes(b"agent alice\n")
+    program.write_bytes(b"# Agent alice\n")
     original = program.stat()
     before = scan_source(source, ("agent.too",))
 
-    program.write_bytes(b"agent other\n")
+    program.write_bytes(b"# Agent other\n")
     os.utime(program, ns=(original.st_atime_ns, original.st_mtime_ns))
     after = scan_source(source, ("agent.too",))
 
@@ -84,7 +84,7 @@ def test_source_manifest_ignores_metadata_only_changes(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     program = source / "agent.too"
-    program.write_text("agent alice\n", encoding="utf-8")
+    program.write_text("# Agent alice\n", encoding="utf-8")
     before = scan_source(source, ("agent.too",))
 
     changed = program.stat().st_mtime_ns + 1_000_000_000
@@ -98,11 +98,11 @@ def test_source_manifest_follows_symbolic_linked_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     target = tmp_path / "roaming.too"
     source.mkdir()
-    target.write_text("agent roaming\n", encoding="utf-8")
+    target.write_text("# Agent roaming\n", encoding="utf-8")
     (source / "agent.too").symlink_to(target)
 
     before = scan_source(source, ("agent.too",))
-    target.write_text("agent changed\n", encoding="utf-8")
+    target.write_text("# Agent changed\n", encoding="utf-8")
     after = scan_source(source, ("agent.too",))
 
     assert before.files[0].path == "agent.too"
@@ -198,7 +198,7 @@ def test_home_source_rejects_directory_in_agent_file_slot(tmp_path: Path) -> Non
     root = tmp_path / "toolang"
     program = root / "agents" / "alice" / "agent.too"
     program.mkdir(parents=True)
-    (program / "nested.too").write_text("agent alice\n", encoding="utf-8")
+    (program / "nested.too").write_text("# Agent alice\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="must be a file"):
         scan_home_source(root, "alice")

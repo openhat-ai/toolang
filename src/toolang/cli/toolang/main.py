@@ -10,6 +10,7 @@ import sys
 from typing import Annotated, Any
 
 import typer
+from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
@@ -22,7 +23,7 @@ from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliCommand, CliGroup, show_help
+from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
@@ -49,13 +50,14 @@ WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
 CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
+SCRIPT_COMMAND_PANEL = "Script Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
     "remove",
     "list",
     "info",
-    "run",
+    "serve",
     "start",
     "stop",
 )
@@ -69,7 +71,6 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "rerun",
     "fork",
     "rewind",
-    "compact",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "caps",
@@ -82,19 +83,45 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "sandboxes",
     "inspect",
 )
-_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "_serve", "channel")
+_SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
+_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "compact")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
     *_WORK_PANEL_COMMAND_ORDER,
     *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
+    *_SCRIPT_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
-class _RunCommand(OptionalValueCommand, RunAgentCommand):
+class _ServeCommand(OptionalValueCommand, RunAgentCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
+
+
+class _ScriptEntryCommand(CliCommand):
+    """Show static help when the required Script file is omitted."""
+
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        if args in ([], ["--"]) and not ctx.resilient_parsing:
+            show_help(ctx)
+        return super().parse_args(ctx, args)
+
+    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        pieces = [
+            "[ARGUMENTS]" if piece == "[ARGUMENTS...]" else piece
+            for piece in self.collect_usage_pieces(ctx)
+        ]
+        formatter.write_usage(ctx.command_path, " ".join(pieces))
+
+    def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        super().format_help(ctx, formatter)
+        formatter.write_paragraph()
+        formatter.write_text(
+            f"The run command is optional: {ctx.find_root().command_path} "
+            "FILE [RUNNABLE] [ARGUMENTS]."
+        )
 
 
 class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
@@ -131,7 +158,21 @@ class _CompactCommand(_TargetAgentCommand):
         return [*pieces, *runnable_usage(self.params)]
 
 
+class _ToolangHelpFormatter(HelpFormatter):
+    def write_description(self, ctx: Context) -> None:
+        description = Text(f"{ctx.command.help}.")
+        description.append(f" ({_version.toolang_version()})", style="dim")
+        self.write_text(description)
+        self.write_paragraph()
+
+
+class _ToolangHelpContext(HelpContext):
+    formatter_class = _ToolangHelpFormatter
+
+
 class _ToolangGroup(CliGroup):
+    context_class = _ToolangHelpContext
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         commands = dict(kwargs.pop("commands", None) or {})
         commands.update(
@@ -154,7 +195,7 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(
     cls=_ToolangGroup,
-    help="Run and manage Toolang agents",
+    help="Toolang is a language and runtime for agents and humans",
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,
@@ -295,11 +336,11 @@ _registered_group(
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
-    "run",
+    "serve",
     "toolang.cli.toolang.commands.runtime:run",
-    help="Run an agent in the foreground",
+    help="Serve an agent in the foreground",
     no_args_is_help=True,
-    cls=_RunCommand,
+    cls=_ServeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
@@ -378,7 +419,7 @@ _registered_command(
     help="Compact a thread",
     no_args_is_help=True,
     cls=_CompactCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
 )
 _registered_command(
     "rerun",
@@ -520,12 +561,31 @@ _registered_command(
     no_args_is_help=True,
 )
 
+_registered_command(
+    "init",
+    "toolang.cli.toolang.commands.init:init_script",
+    help="Initialize Toolang in a directory",
+    no_args_is_help=True,
+    rich_help_panel=SCRIPT_COMMAND_PANEL,
+)
+_registered_command(
+    "run",
+    "toolang.cli.toolang.commands.script:run_script",
+    help="Execute a runnable from a .too file",
+    cls=_ScriptEntryCommand,
+    context_settings={"allow_interspersed_args": False},
+    epilog="For script-specific help, add --help after FILE or RUNNABLE.",
+    rich_help_panel=SCRIPT_COMMAND_PANEL,
+)
+
 routing.validate_command_registration(set(_REGISTERED_COMMANDS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     prog_name = _prog_name(sys.argv[0] if sys.argv else "")
+    if routing.is_script_invocation(raw_args):
+        return _run_app(raw_args, None, prog_name=prog_name)
     routed = routing.dispatch_roaming(
         raw_args,
         prog_name=prog_name,

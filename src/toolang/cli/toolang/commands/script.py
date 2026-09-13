@@ -18,7 +18,7 @@ from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _ParsingState
-from typer.core import TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -100,6 +100,20 @@ class _RunnableParser(OptionalValueParser):
             return
 
 
+class _ScriptParser(OptionalValueParser):
+    """Retain an explicit input boundary while parsing shared file options."""
+
+    def _process_args_for_options(self, state: _ParsingState) -> None:
+        while state.rargs:
+            item = state.rargs[0]
+            if item == "--":
+                state.rargs[0] = _LINE_INPUT_MARKER
+                return
+            if item == "-" or not item.startswith("-"):
+                return
+            self._process_opts(state.rargs.pop(0), state)
+
+
 class _ScriptHelpFormatter(UIHelpFormatter):
     def write_description(self, ctx: Context) -> None:
         command = ctx.command
@@ -111,6 +125,20 @@ class _ScriptHelpFormatter(UIHelpFormatter):
                 description.append(".")
             self.write_text(description)
             self.write_paragraph()
+
+    def write_commands(self, ctx: Context) -> None:
+        if isinstance(ctx.command, _ScriptGroup):
+            has_main = "main" in ctx.command.commands
+            argument = TyperArgument(
+                param_decls=["runnable"],
+                metavar="RUNNABLE",
+                help="Runnable name",
+                required=not has_main,
+                default="main" if has_main else None,
+                show_default=True,
+            )
+            self._sections(((None, self._argument_row(argument, ctx)),), "Arguments")
+        super().write_commands(ctx)
 
     def write_epilog(self, ctx: Context) -> None:
         super().write_epilog(ctx)
@@ -177,10 +205,30 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
 
     context_class = _ScriptHelpContext
     optional_values = {"dev": OptionalValue(bare_value=".")}
+    parser_class = _ScriptParser
+
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        rest = super().parse_args(ctx, args)
+        if not ctx._protected_args and not ctx.resilient_parsing:
+            if "main" not in self.commands:
+                raise UsageError(
+                    "This script has no main entry; select a runnable.", ctx
+                )
+            ctx._protected_args = ["main"]
+        return rest
 
     def resolve_command(
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, Any, list[str]]:
+        token = args[0]
+        if token in {_LINE_INPUT_MARKER, "-"} or "=" in token or token.startswith(":"):
+            if "main" not in self.commands:
+                raise UsageError(
+                    "this Script has no main entry; select a runnable", ctx
+                )
+            if token == _LINE_INPUT_MARKER:
+                args = ["--", *args[1:]]
+            args = ["main", *args]
         kind, separator, name = args[0].partition(":")
         if separator and kind in {"agic", "flow", "runnable"}:
             name = name.strip()
@@ -222,6 +270,37 @@ def _flow_outline(flow: FlowDecl) -> Text:
     return outline
 
 
+def run_script(
+    ctx: typer.Context,
+    file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
+    runnable: Annotated[
+        str | None,
+        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=True),
+    ] = "main",
+    arguments: Annotated[
+        list[str] | None,
+        typer.Argument(metavar="ARGUMENTS", help="Runnable-specific arguments"),
+    ] = None,
+) -> None:
+    """Forward the file and its untouched argument tail to Script dispatch."""
+
+    root = ctx.find_root()
+    if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
+        raise UsageError("Script invocation does not support global --root / -r", ctx)
+    source = Path(file).expanduser()
+    if "://" in file:
+        raise UsageError(f"URLs are not supported: {file}", ctx)
+    if source.is_dir():
+        raise UsageError(f"expected a file, got a directory: {file}", ctx)
+    if source.suffix != ".too":
+        raise UsageError(f"expected a .too file: {file}", ctx)
+    # File dispatch chooses main or shows help when the file has no main entry.
+    if ctx.get_parameter_source("runnable") == ParameterSource.DEFAULT:
+        runnable = None
+    tail = ([runnable] if runnable is not None else []) + (arguments or [])
+    raise typer.Exit(dispatch([], [file, *tail], prog_name=ctx.command_path))
+
+
 def dispatch(
     global_args: list[str],
     argv: list[str],
@@ -232,7 +311,7 @@ def dispatch(
     """Dispatch one path-based runnable invocation."""
 
     if global_args:
-        echo_error("too <path>.too does not support global CLI options")
+        echo_error(f"{prog_name} <path>.too does not support global CLI options")
         return 1
     if not argv:
         echo_error("missing script path")
@@ -250,7 +329,7 @@ def dispatch(
             stdin=stdin or sys.stdin,
         )
         result = command.main(
-            args=argv[1:] or ["--help"],
+            args=argv[1:] or ([] if "main" in command.commands else ["--help"]),
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -275,18 +354,21 @@ def _program_command(
     options = _runnable_command(
         None, program=program, source_path=source_path, stdin=stdin
     ).params
+    runnables = _public_runnables(program)
+    default = runnables.get("main")
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
-        help=f"Run runnables from {source_label}",
-        no_args_is_help=True,
+        help=f"Execute a runnable from {source_label}.",
+        no_args_is_help=False,
         rich_markup_mode="rich",
-        subcommand_metavar="<RUNNABLE>",
+        subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
-    for runnable in _public_runnables(program):
+    for name, runnable in runnables.items():
         group.add_command(
             _runnable_command(
                 runnable,
+                name=name,
                 program=program,
                 source_path=source_path,
                 stdin=stdin,
@@ -298,6 +380,7 @@ def _program_command(
 def _runnable_command(
     runnable: Runnable | None,
     *,
+    name: str = "script",
     program: Program,
     source_path: Path,
     stdin: TextIO,
@@ -364,7 +447,7 @@ def _runnable_command(
         override = _materialize_script_runnable_override(override, program=program)
         return _run(
             source_path,
-            runnable=runnable.name,
+            runnable=name,
             runnable_kind=runnable.kind,
             override=override,
             input=input,
@@ -378,7 +461,6 @@ def _runnable_command(
             quiet=quiet,
         )
 
-    name = runnable.name if runnable is not None else "script"
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
     command = get_command_from_info(
@@ -404,12 +486,16 @@ def _runnable_command(
     return command
 
 
-def _public_runnables(program: Program) -> tuple[Runnable, ...]:
-    return tuple(
-        runnable
-        for runnable in (*program.agics, *program.flows)
-        if runnable.name != "default" and not runnable.name.startswith("<")
-    )
+def _public_runnables(program: Program) -> dict[str, Runnable]:
+    from toolang.state.state import program_runnable_index
+
+    return {
+        name: runnable
+        for name, runnable in program_runnable_index(
+            program, include_default=False
+        ).items()
+        if not name.startswith("<")
+    }
 
 
 def collect_named_arguments(
@@ -489,7 +575,10 @@ def _materialize_script_runnable_override(
     from toolang.state.runnable_collections import runnable_dataset
 
     dataset = runnable_dataset(program)
-    matches = dataset.query(override.runnable)
+    authored = _public_runnables(program)
+    matches = tuple(
+        item for item in dataset.query(override.runnable) if item.name in authored
+    )
     if len(matches) != 1:
         raise ValueError(f"runnable query is unknown or ambiguous: {override.runnable}")
     return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
@@ -1172,11 +1261,10 @@ def _emit_result(
 
 
 def _source_path(token: str) -> Path | None:
-    text = token.strip()
-    if not text or text.startswith("-"):
+    if not token:
         return None
     try:
-        source = Path(text).expanduser().resolve()
+        source = Path(token).expanduser().resolve()
     except OSError:
         return None
     return source if source.is_file() and source.suffix == ".too" else None

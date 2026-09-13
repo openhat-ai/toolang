@@ -15,7 +15,7 @@ from toolang.lang.runnable_query import (
     RunnableQueryView,
 )
 
-from .state import effective_agics, state_program
+from .state import program_runnable_index, state_program
 
 
 def runnable_dataset(
@@ -29,16 +29,14 @@ def runnable_dataset(
     raw_index = getattr(state, "runnables", None)
     raw_modules = getattr(state, "runnable_modules", None)
     if isinstance(state, Program):
-        index = {item.name: item for item in (*effective_agics(state), *state.flows)}
+        index = program_runnable_index(state)
         modules = {name: "agent" for name in index}
     elif isinstance(raw_index, Mapping) and isinstance(raw_modules, Mapping):
         index = cast(Mapping[str, AgicDecl | FlowDecl], raw_index)
         modules = cast(Mapping[str, str], raw_modules)
     else:
         program = state_program(state)
-        index = {
-            item.name: item for item in (*effective_agics(program), *program.flows)
-        }
+        index = program_runnable_index(program)
         modules = {name: "agent" for name in index}
     return RUNNABLE_DEFINITION.dataset(
         tuple(
@@ -72,7 +70,7 @@ def _runnable_view(
         ),
         *(parameter.name for parameter in runnable.params if not parameter.optional),
     )
-    description = runnable.instruct if isinstance(runnable, AgicDecl) else None
+    description = runnable.doc
     return RunnableQueryView(
         record=runnable,
         kind=cast(RunnableKind, runnable.kind),

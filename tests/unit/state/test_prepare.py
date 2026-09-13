@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from hashlib import sha256
 import json
 import multiprocessing
@@ -19,6 +20,7 @@ from toolang.execution.runnables import (
     resolve_state_runnable,
 )
 from toolang.lang.ast import Program
+from toolang.state import cache as state_cache
 from toolang.state import prepare as state_prepare
 from toolang.state import state as cap_state
 from toolang.state.cache import (
@@ -49,6 +51,170 @@ from toolang.state.state import flow_module_name
 
 def _layout(root: Path, name: str = "alice") -> AgentLayout:
     return AgentLayout.resident(root, name)
+
+
+@pytest.mark.parametrize("exported", [False, True])
+def test_authored_default_flow_takes_precedence_over_synthetic_default(
+    tmp_path, exported
+):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    if exported:
+        layout.program.write_text("agic():\n  Main.\n")
+        source = layout.home / "flows" / "default.too"
+        source.parent.mkdir()
+        source.write_text("flow():\n  pass\n")
+    else:
+        layout.program.write_text("flow default():\n  pass\n")
+    state = prepare_agent_state(layout)
+    module, runnable = resolve_state_runnable(state, "default", kind="flow")
+    assert module == ("_flow_default" if exported else "agent")
+    assert runnable.name == (None if exported else "default")
+    assert state.runnables["default"].kind == "flow"
+
+
+@pytest.mark.parametrize("first", ["agic", "flow"])
+@pytest.mark.parametrize("second", ["agic", "flow"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_state_rejects_colliding_main_bindings(tmp_path, first, second, explicit):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    name = " main" if explicit else ""
+    source = f"{first}{name}:\n  pass\n\n{second}:\n  pass\n"
+    program = Program.from_source(source)
+    assert any(item.name is None for item in (*program.agics, *program.flows))
+    layout.program.write_text(source)
+    with pytest.raises(
+        StatePreparationError, match="Runnable name is not unique: main"
+    ):
+        prepare_agent_state(layout)
+
+
+def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
+    tmp_path, monkeypatch
+):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic:\n  Hello.\n")
+    parse = ProgramSource.parse
+
+    def legacy_parse(self):
+        program = parse(self)
+        return replace(
+            program,
+            agics=tuple(replace(agic, name="default") for agic in program.agics),
+        )
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", legacy_parse)
+        old = prepare_agent_state(layout)
+    old_program = old.modules["agent"]
+    assert old_program.agics[0].name == "default"
+
+    current = prepare_agent_state(layout)
+    assert current.home_revision != old.home_revision
+    assert current.modules["agent"].agics[0].name is None
+    assert current.runnables["main"] is current.modules["agent"].agics[0]
+    assert load_agent_state(layout, old.revision).modules["agent"] == old_program
+    assert prepare_agent_state(layout).home_revision == current.home_revision
+
+
+def test_prepare_rebuilds_unnamed_flow_ast_and_preserves_historical_export(
+    tmp_path, monkeypatch
+):
+    layout = _layout(tmp_path)
+    source = layout.home / "flows" / "research.too"
+    source.parent.mkdir(parents=True)
+    source.write_text("flow:\n  pass\n")
+    parse = ProgramSource.parse
+
+    def legacy_parse(self):
+        program = parse(self)
+        return replace(
+            program, flows=tuple(replace(flow, name="main") for flow in program.flows)
+        )
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", legacy_parse)
+        old = prepare_agent_state(layout)
+    assert old.runnables["research"].name == "main"
+
+    current = prepare_agent_state(layout)
+    assert current.home_revision != old.home_revision
+    assert current.runnables["research"].name is None
+    assert (
+        current.module_runnable("_flow_research", "main")
+        is current.runnables["research"]
+    )
+    historical = load_agent_state(layout, old.revision)
+    assert historical.modules == old.modules
+    assert historical.runnables["research"].name == "main"
+
+
+def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic:\n  Hello.\n\nflow:\n  pass\n")
+
+    def legacy_parse(self):
+        return Program.from_source(self.source_text.replace("agic:", "agic default:"))
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", legacy_parse)
+        old = prepare_agent_state(layout)
+
+    with pytest.raises(
+        StatePreparationError, match="Runnable name is not unique: main"
+    ):
+        prepare_agent_state(layout)
+    assert load_agent_state(layout, old.revision).modules == old.modules
+
+
+def test_prepare_reuses_explicit_default_agic_cache(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic default:\n  Hello.\n")
+    before = prepare_agent_state(layout)
+    monkeypatch.setattr(
+        ProgramSource, "parse", lambda _: pytest.fail("rebuilt explicit default")
+    )
+    after = prepare_agent_state(layout)
+    assert after.revision == before.revision
+    assert after.modules["agent"].agics[0].name == "default"
+
+
+@pytest.mark.parametrize("header", ["agent alice", "agent: alice"])
+def test_state_rejects_headers_rejected_by_the_language(tmp_path, header):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    source = f"#!/usr/bin/env too\n# Agent source.\n{header}\n\nagic chat:\n  Hello.\n"
+    layout.program.write_text(source)
+    with pytest.raises(ToolangError) as language_error:
+        Program.from_source(source)
+    with pytest.raises(StatePreparationError) as state_error:
+        prepare_agent_state(layout)
+    assert str(language_error.value) in str(state_error.value)
+
+
+def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    body = "agic chat:\n  Hello.\n"
+    layout.program.write_text("agent alice\n\n" + body)
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", lambda _: Program.from_source(body))
+        old = prepare_agent_state(layout)
+    with pytest.raises(StatePreparationError, match="Syntax error at line 1"):
+        prepare_agent_state(layout)
+    assert load_agent_state(layout, old.revision).modules == old.modules
 
 
 def _prepare_revisions_in_process(toolang_root: str) -> tuple[str, str, str]:
@@ -99,7 +265,7 @@ def test_prepare_materialize_fails_if_layer_publication_fails(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     events: list[ProgressEvent] = []
 
     def fail_write(**_kwargs: object) -> str:
@@ -167,7 +333,7 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     home = toolang_root / "agents" / "alice"
     skill = home / "skills" / "pdf"
     skill.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (home / "config.toml").write_text('[models]\ndefault = "home"\n', encoding="utf-8")
     (skill / "SKILL.md").write_text(
         "---\ndescription: PDF\n---\nUse PDF tools.\n", encoding="utf-8"
@@ -252,7 +418,7 @@ def test_prepare_rejects_invalid_state_owned_config_queries(
         '[allow]\ncaps = ["*[missing=value]"]\n',
         encoding="utf-8",
     )
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
 
     with pytest.raises((ToolangError, ValueError), match="unknown allow field: caps"):
         prepare_agent_state(_layout(toolang_root))
@@ -293,7 +459,7 @@ def test_prepare_ignores_legacy_state_cache_layout(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (toolang_root / ".state").mkdir()
     (toolang_root / ".state" / "current").write_text("legacy\n", encoding="utf-8")
     (home / ".state").mkdir()
@@ -313,7 +479,7 @@ def test_prepare_root_home_reuses_unchanged_revisions(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
 
     first = prepare_root_home(
         _layout(toolang_root),
@@ -455,7 +621,7 @@ def test_setup_only_config_changes_revision_but_not_state_terms(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     config = toolang_root / "config.toml"
     config.write_text(
         '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
@@ -487,7 +653,7 @@ def test_setup_only_config_creation_and_removal_changes_dependency_revision(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     config = toolang_root / "config.toml"
@@ -512,7 +678,7 @@ def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     current_root, current_home = prepare_root_home(layout)
     current_dir = layer_revision_dir(layout, "home", current_home.revision)
@@ -570,7 +736,7 @@ def test_prepare_repairs_a_corrupt_content_addressed_layer(tmp_path: Path) -> No
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     revision_dir = layer_revision_dir(layout, "home", first.home_revision)
@@ -591,7 +757,7 @@ def test_prepare_repairs_corrupt_materialized_layer_content(tmp_path: Path) -> N
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     program = home / "agent.too"
-    program.write_text("agent alice\n", encoding="utf-8")
+    program.write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     materialized = (
@@ -611,7 +777,7 @@ def test_prepare_repairs_a_corrupt_agent_composition(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     layers_path = agent_revision_dir(layout, first.revision) / "layers.json"
@@ -630,7 +796,7 @@ def test_prepare_materializes_inline_caps_as_independent_files(
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "agent.too").write_text(
-        "agent alice\n\nprompt summarize:\n  Summarize this.\n",
+        "# Agent alice\n\nprompt summarize:\n  Summarize this.\n",
         encoding="utf-8",
     )
 
@@ -661,7 +827,7 @@ def test_prepare_materializes_inline_caps_as_independent_files(
     assert "content" not in layer["modules"][0]["here_caps"][0]
 
     (home / "agent.too").write_text(
-        "agent alice\n\nprompt summarize:\n  Changed later.\n",
+        "# Agent alice\n\nprompt summarize:\n  Changed later.\n",
         encoding="utf-8",
     )
     assert entry.read_content() == "Summarize this."
@@ -673,7 +839,7 @@ def test_concurrent_processes_publish_one_root_and_home_revision(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
 
     with ProcessPoolExecutor(
         max_workers=2,
@@ -706,7 +872,7 @@ def test_agent_check_lock_blocks_same_agent_process(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     started = tmp_path / "same-agent-started"
     layout = _layout(toolang_root)
     prepare_agent_state(layout)
@@ -734,7 +900,7 @@ def test_agent_check_lock_does_not_block_another_agent(tmp_path: Path) -> None:
     for name in ("alice", "bob"):
         home = toolang_root / "agents" / name
         home.mkdir(parents=True)
-        (home / "agent.too").write_text(f"agent {name}\n", encoding="utf-8")
+        (home / "agent.too").write_text(f"# Agent {name}\n", encoding="utf-8")
     started = tmp_path / "other-agent-started"
     prepare_agent_state(_layout(toolang_root, "bob"))
 
@@ -765,7 +931,7 @@ def test_different_agent_processes_share_one_root_generation(tmp_path: Path) -> 
         home = toolang_root / "agents" / agent_name
         home.mkdir(parents=True)
         (home / "agent.too").write_text(
-            f"agent {agent_name}\n",
+            f"# Agent {agent_name}\n",
             encoding="utf-8",
         )
 
@@ -803,7 +969,7 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     )
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     content = {"value": b"---\ndescription: Rewrite\n---\nFirst.\n"}
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
@@ -876,7 +1042,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
     )
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
@@ -938,7 +1104,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
     )
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
@@ -986,7 +1152,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
     )
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
@@ -1029,7 +1195,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     home = toolang_root / "agents" / "alice"
     flows = home / "flows"
     flows.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
         "agic helper:\n  Research.\n\nflow:\n  settle using helper\n",
         encoding="utf-8",
@@ -1054,7 +1220,8 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
     assert state.runnable_modules["research"] == "_flow_research"
-    assert exported is program.find_flow("main")
+    assert exported is program.flows[0]
+    assert exported.name is None
     default = state.runnables["default"]
     assert state.runnable_modules["default"] == "agent"
     assert default.name == "default"
@@ -1065,7 +1232,7 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     home = toolang_root / "agents" / "alice"
     flows = home / "flows"
     flows.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     source = flows / "research.too"
     source.write_text("flow:\n  pass\n", encoding="utf-8")
     first = prepare_agent_state(_layout(toolang_root))
@@ -1074,14 +1241,14 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     local = resolve_bound_runnable(first, "_flow_research", "flow:research")
     assert public_module == "_flow_research"
     assert public is local
-    assert public.name == local.name == "main"
+    assert public.name is local.name is None
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))
 
     assert "research" in first.runnables
     assert "research" not in second.runnables
-    assert second.runnables["report"].name == "main"
+    assert second.runnables["report"].name is None
     assert first.revision != second.revision
 
 
@@ -1139,7 +1306,7 @@ def test_prepare_rejects_flow_module_at_the_correct_layer(
     home = toolang_root / "agents" / "alice"
     flows = home / "flows"
     flows.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(source, encoding="utf-8")
 
     with pytest.raises(StatePreparationError) as raised:
@@ -1157,7 +1324,7 @@ def test_prepare_rejects_public_runnable_collisions(tmp_path: Path) -> None:
     flows = home / "flows"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text(
-        "agent alice\n\nflow research:\n  pass\n",
+        "# Agent alice\n\nflow research:\n  pass\n",
         encoding="utf-8",
     )
     (flows / "research.too").write_text(
@@ -1178,7 +1345,7 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
     flows.mkdir(parents=True)
     (home / "agent.too").write_text(
         (
-            "agent alice\n\n"
+            "# Agent alice\n\n"
             "prompt style:\n  Agent style.\n\n"
             "prompt only_agent:\n  Private to agent.\n"
         ),
@@ -1202,7 +1369,7 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    assert loaded.modules["_flow_research"].find_flow("main") is not None
+    assert loaded.modules["_flow_research"].flows[0].name is None
 
 
 def test_flow_modules_can_reference_the_same_cap(

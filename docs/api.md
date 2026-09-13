@@ -23,7 +23,7 @@ Top-level commands are:
 - `remove`
 - `list`
 - `info`
-- `run`
+- `serve`
 - `start`
 - `stop`
 - `chore`
@@ -48,6 +48,8 @@ Top-level commands are:
 - `adapters`
 - `toolsets`
 - `sandboxes`
+- `init`
+- `run`
 
 Global options:
 
@@ -95,13 +97,16 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
+toolang init demo
+toolang run demo/work.too
+toolang run demo/work.too main --help
 PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/script-playground.too --help
 toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
-toolang run alice
-toolang run alice --sandbox docker
-toolang run brice/alice
-toolang run https://toolang.ai/alice.too
+toolang serve alice
+toolang serve alice --sandbox docker
+toolang serve brice/alice
+toolang serve https://toolang.ai/alice.too
 toolang clone brice/alice
 toolang start alice
 toolang start alice --sandbox docker
@@ -131,11 +136,18 @@ toolang catalogs
 toolang toolsets
 ```
 
-Top-level routing uses three command shapes:
+Top-level routing uses these command shapes:
 
+- Script commands use `init DIR` and `run FILE [RUNNABLE]`. They appear
+  in the final Script Commands help panel. `init` creates `work.too` exclusively
+  from the packaged template and never overwrites existing files or symlinks.
+  The directory is required: `init` alone shows help; `init .` creates the file
+  in the current directory. The generated file includes a shebang and executable
+  permission, so it can also run directly as `./work.too`.
+  `run` accepts local `.too` files; foreground agents use `serve`.
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`
-- agent-self commands accept either order: `info`, `run`, `start`, and `stop`
+- agent-self commands accept either order: `info`, `serve`, `start`, and `stop`
 - commands for an agent's execution history, caps, tasks, or chores require
   the target first, such as `toolang alice retry RUN` or
   `toolang alice skill list`
@@ -204,10 +216,11 @@ Foreground runtime port selection depends on the agent mode:
 
 ## Script Run Surface
 
-A script run uses one local `.too` source path directly:
+A script run uses one local `.too` source path:
 
 ```text
-toolang <SCRIPT> <RUNNABLE> [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
+toolang run <SCRIPT> [RUNNABLE] [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
+toolang <SCRIPT> [RUNNABLE] [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -218,9 +231,11 @@ its stdout/stderr contract; it does not use the TUI renderer.
 Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
-- `RUNNABLE` is the uniquely named public agic or flow to run
+- `RUNNABLE` is the uniquely named authored agic or flow to run; omitting it
+  selects authored `main`, or shows file help when no `main` exists
 - `NAME=VALUE` supplies a named runnable parameter; repeat for other parameters
-- `INPUT` is one logical input, supplied as line text directly or after `--`;
+- `INPUT` is one logical input. With an explicit selector, ordinary trailing
+  words start input. Without a selector, use `--` to start primary text;
   `-` reads stdin through EOF, and omitted command-line text reads piped or
   redirected stdin
 
@@ -238,10 +253,10 @@ Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
 Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
 outline in normal style with blank lines between sibling steps.
-Top-level Script help uses `[OPTIONS] <RUNNABLE>` and
-`Run runnables from SCRIPT.` It lists **Runnables** before Options, with
-`agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
-`Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+Top-level Script help identifies `main` as the default when present and marks
+`[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It lists **Runnables**
+before Options, with `agic:NAME` / `flow:NAME` labels and authored descriptions or
+`Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
 `-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
@@ -351,7 +366,7 @@ toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang brice/alice retry RUN
 ```
 
-Commands that execute or inspect current program state (`info`, `run`, `chat`,
+Commands that execute or inspect current program state (`info`, `serve`, `chat`,
 `retry`, and `rerun`) resolve and materialize the remote program. History-only
 commands, including `inspect`, derive the stable visiting layout and read its
 existing `runs.db` without fetching the source.
@@ -525,7 +540,7 @@ read-only and historical and does not load a runnable.
 
 | Command | `name` | `shorthand` | `ref` |
 | --- | --- | --- | --- |
-| `toolang run` | yes | yes | yes |
+| `toolang serve` | yes | yes | yes |
 | `toolang clone` | yes | yes | yes |
 | `toolang start` | yes | no | no |
 
@@ -533,11 +548,11 @@ Behavior:
 
 | Command | Behavior |
 | --- | --- |
-| `toolang run` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
+| `toolang serve` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
-`toolang run` and `toolang start` resolve the same `LaunchSpec` and call the
+`toolang serve` and `toolang start` resolve the same `LaunchSpec` and call the
 same sandbox lifecycle. A hidden `toolang _serve` command is the only
 AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
@@ -616,8 +631,8 @@ new temporary non-host runtime; bare `--dev` searches the working directory. It
 is rejected for embedded host execution or when Chat attaches to an existing
 AgentServer.
 
-Commands that start a new guest accept `--dev [PATH]`. This includes `run`,
-`start`, `chat`, script runs, `retry`, and `rerun`. Omitting `--dev` keeps the
+Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
+`start`, `chat`, Script `run`, `retry`, and `rerun`. Omitting `--dev` keeps the
 existing package selection. Bare `--dev` uses `.` (the process working directory,
 not the script directory or agent home). An explicit `PATH` selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
@@ -703,7 +718,7 @@ failed Docker launch whose workload was removed successfully. If Docker cleanup
 fails, the staged files remain with the persisted recovery reference.
 
 For every sandbox implementation, AgentServer is the environment's primary
-foreground workload. `run` waits for that workload and releases it on exit,
+foreground workload. `serve` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the
 persisted `SandboxState`, stops the primary workload, and releases its sandbox
 resources. Agent removal also asks the sandbox lifecycle to release any stopped
@@ -714,7 +729,7 @@ Agent entrypoints also share one logging policy resolver:
 
 | Entrypoint | Log destination |
 | --- | --- |
-| `toolang run` | `stderr` |
+| `toolang serve` | `stderr` |
 | `toolang start` | `agent_log` under the agent `.runtime` directory |
 | embedded host `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 | attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
@@ -722,7 +737,7 @@ Agent entrypoints also share one logging policy resolver:
 The lifecycle persists a versioned recovery reference immediately after the
 workload is created, then attaches process-local output observers and performs
 the readiness check. The Docker sandbox follows container output locally from
-container creation for foreground `run`. Background `start` instead creates the
+container creation for foreground `serve`. Background `start` instead creates the
 host `agent_log` with mode `0600` and writes Docker launch diagnostics,
 bootstrap errors, and AgentServer output there. Early container diagnostics are
 copied to that log before a failed or stopped workload is released, bounded to

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
@@ -37,13 +38,20 @@ class _Snapshot:
         return self.value
 
 
+@pytest.mark.parametrize("runnable", ["agic:echo", "agic:main", "flow:main"])
 def test_remote_script_uses_a_script_thread_and_native_progress(
     tmp_path: Path,
     capsys,
+    runnable: str,
 ) -> None:
+    source = _SOURCE
+    if runnable == "agic:main":
+        source = source.replace("agic echo", "agic")
+    elif runnable == "flow:main":
+        source += "\nflow(_: Part[]) -> Part[]:\n  run echo\n"
     harness = ExecutionHarness.create(
         tmp_path,
-        source=_SOURCE,
+        source=source,
         responses=[ModelCallResult(message=Message.assistant("remote result"))],
     )
     harness.store.close()
@@ -70,7 +78,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 layout=core.layout,
                 endpoint="http://runtime.test:7001",
                 sandbox="host",
-                runnable="agic:echo",
+                runnable=runnable,
                 override=RunOverride(),
                 input=CallInput({"_": "hello"}),
                 raw_named=CallInput({}),
@@ -89,7 +97,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)
-        assert control.payload.runnable == "agent$agic:echo"
+        assert control.payload.runnable == f"agent${runnable}"
         output = capsys.readouterr()
         assert output.out == ""
         assert "• remote result" in output.err

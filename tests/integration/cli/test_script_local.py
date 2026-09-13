@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message, TextPart, message_text
+from toolang.catalog.templates import load_template
+from toolang.cli.toolang import main as cli
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
@@ -43,6 +46,7 @@ flow research(_: Part[]) -> Text[]:
 """
 
 
+@pytest.mark.parametrize("entry", ["echo", "implicit", "main"])
 @pytest.mark.parametrize(
     ("save_mode", "expected_status", "expected_stdout"),
     (
@@ -57,15 +61,17 @@ def test_local_script_saves_only_to_an_explicit_destination(
     monkeypatch,
     capsys,
     save_mode: str | None,
+    entry: str,
     expected_status: int,
     expected_stdout: str,
 ) -> None:
+    source_text = _SOURCE if entry == "echo" else load_template("script").raw_text
     source = tmp_path / "echo.too"
-    source.write_text(_SOURCE, encoding="utf-8")
+    source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
-        source=_SOURCE,
+        source=source_text,
         responses=[ModelCallResult(message=Message.assistant("done"))],
     )
     setup = replace(harness.setup, layout=layout)
@@ -106,7 +112,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     monkeypatch.setattr("toolang.state.prepare.prepare_agent_state", prepare_state)
     monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
-    args = [str(source), "echo"]
+    args = [str(source), *([] if entry == "implicit" else [entry])]
     destination = tmp_path / "result.txt"
     if save_mode == "stdout":
         args.extend(("--quiet", "--out", "-"))
@@ -115,8 +121,14 @@ def test_local_script_saves_only_to_an_explicit_destination(
     elif save_mode == "missing-parent":
         destination = tmp_path / "missing" / "result.txt"
         args.extend(("--out", str(destination)))
-    args.extend(("--", "hello"))
-    result = script.dispatch([], args, prog_name="toolang")
+    if entry == "echo":
+        args.extend(("--", "hello"))
+    monkeypatch.setattr("sys.stdin", StringIO())
+    result = (
+        script.dispatch([], args, prog_name="toolang")
+        if entry == "echo"
+        else cli.main(["run", *args])
+    )
     output = capsys.readouterr()
 
     assert result == expected_status
@@ -152,20 +164,96 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert durable_output == (TextPart("done"),)
     assert control is not None
     assert isinstance(control.payload, RunControlPayload)
-    assert control.payload.runnable == "agent$agic:echo"
+    assert control.payload.runnable == (
+        "agent$agic:echo" if entry == "echo" else "agent$agic:main"
+    )
 
 
+@pytest.mark.parametrize("entry", ["chat", "rewrite", "polish"])
+def test_template_examples_bind_arguments_and_flow_results(
+    tmp_path: Path, monkeypatch, capsys, entry: str
+) -> None:
+    source_text = load_template("script").raw_text
+    source = tmp_path / "work.too"
+    source.write_text(source_text, encoding="utf-8")
+    layout = agents.materialize_roaming_program(source)
+    responses = ["Draft text.", "done"] if entry == "polish" else ["done"]
+    harness = ExecutionHarness.create(
+        tmp_path / "harness",
+        source=source_text,
+        responses=[
+            ModelCallResult(message=Message.assistant(text)) for text in responses
+        ],
+    )
+    setup = replace(harness.setup, layout=layout)
+
+    class _SetupWatcher:
+        def __init__(self, actual_layout, **_kwargs) -> None:
+            assert actual_layout == layout
+
+        async def refresh(self):
+            return setup
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr(
+        "toolang.state.prepare.prepare_agent_state",
+        lambda actual_layout, **_kwargs: (
+            harness.state
+            if actual_layout == layout
+            else pytest.fail("unexpected layout")
+        ),
+    )
+    monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
+    monkeypatch.setattr("sys.stdin", StringIO())
+    try:
+        assert (
+            cli.main(
+                [
+                    "run",
+                    str(source),
+                    entry,
+                    "--quiet",
+                    "--out",
+                    "-",
+                    *(["tone=professional"] if entry != "chat" else []),
+                    "--",
+                    "Can you send the notes?",
+                ]
+            )
+            == 0
+        )
+        assert capsys.readouterr().out == "done"
+        calls = harness.adapter.invocations
+        assert len(calls) == len(responses)
+        first_input = "\n".join(
+            message_text(message.parts) for message in calls[0].call.messages
+        )
+        assert "Can you send the notes?" in first_input
+        if entry != "chat":
+            assert "professional" in first_input
+        if entry == "polish":
+            final_input = "\n".join(
+                message_text(message.parts) for message in calls[1].call.messages
+            )
+            assert "Draft text." in final_input
+    finally:
+        asyncio.run(harness.close())
+
+
+@pytest.mark.parametrize("entry", ["research", "default"])
 def test_local_script_renders_composite_flow_progress(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    entry: str,
 ) -> None:
+    source_text = _FLOW_SOURCE.replace("flow research", f"flow {entry}")
     source = tmp_path / "research.too"
-    source.write_text(_FLOW_SOURCE, encoding="utf-8")
+    source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
-        source=_FLOW_SOURCE,
+        source=source_text,
         responses=[
             ModelCallResult(message=Message.assistant('["one","two"]')),
         ],
@@ -190,17 +278,13 @@ def test_local_script_renders_composite_flow_progress(
     )
     monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
-    result = script.dispatch(
-        [],
-        [str(source), "research", "--", "agent framework"],
-        prog_name="toolang",
-    )
+    result = cli.main(["run", str(source), entry, "--", "agent framework"])
     output = capsys.readouterr()
 
     try:
         assert result == 0
         assert output.out == ""
-        assert "Run flow research" not in output.err
+        assert f"Run flow {entry}" not in output.err
         assert "> agent framework" not in output.err
         assert "[0] Expand the topic." in output.err
         assert "line 10" not in output.err

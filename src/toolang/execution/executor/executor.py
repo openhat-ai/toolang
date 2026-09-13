@@ -3120,13 +3120,14 @@ def _validate_inputs(
     runnable: AgicDecl | FlowDecl,
     input: RunnableInput,
 ) -> None:
+    name = runnable.name or f"unnamed {runnable.kind}"
     structs = {item.name: item for item in program.structs}
     params = {param.name: param for param in runnable.params}
     args = {name: value for name, value in input.items() if name != "_"}
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
-        raise ValueError(f"unknown named inputs for {runnable.name}: {joined}")
+        raise ValueError(f"unknown named inputs for {name}: {joined}")
     missing = sorted(
         name
         for name, param in params.items()
@@ -3134,11 +3135,11 @@ def _validate_inputs(
     )
     if missing:
         joined = ", ".join(missing)
-        raise ValueError(f"missing named inputs for {runnable.name}: {joined}")
+        raise ValueError(f"missing named inputs for {name}: {joined}")
     if runnable.input is None and "_" in input:
-        raise ValueError(f"{runnable.name} does not accept primary input")
+        raise ValueError(f"{name} does not accept primary input")
     if runnable.input is not None and not runnable.input.optional and "_" not in input:
-        raise ValueError(f"{runnable.name} requires primary input")
+        raise ValueError(f"{name} requires primary input")
     if runnable.input is not None and "_" in input:
         validate_value(
             input["_"],

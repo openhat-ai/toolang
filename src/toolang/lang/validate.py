@@ -44,23 +44,23 @@ def _validate(program: ast.Program) -> None:
     runnables = _runnable_namespace(program)
 
     for agic in program.agics:
-        _validate_parameters(agic.input, agic.params, owner=f"Agic {agic.name!r}")
+        owner = f"Agic {agic.name!r}" if agic.name is not None else "Unnamed agic"
+        _validate_parameters(agic.input, agic.params, owner=owner)
         _validate_directives(
             agic.directives,
-            owner=f"Agic {agic.name!r}",
+            owner=owner,
             allow_routes=True,
             allow_recall=True,
         )
-        _validate_prompt_ref(agic.context, contexts, target="context", owner=agic.name)
-        _validate_prompt_ref(
-            agic.instruct, instructs, target="instruct", owner=agic.name
-        )
+        _validate_prompt_ref(agic.context, contexts, target="context", owner=owner)
+        _validate_prompt_ref(agic.instruct, instructs, target="instruct", owner=owner)
 
     for flow in program.flows:
-        _validate_parameters(flow.input, flow.params, owner=f"Flow {flow.name!r}")
+        owner = f"Flow {flow.name!r}" if flow.name is not None else "Unnamed flow"
+        _validate_parameters(flow.input, flow.params, owner=owner)
         _validate_directives(
             flow.directives,
-            owner=f"Flow {flow.name!r}",
+            owner=owner,
             allow_routes=False,
             allow_recall=False,
         )
@@ -260,6 +260,8 @@ def _validate_service_env(name: str, raw: object, *, line_number: int) -> None:
 def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
     values: dict[str, ast.AgicDecl | ast.FlowDecl] = {}
     for item in (*program.agics, *program.flows):
+        if item.name is None:
+            continue
         if item.name in values:
             raise ToolangValidationError(f"Duplicate runnable name {item.name!r}.")
         values[item.name] = item
@@ -426,9 +428,7 @@ def _validate_prompt_ref(
     if ref is None or ref in {"default", "none"}:
         return
     if ref not in namespace:
-        raise ToolangValidationError(
-            f"Agic {owner!r} references unknown {target} {ref!r}."
-        )
+        raise ToolangValidationError(f"{owner} references unknown {target} {ref!r}.")
 
 
 def _validate_stmts(

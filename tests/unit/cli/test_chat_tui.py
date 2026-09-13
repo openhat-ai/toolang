@@ -3058,21 +3058,23 @@ def test_chat_model_label_preserves_explicit_reasoning_values(
 
 
 @pytest.mark.parametrize("module", ["", "agent$"])
+@pytest.mark.parametrize("runnable", ["agic:chat", "agic:main", "flow:main"])
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
     monkeypatch: Any,
     module: str,
+    runnable: str,
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
     text = "".join(
         fragment
         for _style, fragment in widgets.StatusBar(
-            f"{module}agic:chat", "runtime model"
+            f"{module}{runnable}", "runtime model"
         )._render()
     )
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith("agic:chat")
+    assert text.startswith(runnable)
     assert text.endswith("runtime model")
     assert get_cwidth(text) == 80
 

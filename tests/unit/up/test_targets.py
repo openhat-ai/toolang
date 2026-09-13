@@ -82,7 +82,7 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch: pytest.MonkeyPatch) -> Non
 
     def fake_fetch(url: str) -> str:
         captured["url"] = url
-        return "agent dev\n"
+        return "# Agent dev\n"
 
     monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
 
@@ -90,7 +90,7 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch: pytest.MonkeyPatch) -> Non
         GitHubRef(owner="briceyan", repo="agents", path="dev.too", rev="main")
     )
 
-    assert text == "agent dev\n"
+    assert text == "# Agent dev\n"
     assert captured["url"] == (
         "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
     )
@@ -140,7 +140,7 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     ) -> str:
         del progress, progress_id
         fetches.append(ref.render())
-        return "agent researcher\n"
+        return "# Agent researcher\n"
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
@@ -149,7 +149,7 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
 
     assert first is not second
     assert first == second == AgentLayout.visiting(source, "researcher")
-    assert first.program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert first.program.read_text(encoding="utf-8") == "# Agent researcher\n"
     assert fetches == [source]
 
 
@@ -169,7 +169,7 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     monkeypatch.setattr(
         agents,
         "_fetch_http_text",
-        lambda _url: "agent researcher\n",
+        lambda _url: "# Agent researcher\n",
     )
     events: list[ProgressEvent] = []
 
@@ -196,7 +196,7 @@ def test_visiting_agent_closes_materialize_progress_on_failure(
     monkeypatch.setattr(
         agents,
         "_fetch_http_text",
-        lambda _url: "agent broken\n",
+        lambda _url: "# Agent broken\n",
     )
     monkeypatch.setattr(
         agents,
@@ -217,7 +217,7 @@ def test_visiting_agent_closes_materialize_progress_on_failure(
 
 def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> None:
     source = tmp_path / "demo.too"
-    source.write_text("agent demo\n", encoding="utf-8")
+    source.write_text("# Agent demo\n", encoding="utf-8")
     config = tmp_path / "toolang.toml"
     config.write_text("[models]\n", encoding="utf-8")
 

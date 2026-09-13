@@ -24,6 +24,32 @@ from toolang.common.typer.ui import PLAIN, UV, run
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize("width", [44, 120])
+def test_root_help_shows_the_source_version_in_dim_parentheses(
+    theme, width, monkeypatch
+):
+    monkeypatch.setattr(
+        "toolang.cli.toolang.main._version.toolang_version",
+        lambda: "0.3.0-12-g12345678*",
+    )
+    stdout = StringIO()
+    console = Console(
+        file=stdout, force_terminal=True, color_system="standard", width=width
+    )
+    assert run(app, args=["--help"], prog_name="too", theme=theme, console=console) == 0
+    output = Text.from_ansi(stdout.getvalue())
+    description = "Toolang is a language and runtime for agents and humans."
+    version = "(0.3.0-12-g12345678*)"
+    assert " ".join(output.plain.split()).startswith(f"{description} {version}")
+    start = output.plain.index(version)
+    assert all(
+        output.get_style_at_offset(console, index).dim
+        for index in range(start, start + len(version))
+    )
+    assert not output.get_style_at_offset(console, 0).dim
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
 @pytest.mark.parametrize(
     ("arguments", "status"),
     [
@@ -31,7 +57,7 @@ from toolang.common.typer.ui import PLAIN, UV, run
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
         (["prompt", "new", "--template", "default"], 0),
-        (["run", "--port", "1234"], 0),
+        (["serve", "--port", "1234"], 0),
         (["workspace", "list"], 0),
         (["prompt", "new", "--unknown"], 2),
     ],
@@ -190,7 +216,8 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
     assert root.commands["_serve"].hidden
-    assert "serve" not in root.commands
+    assert root.commands["compact"].hidden
+    assert not root.commands["serve"].hidden
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setenv("FORCE_COLOR", "1")
@@ -203,7 +230,9 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
-    assert "_serve Run an agent server" in " ".join(plain.split())
+    assert "_serve" not in plain
+    assert "channel" not in plain
+    assert "compact Compact a thread" in " ".join(plain.split())
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
@@ -246,7 +275,7 @@ def test_channel_usage_spells_out_arguments(
         (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
         (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
         (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
-        (["run"], "too run [OPTIONS] <AGENT>"),
+        (["serve"], "too serve [OPTIONS] <AGENT>"),
     ],
 )
 def test_virtual_agent_usage_keeps_position_and_normal_weight(
@@ -279,8 +308,8 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
     ("command", "description", "argument_help"),
     [
         (
-            "run",
-            "Run an agent in the foreground",
+            "serve",
+            "Serve an agent in the foreground",
             "Agent name, .too file, reference, or URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
@@ -312,7 +341,7 @@ def test_real_and_virtual_agent_arguments_share_usage(
         "start",
         "stop",
         "_serve",
-        "run",
+        "serve",
         "info",
         "chat",
         "inspect",
@@ -429,7 +458,7 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
     ("arguments", "options"),
     [
         (
-            ["a", "run"],
+            ["a", "serve"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
@@ -604,7 +633,7 @@ def test_repeated_explicit_metavar_is_not_duplicated(required):
     )
 
 
-@pytest.mark.parametrize("command", ["run", "start", "_serve"])
+@pytest.mark.parametrize("command", ["serve", "start", "_serve"])
 def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
@@ -624,7 +653,7 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     assert not any(
         option.startswith("--") and option != option.lower() for option in options
     )
-    if command in ("run", "start"):
+    if command in ("serve", "start"):
         assert "--sandbox" in options
     help_text = strip_ansi(loaded.get_help(Context(loaded, info_name=command)))
     assert capsys.readouterr().out == ""

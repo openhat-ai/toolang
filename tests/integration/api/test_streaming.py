@@ -84,7 +84,7 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
     home = harness.setup.layout.home
     flows = home / "flows"
     flows.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
         "agic helper:\n  Private.\n\nflow:\n  run helper\n",
         encoding="utf-8",

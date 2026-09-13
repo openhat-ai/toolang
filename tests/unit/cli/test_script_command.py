@@ -710,7 +710,9 @@ def test_script_help_after_common_options_never_reads_or_runs(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    assert ("Arguments:" in output) is child
+    assert "Arguments:" in output
+    if not child:
+        assert "RUNNABLE" in _help_panel(output, "Arguments")
     assert ("Runnables:" in output) is not child
     _assert_common_options(output)
 
@@ -718,7 +720,7 @@ def test_script_help_after_common_options_never_reads_or_runs(
 def test_script_without_public_runnables_still_shows_common_options(
     tmp_path: Path, capsys
 ) -> None:
-    source = _write_source(tmp_path, "agic:\n  Default behavior.\n")
+    source = _write_source(tmp_path, "# No authored runnables.\n")
     assert (
         script.dispatch(
             [], [str(source), "--help"], prog_name="too", stdin=_UnreadableStdin()
@@ -1402,10 +1404,16 @@ flow pipeline:
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert f"Usage: {prog_name} {filename} [OPTIONS] <RUNNABLE>" in stdout
+    assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
-    assert f"Run runnables from {filename}" in stdout
-    assert stdout.index("Runnables:") < stdout.index("Options:")
+    assert f"Execute a runnable from {filename}" in stdout
+    assert "Runnable name [default: main]" in " ".join(stdout.split())
+    assert "Omit RUNNABLE" not in stdout
+    assert (
+        stdout.index("Arguments:")
+        < stdout.index("Runnables:")
+        < stdout.index("Options:")
+    )
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout
@@ -1421,6 +1429,7 @@ flow pipeline:
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
+    assert "agic:main Agic main" in descriptions
     assert "<agic:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
@@ -1959,7 +1968,6 @@ def test_quiet_unsuccessful_run_reports_fallback_error(
         ([], ["--dev", "first", "--dev"], Path(".")),
         ([], ["--dev", "--dev=last"], Path("last")),
         (["--dev", "--quiet"], [], Path(".")),
-        (["--dev", "--"], [], Path(".")),
         (["--dev=."], [], Path(".")),
         (["--dev", "wheel directory"], [], Path("wheel directory")),
         (["--dev="], [], Path(".")),

@@ -129,7 +129,7 @@ queries. Singular `model` bindings instead accept one exact `ModelRequest` ref
 and never use this grammar.
 
 ```bash
-toolang run alice \
+toolang serve alice \
   --allow 'models=*[streaming;tool_call]' \
   --allow 'tools=filesystem/*' \
   --allow 'skills=reviewer'

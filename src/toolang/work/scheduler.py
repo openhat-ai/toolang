@@ -17,6 +17,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.execution.runnables import runnable_fallback
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
@@ -472,12 +473,7 @@ class JobScheduler:
     def _build_spec(self, job: Job) -> RunSpec:
         setup = self.get_agent_setup()
         state = self.get_agent_state()
-        runnable = (
-            job.kind
-            if state.modules["agent"].find_agic(job.kind) is not None
-            or state.modules["agent"].find_flow(job.kind) is not None
-            else "default"
-        )
+        runnable = runnable_fallback(state, preferred=job.kind)
         override, input = parse_call(job.body)
         base = job.path.parent if job.path is not None else setup.layout.home
         spec = resolve_spec(

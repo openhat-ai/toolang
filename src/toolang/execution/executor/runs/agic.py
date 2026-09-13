@@ -18,7 +18,6 @@ from toolang.lang.ast import AgicDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
-from toolang.state.state import state_program
 
 from ...events import StepBegin, StepEnd
 from ...assembly import prompting
@@ -44,7 +43,8 @@ from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 from ...runnables import (
-    resolve_runnable,
+    resolve_bound_runnable,
+    resolve_module_runnable,
 )
 
 
@@ -192,13 +192,17 @@ async def execute(
                 cached,
                 run=replace(cached.run, state=state, state_ref=ref),
             )
-        candidate = resolve_runnable(
-            state_program(state, binding.module),
-            agic.name,
-            kind="agic",
-        )
+        if agic.name is not None:
+            ref_name, candidate = resolve_module_runnable(
+                state, binding.module, agic.name, kind="agic"
+            )
+        else:
+            ref_name = binding.bindings.runnable
+            if ref_name is None:  # pragma: no cover - accepted run invariant
+                raise ValueError("active run is missing its runnable binding")
+            candidate = resolve_bound_runnable(state, binding.module, ref_name)
         if not isinstance(candidate, AgicDecl):  # pragma: no cover - kind invariant
-            raise TypeError(f"active agic changed kind: {agic.name}")
+            raise TypeError(f"active agic changed kind: {ref_name}")
         current_binding = (
             binding
             if state.revision == binding.state.revision and ref == binding.state_ref

@@ -18,7 +18,7 @@ from toolang.common.layout import AgentLayout
 def _context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     home = toolang_root / "agents" / agent_name
     home.mkdir(parents=True, exist_ok=True)
-    (home / "agent.too").write_text(f"agent {agent_name}\n", encoding="utf-8")
+    (home / "agent.too").write_text(f"# Agent {agent_name}\n", encoding="utf-8")
     return MeToolContext(
         home=home,
         room=home / ".runtime" / "tools" / "me",
@@ -616,7 +616,7 @@ def test_compact_flow_create_rejects_public_runnable_conflict(tmp_path: Path) ->
     root = tmp_path / "toolang"
     context = _context(root)
     context.home.joinpath("agent.too").write_text(
-        "agent alice\n\nflow research:\n  pass\n", encoding="utf-8"
+        "# Agent alice\n\nflow research:\n  pass\n", encoding="utf-8"
     )
     error = _error(
         _tools()["create"],
@@ -823,7 +823,7 @@ def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     target = root / "agents" / "bob"
     target.mkdir(parents=True)
-    target.joinpath("agent.too").write_text("agent bob\n", encoding="utf-8")
+    target.joinpath("agent.too").write_text("# Agent bob\n", encoding="utf-8")
     home = root / "agents" / "alice"
     home.symlink_to(target, target_is_directory=True)
     context = MeToolContext(

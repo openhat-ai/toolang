@@ -480,7 +480,11 @@ flow evaluate:
 """
     )
 
-    generated = [agic for agic in program.agics if agic.name.startswith("<agic:")]
+    generated = [
+        agic
+        for agic in program.agics
+        if agic.name is not None and agic.name.startswith("<agic:")
+    ]
 
     assert sorted(agic.output for agic in generated if agic.output) == [
         "Boolean",
@@ -774,7 +778,7 @@ flow pipeline:
     assert program.find_instruct("default") is None
 
 
-def test_program_source_hides_header_without_adding_runtime_declarations(
+def test_program_source_rejects_legacy_agent_header(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -786,10 +790,10 @@ def test_program_source_hides_header_without_adding_runtime_declarations(
     )
 
     prepared = read_authored_source(root, "alice").load_program()
-    program = prepared.parse()
+    with pytest.raises(ToolangError, match="Syntax error at line 3"):
+        prepared.parse()
 
     assert prepared.source_text == "#!/usr/bin/env toolang\n\nagent alice\n"
-    assert program.agics == ()
 
 
 def test_program_source_parse_preserves_authored_shebang_line_numbers(
@@ -799,7 +803,7 @@ def test_program_source_parse_preserves_authored_shebang_line_numbers(
     agent_dir = root / "agents" / "alice"
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent.too").write_text(
-        "#!/usr/bin/env toolang\n\n# Agent description.\nagent alice\n\nagic chat:\n  Reply.\n",
+        "#!/usr/bin/env toolang\n\n# Agent description.\n# Agent alice\n\nagic chat:\n  Reply.\n",
         encoding="utf-8",
     )
 
@@ -810,7 +814,7 @@ def test_program_source_parse_preserves_authored_shebang_line_numbers(
     assert program.agics[0].span.line == 6
 
 
-def test_program_source_preserves_explicit_default_agic(tmp_path: Path) -> None:
+def test_program_source_preserves_an_unnamed_agic(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
@@ -822,8 +826,37 @@ agic:
     program = read_authored_source(root, "alice").load_program().parse()
 
     assert len(program.agics) == 1
-    assert program.agics[0].name == "default"
+    assert program.agics[0].name is None
     assert program.agics[0].messages[0].content == "Reply directly."
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_flow_statements_cannot_reference_an_unnamed_entry_as_main(kind: str) -> None:
+    source = f"{kind}():\n  pass\nflow caller():\n  run main\n"
+
+    with pytest.raises(ToolangError, match="references unknown runnable 'main'"):
+        Program.from_source(source)
+
+    named = Program.from_source(source.replace(f"{kind}()", f"{kind} main()", 1))
+    assert named.find_agic("main") or named.find_flow("main")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "agic:\n  Hello.\nflow:\n  pass\n",
+        "agic main:\n  Hello.\nflow:\n  pass\n",
+        "agic:\n  Hello.\nagic main:\n  Hello again.\n",
+    ],
+)
+def test_program_preserves_names_before_state_binding(source):
+    program = Program.from_source(source)
+    assert any(item.name is None for item in (*program.agics, *program.flows))
+
+
+def test_explicit_default_keeps_its_authored_name():
+    program = Program.from_source("agic default:\n  Hello.\n")
+    assert program.agics[0].name == "default"
 
 
 def test_flow_name_explicitness_survives_serialization() -> None:
@@ -831,7 +864,7 @@ def test_flow_name_explicitness_survives_serialization() -> None:
 
     program = Program.from_source("flow:\n  pass\n\nflow named:\n  pass\n")
 
-    assert [flow.name for flow in program.flows] == ["main", "named"]
+    assert [flow.name for flow in program.flows] == [None, "named"]
     assert [flow.name_explicit for flow in program.flows] == [False, True]
     assert program_from_data(to_data(program)) == program
 
@@ -897,7 +930,7 @@ def _write_program(tmp_path: Path, body_text: str) -> Path:
     agent_dir = root / "agents" / "alice"
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "agent.too").write_text(
-        f"agent alice\n\n{body_text}\n",
+        f"{body_text}\n",
         encoding="utf-8",
     )
     return root

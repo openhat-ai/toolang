@@ -94,7 +94,7 @@ may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
 later `stop` command. AgentServer status and execution data remain separate.
 The materialized root and home remain authoritative in every environment.
 
-Both `run` and `start` launch the same AgentServer entrypoint. `run` waits for
+Both `serve` and `start` launch the same AgentServer entrypoint. `serve` waits for
 the hosted workload and releases it on exit; `start` returns after readiness.
 One-shot scripts and the chat TUI continue to use the execution core directly.
 

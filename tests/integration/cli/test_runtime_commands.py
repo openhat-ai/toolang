@@ -50,7 +50,7 @@ def _startup_event(
     ("args", "options"),
     [
         (
-            ["run", "--help"],
+            ["serve", "--help"],
             (
                 "--sandbox",
                 "--allow",
@@ -188,7 +188,7 @@ def test_session_and_run_commands_reject_wrong_lifetime_options(
 def _create_agent(root: Path, name: str = "alice") -> AgentLayout:
     layout = AgentLayout.resident(root, name)
     layout.home.mkdir(parents=True)
-    layout.program.write_text(f"agent {name}\n", encoding="utf-8")
+    layout.program.write_text(f"# Agent {name}\n", encoding="utf-8")
     return layout
 
 
@@ -351,7 +351,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         [
             "--root",
             str(root),
-            "run",
+            "serve",
             "alice",
             "--catalog",
             str(model_catalog),
@@ -424,7 +424,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
 
 def test_runtime_dev_help_describes_wheel_selection() -> None:
     commands = (
-        ["run", "--help"],
+        ["serve", "--help"],
         ["start", "--help"],
         ["chat", "alice", "--help"],
         ["retry", "alice", "--help"],
@@ -479,7 +479,7 @@ def test_runtime_warns_when_development_source_uses_index_package(
             assert "source at" not in stderr
 
 
-@pytest.mark.parametrize("command", ["run", "start", "_serve"])
+@pytest.mark.parametrize("command", ["serve", "start", "_serve"])
 def test_runtime_commands_reject_inbox_option(command: str) -> None:
     help_result = runner.invoke(cli.app, [command, "--help"])
     assert help_result.exit_code == 0
@@ -606,11 +606,11 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
                 "ready",
                 "Failed to connect to the agent API",
                 "failed",
-                "agent server exited before becoming ready",
+                "# Agent server exited before becoming ready",
             ),
         ):
             progress(event)
-        raise ToolangError("agent server exited before becoming ready")
+        raise ToolangError("# Agent server exited before becoming ready")
 
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
@@ -824,7 +824,7 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     assert not layout.home.exists()
 
 
-@pytest.mark.parametrize("command", ["run", "start"])
+@pytest.mark.parametrize("command", ["serve", "start"])
 @pytest.mark.parametrize(
     "options",
     [
@@ -853,7 +853,7 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
 
     async def execute(spec, **_kwargs):
         captured.append(spec)
-        if command == "run":
+        if command == "serve":
             return 0
         return SimpleNamespace(
             state=SimpleNamespace(
@@ -885,7 +885,7 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
     assert captured[0].serve.layout == layout
 
 
-@pytest.mark.parametrize("command", ["run", "start"])
+@pytest.mark.parametrize("command", ["serve", "start"])
 @pytest.mark.parametrize("sandbox", ["host", "docker"])
 def test_bare_dev_preserves_host_and_missing_wheel_errors(
     command, sandbox, tmp_path, monkeypatch, capsys

@@ -354,12 +354,23 @@ _RUNTIME_DEFAULT_AGIC = AgicDecl(
 )
 
 
-def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
-    """Return authored agics plus the implicit runtime default when needed."""
+def program_runnable_index(
+    program: Program,
+    *,
+    include_default: bool = True,
+) -> dict[str, AgicDecl | FlowDecl]:
+    """Bind authored names to module-local identities without changing the AST."""
 
-    if program.find_agic("default") is not None:
-        return program.agics
-    return (*program.agics, _RUNTIME_DEFAULT_AGIC)
+    declarations = (*program.agics, *program.flows)
+    if include_default and not any(item.name == "default" for item in declarations):
+        declarations = (*program.agics, _RUNTIME_DEFAULT_AGIC, *program.flows)
+    result: dict[str, AgicDecl | FlowDecl] = {}
+    for declaration in declarations:
+        name = declaration.name if declaration.name is not None else "main"
+        if name in result:
+            raise ValueError(f"Runnable name is not unique: {name}")
+        result[name] = declaration
+    return result
 
 
 def public_runnable_index(
@@ -380,19 +391,20 @@ def public_runnable_index(
     agent = modules.get("agent")
     if agent is None:
         raise ValueError("home State layer is missing the agent module")
-    for agic in effective_agics(agent):
-        add(agic.name, "agent", agic)
-    for flow in agent.flows:
-        add(flow.name, "agent", flow)
+    exported_names = {
+        Path(source).stem
+        for module, source in module_sources.items()
+        if module != "agent"
+    }
+    for name, declaration in program_runnable_index(agent).items():
+        if declaration is _RUNTIME_DEFAULT_AGIC and name in exported_names:
+            continue
+        add(name, "agent", declaration)
     for module, program in modules.items():
         if module == "agent":
             continue
         public_name, local_name = flow_export(module_sources[module], program)
-        declaration = program.find_flow(local_name)
-        if declaration is None:  # pragma: no cover - flow_export invariant
-            raise ValueError(
-                f"Public flow declaration not found: {module}${local_name}"
-            )
+        declaration = program_runnable_index(program)[local_name]
         add(public_name, module, declaration)
     return result, owners
 
@@ -404,23 +416,22 @@ def module_runnable_index(
 
     result: dict[str, AgicDecl | FlowDecl] = {}
     for module, program in modules.items():
-        for declaration in (*effective_agics(program), *program.flows):
-            result[_module_runnable_key(module, declaration.kind, declaration.name)] = (
-                declaration
-            )
+        for name, declaration in program_runnable_index(program).items():
+            result[_module_runnable_key(module, declaration.kind, name)] = declaration
     return result
 
 
 def flow_export(source: str, program: Program) -> tuple[str, str]:
     public_name = Path(source).stem
     candidates = tuple(
-        flow
-        for flow in program.flows
-        if not flow.name_explicit or flow.name == public_name
+        name
+        for name, flow in program_runnable_index(program, include_default=False).items()
+        if isinstance(flow, FlowDecl)
+        and (flow.name is None or not flow.name_explicit or flow.name == public_name)
     )
     if len(candidates) != 1:
         raise ValueError(f"flow module export does not match its program: {source}")
-    return public_name, candidates[0].name
+    return public_name, candidates[0]
 
 
 def program_term_data(

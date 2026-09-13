@@ -11,10 +11,10 @@ def test_program_load_uses_captured_snapshot_content(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     program_path = root / "agents" / "alice" / "agent.too"
     program_path.parent.mkdir(parents=True)
-    program_path.write_text("agent alice\n\nagic:\n  First.\n", encoding="utf-8")
+    program_path.write_text("# Agent alice\n\nagic:\n  First.\n", encoding="utf-8")
     snapshot = read_authored_source(root, "alice")
 
-    program_path.write_text("agent alice\n\nagic:\n  Second.\n", encoding="utf-8")
+    program_path.write_text("# Agent alice\n\nagic:\n  Second.\n", encoding="utf-8")
 
     source = snapshot.load_program()
     assert source.source_text.endswith("agic:\n  First.\n")

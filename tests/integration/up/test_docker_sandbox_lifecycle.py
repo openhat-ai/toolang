@@ -39,7 +39,7 @@ agic echo(_: Text) -> Text:
   instruct: Return the input exactly.
   user: {{_}}
 """
-_AGENT_SOURCE = f"agent alice\n\n{_ECHO_PROGRAM}"
+_AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,7 +305,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "bob")
     layout.home.mkdir(parents=True)
-    layout.program.write_text("agent bob\n", encoding="utf-8")
+    layout.program.write_text("# Agent bob\n", encoding="utf-8")
     unavailable_provider_port = _available_port()
     layout.root_env.write_text(
         f"OLLAMA_HOST=http://127.0.0.1:{unavailable_provider_port}\n"
@@ -329,7 +329,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
     process = subprocess.Popen(
         (
             *base,
-            "run",
+            "serve",
             "--sandbox",
             "docker",
             "--dev",

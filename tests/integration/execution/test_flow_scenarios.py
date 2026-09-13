@@ -1059,7 +1059,7 @@ def test_home_flow_module_executes_with_local_types_and_helpers(tmp_path: Path) 
     home = tmp_path / "agents" / "alice"
     flows = home / "flows"
     flows.mkdir(parents=True)
-    agent_source = "agent alice\n"
+    agent_source = "# Agent alice\n"
     (home / "agent.too").write_text(agent_source, encoding="utf-8")
     (flows / "research.too").write_text(
         """
