@@ -70,7 +70,6 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "rerun",
     "fork",
     "rewind",
-    "compact",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "caps",
@@ -84,7 +83,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse")
+_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "compact")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -405,7 +404,7 @@ _registered_command(
     help="Compact a thread",
     no_args_is_help=True,
     cls=_CompactCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
 )
 _registered_command(
     "rerun",
@@ -551,6 +550,7 @@ _registered_command(
     "init",
     "toolang.cli.toolang.commands.init:init_script",
     help="Initialize Toolang in a directory",
+    no_args_is_help=True,
     epilog=(
         "Creates missing directories and writes main.too from the default template. "
         "Fails if main.too already exists."

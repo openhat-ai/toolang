@@ -228,7 +228,6 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "rerun": "Rerun an earlier run as a new one",
         "fork": "Fork a thread from an earlier run",
         "rewind": "Rewind a thread to an earlier run",
-        "compact": "Compact a thread",
     }
 
     assert isinstance(group, TyperGroup)
@@ -321,7 +320,6 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "rerun",
             "fork",
             "rewind",
-            "compact",
         ),
         "Inspection Commands": (
             "caps",
@@ -616,6 +614,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
         sorted(stdout.index(panel) for panel in panels)
     )
     assert "channel" not in stdout
+    assert "compact" not in stdout
     assert "No such command" not in output.err
 
 

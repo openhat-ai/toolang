@@ -12,8 +12,12 @@ from toolang.catalog.templates import load_template
 def init_script(
     ctx: typer.Context,
     directory: Annotated[
-        Path, typer.Argument(metavar="DIRECTORY", help="Directory for main.too")
-    ] = Path("."),
+        Path,
+        typer.Argument(
+            metavar="DIR",
+            help="Directory for main.too. Use . for the current directory",
+        ),
+    ],
 ) -> None:
     """Create the bundled Script in the selected directory."""
 

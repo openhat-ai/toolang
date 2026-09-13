@@ -138,9 +138,11 @@ toolang toolsets
 
 Top-level routing uses these command shapes:
 
-- Script commands use `init [DIRECTORY]` and `run FILE [RUNNABLE]`. They appear
+- Script commands use `init DIR` and `run FILE [RUNNABLE]`. They appear
   in the final Script Commands help panel. `init` creates `main.too` exclusively
   from the packaged template and never overwrites existing files or symlinks.
+  The directory is required: `init` alone shows help; `init .` creates the file
+  in the current directory.
   `run` accepts local `.too` files; foreground agents use `serve`.
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`

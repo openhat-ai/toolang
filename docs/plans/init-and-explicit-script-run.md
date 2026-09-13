@@ -2,7 +2,7 @@
 
 ## Goal and Approval
 
-Create a small Script with `too init [DIRECTORY]` and execute it with
+Create a small Script with `too init DIR` and execute it with
 `too run FILE [RUNNABLE]`. Use `serve` for foreground agent hosting. Both `too`
 and `toolang` expose the same behavior.
 
@@ -25,7 +25,8 @@ and authorized model routes.
 
 | Command | Behavior |
 | --- | --- |
-| `too init [DIRECTORY]` | Create `DIRECTORY/main.too`; default directory is `.`. |
+| `too init DIR` | Create `DIR/main.too`; use `.` for the current directory. |
+| `too init` | Show help without creating files. |
 | `too run FILE` | Execute authored `main`, or show file help if absent. |
 | `too run FILE RUNNABLE` | Execute the selected authored runnable once. |
 | `too FILE [RUNNABLE]` | Retain path-first Script invocation. |
@@ -37,8 +38,10 @@ and authorized model routes.
 
 ### Initialization
 
-- Accept a directory, not a filename. Resolve it at the CLI boundary and create
-  missing directories. Permit nonempty directories; preserve neighboring files.
+- Require an explicit directory, not a filename. Omitting it shows help and
+  creates nothing; `too init .` selects the current directory. Resolve it at the
+  CLI boundary and create missing directories. Permit nonempty directories;
+  preserve neighboring files.
 - Load the bundled template before creating directories. Write `main.too` as
   UTF-8 with a trailing newline using exclusive creation. Existing files,
   directories, and symlinks at the destination must fail without being changed.
@@ -140,6 +143,7 @@ too run main.too review -- "text"
 - Replace `run` with `serve` in Agent Commands, after `info` and before `start`.
   Append Script Commands (`init`, then `run`) after Inspection Commands. Keep
   `_serve` and `channel` callable but absent from both root and `too hidden` lists.
+  Move `compact` from Control Commands to `too hidden`, preserving its invocation.
 - Preserve foreground target forms, lifecycle flags, defaults, preparation,
   logging, sandbox handling, Ctrl+C cleanup, and background `start`/`stop` behavior.
   Retain #529's `_serve` launch construction, guest validation, and legacy process
@@ -177,7 +181,8 @@ The existing source cache schema transition is the only storage change.
 
 ## Acceptance Checks
 
-1. Initialization covers current, nonempty, nested, spaced, and Unicode paths;
+1. Initialization without a directory only shows help. Explicit initialization
+   covers current, nonempty, nested, spaced, and Unicode paths;
    concurrent calls have one winner; existing files/symlinks and invalid or
    unwritable destinations fail safely. Verify the packaged template.
 2. Explicit and shorthand Script invocations execute the template with an offline

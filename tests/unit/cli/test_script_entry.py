@@ -31,16 +31,32 @@ def _source(text: str = "agic():\n  Hello.\n") -> str:
     return "demo.too"
 
 
+@pytest.mark.parametrize("executable", ["too", "toolang"])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["-h"]])
+def test_init_without_directory_only_shows_help(
+    executable, arguments, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("sys.argv", [executable])
+    before = set(tmp_path.rglob("*"))
+    assert cli.main(["init", *arguments]) == 0
+    assert set(tmp_path.rglob("*")) == before
+    output = " ".join(capsys.readouterr().out.split())
+    assert f"Usage: {executable} init [OPTIONS] <DIR>" in output
+    assert "* DIR" in output
+    assert "[default: .]" not in output
+    assert "Use . for the current directory" in output
+
+
 @pytest.mark.parametrize(
-    "directory", [None, ".", "existing", "new/nested", "hello world/你好"]
+    "directory", [".", "existing", "new/nested", "hello world/你好"]
 )
 def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
     (tmp_path / "existing").mkdir()
     neighbor = tmp_path / "existing" / "keep.txt"
     neighbor.write_text("keep")
     before = {p for p in tmp_path.rglob("*") if p.is_file()}
-    assert cli.main(["init", *([directory] if directory is not None else [])]) == 0
-    destination = (tmp_path / (directory or ".") / "main.too").resolve()
+    assert cli.main(["init", directory]) == 0
+    destination = (tmp_path / directory / "main.too").resolve()
     assert destination.read_text() == load_template("script").raw_text
     assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {destination}
     assert neighbor.read_text() == "keep"
@@ -65,7 +81,7 @@ def test_init_never_overwrites_existing_output(kind, tmp_path, capsys):
         if kind == "symlink":
             target.write_text("keep")
         output.symlink_to(target)
-    assert cli.main(["init"]) == 2
+    assert cli.main(["init", "."]) == 2
     assert "could not initialize script" in capsys.readouterr().err
     if kind == "file":
         assert output.read_text() == "keep"
@@ -92,7 +108,7 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", denied)
-    assert cli.main(["init"]) == 2
+    assert cli.main(["init", "."]) == 2
     assert "permission denied" in capsys.readouterr().err
 
 

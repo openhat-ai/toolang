@@ -190,6 +190,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
     assert root.commands["_serve"].hidden
+    assert root.commands["compact"].hidden
     assert not root.commands["serve"].hidden
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -205,6 +206,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "QUERY = MATCH" not in plain
     assert "_serve" not in plain
     assert "channel" not in plain
+    assert "compact Compact a thread" in " ".join(plain.split())
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])

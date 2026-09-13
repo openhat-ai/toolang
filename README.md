@@ -103,7 +103,7 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Scripts
-toolang init [directory]             # Create main.too without overwriting files
+toolang init <dir>                   # Create main.too without overwriting files
 toolang run <file.too> [runnable]     # Execute authored main or a named runnable
 
 # Inspection
