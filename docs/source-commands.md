@@ -121,7 +121,10 @@ Use `-` as the sole source. `--stdin-filepath PATH` supplies a diagnostic label;
 it never reads or writes that path. The legacy `fmt --stdin-filepath PATH`
 shorthand also reads stdin without an explicit `-`. `fmt --check` rejects stdin.
 No-argument calls show help without scanning the working directory. Inputs must
-be UTF-8 local `.too` files; URLs and agent selectors are not accepted.
+be UTF-8 local `.too` files; URLs and agent selectors are not accepted. Stdin is
+also decoded as UTF-8, independently of Python's stream encoding. AST parsing
+and all formatter modes accept LF, CRLF, and CR line endings through universal
+newline normalization; raw CST and original-source highlighting retain them.
 
 Successful output modes return 0 and write only their artifact to stdout.
 Syntax/validation, file/decode, and rendering failures return 1 with diagnostics
