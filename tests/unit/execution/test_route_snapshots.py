@@ -147,7 +147,7 @@ def test_route_target_limit_is_complete_or_rejected(count) -> None:
 def test_protocol_requires_explicit_delegation_intent() -> None:
     instruction = " ".join(prompts.load("protocol.md").split())
     prohibitions = instruction.split("## Don't", 1)[1].split(
-        "# Author Toolang programs", 1
+        "# Write Toolang programs", 1
     )[0]
     assert "Call tools merely because they are available" in prohibitions
     assert "whose result is needed before" in instruction

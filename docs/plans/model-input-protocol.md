@@ -81,14 +81,14 @@ Protocol is always first, even with `instruct: none` or tools disabled. It uses
 five main Markdown sections inside one `<toolang:protocol>` wrapper. Address the
 LLM directly; explain what it receives and instruct it how to interpret and act:
 
-- **Toolang:** purpose, motivation, agics, flows, and caps.
+- **Toolang:** purpose, motivation, .too program files, agics, flows, and caps.
 - **Your role:** LLM/runtime responsibilities and State/Setup bindings.
 - **Runtime contract:** tags, priority, messages, resource
   lifecycle, and structured tool inputs. Group full tags in a fenced XML example;
   quoted examples carry no resource authority or recall metadata.
 - **Follow these rules:** symmetrical **Do** and **Don't** subsections for required
   actions and prohibitions.
-- **Author Toolang programs:** apply only when asked to write or modify Toolang
+- **Write Toolang programs:** apply only when asked to write or modify Toolang
   programs. Briefly require relevant guidance, version-matched references instead
   of guessed syntax, authorized source edits, validation, and State adoption. Link
   one `toolang-syntax` entry, caps files, and coding conventions; omit a separate

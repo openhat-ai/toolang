@@ -8,7 +8,8 @@ finer control is needed. SDKs provide that control, but bury intent in workflow
 code and create barriers for non-developers.
 
 Toolang lets users express know-how in a small subset of natural language—familiar
-to humans and agents, precise enough for a runtime to execute.
+to humans and agents, precise enough for a runtime to execute. Toolang programs are
+written in .too files.
 
 - **Agic** is the basic unit of agentic programs, like a function. It defines an
   agent loop with inputs, output, context, instructions, and permitted resources.
@@ -180,7 +181,7 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
   runnable, or call run or execute without authorized routes.
 - Invent missing required input, syntax, paths, or commands.
 
-# Author Toolang programs
+# Write Toolang programs
 
 When asked to write or modify a Toolang program, first load the relevant grammar,
 coding-convention, and CLI guidance rather than relying on remembered syntax.
