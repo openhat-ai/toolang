@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template
 from toolang.cli.toolang import main as cli
 from toolang.base.types.run import ModelCallResult
@@ -122,8 +123,6 @@ def test_local_script_saves_only_to_an_explicit_destination(
         args.extend(("--out", str(destination)))
     if entry == "echo":
         args.extend(("--", "hello"))
-    from io import StringIO
-
     monkeypatch.setattr("sys.stdin", StringIO())
     result = (
         script.dispatch([], args, prog_name="toolang")
@@ -168,6 +167,77 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert control.payload.runnable == (
         "agent$agic:echo" if entry == "echo" else "agent$agic:main"
     )
+
+
+@pytest.mark.parametrize("entry", ["chat", "rewrite", "polish"])
+def test_template_examples_bind_arguments_and_flow_results(
+    tmp_path: Path, monkeypatch, capsys, entry: str
+) -> None:
+    source_text = load_template("script").raw_text
+    source = tmp_path / "work.too"
+    source.write_text(source_text, encoding="utf-8")
+    layout = agents.materialize_roaming_program(source)
+    responses = ["Draft text.", "done"] if entry == "polish" else ["done"]
+    harness = ExecutionHarness.create(
+        tmp_path / "harness",
+        source=source_text,
+        responses=[
+            ModelCallResult(message=Message.assistant(text)) for text in responses
+        ],
+    )
+    setup = replace(harness.setup, layout=layout)
+
+    class _SetupWatcher:
+        def __init__(self, actual_layout, **_kwargs) -> None:
+            assert actual_layout == layout
+
+        async def refresh(self):
+            return setup
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr(
+        "toolang.state.prepare.prepare_agent_state",
+        lambda actual_layout, **_kwargs: (
+            harness.state
+            if actual_layout == layout
+            else pytest.fail("unexpected layout")
+        ),
+    )
+    monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
+    monkeypatch.setattr("sys.stdin", StringIO())
+    try:
+        assert (
+            cli.main(
+                [
+                    "run",
+                    str(source),
+                    entry,
+                    "--quiet",
+                    "--out",
+                    "-",
+                    *(["tone=professional"] if entry != "chat" else []),
+                    "--",
+                    "Can you send the notes?",
+                ]
+            )
+            == 0
+        )
+        assert capsys.readouterr().out == "done"
+        calls = harness.adapter.invocations
+        assert len(calls) == len(responses)
+        first_input = "\n".join(
+            message_text(message.parts) for message in calls[0].call.messages
+        )
+        assert "Can you send the notes?" in first_input
+        if entry != "chat":
+            assert "professional" in first_input
+        if entry == "polish":
+            final_input = "\n".join(
+                message_text(message.parts) for message in calls[1].call.messages
+            )
+            assert "Draft text." in final_input
+    finally:
+        asyncio.run(harness.close())
 
 
 @pytest.mark.parametrize("entry", ["research", "default"])

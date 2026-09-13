@@ -31,4 +31,10 @@ def init_script(
         raise typer.BadParameter(f"could not initialize script: {exc}") from exc
     typer.echo(f"Created {destination}")
     executable = ctx.find_root().info_name or "too"
-    typer.echo(f"Run with: {shlex.join([executable, 'run', str(destination)])}")
+    typer.echo("\nTry:")
+    for arguments in (
+        ["info", str(destination)],
+        ["run", str(destination)],
+        [str(destination), "chat"],
+    ):
+        typer.echo(f"  {shlex.join([executable, *arguments])}")

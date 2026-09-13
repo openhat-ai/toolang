@@ -34,13 +34,23 @@ To try a small script with an already configured model:
 
 ```bash
 too init demo
+too info demo/work.too
 too run demo/work.too
 too run demo/work.too --help
+too demo/work.too chat
 ```
 
-The bundled greeting takes no input. Use `--model` to select another configured
-model. `too demo/work.too` remains a shorthand for Script execution. The generated
-file is executable, so `./demo/work.too` also works.
+The default entry greets you without input. The same file includes a chat agic,
+a rewrite agic with a named parameter, and a flow that combines a named agic
+with an inline agic:
+
+```bash
+too run demo/work.too polish tone=professional -- "Can you send the notes?"
+```
+
+Use `--model` to select another configured model. `too demo/work.too` remains a
+shorthand for Script execution. The generated file is executable, so
+`./demo/work.too` also works.
 
 Create a local agent:
 

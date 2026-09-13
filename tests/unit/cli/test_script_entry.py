@@ -51,7 +51,11 @@ def test_init_without_directory_only_shows_help(
 @pytest.mark.parametrize(
     "directory", [".", "existing", "new/nested", "hello world/你好"]
 )
-def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
+@pytest.mark.parametrize("executable", ["too", "toolang"])
+def test_init_creates_only_a_packaged_script(
+    directory, executable, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("sys.argv", [executable])
     (tmp_path / "existing").mkdir()
     neighbor = tmp_path / "existing" / "keep.txt"
     neighbor.write_text("keep")
@@ -67,8 +71,37 @@ def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
     assert program.agics[0].name is None
     assert program.agics[0].input is None
     output = capsys.readouterr().out
-    command = output.split("Run with: ", 1)[1].strip()
-    assert shlex.split(command) == ["too", "run", str(destination)]
+    commands = output.split("Try:\n", 1)[1].splitlines()
+    assert [shlex.split(command) for command in commands] == [
+        [executable, "info", str(destination)],
+        [executable, "run", str(destination)],
+        [executable, str(destination), "chat"],
+    ]
+
+
+@pytest.mark.parametrize("entry", [None, "chat", "rewrite", "polish"])
+def test_initialized_script_help_exposes_the_language_examples(
+    entry, monkeypatch, capsys
+):
+    assert cli.main(["init", "."]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    assert cli.main(["run", "work.too", *([entry] if entry else []), "--help"]) == 0
+    output = " ".join(capsys.readouterr().out.split())
+    if entry is None:
+        for name in ("agic:main", "agic:chat", "agic:rewrite", "flow:polish"):
+            assert name in output
+        assert "<agic:" not in output
+        assert "agic:default" not in output
+    else:
+        assert "INPUT" in output
+        if entry in {"rewrite", "polish"}:
+            assert "tone=<TONE>" in output
+        if entry == "polish":
+            assert "Rewrite in the requested tone." in output
+            assert "Check the result with an inline agic." in output
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])

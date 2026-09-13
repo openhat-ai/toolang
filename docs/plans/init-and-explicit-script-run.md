@@ -9,8 +9,9 @@ and `toolang` expose the same behavior.
 The human approved implementation, path-first shorthand, `main` as the shared
 entry name, the existing help position for `serve`, and a final Script Commands
 panel. During review, the human confirmed that AST declarations preserve omitted
-names and State owns all module-aware name binding and indexing. Comment syntax
-is handled in a separate task.
+names and State owns all module-aware name binding and indexing. The human also
+requested a representative template and initialization hints for info, run, and
+chat. Comment syntax is handled in a separate task.
 
 PR #529 renamed the internal server command to `_serve`. This change retains
 that behavior and moves the former public `run` command to `serve`. Integration
@@ -48,18 +49,17 @@ and authorized model routes.
   directories, and symlinks at the destination must fail without being changed.
   Report invalid and unwritable destinations clearly.
   Add execute bits to the newly created file, preserving its read/write permissions.
-- Use the existing catalog template mechanism with `script.default.too`:
-
-```too
-#!/usr/bin/env too
-## Write a short greeting.
-agic():
-  Say hello to someone trying Toolang for the first time.
-  Keep the greeting to one sentence.
-```
-
-- Print the created path and a command usable from the caller's current directory,
-  quoting paths correctly and preserving the invoked executable name.
+- Use the existing catalog template mechanism with `script.default.too`. Keep
+  `#!/usr/bin/env too` and a small, coherent writing example with four entries:
+  - Unnamed `agic()` greets the user without input and is publicly `main`.
+  - `agic chat` accepts implicit primary input and has `hands = polish`.
+  - `agic rewrite(_: Text, tone: Text) -> Text` rewrites text in the requested tone.
+  - `flow polish(_: Text, tone: Text) -> Text` calls `rewrite`, then an inline
+    `run -> Text` agic to check clarity, grammar, and unsupported claims.
+  Include concise runnable/step doc comments and copyable rewrite/polish examples.
+- Print the created path and a `Try:` list with `too info FILE`, `too run FILE`,
+  and `too FILE chat`, in that order. Use paths valid from the caller's current
+  directory, quote them correctly, and preserve the invoked executable name.
   The shebang uses path-first invocation and supports direct `./work.too` execution.
 - Create no agent registration, configuration, credentials, or runtime cache.
   Initialization and help require no model or network.
@@ -74,6 +74,9 @@ agic():
 - State binds unnamed declarations locally as `main` and creates the runnable
   indexes without mutating the AST. The agent/Script module exposes its local
   names publicly. Explicit `agic main` and `flow main` select identically.
+  Flow statements can reference only explicitly named declarations or inline
+  agics; the public `main` binding does not make an unnamed declaration a valid
+  static statement target. Preserve the language validator's rejection.
 - State also owns filename-derived exports: the unnamed flow in
   `flows/research.too` is publicly `research`, locally indexed as `main`, and
   remains unnamed in the AST. Renaming the file changes only its module/public
@@ -191,11 +194,15 @@ The existing source cache schema transition is the only storage change.
 1. Initialization without a directory only shows help. Explicit initialization
    covers current, nonempty, nested, spaced, and Unicode paths;
    concurrent calls have one winner; existing files/symlinks and invalid or
-   unwritable destinations fail safely. Verify the packaged template.
+   unwritable destinations fail safely. Verify the packaged template and all
+   three follow-up commands for both executable names and quoted paths.
 2. Explicit and shorthand Script invocations execute the template with an offline
    model fixture and preserve input, named parameters, options, `--`, stdin,
    colon overrides, local/remote results, and exit status. Cover command-like
    runnable names, unsupported targets, root overrides, and exact filenames.
+   Execute the template's named rewrite and composite polish examples with an
+   offline model fixture, checking named-parameter and intermediate-result binding.
+   Verify help lists the four public entries and hides the generated inline agic.
 3. Verify actual help for both executable names at narrow and normal widths:
    root, init, run, file, runnable, serve, target-specific, and hidden help.
    Check descriptions, required markers, panel order, usage, and no execution.
