@@ -140,6 +140,9 @@ too run main.too review -- "text"
   absent. Explain the `too FILE [RUNNABLE] [ARGUMENTS]` shorthand using the actual
   executable name. Command summaries are `Serve an agent in the foreground`,
   `Initialize Toolang in a directory`, and `Execute a runnable from a .too file`.
+  Root help starts with `Toolang is a language and runtime for agents and humans.`
+  followed by the actual source version in parentheses; dim the version and
+  parentheses together.
 - Replace `run` with `serve` in Agent Commands, after `info` and before `start`.
   Append Script Commands (`init`, then `run`) after Inspection Commands. Keep
   `_serve` and `channel` callable but absent from both root and `too hidden` lists.

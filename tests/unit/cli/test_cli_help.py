@@ -24,6 +24,32 @@ from toolang.common.typer.ui import PLAIN, UV, run
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize("width", [44, 120])
+def test_root_help_shows_the_source_version_in_dim_parentheses(
+    theme, width, monkeypatch
+):
+    monkeypatch.setattr(
+        "toolang.cli.toolang.main._version.toolang_version",
+        lambda: "0.3.0-12-g12345678*",
+    )
+    stdout = StringIO()
+    console = Console(
+        file=stdout, force_terminal=True, color_system="standard", width=width
+    )
+    assert run(app, args=["--help"], prog_name="too", theme=theme, console=console) == 0
+    output = Text.from_ansi(stdout.getvalue())
+    description = "Toolang is a language and runtime for agents and humans."
+    version = "(0.3.0-12-g12345678*)"
+    assert " ".join(output.plain.split()).startswith(f"{description} {version}")
+    start = output.plain.index(version)
+    assert all(
+        output.get_style_at_offset(console, index).dim
+        for index in range(start, start + len(version))
+    )
+    assert not output.get_style_at_offset(console, 0).dim
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
 @pytest.mark.parametrize(
     ("arguments", "status"),
     [

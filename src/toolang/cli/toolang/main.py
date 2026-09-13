@@ -10,6 +10,7 @@ import sys
 from typing import Annotated, Any
 
 import typer
+from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
@@ -22,7 +23,7 @@ from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliCommand, CliGroup, show_help
+from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
@@ -157,7 +158,21 @@ class _CompactCommand(_TargetAgentCommand):
         return [*pieces, *runnable_usage(self.params)]
 
 
+class _ToolangHelpFormatter(HelpFormatter):
+    def write_description(self, ctx: Context) -> None:
+        description = Text(f"{ctx.command.help}.")
+        description.append(f" ({_version.toolang_version()})", style="dim")
+        self.write_text(description)
+        self.write_paragraph()
+
+
+class _ToolangHelpContext(HelpContext):
+    formatter_class = _ToolangHelpFormatter
+
+
 class _ToolangGroup(CliGroup):
+    context_class = _ToolangHelpContext
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         commands = dict(kwargs.pop("commands", None) or {})
         commands.update(
@@ -180,7 +195,7 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(
     cls=_ToolangGroup,
-    help="Run scripts and manage Toolang agents",
+    help="Toolang is a language and runtime for agents and humans",
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,
