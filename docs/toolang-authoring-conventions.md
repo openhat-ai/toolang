@@ -150,8 +150,16 @@ translate the statement into prose.
 storm 8 in 4 lanes using investigate
 ```
 
-Use `##!` only when the parent or the complete script needs a description. A
-source file should rarely need more than one parent documentation comment.
+Use an unindented `#@` when the complete module needs a description. The legacy
+`##!` spelling remains accepted, but indented comments do not document a parent.
+A source file should rarely need more than one module description.
+
+Document runnable inputs with `## @param NAME DESCRIPTION` immediately before
+the agic or flow, alongside its ordinary `##` description. Use `_` for primary
+input and exact signature names for named parameters. Keep each description on
+one line and explain its purpose; types and optionality come from the signature.
+See [documentation comments](./program.md#documentation-comments) for binding
+and validation rules.
 
 ## Ordinary Comments
 

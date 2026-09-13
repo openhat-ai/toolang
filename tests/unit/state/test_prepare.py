@@ -1406,3 +1406,55 @@ def test_flow_modules_can_reference_the_same_cap(
     assert one.read_content() == "Review carefully."
     assert two.read_content() == "Review carefully."
     assert not (home / "agent.too").exists()
+
+
+@pytest.mark.parametrize("module_file", ["agent.too", "flows/review.too"])
+def test_prepare_rebinds_parameter_docs_without_rewriting_history(
+    tmp_path, monkeypatch, module_file
+):
+    layout = _layout(tmp_path)
+    source = layout.home / module_file
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "#@ Review module.\n## Review the material.\n"
+        "## @param _ Source material.\n## @param style Preferred style.\n"
+        "flow(_: Text, style?: Text):\n  pass\n"
+    )
+    parse = ProgramSource.parse
+
+    def legacy_parse(self):
+        program = parse(self)
+        return replace(
+            program,
+            doc=None,
+            flows=tuple(
+                replace(
+                    flow,
+                    doc="Review the material.\n@param _ Source material.\n@param style Preferred style.",
+                    input=replace(flow.input, doc=None) if flow.input else None,
+                    params=tuple(replace(param, doc=None) for param in flow.params),
+                )
+                for flow in program.flows
+            ),
+        )
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", 7)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", 7)
+        legacy.setattr(ProgramSource, "parse", legacy_parse)
+        old = prepare_agent_state(layout)
+    old_home = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
+    old_document = old_home.read_bytes()
+    current = prepare_agent_state(layout)
+    module = "agent" if module_file == "agent.too" else "_flow_review"
+    program = current.modules[module]
+    runnable = program.flows[0]
+    assert current.home_revision != old.home_revision
+    assert program.doc == "Review module."
+    assert runnable.doc == "Review the material."
+    assert runnable.input is not None
+    assert runnable.input.doc == "Source material."
+    assert runnable.params[0].doc == "Preferred style."
+    assert load_agent_state(layout, old.revision).modules == old.modules
+    assert old_home.read_bytes() == old_document
+    assert prepare_agent_state(layout).revision == current.revision

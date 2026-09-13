@@ -340,7 +340,6 @@ def test_main_fallback_preserves_the_selected_kind(
 def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
     kind, authored_name, capsys
 ):
-    from dataclasses import replace
     from io import StringIO
     from pathlib import Path
 
@@ -348,8 +347,13 @@ def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
     from toolang.execution.runnables import runnable_signature
     from toolang.state.runnable_collections import runnable_dataset
 
+    input_doc = "Primary request."
+    parameter_doc = "Topic details. " * 80
     state = _state(f"""
+#@ Module overview stays out of calling hints.
 ## Handle the general request.
+## @param topic {parameter_doc}
+## @param _ {input_doc}
 {kind} {authored_name}(_: Part[], topic?: Text):
   pass
 
@@ -366,25 +370,6 @@ agic caller:
         if item.name == (authored_name or None)
     )
     assert target.input is not None
-    input_doc = "Primary request."
-    parameter_doc = "Topic details. " * 80
-    target = replace(
-        target,
-        input=replace(target.input, doc=input_doc),
-        params=(replace(target.params[0], doc=parameter_doc),),
-    )
-    program = replace(
-        program,
-        agics=tuple(
-            target if item.name == (authored_name or None) and kind == "agic" else item
-            for item in program.agics
-        ),
-        flows=tuple(
-            target if item.name == (authored_name or None) and kind == "flow" else item
-            for item in program.flows
-        ),
-    )
-    state = replace(state, modules={"agent": program})
     caller = program.find_agic("caller")
     assert caller is not None
     routes = resolve_agic_routes(state, caller)
@@ -403,7 +388,7 @@ agic caller:
         == contract["parameters"]
         == [
             {
-                "documentation": parameter_doc[:512],
+                "documentation": parameter_doc.strip()[:512],
                 "name": "topic",
                 "optional": True,
                 "type": "Text",

@@ -57,16 +57,17 @@ under `flows/` are discovered; nested files, non-`.too` files, and a root-level
 
 ## Documentation Comments
 
-`##!` documents the complete program. Program documentation comments must be
+`#@` documents the complete module. Module documentation comments must be
 unindented, may appear anywhere between top-level declarations, and are joined
-in source order:
+in source order. The legacy `##!` spelling remains accepted. Both spellings
+populate that file's `Program.doc`, independently of runnable descriptions:
 
 ```too
-##! Research assistant.
+#@ Research assistant.
 agic search:
   Search for relevant sources.
 
-##! Produces a source-backed report.
+#@ Produces a source-backed report.
 flow research:
   run search
 ```
@@ -92,10 +93,42 @@ At the program level, `##` may document any declaration. Inside a struct it may
 document a field, inside an agic it may document a message, and inside a flow
 or nested flow block it may document a statement.
 
-A blank line, an ordinary `#` comment, another syntax item, or the end of the
-current scope ends attachment. Documentation comments never skip an
-intervening directive or setting. Parameters and directives do not currently
-accept documentation comments.
+A blank line, an ordinary `#` comment, a module comment, another syntax item,
+or the end of the current scope ends attachment. Documentation comments never skip an
+intervening directive or setting. Indented legacy `##!` comments do not document
+a parent node; structural `#@` comments must be at column zero.
+
+Use `## @param NAME DESCRIPTION` in an agic or flow's attached documentation
+block to describe an input parameter. Tags match exact signature names in any
+order, including explicit or implicit `_` input:
+
+```too
+## Summarize material when a short overview is needed.
+## @param _ Source material to summarize.
+## @param style Preferred summary style.
+agic summarize(_: Text, style?: Text):
+  Summarize {{_}}.
+```
+
+Each description must be nonempty and fit on the same physical line. Types and
+optionality come from the signature. Unknown or duplicate parameter names,
+and tags attached to anything other than an agic or flow, are validation
+errors. Detached tags are ignored. A malformed leading `@param` tag is a syntax
+error even when detached; other tags such as `@return`, longer words such as
+`@parameter`, and `@param` within prose remain ordinary documentation text.
+
+Ordinary item text populates the runnable description; tags populate
+`Parameter.doc` without appearing in that description. Script argument help
+uses the full parameter description. Runnable queries use the runnable
+description, and `hands` / `handoffs` calling hints and input contracts include
+both runnable and parameter documentation, capped at 512 code points per
+description. Documentation does not grant calling authority.
+
+`#` marks ordinary comments. `#!` is a shebang only at byte zero; later or
+indented occurrences are ordinary comments. Inline comment markers are always
+ordinary comments. Every marker remains literal inside an explicit text block,
+including on its first content line. Formatting preserves those text boundaries
+and each module comment's authored spelling.
 
 
 ## External Caps

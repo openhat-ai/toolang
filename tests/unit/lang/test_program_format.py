@@ -996,3 +996,64 @@ def test_format_source_reports_original_syntax_error_line_after_shebang() -> Non
 
     with pytest.raises(ToolangFormatError, match="line 3"):
         format_source(source)
+
+
+@pytest.mark.parametrize("marker", ["#@", "##!"])
+@pytest.mark.parametrize(
+    "description", ["Detached description.", "@param unknown Detached parameter."]
+)
+def test_format_source_keeps_module_comment_attachment_boundaries(marker, description):
+    source = f"## {description}\n{marker} Module description.\nagic:\n  pass\n"
+    formatted = format_source(source)
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_format_source_preserves_structured_documentation(newline):
+    source = (
+        "#!/usr/bin/env too\n#@Module overview.\n#@\n"
+        "##   Summarize material.\n##@param\tstyle\tRésumé # @param literal.  \n"
+        "## @param   _   Source material.\nagic(_:Text,style?:Text):\n  pass\n"
+    ).replace("\n", newline)
+    formatted = format_source(source)
+    assert formatted == (
+        "#!/usr/bin/env too\n\n#@ Module overview.\n#@\n\n"
+        "## Summarize material.\n## @param style Résumé # @param literal.\n"
+        "## @param _ Source material.\nagic(_: Text, style?: Text):\n  pass\n"
+    )
+    assert format_source(formatted) == formatted
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+
+
+@pytest.mark.parametrize("marker", ["#", "#!", "##", "#@", "##!", "## @param"])
+@pytest.mark.parametrize(
+    "header, indent",
+    [
+        ("agic work:\n  user:", "    "),
+        ("flow work:\n  run:", "    "),
+        ("context notes:", "  "),
+    ],
+)
+def test_format_source_preserves_comment_markers_on_first_literal_line(
+    marker, header, indent
+):
+    body = f"{indent}{marker}  Literal @param # text.\n{indent}More text.\n"
+    source = f"{header}\n{body}"
+    formatted = format_source(source)
+    assert body in formatted
+    assert format_source(formatted) == formatted
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+
+
+def test_format_source_keeps_later_shebang_as_an_item_doc_separator():
+    source = "## Detached.\n#!/usr/bin/env too\nagic:\n  pass\n"
+    formatted = format_source(source)
+    assert Program.from_source(formatted).agics[0].doc is None
+    assert format_source(formatted) == formatted
