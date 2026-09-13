@@ -28,7 +28,7 @@ def test_watcher_publishes_a_prepared_initial_state_without_reloading_state(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = AgentLayout.resident(toolang_root, "alice")
     durable = prepare_agent_state(layout)
 
@@ -50,7 +50,7 @@ def test_initial_state_timeout_hashes_once_without_preparing_again(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
         durable = prepare_agent_state(layout)
         watcher = state_watcher.StateWatcher(layout, initial_state=durable)
@@ -83,12 +83,12 @@ def test_timeout_check_recovers_change_before_watch_registration(
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
         program = home / "agent.too"
-        program.write_text("agent alice\n", encoding="utf-8")
+        program.write_text("# Agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
         watcher = state_watcher.StateWatcher(layout)
         initial = await watcher.refresh()
         program.write_text(
-            "agent alice\n\nagic chat:\n  Registered late.\n",
+            "# Agent alice\n\nagic chat:\n  Registered late.\n",
             encoding="utf-8",
         )
 
@@ -155,7 +155,7 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
         watcher = state_watcher.StateWatcher(layout)
         await watcher.refresh()
@@ -252,12 +252,12 @@ def test_current_publication_does_not_retrigger_candidate_preparation(
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
         program = home / "agent.too"
-        program.write_text("agent alice\n", encoding="utf-8")
+        program.write_text("# Agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
         watcher = state_watcher.StateWatcher(layout)
         await watcher.refresh()
         program.write_text(
-            "agent alice\n\nagic chat:\n  Changed.\n",
+            "# Agent alice\n\nagic chat:\n  Changed.\n",
             encoding="utf-8",
         )
         calls = 0
@@ -302,7 +302,7 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
         home = toolang_root / "agents" / "alice"
         flows = home / "flows"
         flows.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         flow = flows / "research.too"
         flow.write_text("flow research:\n  pass\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
@@ -349,7 +349,7 @@ def test_concurrent_refresh_requests_run_their_serialized_checks(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
         watcher = state_watcher.StateWatcher(layout)
         initial = await watcher.refresh()
@@ -380,13 +380,13 @@ def test_canceling_refresh_does_not_cancel_its_owned_check(
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
         program = home / "agent.too"
-        program.write_text("agent alice\n", encoding="utf-8")
+        program.write_text("# Agent alice\n", encoding="utf-8")
         watcher = state_watcher.StateWatcher(
             AgentLayout.resident(toolang_root, "alice")
         )
         initial = await watcher.refresh()
         program.write_text(
-            "agent alice\n\nagic chat:\n  Changed.\n",
+            "# Agent alice\n\nagic chat:\n  Changed.\n",
             encoding="utf-8",
         )
         started = threading.Event()
@@ -424,7 +424,7 @@ def test_only_one_filesystem_monitor_can_run(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         watcher = state_watcher.StateWatcher(
             AgentLayout.resident(toolang_root, "alice")
         )
@@ -465,7 +465,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         home = toolang_root / "agents" / "alice"
         flows = home / "flows"
         flows.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         flow = flows / "research.too"
         flow.write_text("flow research:\n  pass\n", encoding="utf-8")
         watcher = state_watcher.StateWatcher(
@@ -505,7 +505,7 @@ def test_watcher_bootstraps_last_good_state_before_rejecting_current_source(
     home = toolang_root / "agents" / "alice"
     flows = home / "flows"
     flows.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     flow = flows / "research.too"
     flow.write_text("flow research:\n  pass\n", encoding="utf-8")
     layout = AgentLayout.resident(toolang_root, "alice")
@@ -548,7 +548,7 @@ def test_workspace_change_publishes_a_new_state_revision(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         config = home / "config.toml"
         config.write_text(
             f'[workspaces]\none = "{tmp_path / "one"}"\n',
@@ -590,7 +590,7 @@ def test_invalid_workspace_change_keeps_last_publication_and_recovers(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         config = home / "config.toml"
         config.write_text(
             f'[workspaces]\none = "{tmp_path / "one"}"\n',
@@ -636,7 +636,7 @@ def test_workspace_preparation_failure_keeps_last_state(
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
         home.mkdir(parents=True)
-        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         config = home / "config.toml"
         config.write_text(
             f'[workspaces]\none = "{tmp_path / "one"}"\n',
@@ -670,7 +670,7 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     prompts = toolang_root / "prompts"
     prompts.mkdir()
     (prompts / "one.md").write_text("One prompt.\n", encoding="utf-8")

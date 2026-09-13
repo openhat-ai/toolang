@@ -281,7 +281,7 @@ ordinary text. Shell commands must single-quote dollar-prefixed input, for
 example:
 
 ```sh
-too run alice '$review focus=security'
+too run review.too main -- '$review focus=security'
 ```
 
 ## Evaluation

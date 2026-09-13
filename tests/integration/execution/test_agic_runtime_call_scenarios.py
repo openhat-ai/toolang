@@ -44,6 +44,78 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("directive", ["hands", "handoffs"])
+def test_unnamed_main_can_be_called_through_authorized_routes(
+    tmp_path: Path, kind: str, directive: str
+) -> None:
+    target = (
+        "agic() -> Text:\n  recall = none\n  context: none\n  user: Main.\n"
+        if kind == "agic"
+        else "flow() -> Text:\n  run helper\n"
+    )
+    source = f"""
+agic caller() -> Text:
+  recall = none
+  {directive} = {kind}:main
+  user: Caller.
+
+agic helper() -> Text:
+  recall = none
+  context: none
+  user: Main.
+
+## Use this entry for the general request.
+{target}
+"""
+    action = "run" if directive == "hands" else "execute"
+    responses = [
+        ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "main-call",
+                    "main-call",
+                    f"_toolang__{action}",
+                    {"runnable": f"{kind}:main"},
+                ),
+            )
+        ),
+        ModelCallResult(message=Message.assistant("main output")),
+    ]
+    if directive == "hands":
+        responses.append(ModelCallResult(message=Message.assistant("caller output")))
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            assert "Use this entry for the general request." in (
+                harness.adapter.invocations[0].call.instructions
+            )
+            assert Message.user("Main.") in harness.adapter.invocations[1].call.messages
+            controls = [
+                control
+                for run in harness.store.list_run_tree(root_run_id=root.id)
+                for control in harness.store.list_run_controls(run_id=run.id)
+            ]
+            assert any(
+                isinstance(control.payload, (RunControlPayload, ExecuteControlPayload))
+                and control.payload.runnable == f"agent${kind}:main"
+                for control in controls
+            )
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.local.value) == (
+                "caller output" if directive == "hands" else "main output"
+            )
+
+    asyncio.run(scenario())
+
+
 def test_agic_dynamic_run_is_one_tool_step_and_one_child(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -276,12 +348,13 @@ flow check(_: Text, threshold: Number) -> Text:
                 "code": "invalid_runnable_input",
                 "runnable": "flow:check",
                 "expected": {
-                    "input": {"optional": False, "type": "Text"},
+                    "input": {"optional": False, "type": "Text", "documentation": ""},
                     "parameters": [
                         {
                             "name": "threshold",
                             "optional": False,
                             "type": "Number",
+                            "documentation": "",
                         }
                     ],
                     "structs": [],

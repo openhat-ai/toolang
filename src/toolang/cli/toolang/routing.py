@@ -64,6 +64,8 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
     spec.name: spec
     for spec in (
         _command("new", "none"),
+        _command("init", "none"),
+        _command("run", "none"),
         _command("clone", "none"),
         _command("list", "none"),
         _command("remove", "after", placements=_RESIDENT, prepare="layout"),
@@ -75,7 +77,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             prepare="program",
         ),
         _command(
-            "run",
+            "serve",
             "before",
             "after",
             placements=_ALL_PLACEMENTS,
@@ -184,6 +186,21 @@ def select_target_help(
     if target in residents:
         return TargetHelp(selector=target, label=target, placement="resident")
     return None
+
+
+def is_script_invocation(argv: list[str]) -> bool:
+    """Recognize explicit run without interpreting any of its argument tail."""
+
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in {"--root", "-r"}:
+            index += 2
+        elif token.startswith("--root="):
+            index += 1
+        else:
+            return token == "run"
+    return False
 
 
 def dispatch_roaming(
@@ -397,6 +414,8 @@ def _is_visiting(token: str) -> bool:
 
 
 def _target_order_error(spec: CommandSpec) -> str:
+    if spec.name == "run":
+        return "use serve TARGET to host an agent, or run FILE [RUNNABLE] for a Script"
     if spec.targets == frozenset({"before"}):
         return f"{spec.name} requires TARGET before the command"
     if spec.targets == frozenset({"after"}):

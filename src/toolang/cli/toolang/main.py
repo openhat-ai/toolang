@@ -49,13 +49,14 @@ WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
 CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
+SCRIPT_COMMAND_PANEL = "Script Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
     "remove",
     "list",
     "info",
-    "run",
+    "serve",
     "start",
     "stop",
 )
@@ -82,6 +83,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "sandboxes",
     "inspect",
 )
+_SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 _HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "_serve", "channel")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
@@ -89,12 +91,51 @@ _VISIBLE_COMMAND_ORDER = (
     *_WORK_PANEL_COMMAND_ORDER,
     *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
+    *_SCRIPT_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
-class _RunCommand(OptionalValueCommand, RunAgentCommand):
+class _ServeCommand(OptionalValueCommand, RunAgentCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
+
+
+class _ScriptEntryCommand(CliCommand):
+    """Leave every token after the file for the dynamic Script command."""
+
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        if args and not args[0].startswith("-"):
+            ctx.args = list(args)
+            return ctx.args
+        return super().parse_args(ctx, args)
+
+    def invoke(self, ctx: Context) -> Any:
+        if not ctx.args:
+            return super().invoke(ctx)
+        from typer._click.core import ParameterSource
+        from typer._click.exceptions import UsageError
+        from .commands import script
+
+        root = ctx.find_root()
+        if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
+            raise UsageError(
+                "Script invocation does not support global --root / -r", ctx
+            )
+        source = routing._source_path(ctx.args[0])
+        if source is None or source.is_dir():
+            raise UsageError(
+                "run requires a local .too file; use serve TARGET to host an agent",
+                ctx,
+            )
+        raise typer.Exit(script.dispatch([], ctx.args, prog_name=ctx.command_path))
+
+    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        return ["[OPTIONS]", "FILE", "[RUNNABLE]", "[ARGS]..."]
+
+    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        formatter.write_usage(
+            ctx.command_path, " ".join(self.collect_usage_pieces(ctx))
+        )
 
 
 class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
@@ -295,11 +336,11 @@ _registered_group(
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
-    "run",
+    "serve",
     "toolang.cli.toolang.commands.runtime:run",
     help="Run an agent in the foreground",
     no_args_is_help=True,
-    cls=_RunCommand,
+    cls=_ServeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
@@ -520,12 +561,28 @@ _registered_command(
     no_args_is_help=True,
 )
 
+_registered_command(
+    "init",
+    "toolang.cli.toolang.commands.init:init_script",
+    help="Create a Script from the default template",
+    rich_help_panel=SCRIPT_COMMAND_PANEL,
+)
+_registered_command(
+    "run",
+    "toolang.cli.toolang.commands.script:run_script",
+    help="Run an agic or flow from a local .too file",
+    cls=_ScriptEntryCommand,
+    rich_help_panel=SCRIPT_COMMAND_PANEL,
+)
+
 routing.validate_command_registration(set(_REGISTERED_COMMANDS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     prog_name = _prog_name(sys.argv[0] if sys.argv else "")
+    if routing.is_script_invocation(raw_args):
+        return _run_app(raw_args, None, prog_name=prog_name)
     routed = routing.dispatch_roaming(
         raw_args,
         prog_name=prog_name,

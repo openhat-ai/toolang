@@ -15,7 +15,7 @@ def test_host_sandbox_start_health_and_stop(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text("agent alice\n", encoding="utf-8")
+    layout.program.write_text("# Agent alice\n", encoding="utf-8")
     port = _available_port()
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
     base = (

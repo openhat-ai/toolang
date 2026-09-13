@@ -154,11 +154,18 @@ duplicated in `layer.json`.
 
 ## Prepare, Publish, and Load
 
+State passes unchanged source text to `Program.from_source`; all syntax belongs
+to `toolang.lang` and its tree-sitter grammar. Legacy `agent NAME` and `agent:`
+headers are rejected. Missing optional source is represented by empty text.
+
 Normal preparation hashes the selected source bytes and compares the portable
-manifest with the published layer. An unchanged layer is loaded directly, so
-Programs are not parsed, capabilities are not materialized, and unchanged
-remote refs are not polled. This remains true when the root and home are mounted
-at different absolute paths. An explicit refresh resolves remote refs again.
+manifest with the published layer. An unchanged current layer is loaded without
+parsing Programs, materializing capabilities, or polling remote refs. Layer
+schema 7 rebuilds older caches to apply strict source parsing and the `main`
+identity for unnamed agics. Exact historical loads retain their recorded
+Programs and run references. These rules also apply when the root and home are
+mounted at different absolute paths. An explicit refresh resolves remote refs
+again.
 
 When rebuilding a layer, a writer:
 

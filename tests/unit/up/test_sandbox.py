@@ -518,7 +518,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
     external_program = tmp_path / "external-agent.too"
-    external_program.write_text("agent alice\n", encoding="utf-8")
+    external_program.write_text("# Agent alice\n", encoding="utf-8")
     spec.serve.layout.program.symlink_to(external_program)
     spec.serve.layout.root_config.write_text(
         "[plugin.sandbox.fake]\ncurrent = true\n",

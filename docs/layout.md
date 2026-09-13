@@ -62,7 +62,7 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by `toolang run <remote>` are materialized under a
+Visiting agents fetched by `toolang serve <remote>` are materialized under a
 stable system temporary root derived from the canonical remote ref:
 
 - `/tmp/toolang-<agent>-<hash:8>/`

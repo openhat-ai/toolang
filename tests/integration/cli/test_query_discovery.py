@@ -169,7 +169,7 @@ def test_each_query_enabled_list_points_to_query_help() -> None:
 
 
 def test_allow_help_uses_resource_query_vocabulary() -> None:
-    result = runner.invoke(toolang_app, ["run", "--help"])
+    result = runner.invoke(toolang_app, ["serve", "--help"])
 
     assert result.exit_code == 0, result.stderr
     output = strip_ansi(result.stdout)

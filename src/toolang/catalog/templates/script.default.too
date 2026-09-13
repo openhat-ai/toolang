@@ -1,0 +1,4 @@
+## Write a short greeting.
+agic():
+  Say hello to someone trying Toolang for the first time.
+  Keep the greeting to one sentence.

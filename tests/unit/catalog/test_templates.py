@@ -9,6 +9,7 @@ from toolang.catalog import templates
     ("kind", "expected_description"),
     [
         ("agent", None),
+        ("script", None),
         ("chore", "Chore title"),
         ("prompt", None),
         ("psyche", None),

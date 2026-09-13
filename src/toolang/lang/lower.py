@@ -328,7 +328,7 @@ class _Lowerer:
             )
 
         return ast.AgicDecl(
-            name=self._optional_text(node.child_by_field_name("name")) or "default",
+            name=self._optional_text(node.child_by_field_name("name")) or "main",
             input=input_param,
             params=params,
             output=(

@@ -72,7 +72,7 @@ def _runnable_view(
         ),
         *(parameter.name for parameter in runnable.params if not parameter.optional),
     )
-    description = runnable.instruct if isinstance(runnable, AgicDecl) else None
+    description = runnable.doc
     return RunnableQueryView(
         record=runnable,
         kind=cast(RunnableKind, runnable.kind),

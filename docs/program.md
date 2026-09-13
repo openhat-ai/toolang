@@ -167,22 +167,24 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-An omitted agic name means `default`; an omitted flow name means `main`:
+An omitted agic or flow name means `main`:
 
 ```too
 agic:
   Reply directly.
 
-agic default:
+agic main:
   Reply directly.
 
 flow:
   pass
 ```
 
-The two agic declarations have the same runnable name and therefore cannot
-appear together. In a home flow module, the unnamed Flow's public name is
-instead bound from the filename as described above.
+All three examples have the same runnable name and therefore cannot
+appear together. Explicitly named `main` has the same entry behavior; named
+helpers may coexist. Explicit `default` remains an ordinary authored name. In a
+home flow module, the unnamed Flow's public name is instead bound from the
+filename as described above.
 
 
 ### Primary Input
@@ -591,12 +593,15 @@ catalog-owned frontmatter format.
 Surfaces resolve a default runnable by name:
 
 ```text
-script  explicit name, else default
-chat    chat, else default
-task    task, else default
-chore   chore, else default
-file    file, else default
+script  explicit name, else authored main, else file help
+chat    chat, else authored main, else runtime default
+task    task, else authored main, else runtime default
+chore   chore, else authored main, else runtime default
 ```
+
+Explicit selections take precedence over these fallbacks. The chosen entry may
+be an agic or a flow. Script exposes authored declarations only; it never selects
+the runtime-generated `agic:default`.
 
 Every run surface must resolve one `RunnableInput`, including all required named
 inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for

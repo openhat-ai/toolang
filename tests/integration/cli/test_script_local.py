@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.message import Message, TextPart
+from toolang.catalog.templates import load_template
+from toolang.cli.toolang import main as cli
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
@@ -43,6 +45,7 @@ flow research(_: Part[]) -> Text[]:
 """
 
 
+@pytest.mark.parametrize("entry", ["echo", "implicit", "main"])
 @pytest.mark.parametrize(
     ("save_mode", "expected_status", "expected_stdout"),
     (
@@ -57,15 +60,17 @@ def test_local_script_saves_only_to_an_explicit_destination(
     monkeypatch,
     capsys,
     save_mode: str | None,
+    entry: str,
     expected_status: int,
     expected_stdout: str,
 ) -> None:
+    source_text = _SOURCE if entry == "echo" else load_template("script").raw_text
     source = tmp_path / "echo.too"
-    source.write_text(_SOURCE, encoding="utf-8")
+    source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
-        source=_SOURCE,
+        source=source_text,
         responses=[ModelCallResult(message=Message.assistant("done"))],
     )
     setup = replace(harness.setup, layout=layout)
@@ -106,7 +111,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     monkeypatch.setattr("toolang.state.prepare.prepare_agent_state", prepare_state)
     monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
-    args = [str(source), "echo"]
+    args = [str(source), *([] if entry == "implicit" else [entry])]
     destination = tmp_path / "result.txt"
     if save_mode == "stdout":
         args.extend(("--quiet", "--out", "-"))
@@ -115,8 +120,16 @@ def test_local_script_saves_only_to_an_explicit_destination(
     elif save_mode == "missing-parent":
         destination = tmp_path / "missing" / "result.txt"
         args.extend(("--out", str(destination)))
-    args.extend(("--", "hello"))
-    result = script.dispatch([], args, prog_name="toolang")
+    if entry == "echo":
+        args.extend(("--", "hello"))
+    from io import StringIO
+
+    monkeypatch.setattr("sys.stdin", StringIO())
+    result = (
+        script.dispatch([], args, prog_name="toolang")
+        if entry == "echo"
+        else cli.main(["run", *args])
+    )
     output = capsys.readouterr()
 
     assert result == expected_status
@@ -152,7 +165,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert durable_output == (TextPart("done"),)
     assert control is not None
     assert isinstance(control.payload, RunControlPayload)
-    assert control.payload.runnable == "agent$agic:echo"
+    assert control.payload.runnable == (
+        "agent$agic:echo" if entry == "echo" else "agent$agic:main"
+    )
 
 
 def test_local_script_renders_composite_flow_progress(

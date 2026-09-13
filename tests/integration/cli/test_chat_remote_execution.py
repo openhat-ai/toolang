@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
@@ -35,16 +36,25 @@ class _Snapshot:
         raise AssertionError("remote run acceptance must not refresh publications")
 
 
-def test_remote_chat_session_executes_against_the_agent_api(tmp_path: Path) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
+@pytest.mark.parametrize("entry", ["agic:chat", "agic:main", "flow:main"])
+def test_remote_chat_session_executes_against_the_agent_api(
+    tmp_path: Path, entry: str
+) -> None:
+    source = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
   context: none
   instruct: none
   user: {{_}}
-""",
+"""
+    if entry == "agic:main":
+        source = source.replace("agic chat", "agic")
+    elif entry == "flow:main":
+        source = source.replace("agic chat", "agic helper")
+        source += "\nflow(_: Part[]) -> Part[]:\n  run helper\n"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
         responses=[ModelCallResult(message=Message.assistant("remote response"))],
     )
     harness.store.close()
@@ -75,7 +85,8 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         assert session.list_models()["default"] == "test/scripted"
-        assert session.list_runnables("runnable")["default"] == "agic:chat"
+        assert session.list_runnables("runnable")["default"] == entry
+        assert session.initial_setting().runnable == entry
         thread_id = session.create_thread()
         request = session.build_request(
             thread_id,

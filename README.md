@@ -13,13 +13,13 @@ Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to
 Start with a shared agent, no installation required:
 
 ```bash
-uvx toolang run https://toolang.ai/dev.too
+uvx toolang serve https://toolang.ai/dev.too
 ```
 
 Or use a GitHub shorthand:
 
 ```bash
-uvx toolang run briceyan/dev
+uvx toolang serve briceyan/dev
 ```
 
 ## Get Started
@@ -29,6 +29,17 @@ Install Toolang to build and run your own agents:
 ```bash
 uv tool install toolang
 ```
+
+To try a small script with an already configured model:
+
+```bash
+too init demo
+too run demo/main.too
+too run demo/main.too --help
+```
+
+The bundled greeting takes no input. Use `--model` to select another configured
+model. `too demo/main.too` remains a shorthand for Script execution.
 
 Create a local agent:
 
@@ -59,8 +70,8 @@ caps alice skill new reviewer
 Run in the foreground to watch the logs. Press `Ctrl+C` to stop. Use `PY_LOG` for more detail:
 
 ```bash
-toolang run alice
-PY_LOG=debug toolang run alice
+toolang serve alice
+PY_LOG=debug toolang serve alice
 ```
 
 Or start it in the background:
@@ -87,9 +98,13 @@ toolang stop alice
 # Agents
 toolang new <agent>                  # Create a local agent
 toolang clone <ref> <agent>          # Clone a shared agent
-toolang run <agent-or-ref>           # Run an agent in the foreground
+toolang serve <agent-or-ref>         # Run an agent in the foreground
 toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
+
+# Scripts
+toolang init [directory]             # Create main.too without overwriting files
+toolang run <file.too> [runnable]     # Execute authored main or a named runnable
 
 # Inspection
 toolang models                       # List model catalog entries and availability

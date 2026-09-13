@@ -307,7 +307,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "remove",
             "list",
             "info",
-            "run",
+            "serve",
             "start",
             "stop",
         ),
@@ -334,6 +334,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "sandboxes",
             "inspect",
         ),
+        "Script Commands": ("init", "run"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -1257,7 +1258,7 @@ def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
 @pytest.mark.parametrize(
     ("command", "module", "callback", "operands"),
     [
-        ("run", "runtime", "run", []),
+        ("serve", "runtime", "run", []),
         ("start", "runtime", "start", []),
         ("chat", "chat", "chat_command", []),
         ("retry", "thread", "retry_command", ["run_example"]),
@@ -1304,7 +1305,7 @@ def test_cli_dev_states_reach_each_lazy_command(
         assert isinstance(captured["dev"], Path)
 
 
-@pytest.mark.parametrize("command", ["run", "start", "chat", "retry", "rerun"])
+@pytest.mark.parametrize("command", ["serve", "start", "chat", "retry", "rerun"])
 def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
     assert (
         cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2
