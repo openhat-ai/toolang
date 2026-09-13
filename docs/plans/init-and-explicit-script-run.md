@@ -25,7 +25,7 @@ and authorized model routes.
 
 | Command | Behavior |
 | --- | --- |
-| `too init DIR` | Create `DIR/main.too`; use `.` for the current directory. |
+| `too init DIR` | Create `DIR/work.too`; use `.` for the current directory. |
 | `too init` | Show help without creating files. |
 | `too run FILE` | Execute authored `main`, or show file help if absent. |
 | `too run FILE RUNNABLE` | Execute the selected authored runnable once. |
@@ -42,13 +42,14 @@ and authorized model routes.
   creates nothing; `too init .` selects the current directory. Resolve it at the
   CLI boundary and create missing directories. Permit nonempty directories;
   preserve neighboring files.
-- Load the bundled template before creating directories. Write `main.too` as
+- Load the bundled template before creating directories. Write `work.too` as
   UTF-8 with a trailing newline using exclusive creation. Existing files,
   directories, and symlinks at the destination must fail without being changed.
   Report invalid and unwritable destinations clearly.
 - Use the existing catalog template mechanism with `script.default.too`:
 
 ```too
+#!/usr/bin/env too
 ## Write a short greeting.
 agic():
   Say hello to someone trying Toolang for the first time.
@@ -57,6 +58,8 @@ agic():
 
 - Print the created path and a command usable from the caller's current directory,
   quoting paths correctly and preserving the invoked executable name.
+  The shebang uses path-first invocation; direct `./work.too` execution requires
+  the user to add executable permission.
 - Create no agent registration, configuration, credentials, runtime cache, or
   executable permission. Initialization and help require no model or network.
   Running the greeting requires a configured model; `--model` remains available.
@@ -107,7 +110,7 @@ agic():
 
 - `run` accepts only a local `.too` file. Report invalid extensions, URLs, and
   directories with specific file errors without suggesting `serve`. Missing
-  files retain Script file-error behavior. Do not discover an implicit `main.too`.
+  files retain Script file-error behavior. Do not discover an implicit `work.too`.
 - Reuse the existing Script execution path, options, input binding, sandbox
   execution, output, progress, and exit codes. Show the actual invocation spelling
   in help and errors. Keep path-first invocation and existing shebangs.
@@ -127,8 +130,8 @@ agic():
   primary text uses `--`, `-`, or redirected stdin. For example:
 
 ```text
-too run main.too --model MODEL topic=demo -- "text"
-too run main.too review -- "text"
+too run work.too --model MODEL topic=demo -- "text"
+too run work.too review -- "text"
 ```
 
 - Help never executes, prepares State, or reads stdin. File help identifies `main`

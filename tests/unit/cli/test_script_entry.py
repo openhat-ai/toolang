@@ -56,8 +56,9 @@ def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
     neighbor.write_text("keep")
     before = {p for p in tmp_path.rglob("*") if p.is_file()}
     assert cli.main(["init", directory]) == 0
-    destination = (tmp_path / directory / "main.too").resolve()
+    destination = (tmp_path / directory / "work.too").resolve()
     assert destination.read_text() == load_template("script").raw_text
+    assert destination.read_text().startswith("#!/usr/bin/env too\n")
     assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {destination}
     assert neighbor.read_text() == "keep"
     assert destination.stat().st_mode & 0o111 == 0
@@ -71,7 +72,7 @@ def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])
 def test_init_never_overwrites_existing_output(kind, tmp_path, capsys):
-    output = tmp_path / "main.too"
+    output = tmp_path / "work.too"
     target = tmp_path / "target"
     if kind == "file":
         output.write_text("keep")
@@ -103,7 +104,7 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
     original = Path.open
 
     def denied(self, *args, **kwargs):
-        if self == tmp_path / "main.too":
+        if self == tmp_path / "work.too":
             raise PermissionError("permission denied")
         return original(self, *args, **kwargs)
 
@@ -123,7 +124,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: create(), range(2)))
     assert sorted(results) == [False, True]
-    assert (tmp_path / "main.too").read_text() == load_template("script").raw_text
+    assert (tmp_path / "work.too").read_text() == load_template("script").raw_text
 
 
 @pytest.mark.parametrize("explicit", [False, True])

@@ -1,3 +1,4 @@
+#!/usr/bin/env too
 ## Write a short greeting.
 agic():
   Say hello to someone trying Toolang for the first time.

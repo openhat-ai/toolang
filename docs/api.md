@@ -98,8 +98,8 @@ Typical usage:
 toolang new alice
 toolang list
 toolang init demo
-toolang run demo/main.too
-toolang run demo/main.too main --help
+toolang run demo/work.too
+toolang run demo/work.too main --help
 PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/script-playground.too --help
 toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
@@ -139,7 +139,7 @@ toolang toolsets
 Top-level routing uses these command shapes:
 
 - Script commands use `init DIR` and `run FILE [RUNNABLE]`. They appear
-  in the final Script Commands help panel. `init` creates `main.too` exclusively
+  in the final Script Commands help panel. `init` creates `work.too` exclusively
   from the packaged template and never overwrites existing files or symlinks.
   The directory is required: `init` alone shows help; `init .` creates the file
   in the current directory.

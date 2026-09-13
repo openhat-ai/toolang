@@ -567,8 +567,8 @@ _registered_command(
     help="Initialize Toolang in a directory",
     no_args_is_help=True,
     epilog=(
-        "Creates missing directories and writes main.too from the default template. "
-        "Fails if main.too already exists."
+        "Creates missing directories and writes work.too from the default template. "
+        "Fails if work.too already exists."
     ),
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )

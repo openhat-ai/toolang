@@ -15,7 +15,7 @@ def init_script(
         Path,
         typer.Argument(
             metavar="DIR",
-            help="Directory for main.too. Use . for the current directory",
+            help="Directory for work.too. Use . for the current directory",
         ),
     ],
 ) -> None:
@@ -23,7 +23,7 @@ def init_script(
 
     try:
         template = load_template("script").raw_text
-        destination = directory.expanduser().resolve() / "main.too"
+        destination = directory.expanduser().resolve() / "work.too"
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8") as stream:
             stream.write(template.rstrip("\n") + "\n")

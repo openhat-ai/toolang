@@ -34,12 +34,12 @@ To try a small script with an already configured model:
 
 ```bash
 too init demo
-too run demo/main.too
-too run demo/main.too --help
+too run demo/work.too
+too run demo/work.too --help
 ```
 
 The bundled greeting takes no input. Use `--model` to select another configured
-model. `too demo/main.too` remains a shorthand for Script execution.
+model. `too demo/work.too` remains a shorthand for Script execution.
 
 Create a local agent:
 
@@ -103,7 +103,7 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Scripts
-toolang init <dir>                   # Create main.too without overwriting files
+toolang init <dir>                   # Create work.too without overwriting files
 toolang run <file.too> [runnable]     # Execute authored main or a named runnable
 
 # Inspection
