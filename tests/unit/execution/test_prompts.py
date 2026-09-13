@@ -79,7 +79,7 @@ def test_protocol_uses_markdown_inside_one_runtime_wrapper() -> None:
         "# Your role",
         "# Runtime contract",
         "# Follow these rules",
-        "# Author Toolang programs",
+        "# Write Toolang programs",
     ]
     assert [line for line in protocol.text.splitlines() if line.startswith("## ")] == [
         "## Do",
@@ -116,6 +116,7 @@ def test_protocol_introduces_toolang_and_addresses_the_agent() -> None:
 
     assert "**Toolang** is a language and runtime for agents and humans." in prompt
     assert "Toolang lets users express know-how" in prompt
+    assert "Toolang programs are written in .too files." in prompt
     assert "**Agic** is the basic unit of agentic programs" in prompt
     assert "**Flow** organizes agics and other flows" in prompt
     assert "**Caps** are composable agent primitives" in prompt
@@ -145,7 +146,7 @@ def test_protocol_separates_contract_required_actions_and_prohibitions() -> None
     contract, rules = prompt.split("# Runtime contract\n", 1)[1].split(
         "# Follow these rules\n", 1
     )
-    rules = rules.split("# Author Toolang programs\n", 1)[0]
+    rules = rules.split("# Write Toolang programs\n", 1)[0]
     assert rules.startswith("\n## Do\n")
     actions, prohibitions = rules.split("## Do\n", 1)[1].split("## Don't\n", 1)
 
@@ -158,7 +159,7 @@ def test_protocol_separates_contract_required_actions_and_prohibitions() -> None
 
 def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
     authoring = " ".join(
-        prompts.load("protocol.md").split("# Author Toolang programs\n", 1)[1].split()
+        prompts.load("protocol.md").split("# Write Toolang programs\n", 1)[1].split()
     )
 
     assert "first load the relevant grammar, coding-convention, and CLI guidance" in (
@@ -188,7 +189,7 @@ def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
 
 
 def test_protocol_authoring_references_exist() -> None:
-    authoring = prompts.load("protocol.md").split("# Author Toolang programs\n", 1)[1]
+    authoring = prompts.load("protocol.md").split("# Write Toolang programs\n", 1)[1]
     paths = re.findall(
         r"https://github.com/openhat-ai/toolang/blob/main/(docs/[^)]+)", authoring
     )
@@ -202,7 +203,7 @@ def test_protocol_authoring_references_exist() -> None:
 
 
 def test_protocol_authoring_is_conditional_and_points_to_details() -> None:
-    authoring = prompts.load("protocol.md").split("# Author Toolang programs\n", 1)[1]
+    authoring = prompts.load("protocol.md").split("# Write Toolang programs\n", 1)[1]
     assert authoring.lstrip().startswith(
         "When asked to write or modify a Toolang program,"
     )
