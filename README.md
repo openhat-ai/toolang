@@ -98,7 +98,7 @@ toolang stop alice
 # Agents
 toolang new <agent>                  # Create a local agent
 toolang clone <ref> <agent>          # Clone a shared agent
-toolang serve <agent-or-ref>         # Run an agent in the foreground
+toolang serve <agent-or-ref>         # Serve an agent in the foreground
 toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 

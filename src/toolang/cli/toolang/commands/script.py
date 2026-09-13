@@ -18,7 +18,7 @@ from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _ParsingState
-from typer.core import TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -125,6 +125,20 @@ class _ScriptHelpFormatter(UIHelpFormatter):
                 description.append(".")
             self.write_text(description)
             self.write_paragraph()
+
+    def write_commands(self, ctx: Context) -> None:
+        if isinstance(ctx.command, _ScriptGroup):
+            has_main = "main" in ctx.command.commands
+            argument = TyperArgument(
+                param_decls=["runnable"],
+                metavar="RUNNABLE",
+                help="Runnable name",
+                required=not has_main,
+                default="main" if has_main else None,
+                show_default=True,
+            )
+            self._sections(((None, self._argument_row(argument, ctx)),), "Arguments")
+        super().write_commands(ctx)
 
     def write_epilog(self, ctx: Context) -> None:
         super().write_epilog(ctx)
@@ -258,18 +272,14 @@ def _flow_outline(flow: FlowDecl) -> Text:
 
 def run_script(
     ctx: typer.Context,
-    file: Annotated[str, typer.Argument(metavar="FILE", help="Local .too source file")],
+    file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
     runnable: Annotated[
         str | None,
-        typer.Argument(
-            metavar="RUNNABLE", help="Agic or flow name; defaults to main when defined"
-        ),
-    ] = None,
+        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=True),
+    ] = "main",
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(
-            metavar="ARGUMENTS", help="Run options, NAME=VALUE inputs, or -- INPUT"
-        ),
+        typer.Argument(metavar="ARGUMENTS", help="Runnable-specific arguments"),
     ] = None,
 ) -> None:
     """Forward the file and its untouched argument tail to Script dispatch."""
@@ -278,10 +288,15 @@ def run_script(
     if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
         raise UsageError("Script invocation does not support global --root / -r", ctx)
     source = Path(file).expanduser()
-    if "://" in file or source.suffix != ".too" or source.is_dir():
-        raise UsageError(
-            "run requires a local .too file; use serve TARGET to host an agent", ctx
-        )
+    if "://" in file:
+        raise UsageError(f"URLs are not supported: {file}", ctx)
+    if source.is_dir():
+        raise UsageError(f"expected a file, got a directory: {file}", ctx)
+    if source.suffix != ".too":
+        raise UsageError(f"expected a .too file: {file}", ctx)
+    # File dispatch chooses main or shows help when the file has no main entry.
+    if ctx.get_parameter_source("runnable") == ParameterSource.DEFAULT:
+        runnable = None
     tail = ([runnable] if runnable is not None else []) + (arguments or [])
     raise typer.Exit(dispatch([], [file, *tail], prog_name=ctx.command_path))
 
@@ -341,15 +356,10 @@ def _program_command(
     ).params
     runnables = _public_runnables(program)
     default = runnables.get("main")
-    description = f"Run agics and flows from {source_label}."
-    if default is not None:
-        description += "\n\nOmit RUNNABLE to use main."
-        if default.input is not None:
-            description += " Pass primary input after --."
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
-        help=description,
+        help=f"Execute a runnable from {source_label}.",
         no_args_is_help=False,
         rich_markup_mode="rich",
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",

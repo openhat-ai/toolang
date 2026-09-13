@@ -84,7 +84,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "_serve", "channel")
+_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -107,6 +107,21 @@ class _ScriptEntryCommand(CliCommand):
         if args in ([], ["--"]) and not ctx.resilient_parsing:
             show_help(ctx)
         return super().parse_args(ctx, args)
+
+    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        pieces = [
+            "[ARGUMENTS]" if piece == "[ARGUMENTS...]" else piece
+            for piece in self.collect_usage_pieces(ctx)
+        ]
+        formatter.write_usage(ctx.command_path, " ".join(pieces))
+
+    def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        super().format_help(ctx, formatter)
+        formatter.write_paragraph()
+        formatter.write_text(
+            f"The run command is optional: {ctx.find_root().command_path} "
+            "FILE [RUNNABLE] [ARGUMENTS]."
+        )
 
 
 class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
@@ -309,7 +324,7 @@ _registered_group(
 _registered_command(
     "serve",
     "toolang.cli.toolang.commands.runtime:run",
-    help="Run an agent in the foreground",
+    help="Serve an agent in the foreground",
     no_args_is_help=True,
     cls=_ServeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -535,14 +550,17 @@ _registered_command(
 _registered_command(
     "init",
     "toolang.cli.toolang.commands.init:init_script",
-    help="Create main.too from the default template",
-    epilog="Creates missing directories. Fails if main.too already exists.",
+    help="Initialize Toolang in a directory",
+    epilog=(
+        "Creates missing directories and writes main.too from the default template. "
+        "Fails if main.too already exists."
+    ),
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 _registered_command(
     "run",
     "toolang.cli.toolang.commands.script:run_script",
-    help="Run an agic or flow from a local .too file",
+    help="Execute a runnable from a .too file",
     cls=_ScriptEntryCommand,
     context_settings={"allow_interspersed_args": False},
     epilog="For script-specific help, add --help after FILE or RUNNABLE.",

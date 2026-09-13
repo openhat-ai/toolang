@@ -102,9 +102,9 @@ agic():
 
 ### Script Arguments and Help
 
-- `run` accepts only a local `.too` file. Reject resident names, URLs, references,
-  and directories with a usage error pointing to `serve`. Missing files retain
-  Script file-error behavior. Do not discover an implicit `main.too`.
+- `run` accepts only a local `.too` file. Report invalid extensions, URLs, and
+  directories with specific file errors without suggesting `serve`. Missing
+  files retain Script file-error behavior. Do not discover an implicit `main.too`.
 - Reuse the existing Script execution path, options, input binding, sandbox
   execution, output, progress, and exit codes. Show the actual invocation spelling
   in help and errors. Keep path-first invocation and existing shebangs.
@@ -131,9 +131,15 @@ too run main.too review -- "text"
 - Help never executes, prepares State, or reads stdin. File help identifies `main`
   when present and makes RUNNABLE optional only then. Static help explains FILE,
   RUNNABLE, forwarded arguments, and where to request Script-specific help.
+  Use `[ARGUMENTS]` without an ellipsis, `Path to a .too file`, `Runnable name`,
+  and `Runnable-specific arguments`. Display `[default: main]` using native
+  argument metadata; file help shows RUNNABLE in Arguments, required if main is
+  absent. Explain the `too FILE [RUNNABLE] [ARGUMENTS]` shorthand using the actual
+  executable name. Command summaries are `Serve an agent in the foreground`,
+  `Initialize Toolang in a directory`, and `Execute a runnable from a .too file`.
 - Replace `run` with `serve` in Agent Commands, after `info` and before `start`.
   Append Script Commands (`init`, then `run`) after Inspection Commands. Keep
-  `_serve` hidden, including its existing `too hidden` discovery behavior.
+  `_serve` and `channel` callable but absent from both root and `too hidden` lists.
 - Preserve foreground target forms, lifecycle flags, defaults, preparation,
   logging, sandbox handling, Ctrl+C cleanup, and background `start`/`stop` behavior.
   Retain #529's `_serve` launch construction, guest validation, and legacy process

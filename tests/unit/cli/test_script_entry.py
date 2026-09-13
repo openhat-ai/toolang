@@ -215,14 +215,24 @@ def test_no_main_shows_help_or_requires_an_explicit_runnable(arguments, monkeypa
     )
 
 
+@pytest.mark.parametrize("executable", ["too", "toolang"])
 @pytest.mark.parametrize("arguments", [[], ["--help"]])
-def test_static_run_help(arguments, capsys):
+def test_static_run_help(executable, arguments, monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", [executable])
     assert cli.main(["run", *arguments]) == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert "too run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS...]" in output
+    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS]" in output
     assert "* FILE" in output
-    assert "defaults to main" in output
-    assert "NAME=VALUE" in output
+    assert "Path to a .too file" in output
+    assert "Runnable name [default: main]" in output
+    assert "Runnable-specific arguments" in output
+    assert "NAME=VALUE" not in output
+    assert "local" not in output.lower()
+    assert "ARGUMENTS..." not in output
+    assert (
+        f"The run command is optional: {executable} FILE [RUNNABLE] [ARGUMENTS]."
+        in output
+    )
     assert "add --help after FILE or RUNNABLE" in output
 
 
@@ -293,18 +303,47 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert f"Usage: {executable} {page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
-        assert "Omit RUNNABLE to use main." in output
+        assert "Runnable name [default: main]" in " ".join(output.split())
+        assert output.index("Arguments:") < output.index("Runnables:")
+        assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
 
 
 @pytest.mark.parametrize(
-    "target", ["alice", "https://example.com/demo.too", "owner/agent", "folder.too"]
+    ("target", "reason"),
+    [
+        ("alice", "expected a .too file"),
+        ("main.ttt", "expected a .too file"),
+        ("https://example.com/demo.too", "URLs are not supported"),
+        ("owner/agent", "expected a .too file"),
+        ("folder.too", "expected a file, got a directory"),
+        ("folder", "expected a file, got a directory"),
+    ],
 )
-def test_run_rejects_non_script_targets(target, capsys):
-    if target == "folder.too":
+@pytest.mark.parametrize("arguments", [[], ["--help"]])
+def test_run_reports_invalid_files_without_hosting_advice(
+    target, reason, arguments, capsys
+):
+    if target in {"folder.too", "folder"}:
         Path(target).mkdir()
-    assert cli.main(["run", target]) == 2
-    assert "serve TARGET" in capsys.readouterr().err
+    elif target == "main.ttt":
+        Path(target).write_text("agic():\n  Hello.\n")
+    assert cli.main(["run", target, *arguments]) == 2
+    output = " ".join(capsys.readouterr().err.split())
+    assert f"{reason}: {target}" in output
+    assert "serve" not in output
+    assert "local" not in output.lower()
+    assert "ARGUMENTS..." not in output
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_file_help_without_main_marks_runnable_required(explicit, capsys):
+    path = _source("agic helper():\n  Hello.\n")
+    assert cli.main([*(["run"] if explicit else []), path, "--help"]) == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "demo.too [OPTIONS] <RUNNABLE>" in output
+    assert "Arguments: * RUNNABLE Runnable name" in output
+    assert "[default: main]" not in output
 
 
 def test_run_reports_a_missing_source(capsys):

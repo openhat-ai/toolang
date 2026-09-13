@@ -243,8 +243,10 @@ supplied in any order, interspersed with command options, before input.
 
 When primary input is forbidden, its row and instructions are absent. Empty
 signatures omit Arguments entirely. **Options** follows Arguments. Top-level
-Script help says `Run agics and flows from SCRIPT.` and lists **Runnables** before
-Options, using `agic:NAME` and `flow:NAME` labels with authored descriptions or
+Script file help says `Execute a runnable from SCRIPT.` and shows RUNNABLE in
+**Arguments**, with `[default: main]` when available or a required marker otherwise.
+It then lists **Runnables** before Options, using `agic:NAME` and `flow:NAME`
+labels with authored descriptions or
 `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names are
 valid runnable selectors.
 

@@ -710,7 +710,9 @@ def test_script_help_after_common_options_never_reads_or_runs(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    assert ("Arguments:" in output) is child
+    assert "Arguments:" in output
+    if not child:
+        assert "RUNNABLE" in _help_panel(output, "Arguments")
     assert ("Runnables:" in output) is not child
     _assert_common_options(output)
 
@@ -1404,9 +1406,14 @@ flow pipeline:
     assert result == 0
     assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
-    assert f"Run agics and flows from {filename}" in stdout
-    assert "Omit RUNNABLE to use main" in stdout
-    assert stdout.index("Runnables:") < stdout.index("Options:")
+    assert f"Execute a runnable from {filename}" in stdout
+    assert "Runnable name [default: main]" in " ".join(stdout.split())
+    assert "Omit RUNNABLE" not in stdout
+    assert (
+        stdout.index("Arguments:")
+        < stdout.index("Runnables:")
+        < stdout.index("Options:")
+    )
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout

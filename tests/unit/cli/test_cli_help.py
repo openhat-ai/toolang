@@ -203,7 +203,8 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
-    assert "_serve Run an agent server" in " ".join(plain.split())
+    assert "_serve" not in plain
+    assert "channel" not in plain
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
@@ -280,7 +281,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
     [
         (
             "serve",
-            "Run an agent in the foreground",
+            "Serve an agent in the foreground",
             "Agent name, .too file, reference, or URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
