@@ -82,8 +82,8 @@ implements the `Sandbox` lifecycle. Current implementations are:
 
 | Driver | Meaning |
 | --- | --- |
-| `host` | Launch `too serve` as a local child process |
-| `docker` | Launch a container whose primary workload is `too serve` |
+| `host` | Launch `too _serve` as a local child process |
+| `docker` | Launch a container whose primary workload is `too _serve` |
 
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
 and passes the remaining spec unchanged to that implementation. Future drivers

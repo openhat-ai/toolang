@@ -187,6 +187,10 @@ def test_short_version_alias_matches_long_version(main, capsys):
 
 
 def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch):
+    root = typer.main.get_command(app)
+    assert isinstance(root, TyperGroup)
+    assert root.commands["_serve"].hidden
+    assert "serve" not in root.commands
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setenv("FORCE_COLOR", "1")
@@ -199,7 +203,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
-    assert "serve Run an agent server" in " ".join(plain.split())
+    assert "_serve Run an agent server" in " ".join(plain.split())
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
@@ -279,7 +283,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
             "Run an agent in the foreground",
             "Agent name, .too file, reference, or URL",
         ),
-        ("serve", "Run an agent server", "Local agent name"),
+        ("_serve", "Run an agent server", "Local agent name"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
@@ -307,7 +311,7 @@ def test_real_and_virtual_agent_arguments_share_usage(
         "remove",
         "start",
         "stop",
-        "serve",
+        "_serve",
         "run",
         "info",
         "chat",
@@ -339,7 +343,7 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         "remove",
         "start",
         "stop",
-        "serve",
+        "_serve",
         "workspace",
         "task",
         "chore",
@@ -439,7 +443,7 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
         (["a", "retry"], ("--allow", "--limit")),
         (["a", "rerun"], ("--sandbox", "--allow", "--limit", "--model")),
         (
-            ["serve", "a"],
+            ["_serve", "a"],
             ("--allow", "--limit", "--default", "--compact-model", "--log"),
         ),
     ],
@@ -600,7 +604,7 @@ def test_repeated_explicit_metavar_is_not_duplicated(required):
     )
 
 
-@pytest.mark.parametrize("command", ["run", "start", "serve"])
+@pytest.mark.parametrize("command", ["run", "start", "_serve"])
 def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)

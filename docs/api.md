@@ -538,7 +538,7 @@ Behavior:
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
 `toolang run` and `toolang start` resolve the same `LaunchSpec` and call the
-same sandbox lifecycle. A hidden `toolang serve` command is the only
+same sandbox lifecycle. A hidden `toolang _serve` command is the only
 AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on sandbox.
@@ -623,7 +623,7 @@ not the script directory or agent home). An explicit `PATH` selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel
-is staged into Docker and supplies its `too serve` command. Build a current
+is staged into Docker and supplies its `too _serve` command. Build a current
 wheel and select it with:
 
 ```sh

@@ -50,7 +50,7 @@ def _request(
         endpoint_host="localhost",
         port=8123,
         endpoint="http://localhost:8123",
-        command=("too", "serve", "alice", "--port", "8123"),
+        command=("too", "_serve", "alice", "--port", "8123"),
         working_directory=home,
         output="inherit" if foreground else "file",
         log_path=None if foreground else home / ".runtime" / "agent.log",
@@ -97,7 +97,7 @@ def test_host_sandbox_parses_own_spec_and_prepares_local_process(
     plan = sandbox.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "host"
-    assert plan.command[-4:] == ("serve", "alice", "--port", "8123")
+    assert plan.command[-4:] == ("_serve", "alice", "--port", "8123")
     assert plan.working_directory == tmp_path / "agents" / "alice"
     assert plan.envs[host_sandbox.HOST_SANDBOX_DESCRIPTION_ENV] == ("macOS 27.0 arm64")
     with pytest.raises(ValueError, match="does not accept"):
@@ -363,7 +363,7 @@ def test_docker_sandbox_prepares_and_launches(
         "/root/.toolang/agents/alice/.runtime/agent.log",
         "--",
         "too",
-        "serve",
+        "_serve",
         "alice",
         "--port",
         "8123",
@@ -1380,7 +1380,7 @@ def _write_fake_guest_tools(
     _write_executable(
         directory / "too-template",
         "#!/bin/sh\n"
-        'if [ "$1" = "serve" ] && [ "$2" = "--help" ]; then exit 0; fi\n'
+        'if [ "$1" = "_serve" ] && [ "$2" = "--help" ]; then exit 0; fi\n'
         'if [ "$1" = "--version" ]; then echo "toolang test"; exit 0; fi\n'
         "exit 1\n",
     )

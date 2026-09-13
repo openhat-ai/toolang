@@ -80,7 +80,7 @@ def _startup_event(
             ),
         ),
         (
-            ["serve", "--help"],
+            ["_serve", "--help"],
             (
                 "--allow",
                 "--limit",
@@ -275,7 +275,7 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "serve", "alice"],
+        ["--root", str(root), "_serve", "alice"],
     )
 
     assert result.exit_code == 0, result.stderr
@@ -479,7 +479,7 @@ def test_runtime_warns_when_development_source_uses_index_package(
             assert "source at" not in stderr
 
 
-@pytest.mark.parametrize("command", ["run", "start", "serve"])
+@pytest.mark.parametrize("command", ["run", "start", "_serve"])
 def test_runtime_commands_reject_inbox_option(command: str) -> None:
     help_result = runner.invoke(cli.app, [command, "--help"])
     assert help_result.exit_code == 0

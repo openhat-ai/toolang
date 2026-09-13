@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
+
+import pytest
 
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
 from toolang.up import process
 from toolang.up.records import SandboxState
+
+
+@pytest.mark.parametrize("command", ["_serve", "serve"])
+@pytest.mark.parametrize(
+    ("same_root", "same_agent"), [(True, True), (False, True), (True, False)]
+)
+def test_runtime_command_matches_current_and_legacy_server_identity(
+    tmp_path: Path, command: str, same_root: bool, same_agent: bool
+) -> None:
+    root = tmp_path / "toolang root"
+    argv = shlex.join(["too", "--root", str(root), command, "alice"])
+
+    assert process._runtime_command_matches(
+        argv,
+        root=str(root if same_root else tmp_path / "other"),
+        agent_name="alice" if same_agent else "bob",
+    ) is (same_root and same_agent)
 
 
 def test_runtime_identity_uses_environment_process_without_sandbox_state() -> None:

@@ -140,7 +140,7 @@ def build_serve_argv(
     command = [
         "--root",
         str(root or spec.layout.root),
-        "serve",
+        "_serve",
         spec.layout.name,
         "--host",
         host or spec.host,

@@ -817,7 +817,8 @@ def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> boo
         return True
 
     for index, token in enumerate(tokens[:-1]):
-        if token == "serve" and tokens[index + 1] == agent_name:
+        # Recognize server processes started before the internal command rename.
+        if token in {"_serve", "serve"} and tokens[index + 1] == agent_name:
             return True
     return False
 

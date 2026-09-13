@@ -129,7 +129,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("query", "none"),
         _command("fmt", "none"),
         _command("parse", "none"),
-        _command("serve", "after", placements=_RESIDENT, prepare="program"),
+        _command("_serve", "after", placements=_RESIDENT, prepare="program"),
     )
 }
 

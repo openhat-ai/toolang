@@ -83,7 +83,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert argv[:9] == (
         "--root",
         "/root/.toolang",
-        "serve",
+        "_serve",
         "alice",
         "--host",
         "0.0.0.0",

@@ -45,7 +45,7 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
         ["rerun", "alice", "--help"],
         ["models", "--help"],
         ["providers", "--help"],
-        ["serve", "--help"],
+        ["_serve", "--help"],
     ):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
