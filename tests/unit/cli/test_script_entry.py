@@ -80,7 +80,12 @@ def test_init_creates_only_a_packaged_script(
     ]
     for command, description in zip(
         commands,
-        ("show info", "show script usage", "run the default runnable", "open chat TUI"),
+        (
+            "show agent details",
+            "show runnables and options",
+            "execute the default runnable",
+            "start an interactive chat",
+        ),
         strict=True,
     ):
         assert command.endswith(f"  # {description}")

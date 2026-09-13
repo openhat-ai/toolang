@@ -33,10 +33,10 @@ def init_script(
     executable = ctx.find_root().info_name or "too"
     script = shlex.join([executable, str(destination)])
     examples = (
-        (f"{script} info", "show info"),
-        (f"{script} --help", "show script usage"),
-        (script, "run the default runnable"),
-        (f"{script} chat", "open chat TUI"),
+        (f"{script} info", "show agent details"),
+        (f"{script} --help", "show runnables and options"),
+        (script, "execute the default runnable"),
+        (f"{script} chat", "start an interactive chat"),
     )
     width = max(len(command) for command, _description in examples)
     typer.echo("\nTry:")

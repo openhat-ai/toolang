@@ -59,7 +59,8 @@ and authorized model routes.
   Include concise runnable/step doc comments and copyable rewrite/polish examples.
 - Print the created path and a `Try:` list with `too FILE info`, `too FILE --help`,
   `too FILE`, and `too FILE chat`, in that order. Add aligned shell comments:
-  `show info`, `show script usage`, `run the default runnable`, and `open chat TUI`.
+  `show agent details`, `show runnables and options`, `execute the default runnable`,
+  and `start an interactive chat`.
   Use paths valid from the caller's current directory, quote them correctly,
   and preserve the invoked executable name.
   The shebang uses path-first invocation and supports direct `./work.too` execution.
