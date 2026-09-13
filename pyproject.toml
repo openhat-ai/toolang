@@ -103,9 +103,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolang"]
 
-[tool.uv.sources]
-tree-sitter-toolang = { git = "https://github.com/openhat-ai/tree-sitter-toolang.git", rev = "ac0e2d942bc7e7c4022a6f45bf16dfff53eb9562" }
-
 [tool.hatch.build.hooks.custom]
 
 [tool.ruff]
