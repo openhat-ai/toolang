@@ -39,7 +39,8 @@ too run demo/work.too --help
 ```
 
 The bundled greeting takes no input. Use `--model` to select another configured
-model. `too demo/work.too` remains a shorthand for Script execution.
+model. `too demo/work.too` remains a shorthand for Script execution. The generated
+file is executable, so `./demo/work.too` also works.
 
 Create a local agent:
 

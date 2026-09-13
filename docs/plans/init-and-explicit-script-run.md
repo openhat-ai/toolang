@@ -47,6 +47,7 @@ and authorized model routes.
   UTF-8 with a trailing newline using exclusive creation. Existing files,
   directories, and symlinks at the destination must fail without being changed.
   Report invalid and unwritable destinations clearly.
+  Add execute bits to the newly created file, preserving its read/write permissions.
 - Use the existing catalog template mechanism with `script.default.too`:
 
 ```too
@@ -59,10 +60,9 @@ agic():
 
 - Print the created path and a command usable from the caller's current directory,
   quoting paths correctly and preserving the invoked executable name.
-  The shebang uses path-first invocation; direct `./work.too` execution requires
-  the user to add executable permission.
-- Create no agent registration, configuration, credentials, runtime cache, or
-  executable permission. Initialization and help require no model or network.
+  The shebang uses path-first invocation and supports direct `./work.too` execution.
+- Create no agent registration, configuration, credentials, or runtime cache.
+  Initialization and help require no model or network.
   Running the greeting requires a configured model; `--model` remains available.
 - Filename options, template selection, overwrite flags, credential setup, and
   offline demo flows are outside scope.

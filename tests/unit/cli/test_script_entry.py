@@ -62,7 +62,7 @@ def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
     assert destination.read_text().startswith("#!/usr/bin/env too\n")
     assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {destination}
     assert neighbor.read_text() == "keep"
-    assert destination.stat().st_mode & 0o111 == 0
+    assert destination.stat().st_mode & 0o111 == 0o111
     program = Program.from_source(destination.read_text())
     assert program.agics[0].name is None
     assert program.agics[0].input is None

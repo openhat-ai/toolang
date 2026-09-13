@@ -1,6 +1,7 @@
 """Initialize one local Script without preparing an agent."""
 
 from pathlib import Path
+import os
 import shlex
 from typing import Annotated
 
@@ -24,6 +25,8 @@ def init_script(
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8") as stream:
             stream.write(template.rstrip("\n") + "\n")
+            stream.flush()
+            os.fchmod(stream.fileno(), os.fstat(stream.fileno()).st_mode | 0o111)
     except OSError as exc:
         raise typer.BadParameter(f"could not initialize script: {exc}") from exc
     typer.echo(f"Created {destination}")
