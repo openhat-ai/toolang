@@ -82,7 +82,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "sandboxes",
     "inspect",
 )
-_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "serve", "channel")
+_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "_serve", "channel")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -513,7 +513,7 @@ _registered_command(
     no_args_is_help=True,
 )
 _registered_command(
-    "serve",
+    "_serve",
     "toolang.cli.toolang.commands.runtime:serve",
     help="Run an agent server",
     hidden=True,

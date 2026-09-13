@@ -155,7 +155,7 @@ def _validate_toolang(
         fail("Installed Toolang executable is unavailable", diagnostic_display, 69)
     with diagnostic.open("ab") as stream:
         validated = subprocess.run(
-            (str(too), "serve", "--help"),
+            (str(too), "_serve", "--help"),
             check=False,
             env=environ,
             stdout=stream,
@@ -259,7 +259,7 @@ def main() -> None:
         command[0] = str(too)
     descriptor = _open_workload_log(workload_log, diagnostic_display)
     diagnostic.unlink(missing_ok=True)
-    if authored_command in {"too", "toolang"} and command[1:2] == ["serve"]:
+    if authored_command in {"too", "toolang"} and command[1:2] == ["_serve"]:
         report_progress(progress_events, "server.running", "Starting agent...")
     else:
         report_progress(progress_events, "server.running", "Starting command...")
