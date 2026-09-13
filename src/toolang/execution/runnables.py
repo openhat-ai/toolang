@@ -15,7 +15,7 @@ from toolang.lang.ast import (
 from toolang.lang.types import parse_public_runnable_ref
 from toolang.state.state import (
     AgentState,
-    effective_agics,
+    program_runnable_index,
     state_program,
 )
 from toolang.state.runnable_collections import runnable_dataset
@@ -150,17 +150,13 @@ def resolve_runnable(
 
     if not name or name != name.strip():
         raise ValueError("run spec requires a canonical runnable name")
-    matches: tuple[Runnable, ...] = (
-        *(agic for agic in effective_agics(program) if agic.name == name),
-        *(flow for flow in program.flows if flow.name == name),
-    )
-    if kind is not None:
-        matches = tuple(item for item in matches if item.kind == kind)
-    if not matches:
+    try:
+        entry = program_runnable_index(program).get(name)
+    except ValueError as exc:
+        raise ToolangError(str(exc)) from exc
+    if entry is None or (kind is not None and entry.kind != kind):
         raise ToolangError(f"Runnable not found: {name}")
-    if len(matches) > 1:
-        raise ToolangError(f"Runnable name is not unique: {name}")
-    return matches[0]
+    return entry
 
 
 def resolve_state_runnable(
@@ -218,7 +214,7 @@ def resolve_module_runnable(
     resolve_indexed = getattr(state, "module_runnable", None)
     if not callable(resolve_indexed):
         runnable = resolve_runnable(state_program(state, module_name), name, kind=kind)
-        return runnable.name, runnable
+        return name, runnable
     entry = resolve_indexed(module_name, name, kind=kind)
     if entry is None:
         raise ToolangError(f"Runnable not found: {name}")
@@ -229,7 +225,7 @@ def resolve_module_runnable(
             if state.runnable_modules[candidate_name] == module_name
             and candidate is entry
         ),
-        entry.name,
+        name,
     )
     return public_name, entry
 
@@ -273,7 +269,7 @@ def runnable_fallback(program: Program | AgentState, *, preferred: str) -> str:
     names = (
         program.runnables.keys()
         if isinstance(program, AgentState)
-        else {item.name for item in (*program.agics, *program.flows)}
+        else program_runnable_index(program).keys()
     )
     return next((name for name in (preferred, "main") if name in names), "default")
 
@@ -289,11 +285,11 @@ def runnable_binding_defaults(
     if binding is None:
         binding = runnable_fallback(program, preferred=fallback_agic)
     if isinstance(program, AgentState):
-        runnable = resolve_state_runnable_query(program, binding)[1]
+        resolved = resolve_public_runnable_query(program, binding)
+        name, runnable = resolved.name, resolved.executable
     else:
         name, kind = parse_runnable_ref(binding)
         runnable = resolve_runnable(program, name, kind=kind)
-    name = runnable.name
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
 
 

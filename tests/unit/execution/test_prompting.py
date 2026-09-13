@@ -253,6 +253,7 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
             SimpleNamespace(layout=SimpleNamespace(name="alice"), environment=None),
         ),
         agic,
+        runnable_name="chat",
         module="agent",
         model=ModelTarget(
             ref="test/model",

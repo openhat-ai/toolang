@@ -251,7 +251,7 @@ def validate_model_binding(
         if entry.key not in resources.models:
             raise ToolangError(f"model ref is outside run resources: {model}")
     elif isinstance(runnable, AgicDecl):
-        raise ToolangError(f"run requires a model: {runnable.name}")
+        raise ToolangError(f"run requires a model: {runnable.name or runnable.kind}")
 
 
 def resource_tools(

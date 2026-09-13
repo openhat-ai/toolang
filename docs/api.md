@@ -252,8 +252,8 @@ Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
 outline in normal style with blank lines between sibling steps.
 Top-level Script help identifies `main` as the default when present and marks
 `[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It lists **Runnables**
-before Options, with `agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
-`Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+before Options, with `agic:NAME` / `flow:NAME` labels and authored descriptions or
+`Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
 `-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then

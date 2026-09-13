@@ -180,6 +180,7 @@ class PromptInputs:
     state: AgentState
     setup: AgentSetup
     agic: AgicDecl
+    runnable_name: str
     module: str
     model: ModelTarget
     caps: Sequence[StateCap]
@@ -208,7 +209,7 @@ class PromptInputs:
                 "agent": {"name": self.setup.layout.name},
                 "runnable": {
                     "kind": self.agic.kind,
-                    "name": self.agic.name,
+                    "name": self.runnable_name,
                     "output": self.agic.output,
                 },
                 "model": {

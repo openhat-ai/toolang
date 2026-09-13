@@ -45,8 +45,8 @@ flows declared in another file.
 
 The agent module publicly exports all of its agics and flows. A flow module
 exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
-`<name>` exactly matches its filename stem. An unnamed Flow keeps its local
-name `main` but uses the filename as its public name, so renaming the file also
+`<name>` exactly matches its filename stem. State binds an unnamed Flow locally as
+`main` and uses the filename as its public name, so renaming the file also
 renames the public Flow. Other declarations in that module are private static
 helpers.
 
@@ -167,7 +167,7 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-An omitted agic or flow name means `main`:
+In the agent or Script module, State binds an omitted agic or flow name to `main`:
 
 ```too
 agic:
@@ -180,11 +180,13 @@ flow:
   pass
 ```
 
-All three examples have the same runnable name and therefore cannot
-appear together. Explicitly named `main` has the same entry behavior; named
-helpers may coexist. Explicit `default` remains an ordinary authored name. In a
-home flow module, the unnamed Flow's public name is instead bound from the
-filename as described above.
+These examples bind to the same name and cannot appear together in one module.
+The AST preserves omitted names as `None`; State rejects the name collision when
+building its indexes. Script help uses the same binding rules. Explicitly named
+`main` has the same entry behavior, and named helpers may coexist. Explicit
+`default` remains an ordinary authored name and takes precedence over the
+synthetic runtime fallback. In a home flow module, State binds the unnamed Flow's
+public name from the filename as described above.
 
 
 ### Primary Input

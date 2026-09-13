@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 
 import pytest
+from rich.cells import cell_len
 import typer
 from typer.core import TyperCommand
 from typer._click.utils import strip_ansi
@@ -45,7 +46,7 @@ def test_init_creates_only_a_packaged_script(directory, tmp_path, capsys):
     assert neighbor.read_text() == "keep"
     assert destination.stat().st_mode & 0o111 == 0
     program = Program.from_source(destination.read_text())
-    assert program.agics[0].name == "main"
+    assert program.agics[0].name is None
     assert program.agics[0].input is None
     output = capsys.readouterr().out
     command = output.split("Run with: ", 1)[1].strip()
@@ -217,7 +218,83 @@ def test_no_main_shows_help_or_requires_an_explicit_runnable(arguments, monkeypa
 @pytest.mark.parametrize("arguments", [[], ["--help"]])
 def test_static_run_help(arguments, capsys):
     assert cli.main(["run", *arguments]) == 0
-    assert "too run [OPTIONS] FILE [RUNNABLE] [ARGS]..." in capsys.readouterr().out
+    output = " ".join(capsys.readouterr().out.split())
+    assert "too run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS...]" in output
+    assert "* FILE" in output
+    assert "defaults to main" in output
+    assert "NAME=VALUE" in output
+    assert "add --help after FILE or RUNNABLE" in output
+
+
+@pytest.mark.parametrize("root_boundary", [[], ["--"]])
+@pytest.mark.parametrize("file_boundary", [[], ["--"]])
+@pytest.mark.parametrize("tail", [[], ["main"], ["--", "literal --help"]])
+def test_explicit_run_preserves_arguments_after_option_boundaries(
+    root_boundary, file_boundary, tail, monkeypatch
+):
+    path = _source(
+        "agic(_: Text):\n  Hello.\n" if tail[:1] == ["--"] else "agic():\n  Hello.\n"
+    )
+    captured = []
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
+    )
+    assert cli.main([*root_boundary, "run", *file_boundary, path, *tail]) == 0
+    assert len(captured) == 1
+    assert captured[0]["runnable"] == "main"
+    if tail[:1] == ["--"]:
+        assert captured[0]["input"].get("_") == "literal --help"
+
+
+@pytest.mark.parametrize("name", ["-demo.too", " demo.too"])
+def test_explicit_run_preserves_special_filenames(monkeypatch, name):
+    path = Path(_source()).rename(name)
+    captured = []
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
+    )
+    assert cli.main(["run", "--", str(path)]) == 0
+    assert len(captured) == 1
+
+
+@pytest.mark.parametrize("tail", [["--help"], ["main", "--help"]])
+def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, capsys):
+    path = _source()
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    assert cli.main(["run", "--", path, *tail]) == 0
+    assert "too run demo.too" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("executable", ["too", "toolang"])
+@pytest.mark.parametrize("width", [44, 80, 120])
+@pytest.mark.parametrize(
+    "page",
+    [
+        ["init", "--help"],
+        ["run", "--help"],
+        ["serve", "--help"],
+        ["run", "demo.too", "--help"],
+        ["run", "demo.too", "main", "--help"],
+    ],
+)
+def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
+    executable, width, page, monkeypatch, capsys
+):
+    _source()
+    monkeypatch.setattr("sys.argv", [executable])
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    assert cli.main(page) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    assert f"Usage: {executable} {page[0]}" in output
+    assert all(cell_len(line) <= width for line in output.splitlines())
+    if page == ["run", "demo.too", "--help"]:
+        assert "Omit RUNNABLE to use main." in output
+        assert "Pass primary input" not in output
 
 
 @pytest.mark.parametrize(
@@ -236,7 +313,7 @@ def test_run_reports_a_missing_source(capsys):
 
 
 @pytest.mark.parametrize(
-    "root_args", [["--root", "root"], ["-r", "root"], ["--root=root"]]
+    "root_args", [["--root", "root"], ["-r", "root"], ["--root=root"], ["-rroot"]]
 )
 def test_run_rejects_global_root_overrides(root_args, capsys):
     assert cli.main([*root_args, "run", _source()]) == 2
@@ -257,3 +334,16 @@ def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):
     )
     assert cli.main(["run", path, "--", ":runnable agic:default\n\nHello."]) == 1
     assert "unknown or ambiguous" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_script_help_rejects_main_binding_conflicts(
+    kind, tmp_path, monkeypatch, capsys
+):
+    source = tmp_path / "conflict.too"
+    source.write_text(f"{kind}:\n  pass\n\n{kind} main:\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("executed help")
+    )
+    assert cli.main(["run", str(source), "--help"]) == 1
+    assert "Runnable name is not unique: main" in capsys.readouterr().err

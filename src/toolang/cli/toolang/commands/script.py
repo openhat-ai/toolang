@@ -195,7 +195,11 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         rest = super().parse_args(ctx, args)
-        if not ctx._protected_args and "main" in self.commands:
+        if not ctx._protected_args and not ctx.resilient_parsing:
+            if "main" not in self.commands:
+                raise UsageError(
+                    "This script has no main entry; select a runnable.", ctx
+                )
             ctx._protected_args = ["main"]
         return rest
 
@@ -254,13 +258,32 @@ def _flow_outline(flow: FlowDecl) -> Text:
 
 def run_script(
     ctx: typer.Context,
-    file: Annotated[
-        Path | None, typer.Argument(metavar="FILE", help="Local .too source file")
+    file: Annotated[str, typer.Argument(metavar="FILE", help="Local .too source file")],
+    runnable: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="RUNNABLE", help="Agic or flow name; defaults to main when defined"
+        ),
+    ] = None,
+    arguments: Annotated[
+        list[str] | None,
+        typer.Argument(
+            metavar="ARGUMENTS", help="Run options, NAME=VALUE inputs, or -- INPUT"
+        ),
     ] = None,
 ) -> None:
-    """Show static usage; the entry command forwards file arguments to dispatch."""
+    """Forward the file and its untouched argument tail to Script dispatch."""
 
-    typer.echo(ctx.get_help())
+    root = ctx.find_root()
+    if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
+        raise UsageError("Script invocation does not support global --root / -r", ctx)
+    source = Path(file).expanduser()
+    if "://" in file or source.suffix != ".too" or source.is_dir():
+        raise UsageError(
+            "run requires a local .too file; use serve TARGET to host an agent", ctx
+        )
+    tail = ([runnable] if runnable is not None else []) + (arguments or [])
+    raise typer.Exit(dispatch([], [file, *tail], prog_name=ctx.command_path))
 
 
 def dispatch(
@@ -291,12 +314,7 @@ def dispatch(
             stdin=stdin or sys.stdin,
         )
         result = command.main(
-            args=argv[1:]
-            or (
-                []
-                if program.find_agic("main") or program.find_flow("main")
-                else ["--help"]
-            ),
+            args=argv[1:] or ([] if "main" in command.commands else ["--help"]),
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -321,27 +339,26 @@ def _program_command(
     options = _runnable_command(
         None, program=program, source_path=source_path, stdin=stdin
     ).params
+    runnables = _public_runnables(program)
+    default = runnables.get("main")
+    description = f"Run agics and flows from {source_label}."
+    if default is not None:
+        description += "\n\nOmit RUNNABLE to use main."
+        if default.input is not None:
+            description += " Pass primary input after --."
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
-        help=f"Run runnables from {source_label}"
-        + (
-            "; main is the default entry"
-            if program.find_agic("main") or program.find_flow("main")
-            else ""
-        ),
+        help=description,
         no_args_is_help=False,
         rich_markup_mode="rich",
-        subcommand_metavar=(
-            "[RUNNABLE]"
-            if program.find_agic("main") or program.find_flow("main")
-            else "<RUNNABLE>"
-        ),
+        subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
-    for runnable in _public_runnables(program):
+    for name, runnable in runnables.items():
         group.add_command(
             _runnable_command(
                 runnable,
+                name=name,
                 program=program,
                 source_path=source_path,
                 stdin=stdin,
@@ -353,6 +370,7 @@ def _program_command(
 def _runnable_command(
     runnable: Runnable | None,
     *,
+    name: str = "script",
     program: Program,
     source_path: Path,
     stdin: TextIO,
@@ -419,7 +437,7 @@ def _runnable_command(
         override = _materialize_script_runnable_override(override, program=program)
         return _run(
             source_path,
-            runnable=runnable.name,
+            runnable=name,
             runnable_kind=runnable.kind,
             override=override,
             input=input,
@@ -433,7 +451,6 @@ def _runnable_command(
             quiet=quiet,
         )
 
-    name = runnable.name if runnable is not None else "script"
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
     command = get_command_from_info(
@@ -459,12 +476,16 @@ def _runnable_command(
     return command
 
 
-def _public_runnables(program: Program) -> tuple[Runnable, ...]:
-    return tuple(
-        runnable
-        for runnable in (*program.agics, *program.flows)
-        if not runnable.name.startswith("<")
-    )
+def _public_runnables(program: Program) -> dict[str, Runnable]:
+    from toolang.state.state import program_runnable_index
+
+    return {
+        name: runnable
+        for name, runnable in program_runnable_index(
+            program, include_default=False
+        ).items()
+        if not name.startswith("<")
+    }
 
 
 def collect_named_arguments(
@@ -544,7 +565,7 @@ def _materialize_script_runnable_override(
     from toolang.state.runnable_collections import runnable_dataset
 
     dataset = runnable_dataset(program)
-    authored = {item.name for item in _public_runnables(program)}
+    authored = _public_runnables(program)
     matches = tuple(
         item for item in dataset.query(override.runnable) if item.name in authored
     )
@@ -1230,11 +1251,10 @@ def _emit_result(
 
 
 def _source_path(token: str) -> Path | None:
-    text = token.strip()
-    if not text or text.startswith("-"):
+    if not token:
         return None
     try:
-        source = Path(text).expanduser().resolve()
+        source = Path(token).expanduser().resolve()
     except OSError:
         return None
     return source if source.is_file() and source.suffix == ".too" else None

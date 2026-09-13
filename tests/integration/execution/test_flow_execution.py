@@ -110,6 +110,11 @@ def _executor(tmp_path: Path) -> RunExecutor:
     return RunExecutor(store, IdIssuer(tmp_path / ".runtime" / "ids.json"))
 
 
+def _name(runnable: AgicDecl | FlowDecl) -> str:
+    assert runnable.name is not None
+    return runnable.name
+
+
 def _state(*flows: FlowDecl) -> Any:
     return cast(
         Any,
@@ -266,7 +271,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     owner_thread = threading.get_ident()
 
     record = asyncio.run(
-        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
+        _start(executor, _setup(), _state(flow), _name(flow), tracer=tracer)
     )
 
     assert record.status == "succeeded"
@@ -320,7 +325,7 @@ def test_run_executor_validates_args_against_runnable_params(
                     setup=setup,
                     state=state,
                     thread="term_test",
-                    runnable=flow.name,
+                    runnable=_name(flow),
                 )
             )
         with pytest.raises(ValueError, match="unknown named inputs.*other"):
@@ -329,7 +334,7 @@ def test_run_executor_validates_args_against_runnable_params(
                     setup=setup,
                     state=state,
                     thread="term_test",
-                    runnable=flow.name,
+                    runnable=_name(flow),
                     named={
                         "focus": (TextPart("events"),),
                         "other": True,
@@ -341,7 +346,7 @@ def test_run_executor_validates_args_against_runnable_params(
                 setup=setup,
                 state=state,
                 thread="term_test",
-                runnable=flow.name,
+                runnable=_name(flow),
                 named={"focus": (TextPart("events"),)},
             )
         )
@@ -372,7 +377,7 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
                     setup=_setup(),
                     state=_state(flow),
                     thread="term_test",
-                    runnable=flow.name,
+                    runnable=_name(flow),
                     primary=(ImagePart(file_id="image-1"),),
                 )
             )
@@ -395,7 +400,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
                     setup=_setup(),
                     state=_state(flow),
                     thread="term_test",
-                    runnable=flow.name,
+                    runnable=_name(flow),
                     ceiling=AgentCeiling(tools=("missing/*",)),
                 )
             )
@@ -489,7 +494,7 @@ def test_event_delivery_does_not_read_run_state_per_event(
         return original(run_id=run_id)
 
     monkeypatch.setattr(executor.store, "get_run", get_run)
-    record = asyncio.run(_start(executor, _setup(), _state(flow), flow.name))
+    record = asyncio.run(_start(executor, _setup(), _state(flow), _name(flow)))
 
     assert record.status == "succeeded"
     assert reads == 1
@@ -540,7 +545,7 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
             executor,
             _setup(),
             _state(flow),
-            flow.name,
+            _name(flow),
             tracer=_RecordingTracer(store, fail=True),
         )
     )
@@ -566,7 +571,7 @@ def test_run_handle_shields_execution_from_waiter_cancellation(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
-                runnable=flow.name,
+                runnable=_name(flow),
             )
         )
         assert handle.executor is executor
@@ -598,7 +603,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
             executor,
             _setup(),
             _state(flow),
-            flow.name,
+            _name(flow),
             run_id="run_unique",
             thread_id="term_idempotent",
             request_id="run-unique",
@@ -611,7 +616,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
                 executor,
                 _setup(),
                 _state(flow),
-                flow.name,
+                _name(flow),
                 run_id="run_unique",
                 thread_id="term_idempotent",
                 request_id="run-unique",
@@ -643,7 +648,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
             executor,
             _setup(),
             _state(parent, child),
-            parent.name,
+            _name(parent),
             tracer=tracer,
         )
     )
@@ -676,7 +681,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
     sibling = AgicDecl(name="sibling", span=Span(line=1))
     inner = FlowDecl(
         name="inner",
-        stmts=(RunStmt(runnable=nested.name, span=Span(line=4)),),
+        stmts=(RunStmt(runnable=_name(nested), span=Span(line=4)),),
         span=Span(line=3),
     )
     outer = FlowDecl(
@@ -690,9 +695,9 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
             ),
         ),
         stmts=(
-            RunStmt(runnable=direct.name, span=Span(line=7)),
-            RunStmt(runnable=inner.name, span=Span(line=8)),
-            RunStmt(runnable=sibling.name, span=Span(line=9)),
+            RunStmt(runnable=_name(direct), span=Span(line=7)),
+            RunStmt(runnable=_name(inner), span=Span(line=8)),
+            RunStmt(runnable=_name(sibling), span=Span(line=9)),
         ),
         span=Span(line=5),
     )
@@ -735,14 +740,14 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
     ) -> Local:
         assert binding.resources is not None
         observed.append(
-            (agic.name, tuple(item.model_name for item in binding.resources.tools))
+            (_name(agic), tuple(item.model_name for item in binding.resources.tools))
         )
         return Local("done", "item")
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
     executor = _executor(tmp_path)
 
-    record = asyncio.run(_start(executor, setup, state, outer.name))
+    record = asyncio.run(_start(executor, setup, state, _name(outer)))
 
     assert record.status == "succeeded"
     assert observed == [
@@ -804,7 +809,7 @@ def test_parallel_children_preserve_input_and_output_types(
             binding,
             {"_": Local(["one", "two"], "list", type_name="Text")},
             StepRef.parse("run_root.0"),
-            child.name,
+            _name(child),
             ["one", "two"],
             limit=2,
         )
@@ -868,7 +873,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
                 binding,
                 {"_": Local(list(range(5)), "list", type_name="Number")},
                 StepRef.parse("run_root.0"),
-                child.name,
+                _name(child),
                 list(range(5)),
                 limit=4,
             )
@@ -906,7 +911,7 @@ def test_flow_step_events_record_only_values_read_by_the_statement(
     )
     executor = _executor(tmp_path)
 
-    root = asyncio.run(_start(executor, _setup(), _state(parent, child), parent.name))
+    root = asyncio.run(_start(executor, _setup(), _state(parent, child), _name(parent)))
 
     steps = [
         step
@@ -1582,7 +1587,7 @@ def test_remote_process_can_cancel_an_owned_run(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
-                runnable=flow.name,
+                runnable=_name(flow),
             ),
             run_id="run_remote_cancel",
         )
@@ -1637,7 +1642,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
-                runnable=flow.name,
+                runnable=_name(flow),
             ),
             run_id="run_executor_stop",
         )
@@ -1670,7 +1675,7 @@ def test_executor_stop_persists_run_before_owner_task_starts(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
-                runnable=flow.name,
+                runnable=_name(flow),
             ),
             run_id="run_never_started",
         )

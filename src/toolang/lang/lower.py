@@ -328,7 +328,7 @@ class _Lowerer:
             )
 
         return ast.AgicDecl(
-            name=self._optional_text(node.child_by_field_name("name")) or "main",
+            name=self._optional_text(node.child_by_field_name("name")),
             input=input_param,
             params=params,
             output=(
@@ -435,7 +435,7 @@ class _Lowerer:
         finally:
             self._flow_local_types = previous_local_types
         return ast.FlowDecl(
-            name=self._optional_text(name) or "main",
+            name=self._optional_text(name),
             name_explicit=name is not None,
             input=input_param,
             params=params,

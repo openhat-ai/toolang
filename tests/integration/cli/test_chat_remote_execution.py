@@ -18,6 +18,7 @@ from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.execution.events import RunBegin, RunEnd, RunEvent
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
+from toolang.state.prepare import prepare_agent_state
 from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import ExecutionHarness
 
@@ -36,7 +37,7 @@ class _Snapshot:
         raise AssertionError("remote run acceptance must not refresh publications")
 
 
-@pytest.mark.parametrize("entry", ["agic:chat", "agic:main", "flow:main"])
+@pytest.mark.parametrize("entry", ["agic:chat", "agic:main", "flow:main", "flow:chat"])
 def test_remote_chat_session_executes_against_the_agent_api(
     tmp_path: Path, entry: str
 ) -> None:
@@ -49,18 +50,24 @@ agic chat(_: Part[]) -> Part[]:
 """
     if entry == "agic:main":
         source = source.replace("agic chat", "agic")
-    elif entry == "flow:main":
+    elif entry in {"flow:main", "flow:chat"}:
         source = source.replace("agic chat", "agic helper")
         source += "\nflow(_: Part[]) -> Part[]:\n  run helper\n"
     harness = ExecutionHarness.create(
         tmp_path,
-        source=source,
+        source="" if entry == "flow:chat" else source,
         responses=[ModelCallResult(message=Message.assistant("remote response"))],
     )
     harness.store.close()
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
-    core.state = _Snapshot(harness.state)
+    state = harness.state
+    if entry == "flow:chat":
+        flows = harness.setup.layout.home / "flows"
+        flows.mkdir()
+        (flows / "chat.too").write_text(source)
+        state = prepare_agent_state(harness.setup.layout)
+    core.state = _Snapshot(state)
     agents.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",

@@ -198,6 +198,10 @@ def is_script_invocation(argv: list[str]) -> bool:
             index += 2
         elif token.startswith("--root="):
             index += 1
+        elif token.startswith("-r"):
+            index += 1
+        elif token == "--":
+            return argv[index + 1 : index + 2] == ["run"]
         else:
             return token == "run"
     return False

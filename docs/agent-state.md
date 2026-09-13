@@ -149,8 +149,11 @@ Module-local capability files include the module name in their path:
 files/caps/<inline|referenced>/<module>/<kind>/<name>/...
 ```
 
-The aggregate runnable indexes are derived from validated Programs and are not
-duplicated in `layer.json`.
+Programs preserve omitted agic and flow names as `None`. State binds them locally
+as `main`, applies filename-based public exports, and rejects duplicate local or
+public names across both kinds. It indexes the original declarations without
+mutating their AST names. The indexes are derived from Programs and are not
+duplicated in `layer.json`. Script help uses the same binding rules.
 
 ## Prepare, Publish, and Load
 
@@ -161,8 +164,8 @@ headers are rejected. Missing optional source is represented by empty text.
 Normal preparation hashes the selected source bytes and compares the portable
 manifest with the published layer. An unchanged current layer is loaded without
 parsing Programs, materializing capabilities, or polling remote refs. Layer
-schema 7 rebuilds older caches to apply strict source parsing and the `main`
-identity for unnamed agics. Exact historical loads retain their recorded
+schema 7 rebuilds older caches to apply strict source parsing, preserve unnamed
+AST declarations, and bind them in State. Exact historical loads retain their recorded
 Programs and run references. These rules also apply when the root and home are
 mounted at different absolute paths. An explicit refresh resolves remote refs
 again.

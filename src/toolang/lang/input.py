@@ -257,28 +257,25 @@ def resolve_runnable_input(
 ) -> RunnableInput:
     """Resolve caller values once against one runnable signature."""
 
+    name = runnable.name or f"unnamed {runnable.kind}"
     validate_runnable_input_names(input)
     parameters = {parameter.name: parameter for parameter in runnable.params}
     unknown = sorted(set(input) - set(parameters) - {"_"})
     if unknown:
-        raise ValueError(
-            f"unknown named inputs for {runnable.name}: {', '.join(unknown)}"
-        )
+        raise ValueError(f"unknown named inputs for {name}: {', '.join(unknown)}")
     missing = sorted(
         name
         for name, parameter in parameters.items()
         if not parameter.optional and name not in input
     )
     if missing:
-        raise ValueError(
-            f"missing named inputs for {runnable.name}: {', '.join(missing)}"
-        )
+        raise ValueError(f"missing named inputs for {name}: {', '.join(missing)}")
     if runnable.input is None and "_" in input:
-        raise ValueError(f"{runnable.name} does not accept primary input")
+        raise ValueError(f"{name} does not accept primary input")
     if runnable.input is not None:
         parameters["_"] = runnable.input
         if not runnable.input.optional and "_" not in input:
-            raise ValueError(f"{runnable.name} requires primary input")
+            raise ValueError(f"{name} requires primary input")
     supplied = CallInput(input)
     return CallInput(
         {

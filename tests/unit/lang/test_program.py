@@ -480,7 +480,11 @@ flow evaluate:
 """
     )
 
-    generated = [agic for agic in program.agics if agic.name.startswith("<agic:")]
+    generated = [
+        agic
+        for agic in program.agics
+        if agic.name is not None and agic.name.startswith("<agic:")
+    ]
 
     assert sorted(agic.output for agic in generated if agic.output) == [
         "Boolean",
@@ -810,7 +814,7 @@ def test_program_source_parse_preserves_authored_shebang_line_numbers(
     assert program.agics[0].span.line == 6
 
 
-def test_program_source_names_an_unnamed_agic_main(tmp_path: Path) -> None:
+def test_program_source_preserves_an_unnamed_agic(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
@@ -822,7 +826,7 @@ agic:
     program = read_authored_source(root, "alice").load_program().parse()
 
     assert len(program.agics) == 1
-    assert program.agics[0].name == "main"
+    assert program.agics[0].name is None
     assert program.agics[0].messages[0].content == "Reply directly."
 
 
@@ -834,9 +838,9 @@ agic:
         "agic:\n  Hello.\nagic main:\n  Hello again.\n",
     ],
 )
-def test_unnamed_and_named_main_share_one_runnable_namespace(source):
-    with pytest.raises(ToolangValidationError, match="Duplicate"):
-        Program.from_source(source)
+def test_program_preserves_names_before_state_binding(source):
+    program = Program.from_source(source)
+    assert any(item.name is None for item in (*program.agics, *program.flows))
 
 
 def test_explicit_default_keeps_its_authored_name():
@@ -849,7 +853,7 @@ def test_flow_name_explicitness_survives_serialization() -> None:
 
     program = Program.from_source("flow:\n  pass\n\nflow named:\n  pass\n")
 
-    assert [flow.name for flow in program.flows] == ["main", "named"]
+    assert [flow.name for flow in program.flows] == [None, "named"]
     assert [flow.name_explicit for flow in program.flows] == [False, True]
     assert program_from_data(to_data(program)) == program
 

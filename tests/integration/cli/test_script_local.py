@@ -170,17 +170,20 @@ def test_local_script_saves_only_to_an_explicit_destination(
     )
 
 
+@pytest.mark.parametrize("entry", ["research", "default"])
 def test_local_script_renders_composite_flow_progress(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    entry: str,
 ) -> None:
+    source_text = _FLOW_SOURCE.replace("flow research", f"flow {entry}")
     source = tmp_path / "research.too"
-    source.write_text(_FLOW_SOURCE, encoding="utf-8")
+    source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
-        source=_FLOW_SOURCE,
+        source=source_text,
         responses=[
             ModelCallResult(message=Message.assistant('["one","two"]')),
         ],
@@ -205,17 +208,13 @@ def test_local_script_renders_composite_flow_progress(
     )
     monkeypatch.setattr("toolang.up.logging.configure_logging_plan", lambda _plan: None)
 
-    result = script.dispatch(
-        [],
-        [str(source), "research", "--", "agent framework"],
-        prog_name="toolang",
-    )
+    result = cli.main(["run", str(source), entry, "--", "agent framework"])
     output = capsys.readouterr()
 
     try:
         assert result == 0
         assert output.out == ""
-        assert "Run flow research" not in output.err
+        assert f"Run flow {entry}" not in output.err
         assert "> agent framework" not in output.err
         assert "[0] Expand the topic." in output.err
         assert "line 10" not in output.err

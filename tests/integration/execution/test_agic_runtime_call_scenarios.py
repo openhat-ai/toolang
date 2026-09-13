@@ -13,6 +13,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
     last_tool_result,
     route_snapshots,
+    without_route_snapshots,
 )
 from tests.support.execution_harness import (
     ExecutionHarness,
@@ -94,10 +95,17 @@ agic helper() -> Text:
             )
 
             assert root.status == "succeeded", root.error
-            assert "Use this entry for the general request." in (
-                harness.adapter.invocations[0].call.instructions
+            targets = route_snapshots(harness.adapter.invocations[0].call)[directive]
+            assert len(targets) == 1
+            assert targets[0]["ref"] == f"{kind}:main"
+            assert (
+                targets[0]["documentation"] == "Use this entry for the general request."
             )
-            assert Message.user("Main.") in harness.adapter.invocations[1].call.messages
+            child_call = harness.adapter.invocations[1].call
+            assert route_snapshots(child_call) == {"hands": [], "handoffs": []}
+            assert without_route_snapshots(child_call.messages) == [
+                Message.user("Main.")
+            ]
             controls = [
                 control
                 for run in harness.store.list_run_tree(root_run_id=root.id)
@@ -2326,8 +2334,10 @@ agic target() -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("unnamed", [False, True])
 def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
     tmp_path: Path,
+    unnamed: bool,
 ) -> None:
     source = """
 flow outer(_: Text) -> Text:
@@ -2346,8 +2356,14 @@ agic target(_: Text) -> Text:
   context: none
   instruct:
     old target state
+    bound route {{runnable.name}}
   user: {{_}}
 """
+    target = "main" if unnamed else "target"
+    if unnamed:
+        source = source.replace("agic target(", "agic(").replace(
+            "agic:target", "agic:main"
+        )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")
@@ -2368,7 +2384,7 @@ agic target(_: Text) -> Text:
                         call_id="provider-run-public-target",
                         name="_toolang__run",
                         input={
-                            "runnable": "agic:target",
+                            "runnable": f"agic:{target}",
                             "input": {"_": "topic"},
                         },
                     ),
@@ -2424,5 +2440,7 @@ agic target(_: Text) -> Text:
             }
             assert "old target state" in before_reload.instructions
             assert "new target state" in after_reload.instructions
+            assert f"bound route {target}" in before_reload.instructions
+            assert f"bound route {target}" in after_reload.instructions
 
     asyncio.run(scenario())

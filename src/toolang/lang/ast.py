@@ -144,7 +144,7 @@ class Message(Node):
 class AgicDecl(Node):
     kind: ClassVar[str] = "agic"
 
-    name: str
+    name: str | None
     input: Parameter | None = None
     params: tuple[Parameter, ...] = ()
     output: str | None = None
@@ -305,7 +305,7 @@ FlowStmt = Annotated[
 class FlowDecl(Node):
     kind: ClassVar[str] = "flow"
 
-    name: str
+    name: str | None
     name_explicit: bool = True
     input: Parameter | None = None
     params: tuple[Parameter, ...] = ()

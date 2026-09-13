@@ -53,6 +53,43 @@ def _layout(root: Path, name: str = "alice") -> AgentLayout:
     return AgentLayout.resident(root, name)
 
 
+@pytest.mark.parametrize("exported", [False, True])
+def test_authored_default_flow_takes_precedence_over_synthetic_default(
+    tmp_path, exported
+):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    if exported:
+        layout.program.write_text("agic():\n  Main.\n")
+        source = layout.home / "flows" / "default.too"
+        source.parent.mkdir()
+        source.write_text("flow():\n  pass\n")
+    else:
+        layout.program.write_text("flow default():\n  pass\n")
+    state = prepare_agent_state(layout)
+    module, runnable = resolve_state_runnable(state, "default", kind="flow")
+    assert module == ("_flow_default" if exported else "agent")
+    assert runnable.name == (None if exported else "default")
+    assert state.runnables["default"].kind == "flow"
+
+
+@pytest.mark.parametrize("first", ["agic", "flow"])
+@pytest.mark.parametrize("second", ["agic", "flow"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_state_rejects_colliding_main_bindings(tmp_path, first, second, explicit):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    name = " main" if explicit else ""
+    source = f"{first}{name}:\n  pass\n\n{second}:\n  pass\n"
+    program = Program.from_source(source)
+    assert any(item.name is None for item in (*program.agics, *program.flows))
+    layout.program.write_text(source)
+    with pytest.raises(
+        StatePreparationError, match="Runnable name is not unique: main"
+    ):
+        prepare_agent_state(layout)
+
+
 def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
     tmp_path, monkeypatch
 ):
@@ -78,9 +115,44 @@ def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
 
     current = prepare_agent_state(layout)
     assert current.home_revision != old.home_revision
-    assert current.modules["agent"].agics[0].name == "main"
+    assert current.modules["agent"].agics[0].name is None
+    assert current.runnables["main"] is current.modules["agent"].agics[0]
     assert load_agent_state(layout, old.revision).modules["agent"] == old_program
     assert prepare_agent_state(layout).home_revision == current.home_revision
+
+
+def test_prepare_rebuilds_unnamed_flow_ast_and_preserves_historical_export(
+    tmp_path, monkeypatch
+):
+    layout = _layout(tmp_path)
+    source = layout.home / "flows" / "research.too"
+    source.parent.mkdir(parents=True)
+    source.write_text("flow:\n  pass\n")
+    parse = ProgramSource.parse
+
+    def legacy_parse(self):
+        program = parse(self)
+        return replace(
+            program, flows=tuple(replace(flow, name="main") for flow in program.flows)
+        )
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", legacy_parse)
+        old = prepare_agent_state(layout)
+    assert old.runnables["research"].name == "main"
+
+    current = prepare_agent_state(layout)
+    assert current.home_revision != old.home_revision
+    assert current.runnables["research"].name is None
+    assert (
+        current.module_runnable("_flow_research", "main")
+        is current.runnables["research"]
+    )
+    historical = load_agent_state(layout, old.revision)
+    assert historical.modules == old.modules
+    assert historical.runnables["research"].name == "main"
 
 
 def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):
@@ -97,7 +169,9 @@ def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeyp
         legacy.setattr(ProgramSource, "parse", legacy_parse)
         old = prepare_agent_state(layout)
 
-    with pytest.raises(StatePreparationError, match="Duplicate runnable name 'main'"):
+    with pytest.raises(
+        StatePreparationError, match="Runnable name is not unique: main"
+    ):
         prepare_agent_state(layout)
     assert load_agent_state(layout, old.revision).modules == old.modules
 
@@ -1146,7 +1220,8 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
     assert state.runnable_modules["research"] == "_flow_research"
-    assert exported is program.find_flow("main")
+    assert exported is program.flows[0]
+    assert exported.name is None
     default = state.runnables["default"]
     assert state.runnable_modules["default"] == "agent"
     assert default.name == "default"
@@ -1166,14 +1241,14 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     local = resolve_bound_runnable(first, "_flow_research", "flow:research")
     assert public_module == "_flow_research"
     assert public is local
-    assert public.name == local.name == "main"
+    assert public.name is local.name is None
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))
 
     assert "research" in first.runnables
     assert "research" not in second.runnables
-    assert second.runnables["report"].name == "main"
+    assert second.runnables["report"].name is None
     assert first.revision != second.revision
 
 
@@ -1294,7 +1369,7 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    assert loaded.modules["_flow_research"].find_flow("main") is not None
+    assert loaded.modules["_flow_research"].flows[0].name is None
 
 
 def test_flow_modules_can_reference_the_same_cap(

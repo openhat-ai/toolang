@@ -35,7 +35,12 @@ from .resources import (
     resource_tools,
     snapshot_model_selection,
 )
-from ..runnables import AgicRoutes, runnable_descriptions, resolve_agic_routes
+from ..runnables import (
+    AgicRoutes,
+    parse_runnable_ref,
+    runnable_descriptions,
+    resolve_agic_routes,
+)
 from ..records import RecallControlPayload
 
 if TYPE_CHECKING:
@@ -75,16 +80,21 @@ def build_agic_frame(
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
+    name = agic.name
+    if name is None:
+        if run.bindings.runnable is None:
+            raise RuntimeError(f"run runnable binding missing: {run.run_id}")
+        name, _kind = parse_runnable_ref(run.bindings.runnable)
     resources = run.resources
     if resources is None:
         raise RuntimeError(f"run resources missing: {run.run_id}")
     model_keys = resources.models
     if not model_keys:
-        raise ToolangError(f"run resources include no models: {agic.name}")
+        raise ToolangError(f"run resources include no models: {name}")
     selection = snapshot_model_selection(run.setup)
     ref = run.model_request.ref if run.model_request is not None else run.bindings.model
     if ref is None:
-        raise ToolangError(f"run requires a model: {agic.name}")
+        raise ToolangError(f"run requires a model: {name}")
     entry = selection.resolve(ref)
     if entry.key not in model_keys:
         raise ToolangError(f"model ref is outside run resources: {ref}")
@@ -99,7 +109,7 @@ def build_agic_frame(
     routes = resolve_agic_routes(run.state, agic)
     runtime_tools = (
         {}
-        if agic.name.startswith("<agic:")
+        if name.startswith("<agic:")
         else {
             name: tool
             for name, tool in run.setup.tools.runtime.items()
@@ -127,6 +137,7 @@ def build_agic_frame(
         run.setup,
         agic,
         module=run.module,
+        runnable_name=name,
         model=model,
         caps=caps,
         facts={
@@ -200,7 +211,7 @@ def _log_frame(prepared: _AgicFrame) -> None:
         "prompt.assembled thread=%s run=%s runnable=%s model=%s tools=%s",
         run.thread,
         run.run_id,
-        prepared.agic.name,
+        prepared.inputs.runnable_name,
         prepared.model.ref,
         json.dumps(sorted(prepared.tools), ensure_ascii=False),
     )

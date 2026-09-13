@@ -101,41 +101,12 @@ class _ServeCommand(OptionalValueCommand, RunAgentCommand):
 
 
 class _ScriptEntryCommand(CliCommand):
-    """Leave every token after the file for the dynamic Script command."""
+    """Show static help when the required Script file is omitted."""
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        if args and not args[0].startswith("-"):
-            ctx.args = list(args)
-            return ctx.args
+        if args in ([], ["--"]) and not ctx.resilient_parsing:
+            show_help(ctx)
         return super().parse_args(ctx, args)
-
-    def invoke(self, ctx: Context) -> Any:
-        if not ctx.args:
-            return super().invoke(ctx)
-        from typer._click.core import ParameterSource
-        from typer._click.exceptions import UsageError
-        from .commands import script
-
-        root = ctx.find_root()
-        if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
-            raise UsageError(
-                "Script invocation does not support global --root / -r", ctx
-            )
-        source = routing._source_path(ctx.args[0])
-        if source is None or source.is_dir():
-            raise UsageError(
-                "run requires a local .too file; use serve TARGET to host an agent",
-                ctx,
-            )
-        raise typer.Exit(script.dispatch([], ctx.args, prog_name=ctx.command_path))
-
-    def collect_usage_pieces(self, ctx: Context) -> list[str]:
-        return ["[OPTIONS]", "FILE", "[RUNNABLE]", "[ARGS]..."]
-
-    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        formatter.write_usage(
-            ctx.command_path, " ".join(self.collect_usage_pieces(ctx))
-        )
 
 
 class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
@@ -195,7 +166,7 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(
     cls=_ToolangGroup,
-    help="Run and manage Toolang agents",
+    help="Run scripts and manage Toolang agents",
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,
@@ -564,7 +535,8 @@ _registered_command(
 _registered_command(
     "init",
     "toolang.cli.toolang.commands.init:init_script",
-    help="Create a Script from the default template",
+    help="Create main.too from the default template",
+    epilog="Creates missing directories. Fails if main.too already exists.",
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 _registered_command(
@@ -572,6 +544,8 @@ _registered_command(
     "toolang.cli.toolang.commands.script:run_script",
     help="Run an agic or flow from a local .too file",
     cls=_ScriptEntryCommand,
+    context_settings={"allow_interspersed_args": False},
+    epilog="For script-specific help, add --help after FILE or RUNNABLE.",
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 

@@ -333,6 +333,7 @@ def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, co
                     )
                     if enabled:
                         assert snapshots[tag][0]["input"] == {
+                            "documentation": "",
                             "type": type_name,
                             "optional": False,
                         }

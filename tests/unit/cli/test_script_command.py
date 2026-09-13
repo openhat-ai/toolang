@@ -1404,7 +1404,8 @@ flow pipeline:
     assert result == 0
     assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
-    assert f"Run runnables from {filename}" in stdout
+    assert f"Run agics and flows from {filename}" in stdout
+    assert "Omit RUNNABLE to use main" in stdout
     assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
