@@ -333,6 +333,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "inspect",
         ),
         "Script Commands": ("init", "run"),
+        "Source Commands": ("parse", "fmt", "highlight"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -395,6 +396,18 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
             "Usage: pytest <AGENT> chat [OPTIONS]",
             "AGENT",
             "{AGENT}",
+        ),
+        (
+            ["parse"],
+            "Usage: pytest parse [OPTIONS] <SOURCE>",
+            "SOURCE",
+            "{SOURCE}",
+        ),
+        (
+            ["highlight"],
+            "Usage: pytest highlight [OPTIONS] <SOURCE>",
+            "SOURCE",
+            "{SOURCE}",
         ),
         (
             ["fmt"],

@@ -1,17 +1,25 @@
-"""Hidden Toolang source commands."""
+"""Offline Toolang source developer commands."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Annotated
 
 import typer
-from typer._click.exceptions import ClickException
+from typer._click.exceptions import ClickException, UsageError
 
 from toolang.cli.common.parameters import PathType
+from ..source_output import (
+    ColorOption,
+    HtmlOption,
+    color_enabled,
+    render_source,
+    write_source,
+)
 
 
 def fmt(
@@ -39,6 +47,19 @@ def fmt(
         Path | None,
         typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
     ] = None,
+    stdout: Annotated[
+        bool,
+        typer.Option("--stdout", help="Print formatted source without writing files"),
+    ] = False,
+    highlight: Annotated[
+        bool,
+        typer.Option(
+            "--highlight",
+            help="Print highlighted formatted source without writing files",
+        ),
+    ] = False,
+    color: ColorOption = None,
+    html: HtmlOption = False,
 ) -> None:
     from ....lang.format import ToolangFormatError, format_source
 
@@ -49,6 +70,27 @@ def fmt(
         return format_source(source, tab_size=tab_size)
 
     path_args = paths or []
+    if (color is not None or html) and not highlight:
+        raise UsageError("--color and --html require --highlight")
+    if stdout or highlight:
+        if check:
+            raise UsageError("--check cannot be combined with --stdout or --highlight")
+        if not path_args and stdin_filepath is not None:
+            path_args = [Path("-")]
+        if len(path_args) != 1:
+            raise UsageError("stdout formatting requires exactly one file or '-'")
+        label, source = _read_source(path_args[0], stdin_filepath=stdin_filepath)
+        try:
+            formatted = format_too_source(source)
+        except ToolangFormatError as exc:
+            raise ClickException(f"{label}: {exc}") from exc
+        _emit_source(
+            formatted,
+            color=color if highlight else None,
+            html=html,
+            highlight=highlight,
+        )
+        return
     if any(str(path) == "-" for path in path_args) and len(path_args) > 1:
         raise ClickException("'-' cannot be combined with other path arguments")
 
@@ -69,7 +111,7 @@ def fmt(
     for source_path in source_paths:
         try:
             source = source_path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             raise ClickException(f"{source_path}: {exc}") from exc
         try:
             formatted = format_too_source(source)
@@ -82,7 +124,7 @@ def fmt(
             continue
         try:
             source_path.write_text(formatted, encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             raise ClickException(f"{source_path}: {exc}") from exc
 
     if check and changed:
@@ -102,9 +144,9 @@ def _format_stdin(
 ) -> None:
     try:
         formatted = format_source(sys.stdin.read())
-    except error_type as exc:
+    except (error_type, UnicodeError) as exc:
         raise ClickException(f"{stdin_filepath}: {exc}") from exc
-    sys.stdout.write(formatted)
+    write_source(formatted, sys.stdout)
 
 
 def _stdin_path_arg(paths: list[Path]) -> Path | None:
@@ -143,12 +185,20 @@ def parse_program(
         typer.Argument(
             metavar="SOURCE",
             click_type=PathType(),
-            help="Toolang source file to parse, or '-' for stdin",
+            help="Toolang file to parse, or '-' for stdin",
         ),
     ],
+    ast: Annotated[
+        bool, typer.Option("--ast", help="Show the semantic AST (default)")
+    ] = False,
+    cst: Annotated[
+        bool, typer.Option("--cst", help="Show the raw concrete syntax tree")
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit JSON instead of S-expression")
+    ] = False,
     compact: Annotated[
-        bool,
-        typer.Option("--compact", help="Emit compact JSON"),
+        bool, typer.Option("--compact", help="Emit compact JSON (implies --json)")
     ] = False,
     stdin_filepath: Annotated[
         Path | None,
@@ -156,31 +206,108 @@ def parse_program(
     ] = None,
 ) -> None:
     from ....common.errors import ToolangError
+    from ....lang import cst as concrete
     from ....lang.ast import Program, to_data
+    from ..source_output import ast_sexp, cst_sexp
 
-    label, text = _read_source(source, stdin_filepath=stdin_filepath)
-    try:
-        program = Program.from_source(text)
-    except ToolangError as exc:
-        raise ClickException(f"{label}: {exc}") from exc
-    payload = json.dumps(
-        to_data(program),
-        ensure_ascii=False,
-        indent=None if compact else 2,
-        separators=(",", ":") if compact else None,
+    if ast and cst:
+        raise UsageError("--ast and --cst are mutually exclusive")
+    label, source_text = _read_source(source, stdin_filepath=stdin_filepath)
+    errors = []
+    if cst:
+        tree = concrete.parse(source_text.encode("utf-8"))
+        errors = concrete.diagnostics(tree.root_node)
+        output = (
+            _json(concrete.to_data(tree, source_text), compact=compact)
+            if json_output or compact
+            else cst_sexp(tree.root_node)
+        )
+    else:
+        try:
+            program = Program.from_source(source_text)
+        except ToolangError as exc:
+            raise ClickException(f"{label}: {exc}") from exc
+        output = (
+            _json(to_data(program), compact=compact)
+            if json_output or compact
+            else ast_sexp(program)
+        )
+    write_source(output, sys.stdout)
+    for error in errors:
+        point = error["start_point"]
+        typer.echo(
+            f"{label}:{point['row'] + 1}:{point['column'] + 1}: {error['message']}",
+            err=True,
+        )
+    if errors:
+        raise typer.Exit(1)
+
+
+def highlight_source(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            metavar="SOURCE",
+            click_type=PathType(),
+            help="Toolang file to highlight, or '-' for stdin",
+        ),
+    ],
+    color: ColorOption = None,
+    html: HtmlOption = False,
+    stdin_filepath: Annotated[
+        Path | None,
+        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
+    ] = None,
+) -> None:
+    _label, text = _read_source(source, stdin_filepath=stdin_filepath)
+    _emit_source(text, color=color, html=html, highlight=True)
+
+
+def _emit_source(
+    source: str, *, color: ColorOption, html: bool, highlight: bool
+) -> None:
+    enabled = highlight and color_enabled(
+        color, environ=os.environ, terminal=sys.stdout.isatty()
     )
-    sys.stdout.write(f"{payload}\n")
+    try:
+        output = render_source(source, color=enabled, html=html)
+    except (ValueError, RuntimeError) as exc:
+        raise ClickException(f"Could not highlight source: {exc}") from exc
+    write_source(output, sys.stdout)
+
+
+def _json(value: object, *, compact: bool) -> str:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=None if compact else 2,
+            separators=(",", ":") if compact else None,
+        )
+        + "\n"
+    )
 
 
 def _read_source(source: Path, *, stdin_filepath: Path | None) -> tuple[Path, str]:
     if str(source) == "-":
-        return stdin_filepath or Path("<stdin>"), sys.stdin.read()
+        try:
+            buffer = getattr(sys.stdin, "buffer", None)
+            text = (
+                buffer.read().decode("utf-8")
+                if buffer is not None
+                else sys.stdin.read()
+            )
+        except (OSError, UnicodeError) as exc:
+            raise ClickException(f"{stdin_filepath or '<stdin>'}: {exc}") from exc
+        return stdin_filepath or Path("<stdin>"), text
     if stdin_filepath is not None:
-        raise ClickException("--stdin-filepath can only be combined with '-'")
+        raise UsageError("--stdin-filepath can only be combined with '-'")
     candidate = source.expanduser()
+    if candidate.is_dir():
+        raise UsageError(f"expected one .too file, not a directory: {candidate}")
     if candidate.suffix != ".too":
         raise ClickException(f"not a .too file: {candidate}")
     try:
-        return candidate, candidate.read_text(encoding="utf-8")
-    except OSError as exc:
+        return candidate, candidate.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError) as exc:
         raise ClickException(f"{candidate}: {exc}") from exc

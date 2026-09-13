@@ -27,6 +27,7 @@ Use this directory for:
 | [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
 | [program.md](./program.md) | Program declarations, runnable signatures, agics, flows, directives, and surface rules |
 | [toolang-authoring-conventions.md](./toolang-authoring-conventions.md) | Source style, natural prose, type defaults, and documentation comments |
+| [source-commands.md](./source-commands.md) | Offline formatting, AST/CST inspection, and syntax highlighting |
 | [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
 | [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
 | [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |

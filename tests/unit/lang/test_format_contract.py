@@ -150,3 +150,77 @@ def test_comments_do_not_change_nested_block_ownership(
             formatted = format_source(source)
             assert _semantics(formatted) == _semantics(source), source
             assert format_source(formatted) == formatted, source
+
+
+@pytest.mark.parametrize(
+    "signature",
+    ["_", "_: Part[]", "_: Text", "_, instruction", "instruction?: Text", ""],
+)
+def test_concise_signatures_preserve_authored_types_and_parameter_contract(signature):
+    source = f"agic rewrite({signature}):\n    Rewrite.\n"
+    formatted = format_source(source)
+    assert formatted.startswith(f"agic rewrite({signature}):\n")
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
+def test_import_grouping_retains_source_order_and_documentation_barriers():
+    source = (
+        "with skill org/z\n\nwith skill org/a\nwith service org/b\n"
+        "with skill org/c\n\n## Detached.\n\nwith skill org/d\n"
+        "## Attached.\nwith skill org/e\n\nagic work:\n  Work.\n"
+    )
+    formatted = format_source(source)
+    assert formatted.startswith(
+        "with skill org/z\nwith skill org/a\n\nwith service org/b\n\nwith skill org/c\n"
+    )
+    assert "## Detached.\n\nwith skill org/d" in formatted
+    assert "## Attached.\nwith skill org/e" in formatted
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
+def test_directive_runs_and_inline_conversations_are_compact_without_reordering():
+    source = (
+        "agic work:\n  models = first\n\n  models += second\n"
+        "  tools = fs/*\n  models -= third\n  tools += shell/*\n"
+        "  user: First.\n\n  assistant: Second.\n\n  user: Third.\n"
+    )
+    formatted = format_source(source)
+    assert formatted == (
+        "agic work:\n  models = first\n  models += second\n\n"
+        "  tools = fs/*\n\n  models -= third\n\n  tools += shell/*\n\n"
+        "  user: First.\n  assistant: Second.\n  user: Third.\n"
+    )
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
+def test_prose_flow_boundaries_keep_literal_body_whitespace():
+    source = (
+        "flow work:\n  Identify the question.\n  run:\n"
+        "    First.\n\n\n    Second.\n  Write the answer.\n"
+    )
+    formatted = format_source(source)
+    assert "Identify the question.\n\n  run:" in formatted
+    assert "Second.\n\n  Write the answer." in formatted
+    assert "First.\n\n\n    Second." in formatted
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("module_marker", ["#@", "##!"])
+def test_new_documentation_conventions_preserve_parameter_bindings(module_marker):
+    source = (
+        f"#!/usr/bin/env too\n{module_marker}Module.\n"
+        "##Rewrite text.\n## @param   _   Input.\n"
+        "## @param instruction   Direction.\n## @return ordinary prose\n"
+        "agic rewrite( _, instruction ? ) :\n"
+        "    user: {{_}} {{instruction}}\n"
+    )
+    formatted = format_source(source)
+    assert f"{module_marker} Module." in formatted
+    assert "## @param _ Input.\n## @param instruction Direction." in formatted
+    assert "agic rewrite(_, instruction?):" in formatted
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
