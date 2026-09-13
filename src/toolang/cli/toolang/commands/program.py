@@ -79,7 +79,9 @@ def fmt(
             path_args = [Path("-")]
         if len(path_args) != 1:
             raise UsageError("stdout formatting requires exactly one file or '-'")
-        label, source = _read_source(path_args[0], stdin_filepath=stdin_filepath)
+        label, source = _read_source(
+            path_args[0], stdin_filepath=stdin_filepath, preserve_newlines=False
+        )
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
@@ -143,7 +145,10 @@ def _format_stdin(
     error_type: type[Exception],
 ) -> None:
     try:
-        formatted = format_source(sys.stdin.read())
+        _, source = _read_source(
+            Path("-"), stdin_filepath=stdin_filepath, preserve_newlines=False
+        )
+        formatted = format_source(source)
     except (error_type, UnicodeError) as exc:
         raise ClickException(f"{stdin_filepath}: {exc}") from exc
     write_source(formatted, sys.stdout)
@@ -212,7 +217,9 @@ def parse_program(
 
     if ast and cst:
         raise UsageError("--ast and --cst are mutually exclusive")
-    label, source_text = _read_source(source, stdin_filepath=stdin_filepath)
+    label, source_text = _read_source(
+        source, stdin_filepath=stdin_filepath, preserve_newlines=cst
+    )
     errors = []
     if cst:
         tree = concrete.parse(source_text.encode("utf-8"))
@@ -259,7 +266,9 @@ def highlight_source(
         typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
     ] = None,
 ) -> None:
-    _label, text = _read_source(source, stdin_filepath=stdin_filepath)
+    _label, text = _read_source(
+        source, stdin_filepath=stdin_filepath, preserve_newlines=True
+    )
     _emit_source(text, color=color, html=html, highlight=True)
 
 
@@ -288,26 +297,33 @@ def _json(value: object, *, compact: bool) -> str:
     )
 
 
-def _read_source(source: Path, *, stdin_filepath: Path | None) -> tuple[Path, str]:
+def _read_source(
+    source: Path, *, stdin_filepath: Path | None, preserve_newlines: bool
+) -> tuple[Path, str]:
     if str(source) == "-":
-        try:
+        label = stdin_filepath or Path("<stdin>")
+    else:
+        if stdin_filepath is not None:
+            raise UsageError("--stdin-filepath can only be combined with '-'")
+        label = source.expanduser()
+        if label.is_dir():
+            raise UsageError(f"expected one .too file, not a directory: {label}")
+        if label.suffix != ".too":
+            raise ClickException(f"not a .too file: {label}")
+    try:
+        if str(source) == "-":
             buffer = getattr(sys.stdin, "buffer", None)
             text = (
                 buffer.read().decode("utf-8")
                 if buffer is not None
                 else sys.stdin.read()
             )
-        except (OSError, UnicodeError) as exc:
-            raise ClickException(f"{stdin_filepath or '<stdin>'}: {exc}") from exc
-        return stdin_filepath or Path("<stdin>"), text
-    if stdin_filepath is not None:
-        raise UsageError("--stdin-filepath can only be combined with '-'")
-    candidate = source.expanduser()
-    if candidate.is_dir():
-        raise UsageError(f"expected one .too file, not a directory: {candidate}")
-    if candidate.suffix != ".too":
-        raise ClickException(f"not a .too file: {candidate}")
-    try:
-        return candidate, candidate.read_bytes().decode("utf-8")
+        else:
+            text = label.read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as exc:
-        raise ClickException(f"{candidate}: {exc}") from exc
+        raise ClickException(f"{label}: {exc}") from exc
+    # AST and formatting retain the universal-newline behavior of read_text().
+    # CST and original-source highlighting must retain every input byte instead.
+    if not preserve_newlines:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return label, text

@@ -227,3 +227,52 @@ def test_query_failure_does_not_emit_partial_code_or_html(monkeypatch):
         assert result.exit_code == 1
         assert result.stdout == ""
         assert "query could not compile" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-"],
+        ["--stdin-filepath", "work.too"],
+        ["-", "--stdout"],
+        ["-", "--highlight", "--color", "never"],
+    ],
+)
+def test_formatter_stdin_uses_utf8_independently_of_python_io_encoding(
+    tmp_path, arguments
+):
+    source = "## 中文文档\nagic echo:\n    中文 🧭\n".encode()
+    command = Path(sys.executable).parent / "too"
+    result = subprocess.run(
+        [str(command), "--root", str(tmp_path / "root"), "fmt", *arguments],
+        input=source,
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "latin-1"},
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == format_source(source.decode()).encode()
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_ast_and_formatter_modes_preserve_universal_newline_compatibility(
+    tmp_path, newline
+):
+    canonical = "agic echo:\n  Hello.\n"
+    original = canonical.replace("\n", newline).encode()
+    path = tmp_path / "work.too"
+    path.write_bytes(original)
+    parsed = runner.invoke(app, ["parse", str(path), "--json"])
+    assert parsed.exit_code == 0, parsed.output
+    assert json.loads(parsed.stdout) == to_data(Program.from_source(canonical))
+    assert runner.invoke(app, ["fmt", str(path), "--check"]).exit_code == 0
+    for arguments in (["--stdout"], ["--highlight", "--color", "never"]):
+        formatted = runner.invoke(app, ["fmt", str(path), *arguments])
+        assert formatted.exit_code == 0, formatted.output
+        assert formatted.stdout == canonical
+    concrete = runner.invoke(app, ["parse", str(path), "--cst", "--json"])
+    assert json.loads(concrete.stdout)["source"].encode() == original
+    highlighted = runner.invoke(app, ["highlight", str(path), "--color", "never"])
+    assert highlighted.stdout_bytes == original
+    assert path.read_bytes() == original
