@@ -295,3 +295,34 @@ def test_first_explicit_text_line_is_never_documentation(marker: str) -> None:
     assert program.agics[0].doc is None
     assert program.agics[0].messages[0].doc is None
     assert program.agics[0].messages[0].content == body
+
+
+@pytest.mark.parametrize(
+    "comment, module_doc, runnable_doc, input_doc",
+    [
+        ("#@ Module.", "Module.", None, None),
+        ("##! Module.", "Module.", None, None),
+        ("## Runnable.", None, "Runnable.", None),
+        ("## @param _ Input.", None, None, "Input."),
+    ],
+)
+def test_leading_bom_preserves_first_documentation_comment(
+    comment, module_doc, runnable_doc, input_doc
+):
+    program = Program.from_source(f"\ufeff{comment}\nagic:\n  pass\n")
+    assert program.doc == module_doc
+    assert program.agics[0].doc == runnable_doc
+    assert program.agics[0].input is not None
+    assert program.agics[0].input.doc == input_doc
+
+
+@pytest.mark.parametrize(
+    "comments, error",
+    [
+        ("## @param unknown Input.\n", "Unknown parameter"),
+        ("## @param _ First.\n## @param _ Second.\n", "Duplicate documentation"),
+    ],
+)
+def test_leading_bom_does_not_bypass_parameter_validation(comments, error):
+    with pytest.raises(ToolangValidationError, match=error):
+        Program.from_source(f"\ufeff{comments}agic:\n  pass\n")

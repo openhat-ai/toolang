@@ -1057,3 +1057,56 @@ def test_format_source_keeps_later_shebang_as_an_item_doc_separator():
     formatted = format_source(source)
     assert Program.from_source(formatted).agics[0].doc is None
     assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize(
+    "prelude",
+    [
+        "",
+        "  Work before.\n",
+        "  user: Before.\n",
+        "  user:\n    Before.\n",
+        "  context: Context.\n",
+        "  tools += shell\n",
+    ],
+)
+@pytest.mark.parametrize("message", ["Work.", "user: Work.", "user:\n    Work."])
+def test_format_source_keeps_message_documentation_attached(prelude, message):
+    source = f"agic:\n{prelude}  ## Message.\n  ## Details.\n  {message}\n"
+    before = Program.from_source(source)
+    assert before.agics[0].messages[-1].doc == "Message.\nDetails."
+    formatted = format_source(source)
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(before)
+    )
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("comment", ["#@", "##!", "##", "## @param _"])
+def test_format_source_formats_first_documentation_comment_after_bom(comment):
+    source = f"\ufeff{comment}   Description.\nagic:\n    pass\n"
+    formatted = format_source(source)
+    assert formatted.startswith(f"\ufeff{comment} Description.\n")
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+    assert format_source(formatted) == formatted
+
+
+def test_format_source_preserves_bom_when_moving_module_comments():
+    source = "\ufeff#!/usr/bin/env too\nagic:\n  pass\n#@ Module.\n"
+    formatted = format_source(source)
+    assert formatted.startswith("\ufeff#@ Module.\n")
+    assert "#!/usr/bin/env too\n" in formatted
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("prefix", ["\n", "\n\n", " \t\r\n"])
+def test_format_source_does_not_promote_plain_comments_to_shebangs(prefix):
+    source = f"{prefix}#!/usr/bin/env too\nagic:\n  pass\n"
+    formatted = format_source(source)
+    assert formatted.startswith("\n#!/usr/bin/env too\n")
+    assert format_source(formatted) == formatted

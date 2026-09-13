@@ -34,13 +34,17 @@ class _DocComments:
         self._source = cst.source
         self._attached: dict[int, tuple[CstNode, ...]] = {}
         lines = source_lines(cst.source.decode("utf-8"))
+        bom_size = len("\ufeff".encode("utf-8")) if lines[0].startswith("\ufeff") else 0
+        lines[0] = lines[0].removeprefix("\ufeff")
         comments: dict[int, CstNode] = {}
         pending = [cst.tree.root_node]
         while pending:
             node = pending.pop()
             row, column = node.start_point
             if node.type in _TRIVIA - {"blank_line", "line_end"}:
-                if column == len(self._indent(lines[row])):
+                if column == len(self._indent(lines[row])) + (
+                    bom_size if row == 0 else 0
+                ):
                     comments[row] = node
             else:
                 pending.extend(reversed(node.named_children))
@@ -49,7 +53,8 @@ class _DocComments:
             [
                 self._field_text(node, "text")
                 for node in comments.values()
-                if node.type == "module_doc_comment" and node.start_point.column == 0
+                if node.type == "module_doc_comment"
+                and not self._indent(lines[node.start_point.row])
             ]
         )
         block: list[CstNode] = []

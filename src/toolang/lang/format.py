@@ -89,6 +89,7 @@ class _Line:
     text_owner: int | None = None
     control_owner: int | None = None
     separate: bool = False
+    follows_doc: bool = False
 
 
 def format_source(source: str, *, tab_size: int = 2) -> str:
@@ -106,6 +107,11 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
     ).rstrip()
     if formatted:
         formatted = f"{formatted}\n"
+    if source.startswith("\ufeff"):
+        formatted = f"\ufeff{formatted}"
+    if formatted.startswith("#!") and not source.startswith("#!"):
+        # Keep plain comments from becoming byte-zero shebangs.
+        formatted = f"\n{formatted}"
     _syntax_tree(formatted)
     return formatted
 
@@ -205,6 +211,10 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
     previous_doc_indent: str | None = None
 
     for row, raw_line in enumerate(lines):
+        bom_size = 0
+        if row == 0 and raw_line.startswith("\ufeff"):
+            raw_line = raw_line.removeprefix("\ufeff")
+            bom_size = len("\ufeff".encode("utf-8"))
         line = raw_line.rstrip()
         prefix = _leading_whitespace(line)
         if not line.strip():
@@ -212,8 +222,8 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             previous_doc_indent = None
             continue
         node = root.named_descendant_for_point_range(
-            (row, len(prefix)),
-            (row, len(prefix) + len(line[len(prefix)].encode("utf-8"))),
+            (row, bom_size + len(prefix)),
+            (row, bom_size + len(prefix) + len(line[len(prefix)].encode("utf-8"))),
         )
         if node is None:
             raise ToolangFormatError(f"Missing syntax node at line {row + 1}.")
@@ -261,6 +271,8 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 separate=previous_doc_indent is not None
                 and previous_doc_indent != prefix
                 and _leading_whitespace(formatted[-1].value) == rendered_prefix,
+                follows_doc=previous_doc_indent is not None
+                and previous_doc_indent == prefix,
             )
         )
         previous_doc_indent = prefix if node.type == "item_doc_comment" else None
@@ -637,8 +649,8 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
             and line.text_owner is not None
             and line.text_owner == previous.text_owner
         )
-        if same_text:
-            # Whitespace inside one CST text body is content, never a section separator.
+        if same_text or (line.follows_doc and not pending_blank):
+            # Preserve text whitespace and authored item-doc adjacency.
             _append_blank_lines(normalized, pending_blank)
         elif line.separate or _needs_blank_line(
             previous_kind, kind, pending_blank=bool(pending_blank)
