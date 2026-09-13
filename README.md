@@ -34,9 +34,9 @@ To try a small script with an already configured model:
 
 ```bash
 too init demo
-too info demo/work.too
-too run demo/work.too
-too run demo/work.too --help
+too demo/work.too info
+too demo/work.too --help
+too demo/work.too
 too demo/work.too chat
 ```
 

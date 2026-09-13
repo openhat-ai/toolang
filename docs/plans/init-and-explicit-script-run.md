@@ -57,9 +57,11 @@ and authorized model routes.
   - `flow polish(_: Text, tone: Text) -> Text` calls `rewrite`, then an inline
     `run -> Text` agic to check clarity, grammar, and unsupported claims.
   Include concise runnable/step doc comments and copyable rewrite/polish examples.
-- Print the created path and a `Try:` list with `too info FILE`, `too run FILE`,
-  and `too FILE chat`, in that order. Use paths valid from the caller's current
-  directory, quote them correctly, and preserve the invoked executable name.
+- Print the created path and a `Try:` list with `too FILE info`, `too FILE --help`,
+  `too FILE`, and `too FILE chat`, in that order. Add aligned shell comments:
+  `show info`, `show script usage`, `run the default runnable`, and `open chat TUI`.
+  Use paths valid from the caller's current directory, quote them correctly,
+  and preserve the invoked executable name.
   The shebang uses path-first invocation and supports direct `./work.too` execution.
 - Create no agent registration, configuration, credentials, or runtime cache.
   Initialization and help require no model or network.
@@ -195,7 +197,7 @@ The existing source cache schema transition is the only storage change.
    covers current, nonempty, nested, spaced, and Unicode paths;
    concurrent calls have one winner; existing files/symlinks and invalid or
    unwritable destinations fail safely. Verify the packaged template and all
-   three follow-up commands for both executable names and quoted paths.
+   four follow-up commands and descriptions for both executable names and quoted paths.
 2. Explicit and shorthand Script invocations execute the template with an offline
    model fixture and preserve input, named parameters, options, `--`, stdin,
    colon overrides, local/remote results, and exit status. Cover command-like

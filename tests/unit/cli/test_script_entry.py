@@ -72,11 +72,19 @@ def test_init_creates_only_a_packaged_script(
     assert program.agics[0].input is None
     output = capsys.readouterr().out
     commands = output.split("Try:\n", 1)[1].splitlines()
-    assert [shlex.split(command) for command in commands] == [
-        [executable, "info", str(destination)],
-        [executable, "run", str(destination)],
+    assert [shlex.split(command, comments=True) for command in commands] == [
+        [executable, str(destination), "info"],
+        [executable, str(destination), "--help"],
+        [executable, str(destination)],
         [executable, str(destination), "chat"],
     ]
+    for command, description in zip(
+        commands,
+        ("show info", "show script usage", "run the default runnable", "open chat TUI"),
+        strict=True,
+    ):
+        assert command.endswith(f"  # {description}")
+    assert len({command.rindex("  # ") for command in commands}) == 1
 
 
 @pytest.mark.parametrize("entry", [None, "chat", "rewrite", "polish"])
