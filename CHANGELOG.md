@@ -8,7 +8,21 @@ and this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Expose offline `parse`, `fmt`, and `highlight` Source Commands under both
+  executables, with AST/CST selection, JSON/S-expression output, stdout formatting,
+  and shared Tree-sitter highlighting for terminals and standalone HTML.
+
 ### Changed
+
+- Default `parse` to AST S-expression. Existing JSON consumers must add `--json`;
+  `--compact` still emits compact JSON and AST JSON fields stay unchanged.
+- Preserve omitted `_` types in formatting, compact adjacent same-kind imports,
+  same-key directives, and inline messages, and separate prose/flow boundaries
+  without changing literal text or documentation attachment. `fmt --check` remains
+  a formatting-only check that never writes source files.
+- Require Tree-sitter Python 0.25.2 or later within the 0.25 series.
 
 - Upgrade Flow syntax to tree-sitter-toolang 0.3.1: explicit `using`, `if`, and
   `by` clauses, `in N lanes`, `repeat N times`, and directional stable `sort`.

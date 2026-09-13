@@ -9,8 +9,9 @@ import re
 from typing import Annotated, Any, ClassVar, Literal, cast
 
 from pydantic import Discriminator, Tag, TypeAdapter
-from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
-import tree_sitter_toolang
+from tree_sitter import Node as TreeSitterNode, Tree
+
+from .cst import parse as parse_cst
 
 from toolang.common.immutable import freeze_mapping
 from .text import source_lines
@@ -401,7 +402,7 @@ def _empty_cap_property_details(
 
 
 def _parse_tree(source: bytes) -> Tree:
-    return Parser(_language()).parse(_mask_query_hashes(source))
+    return parse_cst(_mask_query_hashes(source))
 
 
 def _mask_query_hashes(source: bytes) -> bytes:
@@ -447,11 +448,6 @@ def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:
         if error := _first_syntax_error(child):
             return error
     return None
-
-
-@lru_cache(maxsize=1)
-def _language() -> Language:
-    return Language(tree_sitter_toolang.language())
 
 
 def to_data(value: object) -> object:
