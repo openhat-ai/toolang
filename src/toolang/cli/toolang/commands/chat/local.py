@@ -21,7 +21,7 @@ from toolang.execution.calls import materialize_model_request
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.runnables import (
     parse_runnable_ref,
     runnable_binding_defaults,

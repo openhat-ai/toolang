@@ -14,7 +14,8 @@ from toolang.base.utils.workspace_paths import (
 )
 
 from ..records import RecallControlPayload
-from ..types import RecallTarget, RulesRecallTarget
+from ..types import RecallTarget, RulesRecallTarget, WorkspaceRecallTarget
+from .resources import workspace_declarations
 
 
 class _HonorRequired(Exception):
@@ -38,8 +39,21 @@ def check_rules(
     except Exception as exc:
         # The honor Step owns and records rule-loading failures.
         raise _HonorRequired(paths) from exc
+    bindings = {
+        item.target: item.revision
+        for item in workspace_declarations(
+            {name: str(path) for name, path in context.workspaces.items()}
+        )
+    }
     if any(
-        rule.target in pending or visible.get(rule.target) != rule.revision
+        (
+            rule.revision != "0"
+            and isinstance(rule.target, RulesRecallTarget)
+            and visible.get(WorkspaceRecallTarget(rule.target.workspace))
+            != bindings.get(WorkspaceRecallTarget(rule.target.workspace))
+        )
+        or rule.target in pending
+        or visible.get(rule.target) != rule.revision
         for rule in rules
     ):
         raise _HonorRequired(paths)

@@ -8,6 +8,7 @@ import sqlite3
 
 import pytest
 
+from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_fixtures import (
     project_run_end,
     project_run_start,
@@ -21,7 +22,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     StepRecord,
     StoredModelStepGiven,
@@ -159,7 +160,9 @@ agic chat(_: Text) -> Text:
             assert detail is not None
             assert detail.input_text == "first question"
             assert summary.title == "first question"
-            assert harness.adapter.invocations[1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            ) == [
                 Message.user("first question"),
                 Message.assistant("first answer"),
                 Message.user("second question"),
@@ -209,7 +212,9 @@ agic chat(_: Part[]) -> Part[]:
                     primary=resolve_input_parts("second question"),
                 )
             )
-            assert harness.adapter.invocations[1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            ) == [
                 Message.user("first question"),
                 Message.assistant("first answer"),
                 Message.user("second question"),
@@ -226,7 +231,9 @@ agic chat(_: Part[]) -> Part[]:
                     primary=resolve_input_parts("branch question"),
                 )
             )
-            assert harness.adapter.invocations[2].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[2].call.messages
+            ) == [
                 Message.user("first question"),
                 Message.assistant("first answer"),
                 Message.user("branch question"),
@@ -310,7 +317,9 @@ agic calculate(_: Text) -> Boolean:
             assert harness.adapter.invocations[1].call.continuation == {
                 "cursor": "turn-1"
             }
-            assert harness.adapter.invocations[1].call.messages[-1].parts == (
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            )[-1].parts == (
                 ToolResultPart(
                     tool_call_id=call.tool_call_id,
                     call_id=call.call_id,
@@ -346,7 +355,7 @@ agic calculate(_: Text) -> Boolean:
         connection = sqlite3.connect(reopened.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                2,
+                6,  # Includes the standalone per-call route snapshot content.
             )
             assert (
                 connection.execute(
@@ -355,10 +364,10 @@ agic calculate(_: Text) -> Boolean:
                 is None
             )
             assert [
-                len(step.given.call.delta.messages)
+                len(step.given.call.messages.delta)
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [1, 2]
+            ] == [1, 3]
         finally:
             connection.close()
     finally:
@@ -372,8 +381,8 @@ def test_stored_model_call_delta_round_trip() -> None:
             "model": "test/model",
             "call": {
                 "instructions": "instruction-ref",
-                "delta": {"version": 1, "messages": []},
-                "recall": ["far", "near"],
+                "version": 1,
+                "messages": {"head": "run_ab12.0", "delta": []},
                 "tools": None,
                 "output_schema": None,
                 "cont": {"cursor": "saved"},
@@ -387,8 +396,8 @@ def test_stored_model_call_delta_round_trip() -> None:
     assert stored.call.continuation == {"cursor": "saved"}
     assert stored_step_given_to_data("model", stored)["call"] == {
         "instructions": "instruction-ref",
-        "delta": {"version": 1, "messages": []},
-        "recall": ["far", "near"],
+        "version": 1,
+        "messages": {"head": "run_ab12.0", "delta": []},
         "tools": None,
         "output_schema": None,
         "cont": {"cursor": "saved"},

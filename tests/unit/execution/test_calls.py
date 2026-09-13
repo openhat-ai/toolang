@@ -32,6 +32,7 @@ from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.setup import ModelCollection, ToolCollection
 from toolang.state.state import CapSource, StateCap, agent_state_revision
+from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -192,9 +193,9 @@ flow hello_flow(_: Text) -> Text:
             )
 
             assert root.status == "succeeded", root.error
-            assert harness.adapter.invocations[0].call.messages[-1] == Message.user(
-                "hello world"
-            )
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            )[-1] == Message.user("hello world")
 
     asyncio.run(scenario())
 
@@ -251,7 +252,9 @@ flow hello_flow(_: Text) -> Text:
             )
 
             assert first.status == second.status == "succeeded"
-            assert harness.adapter.invocations[1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            ) == [
                 Message.user("hello world"),
                 Message.assistant("first done"),
                 Message.user("next"),

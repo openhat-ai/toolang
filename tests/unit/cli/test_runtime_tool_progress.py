@@ -20,7 +20,7 @@ from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressUpdate
 from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.tools.runtime import RuntimeToolset
+from toolang.execution.tools._toolang import ToolangToolset
 from toolang.execution.types import (
     Output,
     ControlRef,
@@ -46,7 +46,7 @@ def _root():
 
 def _begin(name="compact", arguments=None):
     arguments = arguments or {}
-    summary = RuntimeToolset().tools()[name].summary(arguments)
+    summary = ToolangToolset().tools()[name].summary(arguments)
     assert summary is not None
     return StepBegin(
         step=StepRef.parse("run_root.0"),
@@ -65,7 +65,7 @@ def _end(begin, status="succeeded", output=None):
     call = begin.given.call
     summary = _tool_summary(
         _tool_summary_context(
-            call, RuntimeToolset().tools()[call.name.removeprefix("_toolang__")]
+            call, ToolangToolset().tools()[call.name.removeprefix("_toolang__")]
         ),
         status,
         ToolResult(output or {}, error="failed" if status == "failed" else None),

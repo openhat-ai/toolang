@@ -72,7 +72,7 @@ def test_block_ownership_preserves_iteration_counts_and_prompt_boundaries(
             ]
             assert [
                 message_text(invocation.call.messages[-1].parts).split(
-                    "</context>\n\n", 1
+                    "</toolang:context>\n\n", 1
                 )[-1]
                 for invocation in harness.adapter.invocations
             ] == prompts

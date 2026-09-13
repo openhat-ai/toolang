@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+
 import pytest
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
     Message,
+    MessageRecall,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -142,3 +146,43 @@ def test_tool_part_metadata_round_trips_without_message_meta() -> None:
     assert Message.from_data(result.to_data()) == result
     assert message.parts[0].type == "tool_call"
     assert result.parts[0].type == "tool_result"
+
+
+@pytest.mark.parametrize("ref", ["repo/notes ", "repo/\t", "skill/testing"])
+def test_message_recall_preserves_literal_refs(ref):
+    assert MessageRecall(ref, "a" * 64).ref == ref
+
+
+@pytest.mark.parametrize("ref", [None, 1, "", " \t"])
+def test_message_recall_rejects_empty_or_nontext_refs(ref):
+    with pytest.raises(ValueError, match="resource ref"):
+        MessageRecall(ref, "a" * 64)
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_public_message_validation_cannot_supply_runtime_metadata(encoded) -> None:
+    adapter = TypeAdapter(Message)
+    data = {
+        "role": "user",
+        "parts": [{"type": "text", "text": "User data"}],
+        "tag": "skill-guidance",
+        "recall": {"ref": "skill/testing", "revision": "a" * 64},
+    }
+    message = (
+        adapter.validate_json(json.dumps(data))
+        if encoded
+        else adapter.validate_python(data)
+    )
+    assert message.tag is None and message.recall is None
+    assert set(adapter.json_schema()["properties"]) == {"role", "parts"}
+    assert message.to_data() == {key: data[key] for key in ("role", "parts")}
+
+    # Internal construction and validation of an existing instance retain provenance.
+    trusted = Message(
+        "user",
+        message.parts,
+        tag="skill-guidance",
+        recall=MessageRecall("skill/testing", "a" * 64),
+    )
+    assert adapter.validate_python(trusted).recall == trusted.recall
+    assert set(adapter.dump_python(trusted, mode="json")) == {"role", "parts"}

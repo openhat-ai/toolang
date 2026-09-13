@@ -16,11 +16,12 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
-from toolang.lang.input import coerce_output, output_json_schema
+from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
 from toolang.state.state import state_program
 
 from ...events import StepBegin, StepEnd
+from ...assembly import prompting
 from ...records import ControlRecord
 from ...types import (
     ControlRef,
@@ -37,9 +38,9 @@ from ..common import (
 )
 
 from ..limits import _ModelAccounting
-from .._messages import _MessageBuffer
+from ...assembly.message_buffer import MessageBuffer
 from ..budget import InputEstimate
-from ..prepare import _AgicFrame, prepare_agic
+from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 from ...runnables import (
@@ -71,7 +72,7 @@ class _AgicState:
     steer_before_next_step: Callable[[], bool]
     immediate_steer: Callable[[], bool]
     before_call: Callable[[], None]
-    messages: _MessageBuffer
+    messages: MessageBuffer
     execution: _Execution | None = None
     account_usage: Callable[[ModelUsage | None], _ModelAccounting] = lambda usage: (
         _ModelAccounting(usage=usage)
@@ -183,7 +184,7 @@ async def execute(
 
     def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
-        far, near = execution.message_history().select(horizon)
+        selected = execution.message_history().select(horizon)
         key = (state.revision, horizon)
         cached = frames.get(key)
         if cached is not None:
@@ -209,13 +210,13 @@ async def execute(
                 module=binding.module,
             )
         )
-        prepared = prepare_agic(
+        prepared = build_agic_frame(
             execution,
             replace(current_binding, horizon=horizon),
             candidate,
             variables=variables,
-            far=far,
-            near=near,
+            far=selected.far,
+            near=selected.near,
         )
         execution.require_model_pricing(prepared.model)
         frames[key] = prepared
@@ -226,9 +227,10 @@ async def execute(
     output_binding = _OutputBinding(
         type_name=prepared.agic.output,
         structs=MappingProxyType(dict(output_structs)),
-        output_schema=output_json_schema(
-            prepared.agic.output,
-            structs=output_structs,
+        output_schema=prompting.output_schema(
+            prepared.run.state,
+            prepared.agic,
+            module=prepared.run.module,
         ),
     )
     state = _AgicState(
@@ -247,7 +249,7 @@ async def execute(
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
-        messages=_MessageBuffer(),
+        messages=MessageBuffer(),
         output_binding=output_binding,
         execution=execution,
         next_step=execution.next_step(binding.run_id),
@@ -299,6 +301,8 @@ def _can_repair_output(state: _AgicState, type_name: str | None) -> bool:
 
 
 def _output_repair_message(type_name: str | None) -> Message:
+    """Request one corrected response without changing its output contract."""
+
     if type_name is None:  # pragma: no cover - guarded by _can_repair_output
         raise ValueError("output repair requires a declared type")
     return Message.user(

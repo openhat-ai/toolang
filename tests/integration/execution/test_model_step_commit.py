@@ -9,6 +9,7 @@ from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
     steer_message,
+    without_route_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -96,11 +97,11 @@ agic chat(_: Part[]) -> Part[]:
             assert step.index == 0
             assert step.preceded_by == (ControlRef.for_run(run.id, 0),)
             assert isinstance(step.given, StoredModelStepGiven)
-            assert len(step.given.call.delta.messages) == 1
+            assert len(step.given.call.messages.delta) == 1
             assert len(harness.adapter.invocations) == 1
-            assert harness.adapter.invocations[0].call.messages == [
-                Message.user("start")
-            ]
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            ) == [Message.user("start")]
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -225,24 +226,28 @@ def test_controls_received_before_model_begin_enter_that_call(
             run = await asyncio.wait_for(handle, timeout=2)
             assert run.status == "succeeded", run.error
             (call,) = harness.adapter.invocations
-            assert call.call.messages == [
+            assert without_route_snapshots(call.call.messages) == [
                 Message.user("Start."),
                 *([steer_message("first change")] if prepared else []),
                 steer_message("latest change"),
                 Message(
                     "user",
                     (
-                        TextPart('<skill ref="testing" revision="v1">'),
+                        TextPart(
+                            '<toolang:skill-guidance ref="testing" revision="v1">'
+                        ),
                         TextPart("Use tests."),
-                        TextPart("</skill>"),
+                        TextPart("</toolang:skill-guidance>"),
                     ),
                 ),
+                Message.user('<toolang:skill-guidance ref="testing" removed="true"/>'),
             ]
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.index == 0
             assert step.preceded_by == (
                 ControlRef.for_run(run.id, 0),
                 *(control.ref for control in expected_controls),
+                harness.store.list_run_controls(run_id=run.id)[-1].ref,
             )
             for control in expected_controls:
                 saved = harness.store.get_run_control(
@@ -307,16 +312,17 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
             assert run.status == "succeeded", run.error
             steps = harness.store.list_steps(run_id=run.id)
             assert [
-                len(step.given.call.delta.messages)
+                len(step.given.call.messages.delta)
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [1, 3 if skip_tools else 2]
+            ] == [1, 4 if skip_tools else 3]
             first, second = harness.adapter.invocations
             assert second.call.messages[:1] == first.call.messages
             assert [message.role for message in second.call.messages] == [
                 "user",
                 "assistant",
                 "tool",
+                "user",  # Current hands/handoffs snapshots.
                 *(["user"] if skip_tools else []),
             ]
             assert sum(
@@ -419,7 +425,10 @@ flow parent() -> Text:
                 if child
                 else (entry, steer.ref, reload.ref, recall.ref)
             )
-            assert step.preceded_by == expected
+            assert step.preceded_by == (
+                *expected,
+                harness.store.list_run_controls(run_id=model_run_id)[-1].ref,
+            )
             assert step.state == reload.ref
             (call,) = harness.adapter.invocations
             assert "updated instructions" in call.call.instructions

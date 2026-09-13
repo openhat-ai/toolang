@@ -18,6 +18,8 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
     message_text,
+    parts_from_data,
+    parts_to_data,
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
@@ -27,18 +29,15 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
-from .message_delta import literal_delta, render_delta
-from .control_messages import control_message
-from .run_view import RunView
-from .assembly import (
+from .assembly.utils import control_message, literal_delta, render_delta
+from .inspection.views import RunView, ThreadView, _ThreadProjection
+from .assembly.history import (
     MessageHistory,
     active_steps,
     adopted_horizon,
-    assemble_messages,
-    starts_sequence,
     tail_delta,
 )
-from .tool_results import workspace_reply_from_step
+from .assembly.tool_replies import workspace_reply_from_step
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -105,7 +104,8 @@ from .types import (
     Local,
     Output,
     ModelStepGiven,
-    MessageDelta,
+    MessageTemplate,
+    ModelMessages,
     Occurrence,
     Pointer,
     TypedRef,
@@ -116,10 +116,9 @@ from .types import (
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
-from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 43
+_SCHEMA_VERSION = 44
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -1860,6 +1859,14 @@ class RunStore:
             seen.remove(error.ref)
 
     def _resolve_value(self, value: object, *, seen: set[Pointer]) -> object:
+        if isinstance(value, ContentRef):
+            content = self.get_content(value)
+            if content is None:
+                raise ValueError(f"model message content is missing: {value}")
+            parts = json.loads(content)
+            if not isinstance(parts, list):
+                raise ValueError(f"model message content must contain Parts: {value}")
+            return parts_from_data(parts)
         if isinstance(value, TypedRef):
             pointer = Pointer(value.ref)
             if pointer in seen:
@@ -2682,10 +2689,10 @@ class RunStore:
                 state = ControlRef.parse(str(run_row["state"]))
             stored_given: StoredStepGiven = (
                 self.capture_model_call(
+                    step=ref,
                     model=given.model,
                     call=given.call,
-                    delta=given.delta,
-                    recall=given.recall,
+                    messages=given.messages,
                 )
                 if isinstance(given, ModelStepGiven)
                 else cast(StoredStepGiven, given)
@@ -2720,19 +2727,19 @@ class RunStore:
                 "SELECT * FROM steps WHERE id = ?",
                 (str(ref),),
             ).fetchone()
-        if row is None:
-            raise RuntimeError(f"step begin projection failed: {ref}")
-        step = _step_from_row(row)
-        if (
-            step.kind != kind
-            or step.preceded_by != preceded_by
-            or step.input != tuple(input)
-            or step.state != state
-            or step.occur != occurrence
-            or step.given != stored_given
-            or step.started_at != started_at
-        ):
-            raise ValueError(f"conflicting step_begin event: {ref}")
+            if row is None:
+                raise RuntimeError(f"step begin projection failed: {ref}")
+            step = _step_from_row(row)
+            if (
+                step.kind != kind
+                or step.preceded_by != preceded_by
+                or step.input != tuple(input)
+                or step.state != state
+                or step.occur != occurrence
+                or step.given != stored_given
+                or step.started_at != started_at
+            ):
+                raise ValueError(f"conflicting step_begin event: {ref}")
         return step
 
     def finish_step(
@@ -2848,14 +2855,53 @@ class RunStore:
     def capture_model_call(
         self,
         *,
+        step: StepRef,
         model: str,
         call: ModelCall,
-        delta: MessageDelta | None = None,
-        recall: tuple[str, ...] = ("none",),
+        messages: ModelMessages | None = None,
     ) -> StoredModelStepGiven:
         """Persist call settings and the new message templates for this boundary."""
 
+        messages = messages or ModelMessages(step, literal_delta(call.messages))
+        if len(messages.delta) > len(call.messages):
+            raise ValueError("model message delta exceeds the assembled messages")
+        added = call.messages[-len(messages.delta) :] if messages.delta else ()
+        if any(
+            (template.role, template.tag, template.recall)
+            != (message.role, message.tag, message.recall)
+            for template, message in zip(messages.delta, added, strict=True)
+        ):
+            raise ValueError(
+                "model message metadata differs from the assembled messages"
+            )
+        if messages.head.run != step.run or messages.head.indices > step.indices:
+            raise ValueError(
+                "model message head must be an earlier Model Step in the same Run or itself"
+            )
         with self.write_transaction():
+            if messages.head != step:
+                # Read only sequence identities, never old message bodies.
+                rows = self._conn.execute(
+                    "SELECT id, json_extract(given, '$.call.messages.head') AS head "
+                    "FROM steps WHERE run = ? AND kind = 'model'",
+                    (step.run_id,),
+                )
+                previous = max(
+                    (
+                        (ref.indices, row["head"])
+                        for row in rows
+                        if (ref := StepRef.parse(row["id"])).indices < step.indices
+                    ),
+                    default=None,
+                )
+                if previous is None or previous[1] != str(messages.head):
+                    raise ValueError(
+                        "model message head must continue the preceding model sequence"
+                    )
+            elif len(messages.delta) != len(call.messages):
+                raise ValueError(
+                    "a model message head must record the complete baseline"
+                )
             instruction_ref = str(self.put_content(call.instructions.encode("utf-8")))
             toolset_ref = (
                 str(
@@ -2868,14 +2914,31 @@ class RunStore:
                 if call.tools
                 else None
             )
+            # Freeze the actual content now: later State changes, retry, or
+            # reused execution fields cannot alter a surviving recorded call.
+            delta = tuple(
+                replace(
+                    template,
+                    content=(
+                        self.put_content(
+                            _dump_json(parts_to_data(rendered.parts)).encode("utf-8")
+                        ),
+                    ),
+                    escape_text=False,
+                )
+                for template, rendered in zip(
+                    messages.delta,
+                    added,
+                    strict=True,
+                )
+            )
         from .records import ModelCallRefs
 
         return StoredModelStepGiven(
             model=model,
             call=ModelCallRefs(
                 instructions=instruction_ref,
-                delta=delta if delta is not None else literal_delta(call.messages),
-                recall=recall,
+                messages=ModelMessages(messages.head, delta),
                 tools=toolset_ref,
                 max_output_tokens=call.max_output_tokens,
                 output_schema=(
@@ -2904,11 +2967,10 @@ class RunStore:
         facts: dict[
             RunRef, tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]]
         ] = {}
-        recalled: dict[ControlRef, ControlRecord] = {}
 
         def load(
             selected_roots: Sequence[RunRef],
-        ) -> dict[RunRef, tuple[MessageDelta, ...]]:
+        ) -> dict[RunRef, tuple[MessageTemplate, ...]]:
             with self.read_transaction():
                 ids = tuple(str(ref) for ref in selected_roots)
                 steps = self.list_steps_for_runs(run_ids=ids)
@@ -2916,36 +2978,31 @@ class RunStore:
                 deltas = {}
                 for ref in selected_roots:
                     related = {control.ref: control for control in controls[str(ref)]}
-                    recalled.update(related)
                     selected = active_steps(steps[str(ref)], related)
-                    deltas[ref] = tuple(
-                        step.given.call.delta
+                    models = [
+                        (step.ref, step.given.call.messages)
                         for step in selected
                         if isinstance(step.given, StoredModelStepGiven)
+                    ]
+                    head = models[-1][1].head if models else None
+                    deltas[ref] = tuple(
+                        message
+                        for step_ref, messages in models
+                        if head is not None and step_ref.indices >= head.indices
+                        for message in messages.delta
+                        if message.source is None
                     )
                     facts[ref] = selected, related
                 return deltas
 
         by_ref = {RunRef(run.id): run for run in roots}
 
-        def tail(pending: Sequence[RunRef]) -> MessageDelta:
-            return MessageDelta(
-                messages=tuple(
-                    message
-                    for ref in pending
-                    for message in tail_delta(
-                        by_ref[ref], *facts[ref], self.resolve_value
-                    ).messages
-                )
+        def tail(pending: Sequence[RunRef]) -> tuple[MessageTemplate, ...]:
+            return tuple(
+                message
+                for ref in pending
+                for message in tail_delta(by_ref[ref], *facts[ref], self.resolve_value)
             )
-
-        def control(ref: ControlRef) -> ControlRecord:
-            if ref not in recalled:
-                record = self.get_control(target=str(ref.target), index=ref.index)
-                if record is None:
-                    raise ValueError(f"recall control is missing: {ref}")
-                recalled[ref] = record
-            return recalled[ref]
 
         return MessageHistory(
             str(root.thread),
@@ -2953,7 +3010,6 @@ class RunStore:
             load,
             tail,
             self.resolve_value,
-            control,
         )
 
     def run_horizon(self, run_id: str) -> FieldRef | None:
@@ -2983,11 +3039,23 @@ class RunStore:
         if not run_ids:
             return {}
         grouped = self.list_steps_for_runs(run_ids=run_ids)
-        controls = {
-            control.ref: control
-            for items in self.list_run_controls_for_runs(run_ids=run_ids).values()
-            for control in items
+        by_ref = {
+            step.ref: step for run_steps in grouped.values() for step in run_steps
         }
+        ends: dict[StepRef, tuple[int, ...]] = {}
+        for step in steps:
+            assert isinstance(step.given, StoredModelStepGiven)
+            head = step.given.call.messages.head
+            baseline = by_ref.get(head)
+            if (
+                head.run != step.ref.run
+                or head.indices > step.ref.indices
+                or baseline is None
+                or not isinstance(baseline.given, StoredModelStepGiven)
+                or baseline.given.call.messages.head != head
+            ):
+                raise ValueError(f"invalid model message head: {head}")
+            ends[head] = max(ends.get(head, ()), step.ref.indices)
         settings = [
             step.given.call
             for step in steps
@@ -2997,58 +3065,52 @@ class RunStore:
         toolsets = self._get_toolsets(
             {call.tools for call in settings if call.tools is not None}
         )
-        values: dict[TypedRef, object] = {}
-        records: dict[StepRef | ControlRef, Record] = {
-            step.ref: step for items in grouped.values() for step in items
-        }
-        records.update(controls.items())
+        values: dict[TypedRef | ContentRef, object] = {}
 
-        def resolve(ref: TypedRef) -> object:
+        def resolve(ref: TypedRef | ContentRef) -> object:
             if ref not in values:
-                record = (
-                    records.get(ref.ref.record)
-                    if isinstance(ref.ref.record, StepRef | ControlRef)
-                    else None
-                )
-                selected = (
-                    select_record(record, Pointer(ref.ref))
-                    if record is not None
-                    else self.select_pointer(Pointer(ref.ref))
-                )
-                values[ref] = self.resolve_value(selected.runtime)
+                values[ref] = self.resolve_value(ref)
             return values[ref]
 
         calls: dict[StepRef, ModelCall] = {}
-        histories: dict[str, MessageHistory] = {}
         for run_id, run_steps in grouped.items():
-            run = RunRef(run_id)
-            entry = controls.get(ControlRef(run, 0))
-            horizon = adopted_horizon(None, (entry,) if entry else (), run)
+            first = min(
+                step.given.call.messages.head.indices
+                for step in steps
+                if step.run_id == run_id
+                and isinstance(step.given, StoredModelStepGiven)
+            )
             last = max(
                 (i for i, step in enumerate(run_steps) if step.ref in requested),
                 default=-1,
             )
             messages: list[Message] = []
+            head: StepRef | None = None
             for step in run_steps[: last + 1]:
-                horizon = adopted_horizon(
-                    horizon,
-                    tuple(controls[ref] for ref in step.preceded_by if ref in controls),
-                    run,
-                )
-                if starts_sequence(step, controls):
-                    messages.clear()
-                if not isinstance(step.given, StoredModelStepGiven):
+                if step.ref.indices < first or not isinstance(
+                    step.given, StoredModelStepGiven
+                ):
                     continue
                 call = step.given.call
-                messages.extend(render_delta(call.delta, resolve))
+                if call.messages.head == step.ref:
+                    head = step.ref
+                    messages.clear()
+                # Select by the active baseline, not by an untrusted continuation
+                # head; otherwise a broken intermediate link silently drops data.
+                end = ends.get(head) if head is not None else None
+                if end is None or step.ref.indices > end:
+                    if step.ref in requested:
+                        raise ValueError(
+                            f"invalid model message head: {call.messages.head}"
+                        )
+                    continue
+                if call.messages.head != head:
+                    raise ValueError(
+                        f"invalid model message head: {call.messages.head}"
+                    )
+                messages.extend(render_delta(call.messages.delta, resolve))
                 if step.ref not in requested:
                     continue
-                far, near = "", ()
-                if "far" in call.recall or "near" in call.recall:
-                    root_id = self.root_run_id(run_id=run_id)
-                    if root_id not in histories:
-                        histories[root_id] = self.message_history(root_id)
-                    far, near = histories[root_id].select(horizon)
                 instructions = texts.get(call.instructions)
                 if instructions is None:
                     raise ValueError(
@@ -3058,7 +3120,7 @@ class RunStore:
                     raise ValueError(f"model toolset is missing: {call.tools}")
                 calls[step.ref] = ModelCall(
                     instructions=instructions,
-                    messages=assemble_messages(far, near, messages, call.recall),
+                    messages=list(messages),
                     tools=toolsets[call.tools] if call.tools is not None else (),
                     max_output_tokens=call.max_output_tokens,
                     output_schema=dict(call.output_schema)
@@ -3174,11 +3236,7 @@ class RunStore:
                     emitted.add(ref)
                     template = control_message(control)
                     if template is not None:
-                        deferred.extend(
-                            render_delta(
-                                MessageDelta(messages=(template,)), self.resolve_value
-                            )
-                        )
+                        deferred.extend(render_delta((template,), self.resolve_value))
                 if not waiting:
                     results.extend(deferred)
                     deferred.clear()
@@ -3209,11 +3267,7 @@ class RunStore:
                 if terminal is not None and terminal.ref not in emitted:
                     template = control_message(terminal)
                     if template is not None:
-                        results.extend(
-                            render_delta(
-                                MessageDelta(messages=(template,)), self.resolve_value
-                            )
-                        )
+                        results.extend(render_delta((template,), self.resolve_value))
         return _recent_valid_model_history(results, limit=limit)
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:

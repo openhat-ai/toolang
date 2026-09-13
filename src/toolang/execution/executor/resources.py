@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
+import json
 from typing import cast
 
 from toolang.base.protocols.tool import Tool
@@ -14,7 +16,9 @@ from toolang.execution.types import (
     AgentCapResource,
     AgentResources,
     AgentToolResource,
+    WorkspaceRecallTarget,
 )
+from toolang.execution.records import RecallControlPayload
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl
 from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
@@ -31,6 +35,22 @@ from toolang.state.collections import cap_dataset
 from toolang.state.types import EntryKind
 
 _Runnable = AgicDecl | FlowDecl
+
+
+def workspace_declarations(
+    workspaces: Mapping[str, str],
+) -> tuple[RecallControlPayload, ...]:
+    """Capture named bindings without probing roots or exposing host paths."""
+    return tuple(
+        RecallControlPayload(
+            WorkspaceRecallTarget(name),
+            sha256(json.dumps([name, root], ensure_ascii=False).encode()).hexdigest(),
+            "",
+        )
+        for name, root in sorted(workspaces.items())
+    )
+
+
 _CAP_CEILING_FIELDS: tuple[tuple[EntryKind, str], ...] = (
     ("psyche", "psyches"),
     ("skill", "skills"),

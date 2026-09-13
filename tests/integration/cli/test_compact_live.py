@@ -18,7 +18,7 @@ from toolang.cli.toolang.commands import compact
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager

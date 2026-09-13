@@ -219,32 +219,34 @@ Run/execute retain their child and handoff hierarchy.
 
 Workspace display paths use `repo:/src/file.py`, independently of the URI tool
 protocol. Honor says `Loading rules...` / `Loaded rules: repo:/AGENTS.md`.
-Pick says `Loaded guidance: skill/name` or `service/name`; local catalog refs
-are shortened for display, while remote refs retain their full identity.
+Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
+capability identity rather than its source location.
 Reload continues to say `Reloaded agent state`.
 
 ### Pick guidance
 
-`_toolang/pick({kind: "skill" | "service", ref: "<catalog ref>"})` recalls one
-allowed resource's body. Use the exact ref from its separate skill or service
-catalog, not a name, path, or selector. Pick neither grants tools nor connects,
-authenticates, or discovers MCP services.
+`_toolang/pick({kind: "skill" | "service", ref: "<trigger ref>"})` recalls one
+allowed resource's body. Use the exact ref from its `toolang:skill-trigger` or
+`toolang:service-trigger`, such as `skill/testing`, not a source path or selector.
+Pick neither grants tools nor connects, authenticates, or discovers MCP services.
 
 The Tool Step returns `{controls: [{ref, target, revision}]}`, where target is
 `{kind: "skill" | "service", ref}`. An applied recall control holds
-the target, SHA-256 revision, and original recalled text; the next Model Call
-adopts it as a separate `<skill>` or `<service>` user message. Failures create no
-recall. Revision zero (`"0"`) denotes removal; a present empty body retains its
-nonzero hash. Other revisions use 64 lowercase hexadecimal digits.
+the target, definition revision, and original recalled text; the next Model Call
+adopts it as a separate `toolang:skill-guidance` or `toolang:service-guidance`
+user message. The revision hashes the definition and metadata, not just the
+guidance body. Failures create no recall. Revision zero (`"0"`) is an internal
+tombstone rendered as `removed="true"`; a present empty body retains its nonzero
+hash. Other revisions use 64 lowercase hexadecimal digits.
 
 Repeated picks reuse the latest matching unadopted recall in the same Run. If
 nothing is pending and the last visible revision matches, the receipt is empty.
-Visibility comes from recall references in the committed call's selected near/now
-templates, never from XML matching, far summaries, or raw control existence.
-Content that leaves the view must be picked again; assembly does not restore it.
-Live prefixes cache these revisions, and history recovers them from the same
-saved deltas without reading historical State. Existing record encodings are
-unchanged.
+Visibility comes from the committed messages' tag and recall ref/revision, never
+from XML matching, far summaries, triggers, or raw control existence. Trigger and
+guidance share a ref but have separate visibility. Changed definitions retract
+old guidance. Content that leaves the view must be picked again; assembly does
+not restore it. History recovers visible revisions from saved message deltas
+without reading historical State.
 
 ### Honor workspace rules
 

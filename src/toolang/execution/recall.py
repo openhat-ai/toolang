@@ -1,13 +1,63 @@
-"""Recall revisions and visibility derived from recorded message references."""
+"""Recall selection and visibility derived from structured message metadata."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 import re
 
-from .records import ControlRecord, RecallControlPayload
-from .types import ControlRef, MessageDelta, RecallTarget, TypedRef
+from toolang.base.types.message import Message
+
+from .records import RecallControlPayload
+from .types import MessageTemplate, RecallTarget
+from .types import (
+    RulesRecallTarget,
+    SkillRecallTarget,
+    ServiceRecallTarget,
+    SkillTriggerRecallTarget,
+    ServiceTriggerRecallTarget,
+    WorkspaceRecallTarget,
+    PsycheRecallTarget,
+)
+
+
+def recall_sources(values: Sequence[str] = ()) -> tuple[str, ...]:
+    """Resolve the agic's history policy before assembling its messages."""
+
+    return ("far", "near") if not values or "auto" in values else tuple(values)
+
+
+def required_declarations(
+    declarations: Sequence[RecallControlPayload],
+    visible: Mapping[RecallTarget, str],
+) -> tuple[RecallControlPayload, ...]:
+    """Reconcile supplied current facts with selected history, without I/O."""
+    current = {item.target: item for item in declarations}
+    result: list[RecallControlPayload] = []
+    for target, revision in visible.items():
+        if revision == "0":
+            continue
+        if isinstance(target, SkillRecallTarget | ServiceRecallTarget):
+            trigger = (
+                SkillTriggerRecallTarget
+                if isinstance(target, SkillRecallTarget)
+                else ServiceTriggerRecallTarget
+            )(target.ref)
+            stale = trigger not in current or current[trigger].revision != revision
+        elif isinstance(target, RulesRecallTarget):
+            workspace = WorkspaceRecallTarget(target.workspace)
+            stale = (
+                workspace not in current
+                or visible.get(workspace) != current[workspace].revision
+            )
+        else:
+            stale = target not in current
+        if stale:
+            result.append(RecallControlPayload(target, "0", ""))
+    result.extend(
+        item for item in declarations if visible.get(item.target) != item.revision
+    )
+    return tuple(result)
 
 
 def canonical_recall(payload: RecallControlPayload) -> RecallControlPayload:
@@ -23,26 +73,31 @@ def canonical_recall(payload: RecallControlPayload) -> RecallControlPayload:
 
 
 def recall_revisions(
-    deltas: Iterable[MessageDelta],
-    control: Callable[[ControlRef], ControlRecord],
+    messages: Iterable[MessageTemplate | Message],
 ) -> dict[RecallTarget, str]:
-    """Find the last recalled revision of each target in actual user templates."""
+    """Fold presented declarations by tag/ref, preserving removal tombstones."""
 
+    targets = {
+        "skill-guidance": SkillRecallTarget,
+        "service-guidance": ServiceRecallTarget,
+        "skill-trigger": SkillTriggerRecallTarget,
+        "service-trigger": ServiceTriggerRecallTarget,
+        "psyche": PsycheRecallTarget,
+        "workspace-access": WorkspaceRecallTarget,
+    }
     revisions: dict[RecallTarget, str] = {}
-    for delta in deltas:
-        for message in delta.messages:
-            if message.role != "user":
-                continue
-            for segment in message.segments:
-                if (
-                    isinstance(segment, TypedRef)
-                    and isinstance(segment.ref.record, ControlRef)
-                    and segment.ref.tokens == ("payload", "content")
-                    and segment.type == "Text"
-                ):
-                    record = control(segment.ref.record)
-                    if record.status == "applied" and isinstance(
-                        record.payload, RecallControlPayload
-                    ):
-                        revisions[record.payload.target] = record.payload.revision
+    for message in messages:
+        if message.role != "user" or message.recall is None:
+            continue
+        ref = message.recall.ref
+        if message.tag == "workspace-rules":
+            workspace, separator, path = ref.partition("/")
+            if not workspace or not separator:
+                raise ValueError(f"invalid rules recall ref: {ref}")
+            target = RulesRecallTarget(workspace, "/" + path)
+        elif message.tag in targets:
+            target = targets[message.tag](ref)
+        else:
+            raise ValueError(f"invalid recall tag: {message.tag}")
+        revisions[target] = message.recall.revision
     return revisions

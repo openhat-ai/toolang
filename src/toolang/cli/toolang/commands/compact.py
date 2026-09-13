@@ -19,7 +19,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.compact import compact_state, compact_tools, permit
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import FieldRef, RunRef, ThreadRef, local_to_protocol_data
 from toolang.lang.ast import AgicDecl

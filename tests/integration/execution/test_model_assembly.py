@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_assertions import assert_replayed
+from tests.support.execution_assertions import (
+    assert_replayed,
+    without_route_snapshots,
+)
 from tests.support.execution_fixtures import project_run_start, project_run_end
 from tests.support.execution_harness import (
     AsyncGate,
@@ -18,7 +21,8 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
-from toolang.execution import assembly
+from toolang.execution.assembly import history as execution_history
+from toolang.execution.assembly.utils import render_delta
 from toolang.execution.records import (
     ControlRecord,
     RunControlPayload,
@@ -26,11 +30,11 @@ from toolang.execution.records import (
 )
 from toolang.execution.types import (
     Output,
+    ContentRef,
     FieldRef,
     Local,
     RunRef,
     ThreadPrefix,
-    TypedRef,
 )
 from toolang.state.prepare import prepare_agent_state
 
@@ -81,7 +85,104 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
     )
 
 
-def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "declarations,selection,expected",
+    [
+        pytest.param("", "", "model_provider: test", id="bundled"),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "",
+            "Private context for alice.",
+            id="program-default",
+        ),
+        pytest.param(
+            "context: Private context for {{agent.name}}.\n",
+            "  context: default\n",
+            "Private context for alice.",
+            id="explicit-default",
+        ),
+        pytest.param(
+            "context: Unselected context.\ncontext report: Private context for {{agent.name}}.\n",
+            "  context: report\n",
+            "Private context for alice.",
+            id="named",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context:\n    Private context for {{agent.name}}.\n",
+            "Private context for alice.",
+            id="inline",
+        ),
+        pytest.param(
+            "context: Unselected context.\n",
+            "  context: none\n",
+            None,
+            id="none",
+        ),
+    ],
+)
+def test_context_selection_keeps_data_and_current_input_out_of_instructions(
+    tmp_path: Path, declarations, selection, expected
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            declarations
+            + "instruct: Agent behavior.\n"
+            + "agic chat(_: Text) -> Text:\n"
+            + selection
+            + "  user: {{_}}\n"
+        ),
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("Current user objective."),),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            (invocation,) = harness.adapter.invocations
+            call = invocation.call
+            assert call.instructions.startswith("<toolang:protocol>")
+            assert (
+                "<toolang:instruct>\nAgent behavior.\n</toolang:instruct>"
+                in call.instructions
+            )
+            assert "Current user objective." not in call.instructions
+            assert "Unselected context." not in call.instructions
+            (message,) = without_route_snapshots(call.messages)
+            assert message.role == "user"
+            text = message_text(message.parts)
+            assert text.endswith("Current user objective.")
+            assert text.count("Current user objective.") == 1
+            assert "Agent behavior." not in text and "Unselected context." not in text
+            if expected is None:
+                assert message == Message.user("Current user objective.")
+            else:
+                assert expected not in call.instructions
+                assert text.count(expected) == 1
+                assert text.startswith("<toolang:context>\n")
+                assert (
+                    text.count("<toolang:context>")
+                    == text.count("</toolang:context>")
+                    == 1
+                )
+                assert text.endswith("</toolang:context>\n\nCurrent user objective.")
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_cross_run_baselines_do_not_duplicate_historical_contributions(
+    tmp_path: Path,
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
@@ -96,7 +197,10 @@ def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             runs = [await _run(harness, thread, f"input {i}", tracer) for i in range(3)]
             assert all(run.status == "succeeded" for run in runs)
-            assert [inv.call.messages for inv in harness.adapter.invocations] == [
+            assert [
+                without_route_snapshots(inv.call.messages)
+                for inv in harness.adapter.invocations
+            ] == [
                 [Message.user("input 0")],
                 [
                     Message.user("input 0"),
@@ -117,8 +221,19 @@ def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
             ]
-            assert [len(given.call.delta.messages) for given in givens] == [1, 2, 2]
-            assert isinstance(givens[1].call.delta.messages[0].segments[0], TypedRef)
+            assert [len(given.call.messages.delta) for given in givens] == [1, 3, 5]
+            assert [
+                sum(m.source is None for m in g.call.messages.delta) for g in givens
+            ] == [1, 2, 2]
+            assert isinstance(givens[1].call.messages.delta[0].content[0], ContentRef)
+            assert (
+                givens[1].call.messages.delta[0].content
+                == givens[0].call.messages.delta[0].content
+            )
+            assert all(
+                g.call.messages.head == s.ref
+                for g, s in zip(givens, steps, strict=True)
+            )
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -168,12 +283,17 @@ flow job(_: Part[]) -> Part[]:
                 Message.assistant("reply 2"),
                 Message.user("chat"),
             ]
-            assert harness.adapter.invocations[-1].call.messages == expected
+            assert (
+                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
+                == expected
+            )
             # Recorded tails stay in this delta; the following Run adds only
             # the latest reply and input, without duplicating the Flow outputs.
             following = await _run(harness, thread, "continue", tracer, horizon=horizon)
             assert following.status == "succeeded", following.error
-            assert harness.adapter.invocations[-1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            ) == [
                 *expected,
                 Message.assistant("reply 3"),
                 Message.user("continue"),
@@ -285,7 +405,10 @@ agic next() -> Part[]:
                 ]
                 tracer.events.extend(hooked.events)
             assert run.status == "succeeded", run.error
-            assert harness.adapter.invocations[-1].call.messages == expected
+            assert (
+                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
+                == expected
+            )
 
     hooked = Tracer()
     asyncio.run(scenario())
@@ -355,9 +478,9 @@ def test_compact_preparation_survives_failed_begin(
             assert run.status == "succeeded", run.error
             (step,) = harness.store.list_steps(run_id=target)
             assert compact.ref in step.preceded_by
-            assert harness.adapter.invocations[-1].call.messages[0] == Message.user(
-                "Earlier facts."
-            )
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )[0] == Message.user("Earlier facts.")
             assert harness.store.run_horizon(target) == horizon
 
     asyncio.run(scenario())
@@ -404,7 +527,7 @@ def test_each_call_records_context_without_rerendering_history(
     reads = []
     renderings = []
     read = harness.store.list_steps_for_runs
-    render = assembly.render_delta
+    render = execution_history.render_delta
 
     def read_steps(*, run_ids):
         reads.append(tuple(run_ids))
@@ -422,7 +545,7 @@ def test_each_call_records_context_without_rerendering_history(
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
             monkeypatch.setattr(harness.store, "list_steps_for_runs", read_steps)
-            monkeypatch.setattr(assembly, "render_delta", render_history)
+            monkeypatch.setattr(execution_history, "render_delta", render_history)
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             assert reads == [(first.id, second.id)]
@@ -430,36 +553,54 @@ def test_each_call_records_context_without_rerendering_history(
                 len(renderings) == 3
             )  # two historical deltas and one newly consumed tail
             before, after, final = [
-                item.call.messages for item in harness.adapter.invocations[-3:]
+                without_route_snapshots(item.call.messages)
+                for item in harness.adapter.invocations[-3:]
             ]
-            assert (
-                before[: len(harness.adapter.invocations[1].call.messages)]
-                == harness.adapter.invocations[1].call.messages
-            )
+            assert before[
+                : len(
+                    without_route_snapshots(
+                        harness.adapter.invocations[1].call.messages
+                    )
+                )
+            ] == without_route_snapshots(harness.adapter.invocations[1].call.messages)
             for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
-                        message_text(message.parts).count(context or "<context>")
+                        message_text(message.parts).count(
+                            context or "<toolang:context>"
+                        )
                         for message in messages
                     )
                     == count
                 )
-            for step in harness.store.list_steps(run_id=run.id):
+            models = [
+                step
+                for step in harness.store.list_steps(run_id=run.id)
+                if isinstance(step.given, StoredModelStepGiven)
+            ]
+            for step, expected in zip(models, (1, 2, 1), strict=True):
                 if isinstance(step.given, StoredModelStepGiven):
                     assert (
                         sum(
-                            segment.count(context or "<context>")
-                            for message in step.given.call.delta.messages
-                            for segment in message.segments
-                            if isinstance(segment, str)
+                            message_text(message.parts).count(
+                                context or "<toolang:context>"
+                            )
+                            for message in render_delta(
+                                tuple(
+                                    m
+                                    for m in step.given.call.messages.delta
+                                    if m.source is None
+                                ),
+                                harness.store.resolve_value,
+                            )
                         )
-                        == 1
+                        == expected
                     )
             assert final[: len(after)] == after
 
     asyncio.run(scenario())
     monkeypatch.setattr(
-        assembly,
+        execution_history,
         "control_message",
         lambda _control: pytest.fail("replay must use saved templates"),
     )
@@ -550,7 +691,9 @@ agic describe() -> Text:
                 tracer=tracer,
             )
             assert run.status == "succeeded", run.error
-            (message,) = harness.adapter.invocations[-1].call.messages
+            (message,) = without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )
             text = message_text(message.parts)
             assert "Earlier facts." in text and "second" in text and "role" in text
 
@@ -577,18 +720,16 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
             harness.threads.rewind(thread_id=thread, run_id=second.id)
             await _run(harness, thread, "replacement", tracer)
             await _run(harness, fork, "forked", tracer)
-            assert (
-                Message.user("second") in harness.adapter.invocations[-1].call.messages
+            assert Message.user("second") in without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
             )
-            assert (
-                Message.user("replacement")
-                not in harness.adapter.invocations[-1].call.messages
+            assert Message.user("replacement") not in without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
             )
             harness.threads.rewind(thread_id=fork, run_id=second.id)
             await _run(harness, fork, "new fork tail", tracer)
-            assert (
-                Message.user("second")
-                not in harness.adapter.invocations[-1].call.messages
+            assert Message.user("second") not in without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
             )
 
     asyncio.run(scenario())
@@ -643,7 +784,8 @@ def test_reload_captures_recall_without_reading_state_during_replay(
             run = await asyncio.wait_for(handle, 2)
             assert run.status == "succeeded", run.error
             before, after = [
-                item.call.messages for item in harness.adapter.invocations[-2:]
+                without_route_snapshots(item.call.messages)
+                for item in harness.adapter.invocations[-2:]
             ]
             assert before == [
                 Message.user("first"),
@@ -657,7 +799,7 @@ def test_reload_captures_recall_without_reading_state_during_replay(
                 for s in harness.store.list_steps(run_id=run.id)
                 if isinstance(s.given, StoredModelStepGiven)
             ]
-            assert [g.call.recall for g in givens] == [("far", "near"), ("none",)]
+            assert len({g.call.messages.head for g in givens}) == 2
 
     asyncio.run(scenario())
     for index, path in enumerate(
@@ -757,7 +899,7 @@ agic child() -> Text:
                 )
             assert horizons == [old, new]
             calls = [item.call for item in harness.adapter.invocations[2:]]
-            assert [call.messages[0] for call in calls] == [
+            assert [without_route_snapshots(call.messages)[0] for call in calls] == [
                 Message.user(text)
                 for text in (
                     "Old far.",
@@ -819,7 +961,9 @@ def test_initial_horizon_and_recall_selection(
                 if recall in {None, "auto"}
                 else tuple(recall.split(", "))
             )
-            assert harness.adapter.invocations[-1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            ) == [
                 *([Message.user("Earlier facts.")] if "far" in selected else []),
                 *(
                     [
@@ -834,15 +978,17 @@ def test_initial_horizon_and_recall_selection(
             ]
             (step,) = harness.store.list_steps(run_id=run.id)
             assert isinstance(step.given, StoredModelStepGiven)
-            assert step.given.call.recall == selected
-            assert len(step.given.call.delta.messages) == (
-                2 if "near" in selected else 1
+            assert step.given.call.messages.head == step.ref
+            assert len(step.given.call.messages.delta) == len(
+                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
             )
             entry = harness.store.get_run_control(run_id=run.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
             assert entry.payload.horizon == horizon
             assert first.id not in message_text(
-                harness.adapter.invocations[-1].call.messages[0].parts
+                without_route_snapshots(harness.adapter.invocations[-1].call.messages)[
+                    0
+                ].parts
             )
 
     asyncio.run(scenario())
@@ -891,7 +1037,8 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             before, after = [
-                item.call.messages for item in harness.adapter.invocations[-2:]
+                without_route_snapshots(item.call.messages)
+                for item in harness.adapter.invocations[-2:]
             ]
             assert before[0] == Message.user("first")
             assert after[:5] == [Message.user("Earlier facts."), *before[1:]]
@@ -904,10 +1051,15 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             assert compact is not None
             assert models[-1].preceded_by == (compact.ref,)
             assert [
-                len(s.given.call.delta.messages)
+                len(s.given.call.messages.delta)
                 for s in models
                 if isinstance(s.given, StoredModelStepGiven)
-            ] == [2, 2]
+            ] == [len(item.call.messages) for item in harness.adapter.invocations[-2:]]
+            assert all(
+                s.given.call.messages.head == s.ref
+                for s in models
+                if isinstance(s.given, StoredModelStepGiven)
+            )
             assert harness.store.run_horizon(run.id) == horizon
             rerun = await harness.executor.rerun(
                 run.id, setup=harness.setup, state=harness.state, tracer=tracer
@@ -916,9 +1068,9 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             entry = harness.store.get_run_control(run_id=rerun.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
             assert entry.payload.horizon == horizon
-            assert harness.adapter.invocations[-1].call.messages[0] == Message.user(
-                "Earlier facts."
-            )
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )[0] == Message.user("Earlier facts.")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

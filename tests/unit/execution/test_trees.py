@@ -10,7 +10,7 @@ import pytest
 from toolang.base.types.message import Message, TextPart
 from toolang.execution.inspection import ExecutionSnapshot
 from toolang.execution.store import RunStore
-from toolang.execution.trees import build_execution_tree, tree_to_data
+from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
 from toolang.execution.types import (
     ControlRef,
     ErrorRef,

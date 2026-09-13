@@ -13,7 +13,7 @@ from yaml import YAMLError
 
 from .errors import ResourceError
 from toolang.base.types.tool import ToolContext
-from .types import AgentStateToolContext
+from .types import MeToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.errors import (
     CatalogConflictError,
@@ -309,7 +309,7 @@ def _delete(
 
 
 def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
-    if not isinstance(context, AgentStateToolContext):
+    if not isinstance(context, MeToolContext):
         fail(
             "invalid_request",
             "me requires a current agent context",

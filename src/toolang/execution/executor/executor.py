@@ -50,7 +50,7 @@ from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
-from ..assembly import MessageHistory, adopted_horizon
+from ..assembly.history import MessageHistory, adopted_horizon
 from ..recall import canonical_recall
 from ..calls import (
     IncludeResolver,
@@ -70,7 +70,7 @@ from ..records import (
     StepRecord,
 )
 from ..store import RunStore
-from ..tool_results import control_summary
+from ..assembly.tool_replies import control_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     value_for_type,
@@ -98,7 +98,7 @@ from ..types import (
 from ..runnables import (
     ResolvedRunnable,
     parse_runnable_ref,
-    runnable_input_contract,
+    runnable_signature,
     resolve_bound_runnable,
     resolve_module_runnable,
     resolve_public_runnable,
@@ -1589,14 +1589,15 @@ class _Execution:
 
     def recall(
         self,
-        step: StepRef,
+        step: StepRef | RunRef,
         payload: RecallControlPayload,
         visible: Mapping[RecallTarget, str],
     ) -> tuple[ControlRef, ...]:
         """Reuse pending work or record one new presentation of a resource."""
 
+        run_id = step.run_id if isinstance(step, StepRef) else str(step)
         payload = canonical_recall(payload)
-        for pending in reversed(self.runtime_controls(step.run_id, refresh=False)):
+        for pending in reversed(self.runtime_controls(run_id, refresh=False)):
             if (
                 not isinstance(pending.payload, RecallControlPayload)
                 or pending.payload.target != payload.target
@@ -1609,12 +1610,14 @@ class _Execution:
             if visible.get(payload.target) == payload.revision:
                 return ()
         control = self.store.accept_recall_control(
-            run_id=step.run_id,
+            run_id=run_id,
             payload=payload,
-            triggered_by=step,
+            triggered_by=step if isinstance(step, StepRef) else None,
             created_at=utc_now(),
         )
-        self._runtime_controls[step.run_id][control.index] = control
+        # Advance the read cursor before a model boundary consumes this fact.
+        # Otherwise its next refresh would redeliver our already-adopted recall.
+        self.runtime_controls(run_id)
         return (control.ref,)
 
     def next_step(self, run_id: str) -> int:
@@ -1804,7 +1807,7 @@ class _Execution:
                 details={
                     "code": "invalid_runnable_input",
                     "runnable": f"{runnable.kind}:{name}",
-                    "expected": runnable_input_contract(state, module, runnable),
+                    "expected": runnable_signature(state, module, runnable),
                     "guidance": (
                         "Retry only when available context provides the required "
                         "values; otherwise respond to the user in the normal model "
@@ -1819,6 +1822,19 @@ class _Execution:
         )
         return input
 
+    def active_runnable_identities(self, parent: BoundRun) -> frozenset[str]:
+        """Return the identities blocked by the current and ancestor lineages."""
+
+        identities: set[str] = set()
+        run_id: str | None = parent.run_id
+        while run_id is not None:
+            identities.update(self._run_lineages.get(run_id, ()))
+            active = self._active_bindings.get(run_id)
+            run_id = (
+                active.parent.run_id if active and active.parent is not None else None
+            )
+        return frozenset(identities)
+
     def require_inactive_runnable(
         self,
         parent: BoundRun,
@@ -1828,17 +1844,9 @@ class _Execution:
     ) -> None:
         """Reject a model route already active in this or an ancestor lineage."""
 
-        identity = target.qualified
-        run_id: str | None = parent.run_id
-        while run_id is not None:
-            if identity in self._run_lineages.get(run_id, ()):
-                raise ValueError(
-                    f"{action} cannot call the current or an ancestor runnable: "
-                    f"{target.ref}"
-                )
-            active = self._active_bindings.get(run_id)
-            run_id = (
-                active.parent.run_id if active and active.parent is not None else None
+        if target.qualified in self.active_runnable_identities(parent):
+            raise ValueError(
+                f"{action} cannot call the current or an ancestor runnable: {target.ref}"
             )
 
     def prepare_execute(

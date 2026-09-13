@@ -38,7 +38,7 @@ from toolang.execution.executor.common import (
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.resources import resolve_agent_resources
 from toolang.execution.executor.runs import agic as agic_run
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     ForkControlPayload,
     RunControlPayload,
@@ -223,6 +223,7 @@ def _spec(
 
 def _capture_model_text(store: RunStore, body: str) -> str:
     captured = store.capture_model_call(
+        step=StepRef.parse("run_ab12.0"),
         model="test/model",
         call=ModelCall(instructions=body, messages=[]),
     )

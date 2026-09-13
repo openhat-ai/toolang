@@ -21,7 +21,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import compact
 from toolang.execution.executor.compact import permit
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.lang.input import CallInput, RunnableInput

@@ -12,6 +12,7 @@ from typing import Any
 from anyio import to_process
 import pytest
 
+from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingTool,
@@ -26,7 +27,7 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.common.errors import ToolangError
 from toolang.execution.events import RunEvent
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
@@ -518,7 +519,9 @@ agic chat(_: Part[]) -> Part[]:
         assert session.get_result(runs[0].id, thread_id=None).output == (
             TextPart("hello back"),
         )
-        assert harness.adapter.invocations[0].call.messages == [Message.user("hello")]
+        assert without_route_snapshots(
+            harness.adapter.invocations[0].call.messages
+        ) == [Message.user("hello")]
         assert setup_refreshes == 1
         assert state_refreshes == 1
         assert set(event_threads) == {session._thread.ident}

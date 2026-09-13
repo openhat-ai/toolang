@@ -41,7 +41,7 @@ _DESCRIPTIONS: dict[Operation, str] = {
 
 
 @dataclass(frozen=True, slots=True)
-class AgentStateActionTool(Tool):
+class MeTool(Tool):
     """One operation over the compact current-agent resource protocol."""
 
     operation: Operation
@@ -70,7 +70,7 @@ class AgentStateActionTool(Tool):
 
 
 @dataclass(slots=True)
-class AgentStateToolset:
+class MeToolset:
     """Tools for managing the current agent's authored resources."""
 
     config: dict[str, Any]
@@ -89,9 +89,7 @@ class AgentStateToolset:
             "update",
             "delete",
         )
-        self._tools = {
-            operation: AgentStateActionTool(operation) for operation in operations
-        }
+        self._tools = {operation: MeTool(operation) for operation in operations}
 
     def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
@@ -100,7 +98,7 @@ class AgentStateToolset:
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
     """Create the `me` toolset plugin."""
 
-    return AgentStateToolset(config=dict(config))
+    return MeToolset(config=dict(config))
 
 
-__all__ = ["AgentStateActionTool", "AgentStateToolset", "create_toolset"]
+__all__ = ["MeTool", "MeToolset", "create_toolset"]

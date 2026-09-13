@@ -23,7 +23,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps import tool as tool_step
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix, ToolStepGiven
 from toolang.state.prepare import prepare_agent_state

@@ -6,8 +6,8 @@ import pytest
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunLimits
-from toolang.execution.control_messages import control_message
-from toolang.execution.message_delta import render_delta
+from toolang.execution.assembly.utils import control_message
+from toolang.execution.assembly.utils import render_delta
 from toolang.execution.records import (
     CancelControlPayload,
     ControlRecord,
@@ -24,7 +24,6 @@ from toolang.execution.types import (
     AgentResources,
     ControlRef,
     FieldRef,
-    MessageDelta,
     RunRef,
     ThreadRef,
     TypedRef,
@@ -33,20 +32,31 @@ from toolang.lang.input import CallInput
 
 
 @pytest.mark.parametrize("reason", [None, "Please stop."])
-def test_cancel_description_is_an_attribute(reason: str | None) -> None:
+@pytest.mark.parametrize(
+    "kind,payload_type,description",
+    [
+        ("cancel", CancelControlPayload, "The user canceled this run."),
+        (
+            "steer",
+            SteerControlPayload,
+            "The user supplied updated input for the current task.",
+        ),
+    ],
+)
+def test_control_description_is_an_attribute(
+    reason: str | None, kind, payload_type, description
+) -> None:
     control = ControlRecord(
         str(ControlRef.for_run("run_ab12", 1)),
-        "cancel",
-        CancelControlPayload(
-            CallInput({"_": reason}) if reason is not None else CallInput({})
-        ),
+        kind,
+        payload_type(CallInput({"_": reason}) if reason is not None else CallInput({})),
     )
     template = control_message(control)
     assert template is not None
-    (message,) = render_delta(MessageDelta(messages=(template,)), lambda _: reason)
-    opening = '<cancel description="The user canceled this run."'
+    (message,) = render_delta((template,), lambda _: reason)
+    opening = f'<toolang:{kind} description="{description}"'
     assert message.parts == (
-        (TextPart(opening + ">"), TextPart(reason), TextPart("</cancel>"))
+        (TextPart(opening + ">"), TextPart(reason), TextPart(f"</toolang:{kind}>"))
         if reason is not None
         else (TextPart(opening + "/>"),)
     )
@@ -111,6 +121,6 @@ def test_control_message_retains_referenced_input_type(payload_type) -> None:
     )
     template = control_message(control)
     assert template is not None
-    assert template.segments[1] == TypedRef(
+    assert template.content[1] == TypedRef(
         FieldRef.from_path(control.ref, "payload", "input", "_"), "Part[]"
     )

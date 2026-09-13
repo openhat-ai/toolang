@@ -17,6 +17,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
+    MessageRecall,
     MessageRole,
     Part,
     TextPart,
@@ -1365,18 +1366,38 @@ class RunLink:
 
 @dataclass(frozen=True, slots=True)
 class MessageTemplate:
-    """One message represented by ordered literal content and field references."""
+    """One immutable message with structured content and presentation metadata."""
 
     role: MessageRole
-    segments: tuple[str | Part | TypedRef, ...]
+    content: tuple[str | Part | TypedRef | ContentRef, ...]
+    tag: str | None = None
+    recall: MessageRecall | None = None
+    escape_text: bool = False
+    # Imported historical messages are context, not a new contribution by the
+    # receiving Run. Preserve their owner when recording a new message head.
+    source: RunRef | None = None
+
+    def __post_init__(self) -> None:
+        if self.role not in {"user", "assistant", "tool"}:
+            raise ValueError(f"invalid message role: {self.role}")
+        if self.recall is not None and (self.role != "user" or not self.tag):
+            raise ValueError("message recall requires a tagged user message")
 
 
 @dataclass(frozen=True, slots=True)
-class MessageDelta:
-    """New message templates captured at one Model Step boundary."""
+class ModelMessages:
+    """A Model Step's explicit message-sequence head and ordered additions."""
 
-    version: int = 1
-    messages: tuple[MessageTemplate, ...] = ()
+    head: StepRef
+    delta: tuple[MessageTemplate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.head, StepRef):
+            raise TypeError("model message head requires a StepRef")
+        if not isinstance(self.delta, tuple) or not all(
+            isinstance(message, MessageTemplate) for message in self.delta
+        ):
+            raise TypeError("model message delta requires a tuple of messages")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1386,11 +1407,8 @@ class ModelStepGiven:
     model: str
     call: ModelCall
     # Internal recording metadata; public event codecs expose only the call.
-    delta: MessageDelta | None = field(
+    messages: ModelMessages | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
-    )
-    recall: tuple[str, ...] = field(
-        default=("none",), compare=False, repr=False, metadata={"exclude": True}
     )
 
     def __post_init__(self) -> None:
@@ -1895,8 +1913,38 @@ class ServiceRecallTarget:
     kind: Literal["service"] = field(default="service", init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class PsycheRecallTarget:
+    ref: str
+    kind: Literal["psyche"] = field(default="psyche", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SkillTriggerRecallTarget:
+    ref: str
+    kind: Literal["skill-trigger"] = field(default="skill-trigger", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceTriggerRecallTarget:
+    ref: str
+    kind: Literal["service-trigger"] = field(default="service-trigger", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRecallTarget:
+    ref: str
+    kind: Literal["workspace"] = field(default="workspace", init=False)
+
+
 RecallTarget = Annotated[
-    RulesRecallTarget | SkillRecallTarget | ServiceRecallTarget,
+    RulesRecallTarget
+    | SkillRecallTarget
+    | ServiceRecallTarget
+    | PsycheRecallTarget
+    | SkillTriggerRecallTarget
+    | ServiceTriggerRecallTarget
+    | WorkspaceRecallTarget,
     Field(discriminator="kind"),
 ]
 ControlTiming = Literal["immediate", "next_step", "next_call"]

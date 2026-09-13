@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -286,9 +287,9 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         ]
         assert fallback.input_text == "@note.md"
         assert fallback.controls[0].request_id == "fallback_request"
-        assert harness.adapter.invocations[0].call.messages == [
-            Message.user("included")
-        ]
+        assert without_route_snapshots(
+            harness.adapter.invocations[0].call.messages
+        ) == [Message.user("included")]
         assert [event.type for event in tracer.events] == [
             "run_begin",
             "step_begin",
@@ -451,7 +452,8 @@ prompt rewrite:
         assert current_state_reads == 3
         assert loaded_revisions == [harness.state.revision]
         assert [
-            invocation.call.messages for invocation in harness.adapter.invocations
+            without_route_snapshots(invocation.call.messages)
+            for invocation in harness.adapter.invocations
         ] == [
             [Message.user("Old brief hello")],
             [Message.user("Old brief hello")],

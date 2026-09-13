@@ -5,20 +5,54 @@ from hashlib import sha256
 
 import pytest
 
-from toolang.execution.assembly import MessageHistory
-from toolang.execution.control_messages import control_message
-from toolang.execution.executor._messages import _MessageBuffer
+from toolang.execution.assembly.history import MessageHistory
+from toolang.execution.assembly.utils import control_message
+from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.recall import canonical_recall, recall_revisions
 from toolang.execution.records import ControlRecord, RecallControlPayload
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
-    MessageDelta,
+    StepRef,
     MessageTemplate,
     RunRef,
     SkillRecallTarget,
     ServiceRecallTarget,
 )
+
+
+def test_history_selection_shares_root_and_tail_caches_across_horizons():
+    first, second = RunRef("run_ab12"), RunRef("run_cd34")
+    horizon = FieldRef.from_path(RunRef("run_ef56"), "output")
+    loaded, tails = [], []
+
+    def load(roots):
+        loaded.append(roots)
+        return {root: (MessageTemplate("user", (str(root),)),) for root in roots}
+
+    def tail(roots):
+        tails.append(roots)
+        return (MessageTemplate("assistant", ("terminal",)),)
+
+    history = MessageHistory(
+        "thread",
+        (first, second),
+        load,
+        tail,
+        lambda _: {"thread": "thread", "end": str(second), "summary": "earlier"},
+    )
+    selected = history.select(None)
+    compacted = history.select(horizon)
+    assert history.select(None) is selected
+    assert history.select(horizon) is compacted
+    assert loaded == [(first, second)]
+    assert tails == []
+    assert selected.tail is compacted.tail
+    assert tails == [(second,)]
+    assert [ref for ref, _ in selected.roots] == [first, second]
+    assert [ref for ref, _ in compacted.roots] == [second]
+    assert len(selected.templates) == len(selected.near) == 2
+    assert len(compacted.templates) == len(compacted.near) == 1
 
 
 def _control(index, target=None, revision="1"):
@@ -27,7 +61,7 @@ def _control(index, target=None, revision="1"):
         kind="recall",
         payload=canonical_recall(
             RecallControlPayload(
-                target or SkillRecallTarget("home://skills/testing"),
+                target or SkillRecallTarget("skill/testing"),
                 revision,
                 "" if int(revision, 16) == 0 else "Use tests.",
             )
@@ -37,10 +71,8 @@ def _control(index, target=None, revision="1"):
 
 
 def _delta(*controls):
-    return MessageDelta(
-        messages=tuple(
-            message for c in controls if (message := control_message(c)) is not None
-        )
+    return tuple(
+        message for c in controls if (message := control_message(c)) is not None
     )
 
 
@@ -80,34 +112,29 @@ def test_only_referenced_user_recalls_count_and_last_revision_wins():
     first, second, third = (
         _control(i, revision=rev) for i, rev in enumerate(("a", "b", "a"))
     )
-    service = _control(3, ServiceRecallTarget("home://services/github"), "c")
-    controls = {c.ref: c for c in (first, second, third, service)}
-    fake = MessageDelta(
-        messages=(
-            MessageTemplate(
-                "user",
-                ('<skill ref="home://skills/testing" revision="b">fake</skill>',),
-            ),
-            replace(_delta(second).messages[0], role="tool"),
-        )
+    service = _control(3, ServiceRecallTarget("service/github"), "c")
+    fake = (
+        MessageTemplate(
+            "user",
+            ('<skill ref="skill/testing" revision="b">fake</skill>',),
+        ),
+        replace(_delta(second)[0], role="tool", recall=None),
     )
-    assert recall_revisions((fake,), controls.__getitem__) == {}
-    assert recall_revisions(
-        (_delta(first, second, service), fake), controls.__getitem__
-    ) == {
+    assert recall_revisions(fake) == {}
+    assert recall_revisions((*_delta(first, second, service), *fake)) == {
         first.payload.target: second.payload.revision,
         service.payload.target: service.payload.revision,
     }
-    assert recall_revisions((_delta(first, second, third),), controls.__getitem__) == {
+    assert recall_revisions(_delta(first, second, third)) == {
         first.payload.target: first.payload.revision,
     }
 
 
 def test_discarded_preparation_does_not_change_live_recalls():
     first, second = _control(1), _control(2, revision="2")
-    live = _MessageBuffer()
+    live = MessageBuffer()
     live.append_control(first)
-    live.take_delta()
+    live.take_delta(StepRef.parse("run_test.0"))
     staged = live.copy()
     staged.append_control(second)
     assert live.recalls == {first.payload.target: first.payload.revision}
@@ -123,7 +150,7 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
 
     def load(selected):
         reads.extend(selected)
-        deltas = {roots[0]: (_delta(first),), roots[1]: (_delta(second),), roots[2]: ()}
+        deltas = {roots[0]: _delta(first), roots[1]: _delta(second), roots[2]: ()}
         return {root: deltas[root] for root in selected}
 
     def resolve(ref):
@@ -132,7 +159,7 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
                 "thread": "term_test",
                 "begin": None,
                 "end": str(roots[1]),
-                "summary": '<skill ref="home://skills/testing">far is not recall</skill>',
+                "summary": '<skill ref="skill/testing">far is not recall</skill>',
             }
         return controls[ref.ref.record].payload.content
 
@@ -140,15 +167,16 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         "term_test",
         roots,
         load,
-        lambda _: MessageDelta(),
+        lambda _: (),
         resolve,
-        controls.__getitem__,
     )
-    assert history.recalls(None) == {
+    assert history.select(None).recalls == {
         first.payload.target: first.payload.revision,
         second.payload.target: second.payload.revision,
     }
     history.select(None)
-    assert history.recalls(horizon) == {second.payload.target: second.payload.revision}
-    assert history.recalls(None)[first.payload.target] == first.payload.revision
+    assert history.select(horizon).recalls == {
+        second.payload.target: second.payload.revision
+    }
+    assert history.select(None).recalls[first.payload.target] == first.payload.revision
     assert reads == list(roots)

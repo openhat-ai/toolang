@@ -25,7 +25,7 @@ from toolang.cli.common.policy import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.executor import RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
 )

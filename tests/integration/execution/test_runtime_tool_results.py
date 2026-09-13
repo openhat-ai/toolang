@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_assertions import assert_run_event_integrity, steer_message
+from tests.support.execution_assertions import (
+    assert_run_event_integrity,
+    steer_message,
+    without_route_snapshots,
+)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -20,9 +24,9 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.trees import build_execution_tree
+from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import FieldRef, StepRef, ThreadPrefix, ToolStepGiven
 from toolang.execution.values import parts_from_local
 
@@ -209,7 +213,9 @@ def test_steer_during_result_delivery_preserves_result_once(
             assert skipped.status == "canceled" and skipped.aborted_by == steer.ref
             results = [
                 part
-                for message in harness.adapter.invocations[-1].call.messages
+                for message in without_route_snapshots(
+                    harness.adapter.invocations[-1].call.messages
+                )
                 for part in message.parts
                 if isinstance(part, ToolResultPart)
             ]
@@ -299,7 +305,9 @@ def test_interruption_before_result_commit_preserves_completed_result(
             if interruption == "steer":
                 assert [
                     part
-                    for message in harness.adapter.invocations[-1].call.messages
+                    for message in without_route_snapshots(
+                        harness.adapter.invocations[-1].call.messages
+                    )
                     for part in message.parts
                     if isinstance(part, ToolResultPart)
                 ] == [completed]
@@ -357,7 +365,9 @@ def test_interrupting_runtime_child_terminates_owning_tool_step(
             if interruption == "steer":
                 assert tool_step.output is not None
                 assert parts_from_local(tool_step.output.local) == (
-                    harness.adapter.invocations[-1].call.messages[-2].parts[0],
+                    without_route_snapshots(
+                        harness.adapter.invocations[-1].call.messages
+                    )[-2].parts[0],
                 )
             else:
                 assert tool_step.output is not None
@@ -475,7 +485,9 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
                 assert part.tool_call_id == request.tool_call_id
                 assert part.error == "canceled by steer"
             if followup:
-                messages = harness.adapter.invocations[1].call.messages
+                messages = without_route_snapshots(
+                    harness.adapter.invocations[1].call.messages
+                )
                 assert messages[-2].role == "tool"
                 assert len(messages[-2].parts) == 2
                 assert messages[-1] == steer_message("skip these calls")
@@ -530,7 +542,9 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             steer = handle.steer(Message.user("extra requirement"), timing="immediate")
             root = await asyncio.wait_for(handle, timeout=2)
             assert root.status == "succeeded", root.error
-            followup = harness.adapter.invocations[1].call.messages
+            followup = without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            )
             assert Message.user("Child task.") in followup
             assert followup[-1] == steer_message("extra requirement")
             steps = harness.store.list_steps(run_id=root.id)
@@ -636,7 +650,9 @@ def test_steer_at_tool_begin_closes_the_started_step(
             assert step.output is not None
             assert (
                 parts_from_local(step.output.local)
-                == harness.adapter.invocations[-1].call.messages[-2].parts
+                == without_route_snapshots(
+                    harness.adapter.invocations[-1].call.messages
+                )[-2].parts
             )
             assert tool.calls == []
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
@@ -706,7 +722,9 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
             ]
             parts = tuple(
                 part
-                for message in harness.adapter.invocations[-1].call.messages
+                for message in without_route_snapshots(
+                    harness.adapter.invocations[-1].call.messages
+                )
                 for part in message.parts
                 if isinstance(part, ToolResultPart)
             )

@@ -273,24 +273,38 @@ The target execution package is:
 ```text
 execution/
 ├── types.py                # execution lifecycle vocabulary
-├── records.py              # durable thread, run, control, and step truth
+├── records.py              # durable records and codecs, including message deltas
 ├── schemas.py              # protocol types and pure record conversion
-├── history.py              # caller-facing durable run history
+├── inspection/
+│   ├── __init__.py         # lightweight inspection vocabulary exports
+│   ├── types.py            # focused inspection facts and ordering helpers
+│   ├── history.py          # caller-facing durable run history
+│   ├── views.py            # Run/Thread views and branch projection
+│   └── trees.py            # execution-tree projection
 ├── events.py               # RunEvent, RunTracer, and thread events
 ├── store.py                # RunStore
 ├── threads.py              # ThreadManager
+├── assembly/               # model-call content shared by execution and replay
+│   ├── prompting.py        # complete adapter-facing ModelCall assembly
+│   ├── types.py            # cached PreparedPrompt content
+│   ├── history.py          # historical model context selection and composition
+│   ├── tool_replies.py     # control receipts and intercepted-call replies
+│   ├── utils.py            # text/Part helpers and delta generation/rendering
+│   └── prompts/            # static prompts and defaults/
 ├── tools/                  # agent-specific built-in tools
+│   ├── _toolang.py         # _toolang toolset
+│   └── me/                 # me toolset
 └── executor/               # RunExecutor and execution implementation helpers
     ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
     ├── executor.py         # public run contract and private per-run _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
-    ├── prepare.py          # agic resolution and complete model-input preparation
+    ├── frame.py            # bound resources and runtime facts to an agic frame
+    ├── message_buffer.py   # live message sequence and pending delta
     ├── diagnostics.py      # bounded model and tool diagnostics
     ├── _persist.py         # private run-event projection
     ├── runs/               # agic and flow run bodies
     ├── steps/              # event-owning run, model, tool, and value steps
-    ├── stmts/              # lowered flow-statement semantics
-    └── prompts/            # default execution prompt resources
+    └── stmts/              # lowered flow-statement semantics
 ```
 
 A process owns one shared `RunStore` and `IdIssuer` for an agent and passes both

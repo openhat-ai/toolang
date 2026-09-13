@@ -283,6 +283,28 @@ class StateCap:
             raise ValueError(f"{self.source.form} cap must have here scope")
 
     @property
+    def effective_ref(self) -> str:
+        """Identify this effective definition without exposing its source."""
+
+        return f"{self.kind}/{self.name}"
+
+    @property
+    def revision(self) -> str:
+        """Identify the effective definition independently of its snapshot path."""
+
+        definition = {
+            "kind": self.kind,
+            "name": self.name,
+            "meta": mutable_data(self.meta),
+            "source": self.source.fingerprint,
+        }
+        return sha256(
+            json.dumps(
+                definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+
+    @property
     def scope(self) -> CapScope:
         if self.source.form in {"inline", "referenced"}:
             return "here"

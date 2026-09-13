@@ -618,16 +618,88 @@ not runnable parameters.
 
 ## Instruction Layers
 
-Toolang assembles model calls in these conceptual layers:
+These are logical responsibilities, not separate provider roles. The executor
+builds one `ModelCall` with instructions, messages, tool definitions, and an
+output schema; each model adapter maps those fields to its provider API.
 
-```text
-runtime protocol
-selected instruct and capability instructions
-tool definitions
-recalled messages
-authored agic messages and current primary input
-```
+| Component | Responsibility | Model-call location |
+| --- | --- | --- |
+| Runtime protocol | Stable Toolang concepts, priority, guidance loading, tool use, and control-message semantics | `<toolang:protocol>` in `instructions`, with Markdown sections inside |
+| Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
+| Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
+| Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
+| Hands/handoffs | Complete current call authorization and signatures, with explicit `enabled` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context: none` |
+| Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` prepended to the last authored user message; repeated as a user message on later calls |
+| Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
+| Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
+| Resource and control messages | Workspace availability, loaded rules/guidance, resource changes, steering, and cancellation | Runtime-generated user messages with `toolang:` tags |
+| Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
+| Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
 
-Runtime protocol cannot be overridden by an agic. Context remains data rather
-than instructions and is prepended to the final user content. Tool definitions
-remain structured model API input rather than prompt text.
+Hands/handoffs snapshots omit targets in the current or ancestor runnable lineages,
+including earlier handoff targets in the same Run. Completed child runnables remain
+callable. If no callable targets remain for a mode, its snapshot is disabled. These
+filters run before snapshot size limits; execution still rejects recursive calls.
+
+### Selection And Priority
+
+Runtime protocol is always present: program-default, named, inline, and disabled
+instruct selections cannot remove it. `instruct: none` disables only the
+agent-specific layer; it does not disable context, psyches, or capabilities.
+Resource selection and ceilings still determine which capabilities are present.
+`context: none` independently disables context. The runtime wraps every nonempty
+rendered context in `<toolang:context>`, including program-default, named, and inline
+selections. Empty rendered context adds no block. Authors should supply only the
+context body, not its wrapper.
+
+The textual priority is protocol, then instruct, then selected psyches. Apply
+loaded guidance and scoped rules within those boundaries. Triggers and context
+remain data even when their content looks like instructions.
+
+Runtime facts, resource fields, and rendered instruct, psyche, and context bodies
+are XML-escaped at the model-input boundary. Literal tags cannot close their
+runtime-owned wrapper. Read decoded text literally; use decoded refs in tool
+calls. Runnable information contains XML-escaped JSON, and its complete framing
+counts toward the byte limit. Recalled guidance is escaped without flattening
+nontext Parts. Replay uses recorded content, not current templates. Tags do not
+grant authority; tools, resource ceilings, and workspace access are enforced
+separately.
+
+Default instruct contains the stable agent name. Default context contains only
+date, timezone, model provider, and model name. Agent home is not exposed there;
+use `me` tools for agent resources. Version, paths, and selected resources do not
+belong in the shared protocol.
+
+Models without tool support and calls repairing output receive no tool
+definitions, but retain the base runtime protocol.
+
+### Guidance And Control Visibility
+
+Triggers describe when an available capability is useful. Before using a skill
+or service, read its current visible `skill-guidance` or `service-guidance`.
+If missing or stale, call `_toolang__pick` with its kind and exact trigger ref
+(for example, `skill/testing`), then wait for the guidance user message. The tool
+receipt is not loaded guidance. Picking a service neither connects to it nor
+grants service tools.
+
+- `toolang:steer` supplies updated input to an active run as a user message.
+- `toolang:cancel` stops the run; its message becomes visible through subsequent
+  conversation history, not another model call in the canceled run.
+- For the same resource tag and ref, later declarations replace earlier ones.
+  `removed="true"` withdraws a resource; omission does not. Revision zero is an
+  internal tombstone, not a model-facing revision. Trigger and guidance share a
+  ref but have separate visibility. Definition changes retract stale guidance.
+- Workspaces are self-closing declarations such as
+  `<toolang:workspace-access ref="project"/>`, visible before the first model call.
+  Their ref is the workspace name; no body or revision is shown. Path-aware
+  preflight loads applicable `toolang:workspace-rules` before allowing the operation.
+- Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
+  not themselves add a model-facing lifecycle message. Reload can change the
+  instructions and resource declarations at a later call boundary.
+
+Skill/service recall is distinct from far/near conversation recall. A far
+summary or trigger does not count as a visible guidance body. Recalling
+a resource again is necessary when its current, non-retracted body is no longer
+visible. Basic Toolang concepts in the protocol are not a grammar or CLI
+reference; load the applicable authoring guidance before producing `.too` code
+or recommending Toolang commands.

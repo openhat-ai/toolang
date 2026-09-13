@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_assertions import assert_replayed
+from tests.support.execution_assertions import assert_replayed, without_route_snapshots
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -19,8 +19,9 @@ from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResu
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.executor.compact import permit
+from toolang.execution.executor.budget import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 from toolang.plugin.models.collections import ModelCollection
@@ -232,6 +233,10 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
     async def scenario():
         async with harness:
             thread, end = await seed(harness)
+            # Leave room for current input, but not the large tool result,
+            # independently of the bundled protocol's length.
+            baseline = InputEstimate().count(harness.adapter.invocations[-1].call, None)
+            constrain(harness, context=baseline + 4096)
             harness.adapter._responses.extend(
                 [
                     ModelCallResult(tool_calls=(call,)),
@@ -319,7 +324,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
             assert [step.kind for step in steps] == ["tool", "model"]
             request = RunHistory(harness.store).get_model_call(steps[-1].ref)
             assert request == harness.adapter.invocations[-1].call
-            assert request.messages == [
+            assert without_route_snapshots(request.messages) == [
                 Message.user("Earlier facts."),
                 Message.user("middle"),
                 Message.assistant("middle"),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,13 @@ from toolang.execution.types import ToolStepGiven
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.base.types.tool import RuntimeToolContext, ToolResult
+
+
+@pytest.mark.parametrize("name", ["_toolang", "me"])
+def test_builtin_toolset_module_matches_registered_name(name: str) -> None:
+    (entry,) = entry_points(group="toolang.toolset", name=name)
+    assert entry.value == f"toolang.execution.tools.{name}:create_toolset"
+    assert entry.load()({}).name == name
 
 
 def test_installed_runtime_toolset_has_no_old_aliases() -> None:
@@ -33,6 +41,13 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     for name, tool in tools.runtime.items():
         assert tool.definition().name == name
         assert getattr(tool, "source") == "built-in"
+
+
+def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
+    definition = load_tools()["_toolang__pick"].definition()
+    assert "trigger" in definition.description
+    assert "skill/testing" in str(definition.parameters)
+    assert "catalog" not in definition.description + str(definition.parameters)
 
 
 class _Runtime:
@@ -88,7 +103,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         if name == "honor"
         else {"thread": "term_ab12", "end": "run_ab12"}
         if name == "compact"
-        else {"kind": "skill", "ref": "home://skills/testing"}
+        else {"kind": "skill", "ref": "skill/testing"}
         if name == "pick"
         else {"runnable": "child", "input": {"_": "input"}}
     )
@@ -124,10 +139,10 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("run", {"runnable": ""}),
         (
             "pick",
-            {"kind": "skill", "ref": "home://skills/testing", "content": "injected"},
+            {"kind": "skill", "ref": "skill/testing", "content": "injected"},
         ),
         ("pick", {"kind": "rules", "ref": "/tmp"}),
-        ("pick", {"kind": [], "ref": "home://skills/testing"}),
+        ("pick", {"kind": [], "ref": "skill/testing"}),
         ("pick", {"kind": "skill", "ref": " testing "}),
         ("honor", {"paths": []}),
         ("honor", {"paths": [{"workspace": "repo", "path": "src"}]}),

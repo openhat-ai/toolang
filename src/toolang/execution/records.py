@@ -14,7 +14,9 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
+    MessageRecall,
     MessageRole,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -31,9 +33,10 @@ from toolang.lang.input import (
     validate_runnable_input_names,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
-from .message_delta import delta_from_data, delta_to_data
 from .types import (
-    MessageDelta,
+    ModelMessages,
+    ContentRef,
+    MessageTemplate,
     CollectionStepNoted,
     ControlRef,
     RecallTarget,
@@ -81,6 +84,116 @@ from .types import (
     validate_step_given,
     validate_step_noted,
 )
+
+
+def delta_to_data(delta: Sequence[MessageTemplate]) -> list[dict[str, object]]:
+    """Serialize only top-level segments as references or canonical Parts."""
+
+    return [
+        {
+            "role": message.role,
+            "content": {
+                "segments": [
+                    segment
+                    if isinstance(segment, str)
+                    else {"?": str(segment)}
+                    if isinstance(segment, TypedRef)
+                    else {"hash": str(segment)}
+                    if isinstance(segment, ContentRef)
+                    else segment.to_data()
+                    for segment in message.content
+                ],
+                **({"escape_text": True} if message.escape_text else {}),
+            },
+            **({"tag": message.tag} if message.tag is not None else {}),
+            **({"source": str(message.source)} if message.source is not None else {}),
+            **(
+                {
+                    "recall": {
+                        "ref": message.recall.ref,
+                        "revision": message.recall.revision,
+                    }
+                }
+                if message.recall
+                else {}
+            ),
+        }
+        for message in delta
+    ]
+
+
+def delta_from_data(data: object) -> tuple[MessageTemplate, ...]:
+    """Decode structured messages without guessing metadata from XML content."""
+
+    if not isinstance(data, list):
+        raise ValueError("message delta must be an array")
+    messages = []
+    for raw_message in data:
+        if not isinstance(raw_message, Mapping):
+            raise ValueError("message must be an object")
+        message = cast(Mapping[str, Any], raw_message)
+        if not {"role", "content"} <= set(message) or set(message) - {
+            "role",
+            "content",
+            "tag",
+            "recall",
+            "source",
+        }:
+            raise ValueError("message requires role, content, and optional tag/recall")
+        content = cast(Mapping[str, Any], message["content"])
+        if (
+            not isinstance(content, Mapping)
+            or "segments" not in content
+            or set(content) - {"segments", "escape_text"}
+        ):
+            raise ValueError(
+                "message content requires segments and optional escape_text"
+            )
+        segments = content["segments"]
+        if not isinstance(segments, list):
+            raise ValueError("message content segments must be an array")
+        escaped = content.get("escape_text", False)
+        if not isinstance(escaped, bool):
+            raise ValueError("message escape_text must be boolean")
+        tag = message.get("tag")
+        if tag is not None and (
+            not isinstance(tag, str) or not tag or tag != tag.strip()
+        ):
+            raise ValueError("message tag must be nonempty text")
+        recall = message.get("recall")
+        if recall is not None:
+            if (
+                not isinstance(recall, Mapping)
+                or set(recall) != {"ref", "revision"}
+                or not all(isinstance(value, str) for value in recall.values())
+            ):
+                raise ValueError("message recall requires ref and revision text")
+            recall = MessageRecall(recall["ref"], recall["revision"])
+        messages.append(
+            MessageTemplate(
+                role=message["role"],
+                content=tuple(_segment_from_data(segment) for segment in segments),
+                tag=tag,
+                recall=recall,
+                escape_text=escaped,
+                source=RunRef.parse(message["source"]) if "source" in message else None,
+            )
+        )
+    return tuple(messages)
+
+
+def _segment_from_data(data: object) -> str | Part | TypedRef | ContentRef:
+    if isinstance(data, str):
+        return data
+    if not isinstance(data, Mapping):
+        raise ValueError("message segment must be text, a Part, or a reference")
+    value = cast(Mapping[str, Any], data)
+    if set(value) == {"hash"}:
+        return ContentRef.parse(value["hash"])
+    if set(value) == {"?"}:
+        return TypedRef.parse(value["?"])
+    return part_from_data(value)
+
 
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
@@ -431,14 +544,16 @@ class ModelCallRefs:
     """Durable call settings and incremental message templates."""
 
     instructions: str
-    delta: MessageDelta
+    messages: ModelMessages
     tools: str | None
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
-    recall: tuple[str, ...] = ("none",)
+    version: int = 1
     max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
+        if type(self.version) is not int or self.version != 1:
+            raise ValueError(f"unsupported durable model call version: {self.version}")
         if not isinstance(self.instructions, str) or not self.instructions:
             raise ValueError("stored model instructions require a reference")
         if self.tools is not None and (
@@ -1131,20 +1246,24 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model identity must be text")
     raw_call = payload["call"]
     if not isinstance(raw_call, Mapping) or set(raw_call) != {
+        "version",
         "cont",
         "instructions",
-        "delta",
-        "recall",
+        "messages",
         "output_schema",
         "tools",
         "max_output_tokens",
     }:
         raise ValueError(
-            "stored model call requires: cont, instructions, delta, recall, tools, output_schema, max_output_tokens"
+            "stored model call requires: version, cont, instructions, messages, tools, output_schema, max_output_tokens"
         )
     call = cast(Mapping[str, object], raw_call)
+    if type(call["version"]) is not int or call["version"] != 1:
+        raise ValueError(f"unsupported durable model call version: {call['version']}")
     instructions = call["instructions"]
-    raw_delta = call["delta"]
+    raw_messages = _canonical_object(
+        call["messages"], fields={"head", "delta"}, label="model messages"
+    )
     raw_tools = call["tools"]
     raw_output_schema = call["output_schema"]
     raw_cont = call["cont"]
@@ -1160,8 +1279,11 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         model=model,
         call=ModelCallRefs(
             instructions=instructions,
-            delta=delta_from_data(cast(Mapping[str, object], raw_delta)),
-            recall=tuple(cast(Sequence[str], call["recall"])),
+            version=call["version"],
+            messages=ModelMessages(
+                head=StepRef.parse(cast(str, raw_messages["head"])),
+                delta=delta_from_data(raw_messages["delta"]),
+            ),
             tools=raw_tools,
             max_output_tokens=cast(int | None, call["max_output_tokens"]),
             output_schema=(
@@ -1190,9 +1312,12 @@ def stored_step_given_to_data(
         return {
             "model": given.model,
             "call": {
+                "version": given.call.version,
                 "instructions": given.call.instructions,
-                "delta": delta_to_data(given.call.delta),
-                "recall": list(given.call.recall),
+                "messages": {
+                    "head": str(given.call.messages.head),
+                    "delta": delta_to_data(given.call.messages.delta),
+                },
                 "tools": given.call.tools,
                 "max_output_tokens": given.call.max_output_tokens,
                 "output_schema": (

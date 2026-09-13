@@ -21,7 +21,7 @@ from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResu
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.execution.errors import HistoryChangedError
 from toolang.execution.executor.tool_history import _ToolHistory
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore

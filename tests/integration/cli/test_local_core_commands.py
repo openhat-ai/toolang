@@ -38,7 +38,7 @@ from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
 from toolang.execution.executor import RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     RetryControlPayload,
@@ -851,7 +851,7 @@ def test_inspect_human_collection_uses_one_focused_run_snapshot(
             "focused Run inspection must not build history summaries"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     result = _invoke(root, "alice", "inspect", "runs")
 
@@ -1016,7 +1016,7 @@ def test_inspect_projects_complete_persisted_model_call(
             "model call projection must not load a structural snapshot"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     projected = _invoke(
         root,
@@ -1117,13 +1117,24 @@ def test_inspect_projects_complete_persisted_model_call(
     assert rejected.exit_code == 2
     assert "allowed: steps, tree" in rejected.stderr
 
-    assert json.loads(references.stdout)["delta"] == {
-        "version": 1,
-        "messages": [
-            {"role": "assistant", "segments": ["Context"]},
-            {"role": "user", "segments": [question]},
-        ],
-    }
+    recorded = json.loads(references.stdout)
+    assert recorded["version"] == 1
+    assert recorded["messages"]["head"] == "run_model_call.0"
+    assert [m["role"] for m in recorded["messages"]["delta"]] == ["assistant", "user"]
+    reopened = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        for entry, text in zip(
+            recorded["messages"]["delta"], ("Context", question), strict=True
+        ):
+            from toolang.execution.types import ContentRef
+
+            (segment,) = entry["content"]["segments"]
+            assert set(segment) == {"hash"}
+            content = reopened.get_content(ContentRef(segment["hash"]))
+            assert content is not None
+            assert json.loads(content) == [{"type": "text", "text": text}]
+    finally:
+        reopened.close()
 
 
 def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> None:
@@ -1387,7 +1398,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             "tool call projection must not load a structural snapshot"
         ),
     )
-    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+    monkeypatch.setitem(sys.modules, "toolang.execution.inspection.trees", None)
 
     projected = _invoke(root, "alice", "inspect", str(path), "call", "--json")
     human = _invoke(root, "alice", "inspect", str(path), "call")

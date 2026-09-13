@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import json
@@ -13,7 +13,6 @@ import time
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
-    Message,
     Part,
     PartType,
     TextDelta,
@@ -31,18 +30,19 @@ from toolang.base.types.run import (
     ModelPartStart,
     ToolCall,
 )
-from toolang.base.types.tool import ToolDefinition
 from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...assembly import assemble_messages
-from ...records import ControlRecord
+from ...assembly import prompting
+from ...recall import required_declarations
+from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     Local,
     Output,
     ModelStepGiven,
+    ModelMessages,
     ModelStepNoted,
     ModelTokenCount,
     ModelTokenPrice,
@@ -52,7 +52,7 @@ from ...types import (
     StepRef,
     RunRef,
 )
-from .._messages import _MessageBuffer
+from ...assembly.message_buffer import MessageBuffer
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
@@ -60,7 +60,7 @@ from ..limits import _ModelAccounting
 from . import tool as tool_step
 
 if TYPE_CHECKING:
-    from ..prepare import _AgicFrame
+    from ..frame import _AgicFrame
     from ..runs.agic import _AgicState
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,7 +75,9 @@ def _candidate(
     state: _AgicState,
     agent_state: AgentState,
     state_ref: ControlRef,
-) -> tuple[_AgicFrame, _MessageBuffer, tuple[ControlRecord, ...], ModelCall]:
+) -> tuple[
+    _AgicFrame, MessageBuffer, tuple[ControlRecord, ...], ModelCall, ModelMessages
+]:
     prepared = state.frame_for_step(agent_state, state_ref)
     state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
     recalled = (
@@ -87,31 +89,75 @@ def _candidate(
         sorted((*state.claimed_inputs, *recalled), key=lambda control: control.index)
     )
     messages = state.messages.copy()
-    if not messages.started:
-        messages.initialize(prepared.messages)
-    elif prepared.prompt_context:
-        messages.append(Message.user(prepared.prompt_context))
-    if (
-        not messages.started
-        and state.execution is not None
-        and "near" in prepared.recall
-    ):
-        messages.prepend(*state.execution.message_history().tail(prepared.run.horizon))
-    for control in preceding:
-        messages.append_control(control)
-    request = ModelCall(
-        instructions=_model_instructions(state, prepared),
-        messages=assemble_messages(
-            prepared.far, prepared.near, messages.messages, prepared.recall
+    history = (
+        state.execution.message_history().select(prepared.run.horizon)
+        if state.execution is not None
+        else None
+    )
+    if history is not None and not messages.started and "near" in prepared.recall:
+        # Resolve the tail before publishing controls; failed history must not
+        # leave new declarations behind. Assembly reuses this cached result.
+        _ = history.tail
+    if state.execution is not None:
+        resident = (
+            state.prepared.declarations
+            if state.messages.started
+            else prepared.declarations
+        )
+        visible = {item.target: item.revision for item in resident}
+        if history is not None and "near" in prepared.recall:
+            visible.update(history.recalls)
+        if messages.started:
+            visible.update(messages.recalls)
+        visible.update(
+            (control.payload.target, control.payload.revision)
+            for control in preceding
+            if isinstance(control.payload, RecallControlPayload)
+        )
+        additions = required_declarations(
+            (*prepared.declarations, *prepared.workspaces),
+            visible,
+        )
+        for payload in additions:
+            state.execution.recall(RunRef(prepared.run.run_id), payload, visible)
+        preceding_refs = {item.ref for item in preceding}
+        new_controls = tuple(
+            control
+            for control in state.execution.runtime_controls(
+                prepared.run.run_id, refresh=False
+            )
+            if control.ref not in preceding_refs
+        )
+        preceding = (*preceding, *new_controls)
+    step = StepRef.from_local(prepared.run.run_id, (state.next_step,))
+    inputs = prepared.inputs
+    if state.repairing_output and inputs.runnables:
+        inputs = replace(inputs, runnables=())
+    assembled, recorded = prompting.messages(
+        inputs,
+        messages,
+        step=step,
+        controls=preceding,
+        history=history,
+        recall=prepared.recall,
+        reset=(
+            prepared.run.horizon != state.prepared.run.horizon
+            or prepared.recall != state.prepared.recall
         ),
-        tools=_model_tools(prepared)
-        if prepared.model.tools and not state.repairing_output
-        else (),
+    )
+    request = ModelCall(
+        instructions=prepared.instructions,
+        messages=assembled,
+        tools=(
+            prompting.tools(prepared.tools)
+            if prepared.model.tools and not state.repairing_output
+            else ()
+        ),
         output_schema=deepcopy(state.output_binding.output_schema),
         continuation=state.continuation,
         max_output_tokens=prepared.output_budget,
     )
-    return prepared, messages, preceding, request
+    return prepared, messages, preceding, request, recorded
 
 
 def _estimate_binding(prepared: _AgicFrame) -> object:
@@ -141,16 +187,16 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; no compactable near history"
         )
-    history = execution.message_history()
-    roots = history.near_roots(prepared.run.horizon)
+    history = execution.message_history().select(prepared.run.horizon)
+    roots = history.roots
     if len(roots) < 2:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
-    history_size = len(prepared.near) + bool(prepared.far and "far" in prepared.recall)
+    history_size = len(history.near) + bool(history.far and "far" in prepared.recall)
     if not state.messages.started:
         # A staged historical tail may shrink before its first delta commits.
-        history_size += len(history.tail(prepared.run.horizon)[1])
+        history_size += len(history.tail[1])
     required = replace(
         request,
         messages=[*roots[-1][1], *request.messages[history_size:]],
@@ -178,7 +224,7 @@ def compaction_boundary(state: _AgicState) -> RunRef | None:
     """Reprepare after admission without committing a Step or consuming deltas."""
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
-    prepared, _messages, _controls, request = _candidate(
+    prepared, _messages, _controls, request, _recorded = _candidate(
         state, *state.execution.state_snapshot()
     )
     return _boundary(state, prepared, request)
@@ -214,7 +260,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, request, next_messages
-        prepared, next_messages, preceding, request = _candidate(
+        prepared, next_messages, preceding, request, recorded = _candidate(
             state, agent_state, state_ref
         )
         canceling = state.execution is not None and bool(
@@ -237,19 +283,20 @@ async def execute(state: _AgicState) -> ModelCallResult:
             given=ModelStepGiven(
                 model=prepared.model.ref,
                 call=request,
-                delta=next_messages.take_delta(),
-                recall=prepared.recall,
+                messages=recorded,
             ),
         )
 
     def adopt_begin() -> None:
         state.prepared = prepared
         state.messages = next_messages
-        state.visible_recalls = (
-            dict(state.execution.message_history().recalls(prepared.run.horizon))
-            if state.execution is not None and "near" in prepared.recall
-            else {}
-        )
+        state.visible_recalls = {
+            item.target: item.revision for item in prepared.declarations
+        }
+        if state.execution is not None and "near" in prepared.recall:
+            state.visible_recalls.update(
+                state.execution.message_history().select(prepared.run.horizon).recalls
+            )
         state.visible_recalls.update(next_messages.recalls)
         state.claimed_inputs = ()
         state.next_model_inputs = None
@@ -369,26 +416,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
     )
-
-
-def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
-    """Combine authored and runtime protocol only for an effective tool call."""
-
-    runtime = (
-        prepared.runtime_instructions
-        if prepared.model.tools and not state.repairing_output
-        else ""
-    )
-    if prepared.instructions and runtime:
-        return f"{prepared.instructions}\n\n{runtime}"
-    return prepared.instructions or runtime
-
-
-def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
-    """Expose the selected registered tools at the adapter boundary."""
-
-    definitions = {name: tool.definition() for name, tool in prepared.tools.items()}
-    return tuple(definitions[name] for name in sorted(definitions))
 
 
 async def _emit_response_parts(

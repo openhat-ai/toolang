@@ -38,13 +38,21 @@ from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
-from toolang.execution.executor.prepare import _AgicFrame
-from toolang.execution.executor.runs.agic import _AgicState, _execute
-from toolang.execution.executor._messages import _MessageBuffer
+from toolang.execution.executor.frame import _AgicFrame
+from toolang.execution.executor.runs.agic import _AgicState, _OutputBinding, _execute
+from toolang.execution.executor.steps.model import _candidate
+from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
-from toolang.execution.types import ControlRef, Local, Output
+from toolang.execution.types import (
+    AgentResources,
+    AgentToolResource,
+    ControlRef,
+    Local,
+    Output,
+    StepRef,
+)
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
@@ -2284,6 +2292,72 @@ def test_agic_omits_tools_for_model_without_tool_support() -> None:
     assert provider.requests[0].tools == ()
 
 
+@pytest.mark.parametrize("model_tools", [False, True])
+@pytest.mark.parametrize("repairing", [False, True])
+def test_model_call_keeps_content_separate_and_schema_detached(
+    model_tools: bool, repairing: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = _FakeModels(name="test")
+    model = ModelTarget(
+        ref="test/model",
+        provider="test",
+        name="model",
+        model="model",
+        adapter="responses",
+        tools=model_tools,
+    )
+    prepared = replace(
+        _prepared_agic(provider, model),
+        instructions="Resident instructions {{literal}}",
+        output_budget=123,
+    )
+    schema: dict[str, object] = {"type": "array", "items": {"type": "string"}}
+    continuation = {"adapter": {"id": "response-1"}}
+    state = _AgicState(
+        prepared=prepared,
+        layout=prepared.run.setup.layout,
+        emit=_ignore_event,
+        pending_inputs=tuple,
+        steer_before_next_step=lambda: False,
+        immediate_steer=lambda: False,
+        before_call=lambda: None,
+        messages=MessageBuffer(),
+        output_binding=_OutputBinding(type_name="Text[]", output_schema=schema),
+        continuation=continuation,
+        repairing_output=repairing,
+    )
+    definition = ToolDefinition(
+        "shell__execute", "Unique description", {"type": "object"}
+    )
+    calls = []
+
+    def tool_definition():
+        calls.append(True)
+        return definition
+
+    monkeypatch.setattr(prepared.tools["shell__execute"], "definition", tool_definition)
+    _, buffer, _, request, recorded = _candidate(
+        state, prepared.run.state, prepared.run.state_ref
+    )
+
+    assert request.instructions == prepared.instructions
+    assert request.messages == list(prepared.inputs.rendered_input[1])
+    assert request.messages is not buffer.messages
+    assert request.messages[0] is buffer.messages[0]
+    assert recorded.head == StepRef.from_local(prepared.run.run_id, (0,))
+    assert len(recorded.delta) == len(request.messages)
+    assert request.tools == ((definition,) if model_tools and not repairing else ())
+    assert len(calls) == int(model_tools and not repairing)
+    if request.tools:
+        assert request.tools[0] is definition
+    assert request.output_schema == schema
+    assert request.output_schema is not schema
+    assert request.output_schema is not None
+    assert request.output_schema["items"] is not schema["items"]
+    assert request.continuation is continuation
+    assert request.max_output_tokens == 123
+
+
 def test_responses_adapter_logs_api_request_and_response_at_debug(
     caplog, monkeypatch
 ) -> None:
@@ -2842,7 +2916,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=_MessageBuffer(prepared.messages),
+                messages=MessageBuffer(prepared.inputs.rendered_input[1]),
             )
         )
     )
@@ -2852,10 +2926,10 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         "user",
         (
             TextPart(
-                '<steer description="The user supplied updated input for the current task.">'
+                '<toolang:steer description="The user supplied updated input for the current task.">'
             ),
             *steer.parts,
-            TextPart("</steer>"),
+            TextPart("</toolang:steer>"),
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
@@ -2892,7 +2966,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
             CallInput({"_": Array("Part[]", tuple(steer.parts))})
         ),
     )
-    original_messages = list(prepared.messages)
+    original_messages = list(prepared.inputs.rendered_input[1])
 
     async def emit(_event: RunEvent) -> None:
         assert state.messages.messages == original_messages
@@ -2906,7 +2980,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         steer_before_next_step=lambda: False,
         immediate_steer=lambda: False,
         before_call=lambda: None,
-        messages=_MessageBuffer(original_messages),
+        messages=MessageBuffer(original_messages),
     )
 
     with pytest.raises(RuntimeError, match="step begin persistence failed"):
@@ -3230,8 +3304,11 @@ def _prepared_agic(
                 providers={},
                 adapters={},
                 models=ModelCollection(),
-                tools=ToolCollection(),
+                tools=ToolCollection.from_tools({tool.name: tool}),
                 envs={},
+            ),
+            resources=AgentResources(
+                tools=(AgentToolResource(tool.name, "shell", "shell", "execute"),)
             ),
             created_at="2026-04-10T00:00:00Z",
         ),
@@ -3248,8 +3325,12 @@ def _prepared_agic(
         model=model,
         adapter=provider,
         instructions="",
-        prompt_context="",
-        messages=(Message.user("hello"),),
+        inputs=cast(
+            Any,
+            SimpleNamespace(
+                rendered_input=("", (Message.user("hello"),), ()), runnables=()
+            ),
+        ),
         tools={tool.name: tool},
         routes=AgicRoutes(),
         services=(),
@@ -3267,7 +3348,7 @@ def _run_agic(prepared: _AgicFrame) -> Message | None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=_MessageBuffer(prepared.messages),
+                messages=MessageBuffer(prepared.inputs.rendered_input[1]),
             )
         )
     )

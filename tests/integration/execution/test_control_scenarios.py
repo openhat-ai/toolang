@@ -11,6 +11,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
     steer_message,
+    without_route_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -139,7 +140,9 @@ agic revise(_: Part[]) -> Part[]:
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            ) == [
                 Message.user("write"),
                 Message.assistant("draft"),
                 steer_message("make it shorter"),
@@ -282,9 +285,9 @@ def test_immediate_steer_consumed_before_interrupt_is_not_applied_twice(
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.aborted_by is None
             assert step.preceded_by == (ControlRef.for_run(run.id, 0), steer.ref)
-            assert harness.adapter.invocations[0].call.messages[-1] == steer_message(
-                "keep it short"
-            )
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            )[-1] == steer_message("keep it short")
             assert len(harness.adapter.invocations) == 1
 
     asyncio.run(scenario())
@@ -393,7 +396,9 @@ agic calculate(_: Part[]) -> Part[]:
                 ("tool", "canceled"),
                 ("model", "succeeded"),
             ]
-            messages = harness.adapter.invocations[1].call.messages
+            messages = without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            )
             assert [message.role for message in messages] == [
                 "user",
                 "assistant",
@@ -688,7 +693,9 @@ agic revise(_: Text) -> Text:
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[1].call.messages == [
+            assert without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            ) == [
                 Message.user("start"),
                 steer_message("guidance 1"),
                 steer_message("guidance 2"),

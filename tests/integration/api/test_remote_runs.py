@@ -35,6 +35,7 @@ from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array, Struct
 from toolang.up import AgentCore
+from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
 
@@ -523,7 +524,8 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert selected_detail.runnable_name == "selected"
         assert selected_detail.controls[0].request_id == "selected_request"
         assert [
-            invocation.call.messages for invocation in harness.adapter.invocations
+            without_route_snapshots(invocation.call.messages)
+            for invocation in harness.adapter.invocations
         ] == [
             [Message.user("brief security @note.txt")],
             [Message.user("direct hello")],

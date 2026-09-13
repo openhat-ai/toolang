@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import json
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
+
+from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 
 MessageRole = Literal["user", "assistant", "tool"]
@@ -358,11 +361,41 @@ def message_summary(parts: Sequence[Part]) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class MessageRecall:
+    """The resource revision actually presented by a tagged message."""
+
+    ref: str
+    revision: str
+
+    def __post_init__(self) -> None:
+        # Rule refs include workspace paths, where trailing whitespace is literal.
+        if not isinstance(self.ref, str) or not self.ref.strip():
+            raise ValueError("message recall requires a resource ref")
+        if not self.revision or self.revision != self.revision.strip():
+            raise ValueError("message recall requires a revision")
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """Stable canonical message payload."""
 
     role: MessageRole
     parts: tuple[Part, ...] = field(default_factory=tuple)
+    # Runtime provenance is retained in memory and recorded separately. It is
+    # neither accepted from public message data nor sent to model providers.
+    tag: Annotated[SkipJsonSchema[str | None], Field(exclude=True)] = field(
+        default=None, compare=False
+    )
+    recall: Annotated[SkipJsonSchema[MessageRecall | None], Field(exclude=True)] = (
+        field(default=None, compare=False)
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _public_input(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: value[key] for key in ("role", "parts") if key in value}
+        return value
 
     def __post_init__(self) -> None:
         if self.role == "user" and not all(

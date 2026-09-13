@@ -14,7 +14,7 @@ from tests.support.execution_fixtures import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix, Output

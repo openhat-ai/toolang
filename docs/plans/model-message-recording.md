@@ -1,101 +1,103 @@
-# Record model message deltas (PR6)
+# Record model messages
 
 ## Goal and scope
 
-Approved implementation definition. Record each Model Call's new messages once,
-while retaining the exact normalized request received by the adapter. Follow
-[bounded history](bounded-execution-history.md) and
-[runtime tool results](runtime-tool-results.md).
+Approved implementation definition, incorporating the decisions in
+[model input protocol](model-input-protocol.md). Preserve exactly the normalized
+adapter request while recording ordinary continuations as incremental messages.
+Keep roles, Part boundaries, tool grouping, authorization, and output contracts.
 
-Keep current history selection, roles, Part boundaries, tool grouping, and adapter
-interfaces. Defer far/near/now selection, recall triggers, compaction, runtime
-tools, and runspace. Keep instructions, tools, output_schema, and continuation
-storage unchanged.
+## Durable format
 
-## Format
+Each Model Step stores a call-level format version and explicit message head:
 
-Each Model Step stores `ModelCallRefs.delta`:
-
-```javascript
+```json
 {
-  version: 1,
-  messages: [
-    {role: "assistant", segments: [{"?": "run_ab12.0/output/value:Part[]"}]}
-  ]
+  "model": "provider/model",
+  "call": {
+    "version": 1,
+    "instructions": "sha256_...",
+    "messages": {
+      "head": "run_ab12.0",
+      "delta": [
+        {
+          "role": "user",
+          "content": {"segments": [{"hash": "sha256_..."}]},
+          "tag": "skill-guidance",
+          "recall": {"ref": "skill/testing", "revision": "64 lowercase hex digits"}
+        }
+      ]
+    },
+    "tools": null,
+    "output_schema": null,
+    "cont": null,
+    "max_output_tokens": null
+  }
 }
 ```
 
-`MessageTemplate` contains `role` and `segments`; `MessageDelta` contains `version`
-and `messages`. Segments use existing `str | Part | TypedRef` values. Serialize
-Parts as their ordinary objects and references as `{"?": "typed-pointer"}`.
-Ordinary strings are always literal, even when they look like pointers.
+Delta is an ordered message array. Each message has role and content, with
+optional tag and recall metadata. Content owns its segments: literal text,
+canonical Parts, typed field references, or content hashes. Commit freezes the
+actual assembled Parts as immutable content hashes; it does not resolve source
+fields again. Preserve empty messages, duplicate occurrences, adjacent text
+boundaries, multimodal Parts, and nested tool data exactly.
 
-Version 1 expands strings and Text references into individual TextParts, Part
-objects/references into individual Parts, and Part-array references in order.
-Do not merge adjacent text, insert separators, recursively flatten tool data, or
-reinterpret arbitrary JSON objects. JSON intended as text is encoded before
-recording. Each template produces exactly one Message, including empty messages
-and repeated equal occurrences. Unknown versions or invalid references fail.
+Recall is direct ref/revision metadata, not a pointer to a control. Visibility is
+keyed by tag/ref: skill-trigger and skill-guidance share skill/testing without
+satisfying each other's visibility. Revision zero is a tombstone; XML uses
+removed="true". Withdrawal appends a new message and never rewrites prior calls.
 
-The version specifies expansion semantics, independently of the store schema.
-Existing versions retain their meaning; new runtime wording is already captured
-as literal segments and does not require a format version change.
+Imported historical messages additionally carry source, the owning Run ref.
+This marks reused context, not capability origin. History selection excludes
+imported context from a Run's new contribution, including after rebasing.
 
-## Online execution and reconstruction
+## Assembly and persistence
 
-Maintain resolved messages and pending templates in one execution-local buffer.
-Create templates at message-producing sites, not by comparing completed calls.
-Model outputs and tool results reference their owning Step outputs; steer Parts
-reference control input fields. Authored/context/repair messages and existing
-legacy history selections remain literal templates in this PR.
+Assembly consumes adopted State, setup, agic, bound input, and executor-supplied
+history/control facts. It returns adapter components and recording metadata
+without persistence callbacks or writes. State owns capability merging and
+shadowing; model-facing refs contain no source scope.
 
-Use one deterministic renderer with different resolvers: live values online,
-durable fields during reconstruction. Online execution renders only additions;
-it neither rereads nor reconstructs the saved prefix. Keep adopted values stable.
-Persist the pending delta with Model Step begin before invoking the adapter.
-An established but interrupted begin still contributes its delta exactly once.
-Complete interrupted Step boundaries before continuing. Persist adopted outputs
-before later deltas can reference them, including steer-skipped tool results.
+Executor stages resolved messages and recording descriptions together. It
+commits immutable content dependencies and Model Step begin atomically, then
+adopts the staged buffer and dispatches the call. An established but interrupted
+begin contributes its delta once; failed preparation changes no visible recall.
+Public message serialization omits runtime metadata.
 
-Reconstruct deltas in numeric Step order within the owning Run, stopping at the
-requested Model Step. Run/execute/retry boundaries start a fresh message sequence;
-child Runs are independent. The boundary comes from existing control relations,
-not a stored `previous`, `keep`, or prefix chain. Render each delta with its own
-version. Batch reconstruction shares reads and expanded prefixes.
+## Sequence and reconstruction
 
-Public events continue to expose resolved ModelCalls. Recording metadata stays
-internal; adapters and inspection receive ordinary Messages and Parts.
-Direct record producers must supply a delta for continuations; an omitted delta
-captures the supplied call's messages as literal templates for an initial call.
+Head references a Model Step in the same Run. A self-head stores the complete
+selected baseline. Continuations retain that head and store only additions.
+Compaction, changed history selection, or a new execution sequence starts a new
+self-head while preserving the current conversation.
 
-## Persistence and retry
+Reconstruct by concatenating raw deltas from head through the requested call in
+numeric Model Step order. Never recursively concatenate expanded calls. Batch
+reads share resolved content. Head validation rejects missing, future,
+cross-Run, and disconnected sequences.
 
-Replace complete per-call message-hash lists with inline deltas and stop creating
-`model_messages`. Increment the store schema; reject incompatible databases
-untouched rather than migrating or keeping dual readers.
+Instructions, tools, output_schema, continuation, and token budget come from the
+current row, not the head. Far/near is agic policy, absent from the durable call.
+Record its selected messages explicitly; replay neither reselects history nor
+reads State, controls, current templates, or deleted source fields.
 
-Retry continues deleting its Step suffix, including those Steps' deltas. Add no
-reference snapshots, MVCC, redirects, or reference-protection policy. Replaying
-surviving calls after their dependencies were deleted or overwritten is not
-guaranteed; unresolved references fail explicitly.
+Retry deletes its Step suffix as before. Surviving calls retain captured content
+even if referenced execution fields are later removed or reused. Missing or
+corrupt content hashes fail explicitly. Upgrade the store schema and reject
+incompatible databases unchanged; no migration or dual reader.
 
-## Implementation and acceptance
+## Acceptance
 
-Touchpoints: execution vocabulary/record codecs, a small delta renderer, Store
-capture/reconstruction, and executor message production and persistence.
-
-- Compare captured adapter requests with reconstruction, including after restart:
-  text, multimodal Parts, empty/duplicate messages, tool exchanges and grouping,
-  steer, cancellation, repair, reload, execute, retry, and parallel child Runs.
-- Verify reference/literal round trips, Part boundaries, unsupported versions,
-  missing references, and reference-looking text/tool data remaining literal.
-- Verify numeric ordering, linear delta metadata growth, long iterative reads,
-  batched reconstruction, and no store reads to render an online saved prefix.
-- Verify Step-begin atomicity and repeated interruptions during terminal cleanup;
-  pending messages must neither disappear nor be duplicated in the next call,
-  and completed ToolCalls must receive results before steer continues.
-- Verify incompatible databases remain unchanged and run the default offline
-  suite: Ruff, Ruff format, ty, and pytest.
-
-The principal risks are mismatched live/durable values and incorrectly connected
-execution boundaries. Exact request-equality tests are the acceptance criterion.
+- Exact adapter/replay equality after restart: text, multimodal Parts, empty and
+  duplicate messages, grouped tools, steer, cancel, repair, reload, execute,
+  retry, and child Runs.
+- Direct metadata survives replay; trigger/guidance, rules/workspaces, removal,
+  replacement, restoration, and pending versus presented visibility stay distinct.
+- Initial baselines, ordinary continuations, repeated compaction, history-policy
+  changes, fork/rewind, numeric ordering, and nonduplicated history.
+- Call-level version rejection, malformed records, invalid heads, content hash
+  integrity, and reference-looking text remaining literal.
+- Linear delta storage, shared batched expansion, no online reread of saved
+  message bodies, and no State or control lookup during replay.
+- Atomic Step begin and interruption recovery; all default offline checks pass.

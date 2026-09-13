@@ -12,6 +12,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
+    without_route_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -27,14 +28,14 @@ from toolang.base.types.policy import RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunExecutor, RunLimits
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.store import RunStore
-from toolang.execution.trees import build_execution_tree
+from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import (
     Output,
     CollectionStepNoted,
@@ -461,9 +462,9 @@ flow relay(_: Part[]) -> Part[]:
             ] == ["bracket"]
             assert root_control.payload.prompt_invocations[0].cap_ref
             assert child_control.payload.prompt_invocations[0].cap_ref
-            assert harness.adapter.invocations[0].call.messages == [
-                Message.user("[hello]")
-            ]
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            ) == [Message.user("[hello]")]
 
     asyncio.run(scenario())
 
@@ -754,7 +755,10 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             payload = projected.runs[1].controls[0].payload
             assert isinstance(payload, RunControlPayload)
             assert not hasattr(payload, "rerun_from")
-            assert [call.call.messages for call in harness.adapter.invocations] == [
+            assert [
+                without_route_snapshots(call.call.messages)
+                for call in harness.adapter.invocations
+            ] == [
                 [Message.user('Reply to hello in brief with ["one","two"].')],
                 [Message.user('Reply to hello in brief with ["one","two"].')],
             ]
@@ -1109,7 +1113,9 @@ flow research(brief: Brief) -> Text:
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert child_run_control.payload.runnable == "_flow_research$agic:echo"
             assert "Module-Local Input" in message_text(
-                harness.adapter.invocations[0].call.messages[0].parts
+                without_route_snapshots(harness.adapter.invocations[0].call.messages)[
+                    0
+                ].parts
             )
 
     asyncio.run(scenario())
@@ -1202,7 +1208,7 @@ flow mapped(_: Text) -> Text[]:
             assert _output_value(harness, root.id) == ["ONE", "TWO"]
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
             assert [
-                invocation.call.messages[-1]
+                without_route_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [Message.user("one"), Message.user("two")]
             children = [
@@ -1294,18 +1300,22 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             assert root_steps[4].noted == CollectionStepNoted(3, 3)
             assert len(harness.adapter.invocations) == 20
             predicate_messages = [
-                message_text(invocation.call.messages[-1].parts)
+                message_text(
+                    without_route_snapshots(invocation.call.messages)[-1].parts
+                )
                 for invocation in harness.adapter.invocations[7:13]
             ]
             assert all(
-                len(invocation.call.messages) == 1
+                len(without_route_snapshots(invocation.call.messages)) == 1
                 for invocation in harness.adapter.invocations[7:13]
             )
             assert all(
                 "Research question:\nagent framework/sdk" in message
                 for message in predicate_messages
             )
-            final_message = harness.adapter.invocations[-1].call.messages[-1]
+            final_message = without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )[-1]
             assert any(
                 isinstance(part, TextPart)
                 and "Research question:\nagent framework/sdk" in part.text
@@ -1481,9 +1491,9 @@ flow summary(_: Text) -> Text:
             assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "a+b+c"
             assert _root_step_kinds(harness, root.id) == ["run", "run"]
-            assert harness.adapter.invocations[-1].call.messages[-1] == (
-                Message.user('["a","b","c"]')
-            )
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )[-1] == (Message.user('["a","b","c"]'))
 
     asyncio.run(scenario())
 
@@ -1532,7 +1542,7 @@ flow folded(_: Text) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert _root_step_kinds(harness, root.id) == ["run", "loop"]
             assert [
-                invocation.call.messages[-1]
+                without_route_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [
                 Message.user("a"),
@@ -1583,7 +1593,9 @@ flow folded(_: Text) -> Text:
             assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert [
-                message_text(invocation.call.messages[-1].parts).rsplit("\n", 1)[-1]
+                message_text(
+                    without_route_snapshots(invocation.call.messages)[-1].parts
+                ).rsplit("\n", 1)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [
                 "a",
@@ -1852,7 +1864,7 @@ flow repeated(_: Text) -> Text:
                 total=3,
             )
             assert [
-                invocation.call.messages[-1]
+                without_route_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations
             ] == [
                 Message.user("zero"),
@@ -1912,7 +1924,9 @@ flow repeated(_: Text) -> Text:
             assert run.status == "succeeded"
             assert harness.store.run_output_text(run_id=run.id) == "recovered"
             assert [
-                harness.adapter.invocations[index].call.messages[-1]
+                without_route_snapshots(
+                    harness.adapter.invocations[index].call.messages
+                )[-1]
                 for index in (0, 2, 4, 5)
             ] == [
                 Message.user("zero"),
@@ -2231,7 +2245,9 @@ flow scattered(_: Text) -> Text[]:
                 "type": "array",
             }
             assert "Return distinct pieces of this source:\nsplit" in message_text(
-                harness.adapter.invocations[0].call.messages[-1].parts
+                without_route_snapshots(harness.adapter.invocations[0].call.messages)[
+                    -1
+                ].parts
             )
 
     asyncio.run(scenario())
@@ -2270,9 +2286,9 @@ flow relay(_: Text, suffix: Text) -> Text:
             )
 
             assert root.status == "succeeded"
-            assert harness.adapter.invocations[0].call.messages == [
-                Message.user("hello!")
-            ]
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            ) == [Message.user("hello!")]
             child = next(
                 run
                 for run in harness.store.list_runs(

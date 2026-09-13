@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
-from toolang.base.types.message import Message, TextPart
+from html import escape
+import json
+import re
+from typing import Any
+from xml.etree import ElementTree
+from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
+from toolang.base.types.run import ModelCall
 
 from toolang.execution.events import (
     PartBegin,
@@ -21,6 +28,64 @@ from toolang.execution.store import RunStore
 from toolang.lang.types import Array
 
 
+_ROUTE_SNAPSHOTS = re.compile(
+    r"(<toolang:hands\b[^>]*(?:/>|>.*?</toolang:hands>))\s*"
+    r"(<toolang:handoffs\b[^>]*(?:/>|>.*?</toolang:handoffs>))",
+    re.S,
+)
+
+
+def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
+    """Project authored/history content for tests unrelated to routing.
+
+    Full-call replay and route-contract tests compare the unmodified messages.
+    Preserve all other context, control metadata, roles, and multimodal parts.
+    """
+    result = []
+    for message in messages:
+        parts = message.parts
+        if message.role == "user" and parts and isinstance(parts[0], TextPart):
+            match = _ROUTE_SNAPSHOTS.match(parts[0].text)
+            if match is not None:
+                assert message.recall is None
+                suffix = parts[0].text[match.end() :].lstrip("\n")
+                parts = ((TextPart(suffix),) if suffix else ()) + parts[1:]
+                if not parts:
+                    continue
+                message = replace(message, parts=parts)
+        result.append(message)
+    return result
+
+
+def route_snapshots(call: ModelCall) -> dict[str, list[dict[str, Any]]]:
+    """Read the latest sibling snapshots, checking their explicit wire contract."""
+    for message in reversed(call.messages):
+        match = _ROUTE_SNAPSHOTS.match(message_text(message.parts))
+        if match is None:
+            continue
+        assert message.role == "user" and message.recall is None
+        root = ElementTree.fromstring(
+            '<root xmlns:toolang="urn:test">' + match.group(0) + "</root>"
+        )
+        result = {}
+        for node in root:
+            entries = json.loads(node.text) if node.text else []
+            assert node.attrib == {"enabled": "true" if entries else "false"}
+            result[node.tag.removeprefix("{urn:test}")] = entries
+        return result
+    raise AssertionError("model call has no hands/handoffs snapshots")
+
+
+def last_tool_result(call: ModelCall) -> ToolResultPart:
+    """Find the latest result independently of appended per-call context."""
+    return next(
+        part
+        for message in reversed(call.messages)
+        for part in reversed(message.parts)
+        if isinstance(part, ToolResultPart)
+    )
+
+
 def assert_replayed(path: Path, events: Sequence[RunEvent]) -> None:
     """Compare persisted replay with the exact calls captured online."""
     expected = {
@@ -33,9 +98,16 @@ def assert_replayed(path: Path, events: Sequence[RunEvent]) -> None:
         steps = [store.get_step(ref=ref) for ref in expected]
         assert all(step is not None for step in steps)
         saved = [step for step in steps if step is not None]
-        assert store.rebuild_model_calls(saved) == expected
+        batch = store.rebuild_model_calls(saved)
+        assert batch == expected
         for step in saved:
-            assert store.rebuild_model_call(step) == expected[step.ref]
+            original = expected[step.ref]
+            for replayed in (batch[step.ref], store.rebuild_model_call(step)):
+                assert replayed == original
+                # Message equality intentionally excludes runtime metadata.
+                assert [(m.tag, m.recall) for m in replayed.messages] == [
+                    (m.tag, m.recall) for m in original.messages
+                ]
     finally:
         store.close()
 
@@ -47,10 +119,13 @@ def steer_message(value: str | Message) -> Message:
         "user",
         (
             TextPart(
-                '<steer description="The user supplied updated input for the current task.">'
+                '<toolang:steer description="The user supplied updated input for the current task.">'
             ),
-            *message.parts,
-            TextPart("</steer>"),
+            *(
+                TextPart(escape(p.text, quote=False)) if isinstance(p, TextPart) else p
+                for p in message.parts
+            ),
+            TextPart("</toolang:steer>"),
         ),
     )
 

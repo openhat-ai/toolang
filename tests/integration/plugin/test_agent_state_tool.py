@@ -10,8 +10,8 @@ from toolang.base.protocols.tool import Tool
 from toolang.base.types.tool import ToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.job import AuthoredJobs
-from toolang.execution.tools.agent_state import create_toolset
-from toolang.execution.tools.agent_state.types import AgentStateToolContext
+from toolang.execution.tools.me import create_toolset
+from toolang.execution.tools.me.types import MeToolContext
 from toolang.common.layout import AgentLayout
 
 
@@ -19,7 +19,7 @@ def _context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     home = toolang_root / "agents" / agent_name
     home.mkdir(parents=True, exist_ok=True)
     (home / "agent.too").write_text(f"agent {agent_name}\n", encoding="utf-8")
-    return AgentStateToolContext(
+    return MeToolContext(
         home=home,
         room=home / ".runtime" / "tools" / "me",
         layout=AgentLayout(root=toolang_root, name=agent_name, placement="resident"),
@@ -826,7 +826,7 @@ def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
     target.joinpath("agent.too").write_text("agent bob\n", encoding="utf-8")
     home = root / "agents" / "alice"
     home.symlink_to(target, target_is_directory=True)
-    context = AgentStateToolContext(
+    context = MeToolContext(
         home=home,
         room=home / ".runtime" / "tools" / "me",
         layout=AgentLayout(root=root, name="alice", placement="resident"),

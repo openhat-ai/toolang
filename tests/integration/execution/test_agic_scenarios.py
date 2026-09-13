@@ -12,6 +12,8 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
+    without_route_snapshots,
+    route_snapshots,
 )
 from tests.support.execution_harness import (
     TEST_MODEL_REF,
@@ -110,9 +112,9 @@ agic reply(_: Part[], tone: Text) -> Part[]:
 
             assert record.status == "succeeded"
             assert harness.store.run_output(run_id=record.id) == (TextPart("done"),)
-            assert harness.adapter.invocations[0].call.messages == [
-                Message.user("Reply to hello in brief.")
-            ]
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            ) == [Message.user("Reply to hello in brief.")]
             steps = harness.store.list_steps(run_id=record.id)
             assert [step.kind for step in steps] == ["model"]
             assert steps[0].input == (
@@ -144,10 +146,15 @@ def test_agic_repairs_one_invalid_structured_output(tmp_path: Path) -> None:
         source="""
 agic decide(_: Text) -> Boolean:
   recall = none
+  hands = helper
+  handoffs = helper
   tools = lookup/*
   context: none
   instruct: none
   user: {{_}}
+
+agic helper(_: Text) -> Boolean:
+  Decide.
 """,
         responses=[
             ModelCallResult(usage=ModelUsage(input_tokens=8, output_tokens=1)),
@@ -187,16 +194,26 @@ agic decide(_: Text) -> Boolean:
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call
+            assert route_snapshots(initial)["hands"][0]["ref"] == "agic:helper"
+            assert route_snapshots(initial)["handoffs"][0]["ref"] == "agic:helper"
             assert "<output-contract>" not in initial.instructions
             assert "type: Boolean" not in initial.instructions
             assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
+            assert route_snapshots(repair) == {"hands": [], "handoffs": []}
+            # Protocol stays stable; the adapter receives no tools on repair.
+            assert repair.instructions == initial.instructions
+            assert "<toolang:instruct>" not in repair.instructions
             assert repair.output_schema == initial.output_schema
-            assert repair.messages[-1].role == "user"
-            repair_part = repair.messages[-1].parts[0]
+            assert without_route_snapshots(repair.messages)[-1].role == "user"
+            repair_part = without_route_snapshots(repair.messages)[-1].parts[0]
             assert isinstance(repair_part, TextPart)
-            assert "Return only a corrected Boolean value" in repair_part.text
+            assert repair_part.text == (
+                "Your previous response did not satisfy the required Boolean output "
+                "contract. Return only a corrected Boolean value. Do not explain the "
+                "value, add a preface, or wrap it in Markdown code fences."
+            )
             assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())
@@ -251,9 +268,10 @@ agic reply(_: Part[]) -> Part[]:
                     ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
             )
-            assert [call.call.messages for call in harness.adapter.invocations] == [
-                [Message.user("hello")]
-            ] * (retries + 1)
+            assert [
+                without_route_snapshots(call.call.messages)
+                for call in harness.adapter.invocations
+            ] == [[Message.user("hello")]] * (retries + 1)
             assert active[0].preceded_by == (ControlRef.for_run(run.id, retries),)
             assert (
                 harness.store.select_pointer(Pointer(active[0].input[0])).runtime
@@ -525,9 +543,9 @@ agic inspect(_: Part[]) -> Part[]:
             )
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[0].call.messages == [
-                Message(role="user", parts=input)
-            ]
+            assert without_route_snapshots(
+                harness.adapter.invocations[0].call.messages
+            ) == [Message(role="user", parts=input)]
             assert harness.store.run_output(run_id=record.id) == (audio,)
 
     asyncio.run(scenario())
@@ -1328,7 +1346,9 @@ agic calculate(_: Part[]) -> Part[]:
             assert [
                 step.kind for step in harness.store.list_steps(run_id=record.id)
             ] == ["model", "tool", "model"]
-            followup = harness.adapter.invocations[1].call.messages
+            followup = without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            )
             assert [message.role for message in followup] == [
                 "user",
                 "assistant",
@@ -1426,7 +1446,9 @@ agic calculate(_: Text) -> Text:
                 ToolStepNoted(summary="Failed silent"),
                 ToolStepNoted(summary="Failed tool"),
             ]
-            followup = harness.adapter.invocations[1].call.messages
+            followup = without_route_snapshots(
+                harness.adapter.invocations[1].call.messages
+            )
             results = [
                 part
                 for message in followup

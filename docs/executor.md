@@ -218,29 +218,124 @@ The implementation is divided by semantic level:
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
 - `resources.py` builds and filters `AgentResources`, then applies runnable
   directives to the selected resource base;
-- `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
-  adapter in one pass;
-- `runs/agic.py` owns the fixed model-tool cycle for one agic;
+- `frame.py` builds an agic's execution frame from bound resources and runtime
+  facts; it does not materialize Agent State;
+- `runs/agic.py` owns the fixed model-tool cycle and output-repair requests for
+  one agic;
 - `runs/flow.py` advances through lowered flow statements and updates locals;
 - `stmts/` implements lowered statement semantics and chooses a step type;
 - `steps/` owns execution step boundaries and their `StepBegin`, part, and
   `StepEnd` events.
 
-Preparation produces one private `_AgicFrame` consumed directly by the agic
+`execution/assembly/` groups model-call content assembly:
+
+- `prompting.py` provides the four adapter-facing entry points:
+  `instructions()`, `messages()`, `tools()`, and `output_schema()`;
+  they consume the adopted State, setup, agic, bound values, and concrete runtime
+  facts. Rendering helpers remain private; output schemas use language semantics.
+  Resource declarations retain their identities and revisions for rendering and
+  visibility checks;
+- `messages()` combines selected history with the current buffer and controls,
+  returning both adapter messages and matching recording descriptions;
+- `history.py` selects historical messages and reconstructs recorded exchanges;
+- `tool_replies.py` constructs individual control receipts and intercepted-call
+  replies, shared by live delivery and history reconstruction;
+- `utils.py` handles control-message framing, text escaping, Part normalization,
+  message joining, and delta generation/rendering without selecting history or
+  loading prompts;
+- `prompts/` holds static text; `prompts/defaults/` contains the default
+  instruct, context, and compact program.
+
+Tool-use conventions belong to the static `prompts/protocol.md`. Protocol stays
+first and unchanged across tool selection, `instruct: none`, and output repair.
+Tool definitions remain structured `ToolDefinition` values; adapters choose their
+provider-specific representation. The model step decides whether tools are enabled.
+
+The frame caches instructions and declarations, with shared template variables
+and authored input in `PromptInputs`. Assembly returns prompt invocation
+provenance; the executor records it. The output schema stays bound to the
+complete agic invocation. Each model step constructs `ModelCall`
+directly, using a detached schema and its continuation and token budget.
+Control-message framing and its short steer/cancel descriptions live in
+`utils.py`; replay uses recorded templates, not current wording. Output-repair
+wording lives directly beside its policy in `executor/runs/agic.py`.
+
+Assembly consumes prepared data and records; it does not execute tools or read
+the store. `assembly/message_buffer.py` holds the message sequence and pending
+delta; the executor adopts each staged buffer only after committing its call.
+`execution/records.py` owns delta serialization.
+`execution/recall.py` reconciles resource visibility and resolves recall selection.
+
+Durable calls have a call-level `version` and `messages: {head, delta}`. The head
+is the first Model Step of the current sequence. Replay concatenates raw deltas
+from that head through the requested call in numeric Step order. Compaction or
+changed history selection records a new self-headed baseline. Other call fields
+are complete per-call snapshots; far/near policy is not stored in the call.
+Message content has ordered segments, frozen as content hashes at commit.
+Imported history carries its owning Run as `source`, preventing repeated history
+from becoming new conversation. Replay needs neither State nor control lookup.
+
+Instructions contain `toolang:protocol`, optional `toolang:instruct`, resident
+`toolang:psyche` bodies, and `toolang:skill-trigger`/`toolang:service-trigger`
+descriptions. Triggers advertise availability, not loaded guidance.
+Using a skill or service requires its current visible `skill-guidance` or
+`service-guidance` user message; `_toolang__pick` loads it on demand.
+Revisions derive from immutable definition fingerprints and metadata, without
+reading skill/service bodies during assembly.
+
+Resource declarations use replacement by tag/ref and self-closing
+`removed="true"` withdrawals. Capability changes retract stale guidance.
+The executor reconciles adopted State with resident, historical, and pending
+declarations at model-call boundaries; watcher changes alone do not wake runs.
+New control templates escape literal text while preserving nontext Parts.
+Messages retain `tag` and `recall: {ref, revision}` in memory and persistence.
+Trigger and guidance tags share a source-free ref such as `skill/testing` but
+have separate visibility. Withdrawals append a revision-zero tombstone; previous
+calls and their content remain unchanged. Public message payloads omit metadata.
+
+Every model call sees the available workspaces, including its first call:
+`<toolang:workspace-access ref="project"/>`. Names are the refs; host roots and binding
+revisions stay internal. Assembly does not scan rules. Preflight blocks a
+path-aware operation until applicable rules are current and model-visible.
+On a remap, honor withdraws old scoped rules and presents the new binding before
+new rules; loading failure never permits the original operation. Compaction and
+`recall = none` re-present bindings when the previous declarations are no longer visible.
+
+Default instruct retains the agent name. Default context contains only date,
+timezone, model provider, and model name. Authored instruct/context selection
+remains unchanged; no default agent-home path, model-family label, or run-info is emitted.
+
+`execution/inspection/` groups durable history queries, inspection types,
+Run/Thread views, and execution-tree projections. Its package facade exposes
+only lightweight types and helpers, so basic inspection does not load tree
+projection. Persistence and model-call reconstruction remain in `RunStore`.
+
+Built-in tool modules match their registered toolset names:
+`execution/tools/_toolang.py` and `execution/tools/me/`.
+
+`build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
 `ModelTarget` and one normalized `ModelCall` per model step.
-There is no loop plugin or public run-context protocol, and there are no
-separate effective-resource, invocation, model-call assembly, or tool-snapshot
-layers.
+Assembly helpers add no separate execution state or model-call lifecycle.
+There is no loop plugin, public run-context protocol, or separate
+effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,
 `_toolang__execute`, `_toolang__reload`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
 execute targets; they do not select definitions. All tools use plugin registration
-and the same Tool Step lifecycle. A bounded route catalog lists
-the authored routes and resolved union as model hints only when `hands` or
-`handoffs` is present; with neither directive, instructions state that no
-target is authorized and omit the catalog. Runtime calls in one model batch
+and the same Tool Step lifecycle. Every call includes `toolang:hands` and
+`toolang:handoffs` in messages, as siblings before `toolang:context`, even with
+`context: none`. Each snapshot has `enabled="true"` and a complete JSON target
+list, or `enabled="false"` and no body. Entries contain refs, descriptions and
+signatures, without redundant actions. Only the latest runtime snapshots apply;
+they have no revision, withdrawal, or recall metadata. Instructions stay stable
+when routes change. Snapshots persist as ordinary message content, not controls.
+Calls without runtime tools, including output repair, disable both modes.
+The limits are 64 unique targets and 32,768 UTF-8 bytes across both snapshots,
+including escaped framing. Overflow rejects preparation with an error asking
+the author to narrow hands/handoffs; lists are never silently truncated.
+Runtime calls in one model batch
 use that Model Call's captured routes, even if reload and ordinary tools adopt
 new State between calls. The next Model Call captures the new routes.
 

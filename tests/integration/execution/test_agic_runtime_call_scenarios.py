@@ -8,7 +8,12 @@ from typing import Any
 
 import pytest
 
-from tests.support.execution_assertions import assert_run_event_integrity
+from tests.support.execution_assertions import (
+    assert_replayed,
+    assert_run_event_integrity,
+    last_tool_result,
+    route_snapshots,
+)
 from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingRunTracer,
@@ -117,20 +122,22 @@ agic child(_: Text) -> Text:
             assert isinstance(child_control.payload, RunControlPayload)
             assert child_control.payload.runnable == "agent$agic:child"
             followup = harness.adapter.invocations[2].call
-            result = followup.messages[-1].parts[0]
+            result = last_tool_result(followup)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "call-run"
             assert result.output["run_id"] == children[0].id
             assert persisted_result == result
-            assert "<available-runnable-routes>" in (
-                harness.adapter.invocations[0].call.instructions
-            )
-            assert "<available-runnable-routes>" not in (
-                harness.adapter.invocations[1].call.instructions
-            )
-            assert "declares no hands or handoffs" in (
-                harness.adapter.invocations[1].call.instructions
-            )
+            parent_routes = route_snapshots(harness.adapter.invocations[0].call)
+            assert [item["ref"] for item in parent_routes["hands"]] == ["agic:child"]
+            assert parent_routes["handoffs"] == []
+            assert route_snapshots(harness.adapter.invocations[1].call) == {
+                "hands": [],
+                "handoffs": [],
+            }
+            prohibitions = harness.adapter.invocations[1].call.instructions.split(
+                "## Don't", 1
+            )[1]
+            assert "call run or execute without authorized routes" in prohibitions
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
@@ -208,7 +215,9 @@ flow check(_: Part[]) -> Text:
             runs = harness.store.list_run_tree(root_run_id=root.id)
             assert len(runs) == 3
             reviewer_call = harness.adapter.invocations[1].call
-            assert reviewer_call.messages[-1] == Message.user("Review candidate")
+            assert reviewer_call.messages[-1] == Message.user(
+                '<toolang:hands enabled="false"/>\n<toolang:handoffs enabled="false"/>\n\nReview candidate'
+            )
 
     asyncio.run(scenario())
 
@@ -260,7 +269,7 @@ flow check(_: Text, threshold: Number) -> Text:
 
             assert root.status == "succeeded", root.error
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "missing named inputs for check: threshold"
             assert result.output == {
@@ -276,6 +285,7 @@ flow check(_: Text, threshold: Number) -> Text:
                         }
                     ],
                     "structs": [],
+                    "output": "Text",
                 },
                 "guidance": (
                     "Retry only when available context provides the required "
@@ -363,6 +373,103 @@ flow check(_: Text, threshold: Number) -> Text:
     asyncio.run(scenario())
 
 
+def test_wildcard_routes_hide_active_lineage_and_keep_completed_children(
+    tmp_path: Path,
+) -> None:
+    responses = []
+    for index in range(2):
+        responses.extend(
+            (
+                ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            f"run-{index}",
+                            f"provider-{index}",
+                            "_toolang__run",
+                            {"runnable": "helper"},
+                        ),
+                    )
+                ),
+                ModelCallResult(message=Message.assistant("helper completed")),
+            )
+        )
+    responses.append(ModelCallResult(message=Message.assistant("done")))
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic default() -> Text:
+  hands = *
+  handoffs = *
+  context: none
+  Delegate the task.
+
+agic helper() -> Text:
+  hands = *
+  handoffs = *
+  context: none
+  Help.
+""",
+        responses=responses,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:default"),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            assert len(harness.store.list_run_tree(root_run_id=root.id)) == 3
+            calls = [invocation.call for invocation in harness.adapter.invocations]
+            assert len(calls) == 5
+            for index, call in enumerate(calls):
+                snapshots = route_snapshots(call)
+                for targets in snapshots.values():
+                    assert [target["ref"] for target in targets] == (
+                        ["agic:helper"] if index % 2 == 0 else []
+                    )
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+@pytest.mark.parametrize("count", [64, 65])
+def test_route_limit_counts_only_inactive_targets(tmp_path: Path, count: int) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            "agic default() -> Text:\n  hands = *\n  handoffs = *\n  Call.\n"
+            + "\n".join(
+                f"agic action_{index}() -> Text:\n  Help.\n" for index in range(count)
+            )
+        ),
+        responses=(ModelCallResult(message=Message.assistant("done")),),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:default")
+            )
+            if count == 64:
+                assert root.status == "succeeded", root.error
+                snapshots = route_snapshots(harness.adapter.invocations[0].call)
+                for targets in snapshots.values():
+                    assert len(targets) == count
+                    assert all(target["ref"] != "agic:default" for target in targets)
+            else:
+                assert root.status == "failed"
+                assert root.error == ErrorMessage(
+                    "Authorized routes exceed 64 targets. Narrow hands or handoffs."
+                )
+                assert harness.adapter.invocations == []
+
+    asyncio.run(scenario())
+
+
 def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
     tmp_path: Path,
 ) -> None:
@@ -414,12 +521,14 @@ agic parent(_: Text, threshold: Number) -> Text:
                 ("model", "succeeded"),
             ]
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: agic:parent"
             )
             assert result.output == {}
+            for invocation in harness.adapter.invocations:
+                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
 
     asyncio.run(scenario())
 
@@ -479,12 +588,19 @@ flow outer(_: Text) -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
-            assert isinstance(result, ToolResultPart)
+            result = next(
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__run"
+            )
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
             )
             assert result.output == {}
+            for invocation in harness.adapter.invocations:
+                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
 
     asyncio.run(scenario())
 
@@ -572,11 +688,19 @@ flow -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = next(
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__run"
+            )
             assert isinstance(result, ToolResultPart)
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
             )
+            for invocation in harness.adapter.invocations:
+                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
 
     asyncio.run(scenario())
 
@@ -644,7 +768,7 @@ agic parent(_: Text) -> Text:
             assert isinstance(steps[1].given, ToolStepGiven)
             assert steps[1].given.call.input == {"input": {}}
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "bad-run"
             assert result.error == "_toolang/run requires a non-empty runnable ref"
@@ -715,7 +839,7 @@ agic child(_: Text) -> Text:
             assert dynamic.error == ErrorRef(
                 FieldRef.from_path(RunRef.parse(child.id), "error")
             )
-            result = harness.adapter.invocations[2].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-child"
             assert "child provider failed" in (result.error or "")
@@ -815,7 +939,13 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             reload_control = next(item for item in controls if item.kind == "reload")
             assert reload_control.status == "applied"
             second_call = harness.adapter.invocations[1].call
-            reload_result = second_call.messages[-1].parts[0]
+            reload_result = next(
+                part
+                for message in second_call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+                and part.tool_name == "_toolang__reload"
+            )
             assert isinstance(reload_result, ToolResultPart)
             assert reload_result.error is None
             assert isinstance(reload_control.payload, ReloadControlPayload)
@@ -827,11 +957,14 @@ flow new_flow(_: Text, brief: Brief) -> Text:
                     }
                 ]
             }
-            assert "flow:new_flow" in second_call.instructions
+            assert "flow:new_flow" in {
+                item["ref"] for item in route_snapshots(second_call)["hands"]
+            }
             dynamic = steps[3]
             assert isinstance(dynamic.given, ToolStepGiven)
             assert dynamic.given.call.input["runnable"] == "flow:new_flow"
             assert reload_control.triggered_by == steps[1].ref
+            assert not [control for control in controls if control.kind == "recall"]
             assert steps[2].preceded_by == (reload_control.ref,)
             assert [
                 harness.store.rebuild_model_call(step)
@@ -1134,7 +1267,7 @@ agic parent(_: Text) -> Text:
                 item.kind != "reload"
                 for item in harness.store.list_run_controls(run_id=root.id)
             )
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Agent State refresh failed"
             assert set(result.output) == {"diagnostics"}
@@ -1204,7 +1337,7 @@ agic parent(_: Text) -> Text:
                 if item.kind == "reload"
             )
             assert reload_control.status == "applied"
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
             assert isinstance(reload_control.payload, ReloadControlPayload)
@@ -1291,7 +1424,7 @@ agic parent(_: Text) -> Text:
             )
             assert reload_control.status == "wontapply"
             assert reload_control.error == "reload persistence failed"
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-reload"
             assert result.error == "reload persistence failed"
@@ -1386,7 +1519,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
             assert accepted.payload.runnable == "_flow_research$flow:research"
-            result = harness.adapter.invocations[2].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
             assert result.output == {
@@ -1627,7 +1760,7 @@ agic blocked -> Text:
                 ("model", "succeeded"),
             ]
             assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "blocked-handoff"
             assert result.error == (
@@ -1684,10 +1817,11 @@ agic caller() -> Text:
                 "_toolang__reload",
                 "_toolang__run",
             }
-            assert "<available-runnable-routes>" not in first_call.instructions
+            assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
             assert '"runnables"' not in first_call.instructions
-            assert "declares no hands or handoffs" in first_call.instructions
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            prohibitions = first_call.instructions.split("## Don't", 1)[1]
+            assert "call run or execute without authorized routes" in prohibitions
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
 
@@ -1735,7 +1869,7 @@ agic caller() -> Text:
                 "model",
             ]
             assert not harness.store.list_run_controls(run_id=root.id, kind="reload")
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "reload"
             assert result.error == "Agent State refresh is unavailable in this executor"
@@ -1796,8 +1930,9 @@ agic target() -> Text:
             assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
             results = tuple(
                 part
-                for message in harness.adapter.invocations[1].call.messages[-2:]
+                for message in harness.adapter.invocations[1].call.messages
                 for part in message.parts
+                if isinstance(part, ToolResultPart)
             )
             assert len(results) == 2
             assert all(
@@ -1875,12 +2010,18 @@ agic target() -> Text:
             assert len(controls) == 1
             assert isinstance(controls[0].payload, ExecuteControlPayload)
             assert controls[0].payload.runnable == "agent$agic:target"
-            result = harness.adapter.invocations[2].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
                 "_toolang/execute cannot call the current or an ancestor runnable: "
                 "agic:caller"
             )
+            first, *following = harness.adapter.invocations
+            assert [
+                target["ref"] for target in route_snapshots(first.call)["handoffs"]
+            ] == ["agic:target"]
+            for invocation in following:
+                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
 
     asyncio.run(scenario())
 
@@ -2009,7 +2150,7 @@ agic inner() -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"

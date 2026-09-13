@@ -9,7 +9,7 @@ from toolang.base.types.model import ModelOverride
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor
-from toolang.execution.history import RunHistory
+from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.setup import SetupWatcher
