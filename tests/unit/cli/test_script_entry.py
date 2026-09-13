@@ -44,7 +44,8 @@ def test_init_without_directory_only_shows_help(
     assert f"Usage: {executable} init [OPTIONS] <DIR>" in output
     assert "* DIR" in output
     assert "[default: .]" not in output
-    assert "Use . for the current directory" in output
+    assert "Directory to set up for Toolang" in output
+    assert output.endswith("Show this message and exit")
 
 
 @pytest.mark.parametrize(

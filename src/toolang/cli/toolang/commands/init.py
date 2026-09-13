@@ -13,10 +13,7 @@ def init_script(
     ctx: typer.Context,
     directory: Annotated[
         Path,
-        typer.Argument(
-            metavar="DIR",
-            help="Directory for work.too. Use . for the current directory",
-        ),
+        typer.Argument(metavar="DIR", help="Directory to set up for Toolang"),
     ],
 ) -> None:
     """Create the bundled Script in the selected directory."""

@@ -42,6 +42,7 @@ and authorized model routes.
   creates nothing; `too init .` selects the current directory. Resolve it at the
   CLI boundary and create missing directories. Permit nonempty directories;
   preserve neighboring files.
+  Help uses `<DIR>` and `Directory to set up for Toolang`, without an epilog.
 - Load the bundled template before creating directories. Write `work.too` as
   UTF-8 with a trailing newline using exclusive creation. Existing files,
   directories, and symlinks at the destination must fail without being changed.

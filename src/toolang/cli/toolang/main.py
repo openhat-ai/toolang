@@ -566,10 +566,6 @@ _registered_command(
     "toolang.cli.toolang.commands.init:init_script",
     help="Initialize Toolang in a directory",
     no_args_is_help=True,
-    epilog=(
-        "Creates missing directories and writes work.too from the default template. "
-        "Fails if work.too already exists."
-    ),
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 _registered_command(
