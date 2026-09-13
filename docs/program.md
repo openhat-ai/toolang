@@ -188,6 +188,10 @@ building its indexes. Script help uses the same binding rules. Explicitly named
 synthetic runtime fallback. In a home flow module, State binds the unnamed Flow's
 public name from the filename as described above.
 
+State's entry names do not add source declarations. Flow statements must reference
+explicitly named runnables or use inline agics; `run main` cannot target an unnamed
+declaration.
+
 
 ### Primary Input
 

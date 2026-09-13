@@ -830,6 +830,17 @@ agic:
     assert program.agics[0].messages[0].content == "Reply directly."
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_flow_statements_cannot_reference_an_unnamed_entry_as_main(kind: str) -> None:
+    source = f"{kind}():\n  pass\nflow caller():\n  run main\n"
+
+    with pytest.raises(ToolangError, match="references unknown runnable 'main'"):
+        Program.from_source(source)
+
+    named = Program.from_source(source.replace(f"{kind}()", f"{kind} main()", 1))
+    assert named.find_agic("main") or named.find_flow("main")
+
+
 @pytest.mark.parametrize(
     "source",
     [
