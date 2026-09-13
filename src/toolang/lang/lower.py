@@ -18,86 +18,133 @@ from .validate import _validate_cap_source
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _TRIVIA = {
     "blank_line",
-    "comment_line",
-    "doc_line",
+    "plain_comment",
+    "shebang_comment",
+    "item_doc_comment",
     "line_end",
-    "parent_doc_line",
+    "module_doc_comment",
 }
 NodeT = TypeVar("NodeT", bound=ast.Node)
 
 
 class _DocComments:
-    """Resolve source-level documentation comments by line and indentation."""
+    """Bind structured CST documentation using physical adjacency and scope."""
 
-    def __init__(self, source: bytes) -> None:
-        lines = source_lines(source.decode("utf-8"))
-        self.program_doc = self._program_doc(lines)
-        self._attached = self._attached_docs(lines)
-        self._comment_lines = {
-            line_number
-            for line_number, line in enumerate(lines, start=1)
-            if self._content(line).startswith("##")
-        }
+    def __init__(self, cst: ast._ParsedSource) -> None:
+        self._source = cst.source
+        self._attached: dict[int, tuple[CstNode, ...]] = {}
+        lines = source_lines(cst.source.decode("utf-8"))
+        bom_size = len("\ufeff".encode("utf-8")) if lines[0].startswith("\ufeff") else 0
+        lines[0] = lines[0].removeprefix("\ufeff")
+        comments: dict[int, CstNode] = {}
+        pending = [cst.tree.root_node]
+        while pending:
+            node = pending.pop()
+            row, column = node.start_point
+            if node.type in _TRIVIA - {"blank_line", "line_end"}:
+                if column == len(self._indent(lines[row])) + (
+                    bom_size if row == 0 else 0
+                ):
+                    comments[row] = node
+            else:
+                pending.extend(reversed(node.named_children))
+
+        self.program_doc = self._joined(
+            [
+                self._field_text(node, "text")
+                for node in comments.values()
+                if node.type == "module_doc_comment"
+                and not self._indent(lines[node.start_point.row])
+            ]
+        )
+        block: list[CstNode] = []
+        for row, node in comments.items():
+            if block and (
+                row != block[-1].start_point.row + 1
+                or self._indent(lines[row])
+                != self._indent(lines[block[-1].start_point.row])
+                or node.type != "item_doc_comment"
+            ):
+                self._attach(block, cst=cst, lines=lines, comments=comments)
+                block = []
+            if node.type == "item_doc_comment":
+                block.append(node)
+        if block:
+            self._attach(block, cst=cst, lines=lines, comments=comments)
+
+    def _attach(
+        self,
+        block: list[CstNode],
+        *,
+        cst: ast._ParsedSource,
+        lines: list[str],
+        comments: dict[int, CstNode],
+    ) -> None:
+        row = block[-1].start_point.row + 1
+        indent = self._indent(lines[row - 1])
+        if (
+            row >= len(lines)
+            or not lines[row].strip()
+            or row in comments
+            or self._indent(lines[row]) != indent
+        ):
+            return
+        target = cst.tree.root_node.named_descendant_for_point_range(
+            (row, len(indent)), (row, len(indent) + 1)
+        )
+        assert target is not None
+        while (
+            target.parent is not None
+            and target.parent.type not in {"source_file", "item"}
+            and target.parent.start_point.row == row
+        ):
+            target = target.parent
+        tags = [node.child_by_field_name("parameter") for node in block]
+        for tag in tags:
+            if tag is not None and target.type not in {"agic", "flow"}:
+                raise ToolangValidationError(
+                    f"Parameter documentation at line {tag.start_point.row + 1} "
+                    "must attach to an agic or flow declaration."
+                )
+        self._attached[row] = tuple(block)
 
     def for_node(self, node: CstNode) -> str | None:
-        return self._attached.get(node.start_point.row + 1)
+        return self._joined(
+            [
+                self._field_text(comment, "text")
+                for comment in self._attached.get(node.start_point.row, ())
+            ]
+        )
 
-    def is_doc_comment(self, node: CstNode) -> bool:
-        return node.start_point.row + 1 in self._comment_lines
-
-    @classmethod
-    def _program_doc(cls, lines: list[str]) -> str | None:
-        docs = [
-            cls._content(line).removeprefix("##!").strip()
-            for line in lines
-            if not cls._indent(line) and cls._content(line).startswith("##!")
-        ]
-        return cls._joined(docs)
-
-    @classmethod
-    def _attached_docs(cls, lines: list[str]) -> dict[int, str]:
-        attached: dict[int, str] = {}
-        index = 0
-        while index < len(lines):
-            line = lines[index]
-            indent = cls._indent(line)
-            content = cls._content(line)
-            if not content.startswith("##") or content.startswith("##!"):
-                index += 1
+    def parameters(self, owner: CstNode, names: set[str]) -> dict[str, str]:
+        docs: dict[str, str] = {}
+        for comment in self._attached.get(owner.start_point.row, ()):
+            tag = comment.child_by_field_name("parameter")
+            if tag is None:
                 continue
+            name = self._field_text(tag, "name")
+            if name not in names:
+                raise ToolangValidationError(
+                    f"Unknown parameter {name!r} in documentation "
+                    f"at line {tag.start_point.row + 1}."
+                )
+            if name in docs:
+                raise ToolangValidationError(
+                    f"Duplicate documentation for parameter {name!r} "
+                    f"at line {tag.start_point.row + 1}."
+                )
+            docs[name] = self._field_text(tag, "description")
+        return docs
 
-            docs: list[str] = []
-            while index < len(lines):
-                line = lines[index]
-                if cls._indent(line) != indent:
-                    break
-                content = cls._content(line)
-                if not content.startswith("##") or content.startswith("##!"):
-                    break
-                docs.append(content.removeprefix("##").strip())
-                index += 1
-
-            if index >= len(lines):
-                continue
-            target = lines[index]
-            target_content = cls._content(target)
-            if (
-                cls._indent(target) == indent
-                and target_content
-                and not target_content.startswith("#")
-            ):
-                doc = cls._joined(docs)
-                if doc is not None:
-                    attached[index + 1] = doc
-        return attached
+    def _field_text(self, node: CstNode, field: str) -> str:
+        child = node.child_by_field_name(field)
+        if child is None:
+            return ""
+        return self._source[child.start_byte : child.end_byte].decode("utf-8").strip()
 
     @staticmethod
     def _indent(line: str) -> str:
         return line[: len(line) - len(line.lstrip(" \t"))]
-
-    @staticmethod
-    def _content(line: str) -> str:
-        return line.lstrip(" \t")
 
     @staticmethod
     def _joined(items: list[str]) -> str | None:
@@ -117,7 +164,7 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
 class _Lowerer:
     def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst
-        self.docs = _DocComments(cst.source)
+        self.docs = _DocComments(cst)
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
         self.jobs: list[ast.JobDecl] = []
@@ -378,8 +425,6 @@ class _Lowerer:
                 raise RuntimeError(
                     f"Unsupported message CST node {child.type!r} at line {self._line(child)}."
                 )
-            if self.docs.is_doc_comment(child):
-                continue
             messages.append(self._lower_message(child, doc=self.docs.for_node(child)))
         return messages
 
@@ -452,8 +497,6 @@ class _Lowerer:
         stmts: list[ast.FlowStmt] = []
         for child in node.named_children:
             if child.type in _TRIVIA:
-                continue
-            if self.docs.is_doc_comment(child):
                 continue
             stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return stmts
@@ -697,7 +740,8 @@ class _Lowerer:
         owner: CstNode,
     ) -> tuple[ast.Parameter | None, tuple[ast.Parameter, ...]]:
         if node is None:
-            return self._default_input(owner), ()
+            docs = self.docs.parameters(owner, {"_"})
+            return replace(self._default_input(owner), doc=docs.get("_")), ()
         input_param: ast.Parameter | None = None
         params: list[ast.Parameter] = []
         for child in node.children_by_field_name("param"):
@@ -715,7 +759,13 @@ class _Lowerer:
                 input_param = param
             else:
                 params.append(param)
-        return input_param, tuple(params)
+        docs = self.docs.parameters(
+            owner, {param.name for param in params} | ({"_"} if input_param else set())
+        )
+        return (
+            replace(input_param, doc=docs.get("_")) if input_param else None,
+            tuple(replace(param, doc=docs.get(param.name)) for param in params),
+        )
 
     def _default_input(self, owner: CstNode) -> ast.Parameter:
         return ast.Parameter(name="_", type_name="Part[]", span=self._span(owner))

@@ -164,11 +164,11 @@ headers are rejected. Missing optional source is represented by empty text.
 Normal preparation hashes the selected source bytes and compares the portable
 manifest with the published layer. An unchanged current layer is loaded without
 parsing Programs, materializing capabilities, or polling remote refs. Layer
-schema 7 rebuilds older caches to apply strict source parsing, preserve unnamed
-AST declarations, and bind them in State. Exact historical loads retain their recorded
-Programs and run references. These rules also apply when the root and home are
-mounted at different absolute paths. An explicit refresh resolves remote refs
-again.
+schema 8 rebuilds older caches with structured module and parameter documentation
+from grammar 0.3.2, in addition to strict source parsing and unnamed declaration
+binding. Exact historical loads retain their recorded Programs and run references.
+These rules also apply when the root and home are mounted at different absolute
+paths. An explicit refresh resolves remote refs again.
 
 When rebuilding a layer, a writer:
 

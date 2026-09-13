@@ -70,7 +70,12 @@ _DECLARATION_TYPES = {
     "agic",
     "flow",
 }
-_COMMENT_TYPES = {"comment_line", "doc_line", "parent_doc_line"}
+_COMMENT_TYPES = {
+    "plain_comment",
+    "shebang_comment",
+    "item_doc_comment",
+    "module_doc_comment",
+}
 _TEXT_TYPES = {"text_body", "unroled_message", "implicit_run_statement"}
 _CONTROL_TYPES = {"context_setting", "instruct_setting"}
 
@@ -84,6 +89,7 @@ class _Line:
     text_owner: int | None = None
     control_owner: int | None = None
     separate: bool = False
+    follows_doc: bool = False
 
 
 def format_source(source: str, *, tab_size: int = 2) -> str:
@@ -101,6 +107,11 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
     ).rstrip()
     if formatted:
         formatted = f"{formatted}\n"
+    if source.startswith("\ufeff"):
+        formatted = f"\ufeff{formatted}"
+    if formatted.startswith("#!") and not source.startswith("#!"):
+        # Keep plain comments from becoming byte-zero shebangs.
+        formatted = f"\n{formatted}"
     _syntax_tree(formatted)
     return formatted
 
@@ -200,6 +211,10 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
     previous_doc_indent: str | None = None
 
     for row, raw_line in enumerate(lines):
+        bom_size = 0
+        if row == 0 and raw_line.startswith("\ufeff"):
+            raw_line = raw_line.removeprefix("\ufeff")
+            bom_size = len("\ufeff".encode("utf-8"))
         line = raw_line.rstrip()
         prefix = _leading_whitespace(line)
         if not line.strip():
@@ -207,8 +222,8 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             previous_doc_indent = None
             continue
         node = root.named_descendant_for_point_range(
-            (row, len(prefix)),
-            (row, len(prefix) + len(line[len(prefix)].encode("utf-8"))),
+            (row, bom_size + len(prefix)),
+            (row, bom_size + len(prefix) + len(line[len(prefix)].encode("utf-8"))),
         )
         if node is None:
             raise ToolangFormatError(f"Missing syntax node at line {row + 1}.")
@@ -256,9 +271,11 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 separate=previous_doc_indent is not None
                 and previous_doc_indent != prefix
                 and _leading_whitespace(formatted[-1].value) == rendered_prefix,
+                follows_doc=previous_doc_indent is not None
+                and previous_doc_indent == prefix,
             )
         )
-        previous_doc_indent = prefix if node.type == "doc_line" else None
+        previous_doc_indent = prefix if node.type == "item_doc_comment" else None
 
     return _normalize_blank_lines(
         _order_program_comments(_order_control_segments(formatted))
@@ -268,9 +285,9 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
 def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> str:
     types = {item.type for item in ancestors}
     if not _leading_whitespace(line):
-        if line.startswith("#!"):
+        if node.type == "shebang_comment":
             return "shebang"
-        if node.type == "parent_doc_line":
+        if node.type == "module_doc_comment":
             return "program_comment"
         if node.type in _COMMENT_TYPES:
             return "top_comment"
@@ -309,8 +326,8 @@ def _syntax_tree(source: str) -> Tree:
 
 
 def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
-    if stripped_line.startswith("#"):
-        return _format_comment_line(stripped_line)
+    if node.type in _COMMENT_TYPES:
+        return _format_comment_line(stripped_line, node=node)
 
     ancestors = _ancestor_types(node)
     declaration = next(
@@ -400,15 +417,27 @@ def _format_with_line(stripped_line: str) -> str:
     return f"with {match.group('kind')} {match.group('reference').strip()}{comment}"
 
 
-def _format_comment_line(stripped_line: str) -> str:
-    if not stripped_line.startswith("#") or stripped_line.startswith("#!"):
+def _format_comment_line(stripped_line: str, *, node: Node) -> str:
+    if node.type in {"item_doc_comment", "module_doc_comment"}:
+        marker = (
+            "##"
+            if node.type == "item_doc_comment"
+            else "##!"
+            if stripped_line.startswith("##!")
+            else "#@"
+        )
+        if tag := node.child_by_field_name("parameter"):
+            name = tag.child_by_field_name("name")
+            description = tag.child_by_field_name("description")
+            assert name is not None and description is not None
+            assert name.text is not None and description.text is not None
+            body = f"@param {name.text.decode('utf-8')} {description.text.decode('utf-8').strip()}"
+        else:
+            text = node.child_by_field_name("text")
+            body = text.text.decode("utf-8").strip() if text and text.text else ""
+        return f"{marker} {body}" if body else marker
+    if stripped_line.startswith("#!"):
         return stripped_line
-    if stripped_line.startswith("##!"):
-        body = stripped_line[3:].strip()
-        return "##!" if not body else f"##! {body}"
-    if stripped_line.startswith("##"):
-        body = stripped_line[2:].strip()
-        return "##" if not body else f"## {body}"
     body = stripped_line[1:].strip()
     return "#" if not body else f"# {body}"
 
@@ -565,7 +594,11 @@ def _order_program_comments(lines: list[_Line]) -> list[_Line]:
     return [
         *prefix,
         *(line for line in body if line.kind == "program_comment"),
-        *(line for line in body if line.kind != "program_comment"),
+        # A moved module comment must still interrupt item-doc attachment.
+        *(
+            _Line("", "blank") if line.kind == "program_comment" else line
+            for line in body
+        ),
     ]
 
 
@@ -616,8 +649,8 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
             and line.text_owner is not None
             and line.text_owner == previous.text_owner
         )
-        if same_text:
-            # Whitespace inside one CST text body is content, never a section separator.
+        if same_text or (line.follows_doc and not pending_blank):
+            # Preserve text whitespace and authored item-doc adjacency.
             _append_blank_lines(normalized, pending_blank)
         elif line.separate or _needs_blank_line(
             previous_kind, kind, pending_blank=bool(pending_blank)
