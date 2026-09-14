@@ -51,7 +51,6 @@ CAPS_COMMAND_PANEL = "Cap Commands"
 CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
-SOURCE_COMMAND_PANEL = "Source Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
@@ -85,8 +84,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_SOURCE_PANEL_COMMAND_ORDER = ("parse", "fmt", "highlight")
-_HIDDEN_COMMAND_ORDER = ("query", "compact")
+_HIDDEN_COMMAND_ORDER = ("query", "parse", "fmt", "highlight", "compact")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -94,7 +92,6 @@ _VISIBLE_COMMAND_ORDER = (
     *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
     *_SCRIPT_PANEL_COMMAND_ORDER,
-    *_SOURCE_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
@@ -545,22 +542,22 @@ _registered_command(
 _registered_command(
     "fmt",
     "toolang.cli.toolang.commands.program:fmt",
-    help="Format .too files",
-    rich_help_panel=SOURCE_COMMAND_PANEL,
+    help="Format .too source",
+    hidden=True,
     no_args_is_help=True,
 )
 _registered_command(
     "parse",
     "toolang.cli.toolang.commands.program:parse_program",
-    help="Inspect a .too AST or CST (S-expression by default; --json for JSON)",
-    rich_help_panel=SOURCE_COMMAND_PANEL,
+    help="Parse .too source",
+    hidden=True,
     no_args_is_help=True,
 )
 _registered_command(
     "highlight",
     "toolang.cli.toolang.commands.program:highlight_source",
-    help="Highlight .too source in the terminal or as HTML",
-    rich_help_panel=SOURCE_COMMAND_PANEL,
+    help="Highlight .too source",
+    hidden=True,
     no_args_is_help=True,
 )
 _registered_command(

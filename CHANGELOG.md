@@ -10,8 +10,8 @@ and this project uses semantic versioning.
 
 ### Added
 
-- Expose offline `parse`, `fmt`, and `highlight` Source Commands under both
-  executables, with AST/CST selection, JSON/S-expression output, stdout formatting,
+- Extend hidden `parse` and `fmt` commands and add `highlight` under both
+  executable names, with AST/CST selection, JSON/S-expression output, stdout formatting,
   and shared Tree-sitter highlighting for terminals and standalone HTML.
 
 ### Changed

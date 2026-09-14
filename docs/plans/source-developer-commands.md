@@ -3,7 +3,7 @@
 ## Goal and Status
 
 Approved for implementation by the user, including preservation of `fmt --check`.
-Development uses an isolated branch on PR #532 until its changes reach main.
+The 0.3.2 prerequisite is merged into main through PR #532.
 
 Expose `parse`, `fmt`, and `highlight` through both `too` and `toolang`, using
 installed Tree-sitter Python packages and Rich. Installation alone must suffice:
@@ -26,10 +26,10 @@ Verified against Toolang `ba81f137`, `tree-sitter==0.25.2`, and
 - Current formatting adds `: Part[]` to untyped `_` and inserts blank lines
   between every `with` and between adjacent inline messages.
 
-Before final integration, rebase onto merged [PR #532](https://github.com/openhat-ai/toolang/pull/532).
-It was open when implementation started; inherit its released 0.3.2 grammar, comment node
-names, parameter documentation, and formatter attachment fixes. Do not duplicate
-its grammar/cache migration. Verify its final merged behavior before coding.
+Base implementation on [PR #532](https://github.com/openhat-ai/toolang/pull/532),
+merged as `faf71283`. Inherit its released 0.3.2 grammar, comment node names,
+parameter documentation, and formatter attachment fixes. Do not duplicate its
+grammar/cache migration.
 
 Convention inputs: the repository's
 [authoring conventions](../toolang-authoring-conventions.md), the
@@ -67,10 +67,10 @@ Shared input rules:
   deduplication, ordering, and multiple inputs. Other modes require one file
   or stdin. Explicit files must have the `.too` suffix; URLs/agent selectors
   are not source inputs.
-- Expose a `Source Commands` panel after `Script Commands`, ordered `parse`,
-  `fmt`, `highlight`, using existing factories and target-free routing.
-  Preserve script shorthand, shebangs, and agent routes; `agent:highlight`
-  escapes collision with the newly reserved command.
+- Keep `parse`, `fmt`, and `highlight` hidden from main help and list them in
+  `too hidden`, using concise descriptions, existing factories, and target-free
+  routing. Preserve script shorthand, shebangs, and agent routes;
+  `agent:highlight` escapes collision with the newly reserved command.
 
 `--ast` and `--cst` are mutually exclusive. Keep `--compact` as shorthand for
 compact JSON, implying `--json`; `--json --compact` also works. Do not add
@@ -245,7 +245,7 @@ Existing `too query` remains unrelated collection-query tooling.
 
 ## Acceptance and Delivery
 
-1. Verify both executable entry points, lazy Source Commands help, no setup or
+1. Verify both executable entry points, lazy hidden-command help, no setup or
    side effects, preserved script/agent routing, and command-name collision escape.
 2. Cover all formatter modes, check status, discovery/deduplication, stdin labels,
    tab size, rejected combinations before writes, unchanged source files in

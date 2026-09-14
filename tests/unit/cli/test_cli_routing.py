@@ -333,7 +333,6 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "inspect",
         ),
         "Script Commands": ("init", "run"),
-        "Source Commands": ("parse", "fmt", "highlight"),
     }
 
     assert isinstance(group, TyperGroup)
