@@ -1,63 +1,52 @@
 # Known Limitations
 
-These limitations apply to Toolang 0.3.0. Toolang is currently alpha software,
-and compatibility boundaries may change between minor releases.
+These limitations apply to Toolang 0.3.0. Toolang is alpha software, and
+compatibility boundaries may change between minor releases.
 
 
-## Platform Support
+## Platform And Execution
 
-- Toolang currently targets Linux and macOS. Windows is not supported because
-  runtime locking, process management, sandbox startup, and the shell tool use
+- Toolang targets Linux and macOS with Python 3.11 or later. Windows is not
+  supported: locking, process management, sandbox startup, and shell tools use
   POSIX facilities such as `fcntl`, process groups, signals, and `/bin/sh`.
-- Docker hosting requires a working local Docker installation. The `none`
-  sandbox runs directly on the host and does not provide operating-system
-  isolation.
+- The `host` sandbox runs with the host process's permissions and provides no
+  operating-system isolation. Docker execution requires a working Docker
+  installation. The interactive TUI remains local while its workload can run
+  in a sandbox or an attached compatible agent server.
+- Toolang does not automatically resume an unfinished run after its owner
+  process exits. Durable history and explicit retry/rerun remain available
+  where the recorded run state permits them.
 
 
-## Models And Live Integrations
+## Models And Clients
 
-- An API key for a configured provider or a running Ollama service is required
-  before an agent can make model calls.
-- Provider behavior and supported multimodal features vary by model. Real-model
-  and live terminal tests are opt-in and are not part of the default test run.
-- Agent-home setup overrides are not supported yet. Model and tool setup is
-  resolved from root-scoped configuration and the process environment.
+- Model calls require credentials for a configured provider or a running local
+  model service. Model capabilities and multimodal support vary by provider.
+- Live-provider, live-terminal, and Docker tests are opt-in; passing the default
+  offline suite does not verify a user's credentials or hosting environment.
+- Agent-management commands have different target support; see
+  [CLI/API documentation](./docs/api.md).
+- Run-event SSE has no historical replay cursor. Clients reconstruct state from
+  durable records; a disconnected stream does not imply that its run stopped.
 
 
 ## Security And Trust
 
-- Remote agents and caps are executable instructions, not passive documents.
-  Run only sources you trust, especially when they enable shell, filesystem,
-  network, or service tools.
-- The shell tool constrains its working directory to the agent home, but the
-  command itself runs with the host process permissions and environment. Use an
-  isolated sandbox for untrusted workloads.
-- The local agent HTTP API does not currently authenticate requests. Keep it
-  bound to a loopback address and do not expose it directly to an untrusted
-  network.
+- Remote agents and caps can enable executable tools. Review sources before
+  granting shell, filesystem, network, or service access.
+- Workspace paths choose a filesystem or shell working location; they do not
+  restrict a shell process's operating-system permissions. Use an appropriate
+  sandbox for workloads that require isolation.
+- The agent HTTP API does not authenticate requests. Keep it bound to a
+  loopback address unless a trusted external access boundary protects it.
 
 
-## Surface Coverage
+## Compatibility
 
-- The terminal chat supports quick commands, persistent settings, and runnable
-  overrides. The WebUI does not yet implement the same complete submission
-  profile.
-- Direct terminal chat currently supports only the `none` sandbox. Running the
-  interactive TUI itself inside another hosting environment is not supported.
-- Roaming and visiting agents support only the command subsets documented in
-  `docs/api.md`; not every resident-agent management command is available.
-
-
-## Upgrade Compatibility
-
-- Programs written for 0.2.7 use the legacy `use` and `thunk` syntax and do not
-  parse under the current language. They must be migrated to `with`, `agic`,
-  and, where applicable, `flow` declarations.
-- Version 0.2.7 `runs.db` files use schema 9. The current runtime does not
-  migrate that schema, so old execution history cannot be opened in place.
-  Back up the Toolang root before upgrading and preserve or move the old
-  `.runtime/runs.db` files before allowing the new runtime to create its
-  stores.
-- External plugins built against legacy internal modules may require import and
-  protocol updates. Stable plugin-facing values and protocols now live under
-  `toolang.base`.
+- Execution stores must use schema 43. Incompatible stores are rejected without
+  an in-place migration, including stores created by internal development
+  snapshots. Preserve a complete Toolang root backup and the matching runtime
+  if that history is needed.
+- Language, configuration, storage, and plugin contracts may change while
+  Toolang is in alpha. Build plugins against the interfaces in `toolang.base`;
+  internal implementation modules are not stable extension points.

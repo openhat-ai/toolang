@@ -8,67 +8,31 @@ and this project uses semantic versioning.
 
 ## [Unreleased]
 
-### Changed
 
-- Upgrade Flow syntax to tree-sitter-toolang 0.3.1: explicit `using`, `if`, and
-  `by` clauses, `in N lanes`, `repeat N times`, and directional stable `sort`.
-  Replace rank selection with separate sort and positional keep statements.
-- Enforce indentation-based block ownership and keyword recognition on every
-  implicit prose line; explicit text blocks retain literal keywords and Markdown.
-- Persist sort statements with State layer schema 5 and execution store schema
-  39. Derived State rebuilds from migrated source; old execution stores are
-  rejected without modification and require the previous runtime for history.
+## [0.3.0]
 
-- Script runnable commands no longer copy their persisted Run result to stdout
-  by default. Use `--save -` for stdout or `--save PATH` for atomic file output.
-- Terminal Chat interactions now use slash commands, reusable prompt calls use
-  `$prompt`, colon remains the execution-policy prefix, and `@` remains resource
-  inclusion. Former colon quick commands and `/prompt` calls are not accepted as
-  aliases. Quote dollar prompt calls in shells, for example
-  `too run alice '$review focus=security'`.
-
-
-## [0.3.0] - 2026-08-03
+First public release. Earlier version numbers tracked internal development.
 
 ### Added
 
-- Added static `agic` and `flow` executables with typed signatures, shared
-  content input, directives, and AST-driven execution.
-- Added durable thread, run, step, control, and normalized model-call storage.
-- Added direct script execution, local terminal chat, run inspection, and
-  thread steering, cancellation, rewind, and fork operations.
-- Added a versioned local agent HTTP API for agent state, caps, jobs, runs, and
-  threads, including native run-event SSE streams.
-- Added RRULE-based chore scheduling and file-inbox execution.
-- Added explicit tool, channel, sandbox, model-provider, and model-adapter
-  plugin families.
-
-### Changed
-
-- Replaced the legacy top-level `use` and `thunk` language with `with`, `agic`,
-  and `flow` declarations.
-- Rebuilt execution around immutable setup and agent-state snapshots, explicit
-  ceilings, native run events, and canonical percept/message values.
-- Reorganized runtime ownership into focused `catalog`, `execution`, `lang`,
-  `plugin`, `setup`, `state`, `up`, and `work` packages.
-- Replaced the legacy invocation surface with direct runnable commands such as
-  `toolang SCRIPT RUNNABLE`.
-- Made model adapters, tools, sandboxes, channels, run tracers, and executor
-  contracts asynchronous at their runtime boundaries.
-
-### Fixed
-
-- Kept chat submission validation failures separate from accepted durable runs.
-- Improved multi-process identity allocation and serialized authored catalog
-  writes.
-
-
-## [0.2.7] - 2026-06-16
-
-- Final published release of the legacy thunk-based runtime before the current
-  language and execution architecture revision.
+- Static `agic` and `flow` runnables with typed signatures, structured output,
+  shared input forms, and direct `.too` script execution.
+- Durable threads, runs, steps, controls, model calls, and execution inspection;
+  steering, cancellation, retry, rerun, fork, rewind, and history compaction.
+- Terminal Chat with slash commands, queued submissions, session settings,
+  optional thread selection, and local or sandboxed execution.
+- Agent workspaces, workspace URI addressing, and workspace instructions applied
+  before tool calls.
+- Typed collection queries for models, tools, psyches, skills, services, and
+  prompts, with CLI field discovery.
+- Agent state snapshots, bounded history tools, and runtime tool calls for
+  loading guidance and invoking runnables.
+- RRULE-based chore scheduling and a versioned agent HTTP API with run-event SSE.
+- Explicit toolset, model adapter, model catalog, channel, and sandbox plugins;
+  host and Docker execution, layered model catalogs, and usage/cost accounting.
+- Compact CLI help with aligned groups, explicit operand notation, `-h`/`-V`,
+  and optional-value options; live execution progress and parallel summaries.
 
 
 [Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/openhat-ai/toolang/compare/v0.2.7...v0.3.0
-[0.2.7]: https://github.com/openhat-ai/toolang/compare/v0.2.6...v0.2.7
+[0.3.0]: https://github.com/openhat-ai/toolang/releases/tag/v0.3.0

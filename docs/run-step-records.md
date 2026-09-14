@@ -229,6 +229,6 @@ scope, target, and index. Record selection still uses the canonical ID.
 All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-The current RunStore schema is version 36. Every older or newer version is
+The current RunStore schema is version 43. Every older or newer version is
 rejected before reading or writing. There is no migration or legacy reference
 parser at this boundary, and incompatible stores remain unchanged.

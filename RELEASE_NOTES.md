@@ -1,135 +1,115 @@
-# Unreleased Grammar Integration
-
-The current runtime requires tree-sitter-toolang 0.3.1. This grammar upgrade
-does not change the Toolang package version.
-
-Use explicit `using`, `if`, and `by` clauses, `in N lanes` (`in 1 lane`), and
-`repeat N times` (`repeat 1 time`). Replace an unbound `rank score top 3` with:
-
-```too
-sort descending by score
-keep first 3
-```
-
-Sort and keep commit separately. Sort scores every item once; keep performs
-local selection without a model call. Retry reuses committed sorting work.
-For bottom-N, use descending sort followed by `keep last N` to preserve order.
-Named or discarded rank-with-selection needs explicit re-authoring because
-the new statements have different binding boundaries. See
-[Flow syntax](./docs/flow-syntax.md) for the full migration rules.
-
-Block ownership follows indentation. Required bodies must contain substantive
-content; comments cannot make an empty loop valid or pull an outer statement
-into it. A final `until` belongs to the repeat at its sibling indentation.
-Every implicit prose line checks its first token for lowercase keywords.
-Capitalize keyword-led prose or put it inside an explicit `run:` text block,
-where keywords and Markdown remain literal content.
-
-State layer schema advances from 4 to 5 and rebuilds from migrated source.
-Execution store schema advances from 38 to 39. The runtime rejects old stores
-without modifying or deleting them, including stores without rank history.
-Preserve the previous runtime and source to inspect or retry old executions;
-use a separate compatible store for new executions. No history migration or
-downgrade conversion is included.
-
-The historical release notes below describe the previously released syntax.
-
-
 # Toolang 0.3.0 Release Notes
 
-Release date: August 3, 2026.
-
-Toolang 0.3.0 is the first release built on the static agic/flow language and
-the rebuilt durable execution runtime. It is an alpha release and contains
-intentional breaking changes from 0.2.7.
+Toolang 0.3.0 is the first public release of the Toolang language and agent
+runtime. Define agents in `.too` files, compose their work into flows, and run
+them from the CLI, Terminal Chat, or an HTTP client. This is an alpha release.
 
 
 ## Highlights
 
-- Define model/tool runnables as `agic` declarations and deterministic
-  orchestration as `flow` declarations.
-- Run a public runnable directly with `toolang SCRIPT RUNNABLE`.
-- Use one durable execution model across scripts, chats, tasks, and chores.
-- Inspect threads, recursive run trees, steps, controls, outputs, and failures
-  without requiring a running HTTP server.
-- Steer or cancel active runs, and rewind or fork terminal thread history.
-- Serve the same runtime through the local Agent API and native run-event SSE.
-- Extend Toolang through explicit tool, channel, sandbox, model-provider, and
-  model-adapter entry points.
-
-
-## Breaking Language Changes
-
-The old `use` and `thunk` spellings are no longer accepted. A typical program
-moves to `with` and `agic` and uses `_` for primary input:
-
-```too
-with skill briceyan/codebase-navigation
-
-agic review(_: Part[], focus?: Text):
-  skills += codebase-navigation
-
-  Review {{_}} with emphasis on {{focus}}.
-```
-
-Runnable parameters are named `params` in declarations and supplied as
-`args` at runtime. `Part` and `Part[]` are the language-level percept types;
-`Message` is reserved for model-call and chat protocol values.
-
-Flows share the runnable namespace with agics:
-
-```too
-flow review_twice(_: Part[]):
-  repeat 2:
-    run review
-```
-
-See `docs/program.md`, `docs/flow-syntax.md`, and `docs/input-syntax.md` for the
-complete current language.
-
-
-## CLI And Plugin Migration
-
-- Replace legacy invocation commands with `toolang SCRIPT RUNNABLE`.
-- Use `toolang AGENT chat`, `threads`, `runs`, and `inspect` for direct local
-  execution and durable history.
-- Update external plugin imports to use the contracts and values in
-  `toolang.base`.
-- Remove loop-plugin integrations. Agic model/tool sequencing is now fixed
-  executor behavior.
-- Update synchronous runtime integrations to the current async tool, channel,
-  sandbox, adapter, and tracer contracts.
-
-
-## Runtime Data Upgrade
-
-The 0.2.7 `runs.db` schema is not migrated by this release candidate. Before
-upgrading:
-
-1. Stop all Toolang agent processes.
-2. Back up the complete Toolang root.
-3. Preserve or move each agent's `.runtime/runs.db` if the old history matters.
-4. Migrate authored `.too` programs to the new language.
-5. Start the new runtime and let it create current runtime stores.
-
-Authored agent, cap, task, and chore files remain the durable source material;
-generated setup, state, and runtime projections can be rebuilt.
+- Define model/tool runnables as `agic` declarations and compose them with
+  `flow`, including parallel map, filter, sort, and gather operations.
+- Run `.too` files directly, or use Terminal Chat with queued submissions,
+  slash commands, model settings, and optional thread selection.
+- Inspect durable execution history and control runs with steer, cancel,
+  retry, rerun, fork, rewind, and compact commands.
+- Use registered workspaces, typed resource queries, bounded history tools,
+  and explicit model/tool/channel/sandbox plugins.
+- Run on the host or through Docker, with the same run client boundary for
+  terminal and HTTP/SSE clients.
+- Read compact CLI help and live execution summaries with consistent names,
+  operand notation, and parallel progress counts.
 
 
 ## Installation
 
-Upgrade an existing installation with:
+Python 3.11 or later on Linux or macOS is required.
 
 ```bash
-uv tool upgrade toolang
+uv tool install toolang==0.3.0
 toolang --version
+caps --version
 ```
 
-New installations can use:
+`too` is a short alias for `toolang`. Model calls require credentials for a
+configured provider or a running local model service. Use `too providers` and
+`too models` to inspect availability; see [model configuration](./docs/models.md).
+
+
+## Write And Run A Script
+
+Use `agic` for model/tool runnables and `flow` to compose them. Runnable
+signatures describe named inputs and `_` for primary input; `Part` and
+`Part[]` represent text and multimodal content.
+
+For example, save this as `review.too`:
+
+```too
+agic review(_: Text, focus?: Text) -> Text:
+  recall = none
+  tools = none
+
+  Review the supplied material with emphasis on {{focus}}:
+  {{_}}
+
+flow review_twice(_: Text) -> Text:
+  repeat 2 times:
+    run review
+```
 
 ```bash
-uv tool install toolang
+# Inspect a script's signature without loading execution resources
+too review.too review --help
+
+# Supply named input before -- and primary input after it
+too review.too review focus=security -- 'Review this change'
+
+# Save the Run result, or write it to stdout with --out -
+too review.too review --out review.txt focus=security -- 'Review this change'
 ```
 
-Review [Known Limitations](./KNOWN_LIMITATIONS.md) before running remote agents
-or exposing an Agent API endpoint.
+Script usage is `[NAME=VALUE...] [-- <INPUT> | -]` when both input roles exist.
+Use `-` or omit primary input to read stdin. Result-file output is opt-in;
+`--out PATH` saves the Run result, and `--out -` writes it to stdout. Use
+`--model` for a per-run model override.
+
+Flows also support parallel map, filter, sort, gather, and explicit run
+control. See [program syntax](./docs/program.md), [Flow syntax](./docs/flow-syntax.md),
+and [input syntax](./docs/input-syntax.md) for complete rules.
+
+
+## Chat And Inspect History
+
+```bash
+# Create a local agent
+too new alice
+
+# Start a new chat, resume the latest thread, or select a thread
+too alice chat
+too alice chat --thread
+too alice chat --thread THREAD
+
+# Inspect or compact local history
+too alice inspect
+too alice compact thread=THREAD
+```
+
+In Chat, `/command` selects a built-in command, `$prompt` invokes a reusable
+prompt, `:` starts an execution-policy prefix, and `@` includes a resource.
+Quote literal `$prompt` expressions when passing them through a shell.
+
+Runs, steps, model calls, and controls are recorded for inspection. Use retry,
+rerun, fork, rewind, and compact to work with execution history. See
+[Chat](./docs/chat.md) and [execution](./docs/execution.md) for details.
+
+
+## Extend And Host Agents
+
+Add skills, psyches, services, and prompts with the `caps` CLI. Plugins expose
+toolsets, model adapters and catalogs, channels, and sandboxes. Toolang includes
+host and Docker execution, RRULE-based chores, and an HTTP API with run-event
+SSE for clients.
+
+See [caps](./docs/caps.md), [plugins](./docs/plugins.md), and the
+[HTTP API](./docs/api.md). Review the [known limitations](./KNOWN_LIMITATIONS.md)
+for platform support, trust boundaries, and alpha compatibility.

@@ -43,7 +43,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 36: both
+process exits. The execution store uses schema version 43: both
 read-only and writable opens reject every other version unchanged. This build
 does not migrate older stores.
 
