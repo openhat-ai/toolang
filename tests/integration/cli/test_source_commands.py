@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -47,10 +48,17 @@ def test_tree_and_representation_are_independent(tree, representation):
         )
 
 
-def test_default_ast_and_invalid_tree_behavior():
+@pytest.mark.parametrize(
+    "bad,kind,line",
+    [
+        ("flow broken:\n  run\n", "invalid", 2),
+        ("struct :\n  field: Text\n", "missing", 1),
+        ("@", "error", 1),
+    ],
+)
+def test_default_ast_and_invalid_tree_behavior(bad, kind, line):
     default = runner.invoke(app, ["parse", "-"], input=SOURCE)
     assert default.stdout.startswith("(program\n")
-    bad = "flow broken:\n  run\n"
     ast = runner.invoke(app, ["parse", "-"], input=bad)
     assert ast.exit_code == 1 and not ast.stdout
     cst = runner.invoke(
@@ -59,9 +67,102 @@ def test_default_ast_and_invalid_tree_behavior():
         input=bad,
     )
     assert cst.exit_code == 1
-    assert json.loads(cst.stdout)["diagnostics"][0]["kind"] == "invalid"
-    assert "work.too:2:" in cst.stderr
+    assert kind in {item["kind"] for item in json.loads(cst.stdout)["diagnostics"]}
+    assert f"work.too:{line}:" in cst.stderr
     assert runner.invoke(app, ["highlight", "-"], input=bad).exit_code == 0
+
+
+def test_ast_displays_cover_declarations_and_every_flow_statement_family():
+    source = """#@ Module documentation.
+with skill org/review
+skill review:
+  description = Review changes.
+  Inspect carefully.
+task publish:
+  Publish the result.
+struct Review:
+  title: Text
+  body?: Text
+context shared:
+  Shared context.
+instruct concise:
+  Be concise.
+## Review documentation.
+## @param _ Input documentation.
+agic action(_: Text, focus?) -> Review:
+  models = model-name
+  context: shared
+  instruct: concise
+  user: Review {{_}}.
+agic predicate -> Boolean:
+  pass
+agic score -> Number:
+  pass
+flow pipeline:
+  run action
+  seek reviewer action
+  ask: Continue?
+  scatter 2 using action
+  storm 3 using action in 2 lanes
+  gather using action
+  settle using action
+  map using action in 4 lanes
+  keep first 2
+  drop last 1
+  sort descending by score in 2 lanes
+  let saved = run action
+  let note = Store this note.
+  repeat 2 times:
+    repeat 1 time:
+      run action
+    until: Complete?
+"""
+    sexp = runner.invoke(app, ["parse", "-"], input=source)
+    serialized = runner.invoke(app, ["parse", "-", "--json"], input=source)
+    assert sexp.exit_code == serialized.exit_code == 0
+    assert sexp.stderr == serialized.stderr == ""
+    assert json.loads(serialized.stdout) == to_data(Program.from_source(source))
+    assert set(re.findall(r"^\s*\((\w+)", sexp.stdout, re.M)) == {
+        "program",
+        "with",
+        "skill",
+        "task",
+        "struct",
+        "field",
+        "context",
+        "instruct",
+        "agic",
+        "parameter",
+        "directive",
+        "message",
+        "flow",
+        "run",
+        "seek",
+        "ask",
+        "scatter",
+        "storm",
+        "gather",
+        "settle",
+        "map",
+        "keep",
+        "drop",
+        "sort",
+        "let",
+        "repeat",
+    }
+    for value in (
+        'doc: "Module documentation."',
+        'doc: "Review documentation."',
+        'doc: "Input documentation."',
+        'binding: "saved"',
+        'value: "Store this note."',
+        '("description" "Review changes.")',
+        "optional: true",
+        'order: "descending"',
+        "lanes: 4",
+    ):
+        assert value in sexp.stdout
+    assert "\x1b" not in sexp.stdout + serialized.stdout
 
 
 @pytest.mark.parametrize(

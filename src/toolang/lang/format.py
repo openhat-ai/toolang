@@ -91,6 +91,7 @@ class _Line:
     separate: bool = False
     follows_doc: bool = False
     group: tuple[str, str] | None = None
+    flow_ancestry: tuple[tuple[int, str], ...] = ()
 
 
 def format_source(source: str, *, tab_size: int = 2) -> str:
@@ -268,6 +269,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 rendered_prefix + value,
                 kind,
                 group=_spacing_group(kind, value=value, ancestors=ancestors, row=row),
+                flow_ancestry=_flow_ancestry(ancestors),
                 text_owner=text.id if text is not None else None,
                 control_owner=control.id if control is not None else None,
                 separate=previous_doc_indent is not None
@@ -289,11 +291,6 @@ def _spacing_group(
 ) -> tuple[str, str] | None:
     if ancestors[0].type in _COMMENT_TYPES:
         return None
-    types = {node.type for node in ancestors}
-    if "flow_body" in types and types & (
-        _FLOW_STATEMENT_TYPES | {"implicit_run_statement"}
-    ):
-        return ("flow", "prose" if "implicit_run_statement" in types else "statement")
     if any(node.type == "with" for node in ancestors):
         return ("with", value.split()[1])
     if kind == "directive":
@@ -303,6 +300,17 @@ def _spacing_group(
         if owner.end_point.row <= row + 1:
             return ("message", "inline")
     return None
+
+
+def _flow_ancestry(ancestors: tuple[Node, ...]) -> tuple[tuple[int, str], ...]:
+    if ancestors[0].type in _COMMENT_TYPES:
+        return ()
+    return tuple(
+        (node.id, node.type)
+        for node in reversed(ancestors)
+        if node.type == "implicit_run_statement"
+        or (node.type in _FLOW_STATEMENT_TYPES and node.type != "inline_agic_body")
+    )
 
 
 def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> str:
@@ -673,6 +681,22 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
         if same_text or (line.follows_doc and not pending_blank):
             # Preserve text whitespace and authored item-doc adjacency.
             _append_blank_lines(normalized, pending_blank)
+        elif previous is not None and previous.flow_ancestry and line.flow_ancestry:
+            # Compare siblings in their common block, not a header with its body
+            # or the last nested child with the following outer statement.
+            boundary = next(
+                (
+                    (before[1] == "implicit_run_statement")
+                    != (after[1] == "implicit_run_statement")
+                    for before, after in zip(previous.flow_ancestry, line.flow_ancestry)
+                    if before[0] != after[0]
+                ),
+                False,
+            )
+            if boundary:
+                _append_blank_line(normalized)
+            else:
+                _append_blank_lines(normalized, pending_blank)
         elif (
             not line.separate
             and previous is not None
@@ -682,8 +706,6 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
         ):
             if previous.group != line.group:
                 _append_blank_line(normalized)
-            elif line.group[0] == "flow":
-                _append_blank_lines(normalized, pending_blank)
         elif line.separate or _needs_blank_line(
             previous_kind, kind, pending_blank=bool(pending_blank)
         ):
