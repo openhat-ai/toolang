@@ -285,6 +285,41 @@ def test_additional_directory_uses_selected_help_output(theme, args, capsys):
     assert (style.color is not None) is (theme is UV)
 
 
+def test_additional_directory_help_forms_are_identical():
+    outputs = []
+    for args in (["more"], ["more", "-h"], ["more", "--help"]):
+        stdout = StringIO()
+        assert (
+            run(
+                app,
+                args=args,
+                prog_name="too",
+                theme=PLAIN,
+                console=Console(file=stdout),
+            )
+            == 0
+        )
+        outputs.append(stdout.getvalue())
+    assert outputs[0] == outputs[1] == outputs[2]
+
+
+@pytest.mark.parametrize("tail", [["extra"], ["--unknown"]])
+def test_additional_directory_rejects_unexpected_input(tail):
+    stderr = StringIO()
+    assert (
+        run(
+            app,
+            args=["more", *tail],
+            prog_name="too",
+            theme=PLAIN,
+            console=Console(file=StringIO()),
+            error_console=Console(file=stderr),
+        )
+        == 2
+    )
+    assert stderr.getvalue().startswith("Error: ")
+
+
 def test_root_help_hint_uses_the_invoked_executable():
     for prog_name in ("too", "toolang"):
         stdout = StringIO()

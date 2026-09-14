@@ -456,15 +456,25 @@ def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
     assert syntax_metavar not in row
 
 
-def test_cli_explicit_agent_prefix_resolves_command_name_collision() -> None:
-    args, agent = normalize(["agent:more", "info"])
+@pytest.mark.parametrize("name", ["retry", "more"])
+def test_cli_explicit_agent_prefix_resolves_command_name_collision(name: str) -> None:
+    args, agent = normalize([f"agent:{name}", "info"])
 
-    assert args == ["info", "more"]
+    assert args == ["info", name]
     assert agent is None
 
 
-def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
-    assert normalize(["more"]) == (["more"], None)
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        (["retry", "info"], (["retry", "info"], None)),
+        (["more"], (["more"], None)),
+    ],
+)
+def test_cli_command_name_wins_without_explicit_agent_prefix(
+    arguments: list[str], expected: tuple[list[str], None]
+) -> None:
+    assert normalize(arguments) == expected
 
 
 @pytest.mark.parametrize(
