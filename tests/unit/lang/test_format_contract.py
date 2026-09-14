@@ -248,6 +248,46 @@ def test_prose_flow_spacing_respects_nested_statement_ownership(tab_size):
     assert format_source(formatted, tab_size=tab_size) == formatted
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "flow work:\n  repeat 2 times:\n    run: Work.\n  Finish.\n",
+            "flow work:\n  repeat 2 times:\n    run: Work.\n\n  Finish.\n",
+        ),
+        (
+            "flow work:\n  repeat 2 times:\n    First.\n    until: Done?\n  Finish.\n",
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    First.\n"
+            "    until: Done?\n\n"
+            "  Finish.\n",
+        ),
+        (
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    repeat 1 time:\n"
+            "      run: Work.\n"
+            "    run: Publish.\n"
+            "  Finish.\n",
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    repeat 1 time:\n"
+            "      run: Work.\n"
+            "    run: Publish.\n\n"
+            "  Finish.\n",
+        ),
+    ],
+)
+def test_nested_flow_boundaries_cover_explicit_statements_and_until(
+    source: str, expected: str
+) -> None:
+    formatted = format_source(source)
+    assert formatted == expected
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
 @pytest.mark.parametrize("module_marker", ["#@", "##!"])
 def test_new_documentation_conventions_preserve_parameter_bindings(module_marker):
     source = (
