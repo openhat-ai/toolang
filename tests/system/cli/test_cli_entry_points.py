@@ -264,6 +264,9 @@ def test_every_cli_command_renders_help(
     result = CliRunner().invoke(app, [*path, "--help"], prog_name=name)
 
     assert result.exit_code == 0, result.output
+    if name == "toolang" and path == ("more",):
+        assert "Usage:" not in result.output
+        return
     assert "Usage:" in result.output
     usage = result.output.partition("Usage:")[2].splitlines()[0]
     assert "{" not in usage

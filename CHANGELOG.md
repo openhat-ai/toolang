@@ -10,11 +10,14 @@ and this project uses semantic versioning.
 
 ### Added
 
-- Extend hidden `parse` and `fmt` commands and add `highlight` under both
+- Extend additional `parse` and `fmt` commands and add `highlight` under both
   executable names, with AST/CST selection, JSON/S-expression output, stdout formatting,
   and shared Tree-sitter highlighting for terminals and standalone HTML.
 
 ### Changed
+
+- Replace the undisclosed `hidden` command directory with `more`, advertise it at
+  the end of root help, and list additional commands without description or usage.
 
 - Default `parse` to AST S-expression. Existing JSON consumers must add `--json`;
   `--compact` still emits compact JSON and AST JSON fields stay unchanged.

@@ -2,7 +2,7 @@
 
 ## Status and Goal
 
-Defined on 2026-09-14; awaiting human confirmation before implementation.
+Approved for implementation by the user on 2026-09-14.
 
 Make the additional supported commands discoverable through `too more` while
 keeping the main command directory concise. Success means an executable-aware
@@ -108,6 +108,9 @@ This definition adds only this plan. A later implementation is limited to:
   assertions consistent with the rename.
 - `tests/integration/cli/test_query_discovery.py`: discover unchanged query help
   through `more`.
+- `tests/system/cli/test_cli_entry_points.py`: exempt the intentionally minimal
+  `more` directory from the generic requirement that every command help includes
+  a usage line.
 - `docs/source-commands.md`, `docs/queries.md`, and the `Unreleased` section of
   `CHANGELOG.md`: name `more` as the discovery entry point and record the
   removal of `hidden`.
@@ -145,5 +148,4 @@ and their order.
   invoked name.
 - Directory order lives in one constant so panels and tests cannot drift.
 
-No unresolved implementation choices. Human confirmation of this definition is
-pending.
+No unresolved implementation choices.

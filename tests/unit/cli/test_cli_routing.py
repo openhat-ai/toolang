@@ -103,6 +103,7 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("models", {"none", "before"}, {"resident"}),
         ("catalogs", {"none"}, set()),
         ("toolsets", {"none"}, set()),
+        ("more", {"none"}, set()),
     ),
 )
 def test_cli_command_registry_declares_target_grammar(
@@ -456,14 +457,14 @@ def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
 
 
 def test_cli_explicit_agent_prefix_resolves_command_name_collision() -> None:
-    args, agent = normalize(["agent:retry", "info"])
+    args, agent = normalize(["agent:more", "info"])
 
-    assert args == ["info", "retry"]
+    assert args == ["info", "more"]
     assert agent is None
 
 
 def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
-    assert normalize(["retry", "info"]) == (["retry", "info"], None)
+    assert normalize(["more"]) == (["more"], None)
 
 
 @pytest.mark.parametrize(
