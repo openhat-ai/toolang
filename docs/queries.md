@@ -106,8 +106,9 @@ does not express model priority.
 
 ## CLI Help
 
-Query-enabled lists expose repeatable `--query/-q`. The hidden `too query`
-command documents the language without loading collection data:
+Query-enabled lists expose repeatable `--query/-q`. The additional `too query`
+command, discoverable through `too more`, documents the language without loading
+collection data:
 
 ```text
 too query --help

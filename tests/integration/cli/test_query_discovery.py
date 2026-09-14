@@ -14,17 +14,17 @@ from toolang.cli.toolang.main import app as toolang_app
 runner = CliRunner()
 
 
-def test_query_is_hidden_but_direct_help_explains_the_grammar() -> None:
+def test_query_is_additional_but_direct_help_explains_the_grammar() -> None:
     root = runner.invoke(toolang_app, ["--help"])
-    hidden = runner.invoke(toolang_app, ["hidden"])
+    more = runner.invoke(toolang_app, ["more"])
     query = runner.invoke(toolang_app, ["query", "--help"])
     bare = runner.invoke(toolang_app, ["query"])
 
     assert root.exit_code == 0, root.stderr
     assert "query" not in strip_ansi(root.stdout)
-    assert hidden.exit_code == 0, hidden.stderr
-    assert "query" in strip_ansi(hidden.stdout)
-    assert "QUERY = MATCH" not in strip_ansi(hidden.stdout)
+    assert more.exit_code == 0, more.stderr
+    assert "query" in strip_ansi(more.stdout)
+    assert "QUERY = MATCH" not in strip_ansi(more.stdout)
     assert query.exit_code == 0, query.stderr
     assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(query.stdout)
     assert "models, tools, psyches, skills, services, prompts" in strip_ansi(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
+from copy import copy
 from pathlib import Path
 import os
 import sys
@@ -84,7 +85,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_HIDDEN_COMMAND_ORDER = ("query", "parse", "fmt", "highlight", "compact")
+_ADDITIONAL_COMMAND_ORDER = ("fmt", "highlight", "parse", "query", "compact")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -164,6 +165,13 @@ class _ToolangHelpFormatter(HelpFormatter):
         description.append(f" ({_version.toolang_version()})", style="dim")
         self.write_text(description)
         self.write_paragraph()
+
+    def write_epilog(self, ctx: Context) -> None:
+        super().write_epilog(ctx)
+        self.write_paragraph()
+        self.write_text(
+            f"Run '{ctx.find_root().info_name} more' to see additional commands."
+        )
 
 
 class _ToolangHelpContext(HelpContext):
@@ -257,22 +265,20 @@ def callback(
     )
 
 
-class _HiddenCommandsCommand(CliCommand):
+class _MoreCommandsCommand(CliCommand):
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        group = typer.main.get_command(app)
-        assert isinstance(group, TyperGroup)
+        root = typer.main.get_command(app)
+        assert isinstance(root, TyperGroup)
         commands = {}
-        for name in _HIDDEN_COMMAND_ORDER:
-            if name in group.commands:
-                command = group.commands[name]
+        for name in _ADDITIONAL_COMMAND_ORDER:
+            if name in root.commands:
+                command = copy(root.commands[name])
                 assert isinstance(command, LazyCommand)
                 command.hidden = False
-                command.rich_help_panel = "Hidden Commands"
+                command.rich_help_panel = "Additional Commands"
                 commands[name] = command
-        group.commands = commands
+        group = CliGroup(name="more", commands=commands)
         assert isinstance(formatter, HelpFormatter)
-        formatter.write_description(ctx)
-        formatter.write_usage(ctx)
         formatter.write_commands(Context(group))
         formatter.write_paragraph()
         formatter.write_text(
@@ -280,16 +286,16 @@ class _HiddenCommandsCommand(CliCommand):
         )
 
 
-def hidden_commands(ctx: typer.Context) -> None:
+def more_commands(ctx: typer.Context) -> None:
     show_help(ctx)
 
 
 _registered_command(
-    "hidden",
-    "toolang.cli.toolang.main:hidden_commands",
-    help="Show commands hidden from the main help",
+    "more",
+    "toolang.cli.toolang.main:more_commands",
+    help="Show additional commands",
     hidden=True,
-    cls=_HiddenCommandsCommand,
+    cls=_MoreCommandsCommand,
 )
 
 

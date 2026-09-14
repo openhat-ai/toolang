@@ -212,47 +212,57 @@ def test_short_version_alias_matches_long_version(main, capsys):
     assert "-V, --version" in strip_ansi(capsys.readouterr().out)
 
 
-def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch):
+def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch):
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
+    assert "more" in root.commands
+    assert "hidden" not in root.commands
+    assert root.commands["more"].hidden
     assert root.commands["_serve"].hidden
     assert root.commands["compact"].hidden
-    source_commands = {
-        "parse": "Parse .too source",
+    additional_commands = {
         "fmt": "Format .too source",
         "highlight": "Highlight .too source",
+        "parse": "Parse .too source",
+        "query": "Show collection-query syntax and fields",
+        "compact": "Compact a thread",
     }
-    for name, description in source_commands.items():
+    for name, description in additional_commands.items():
         assert root.commands[name].hidden
-        assert root.commands[name].help == description
+        assert (root.commands[name].help or "").startswith(description)
     assert not root.commands["serve"].hidden
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setenv("FORCE_COLOR", "1")
     monkeypatch.delenv("NO_COLOR", raising=False)
-    assert too_main(["hidden"]) == 0
+    assert too_main(["more"]) == 0
     output = capsys.readouterr().out
     assert "\x1b[1;32m" in output
     plain = strip_ansi(output)
-    assert "Hidden Commands:" in plain
-    assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
+    assert plain.splitlines()[0] == "Additional Commands:"
+    assert "Usage:" not in plain
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
     assert "_serve" not in plain
     assert "channel" not in plain
-    assert "compact Compact a thread" in " ".join(plain.split())
-    for name, description in source_commands.items():
-        assert f"{name} {description}" in " ".join(plain.split())
+    rows = " ".join(plain.split())
+    positions = []
+    for name, description in additional_commands.items():
+        row = f"{name} {description}"
+        assert row in rows
+        positions.append(rows.index(row))
+    assert positions == sorted(positions)
     assert too_main(["--help"]) == 0
     main_help = strip_ansi(capsys.readouterr().out)
-    assert "Source Commands:" not in main_help
-    for description in source_commands.values():
+    assert main_help.rstrip().endswith("Run 'too more' to see additional commands.")
+    assert "Additional Commands:" not in main_help
+    for description in additional_commands.values():
         assert description not in main_help
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
-@pytest.mark.parametrize("args", [["hidden"], ["hidden", "--help"]])
-def test_hidden_directory_uses_selected_help_output(theme, args, capsys):
+@pytest.mark.parametrize("args", [["more"], ["more", "-h"], ["more", "--help"]])
+def test_additional_directory_uses_selected_help_output(theme, args, capsys):
     stdout = StringIO()
     console = Console(
         file=stdout,
@@ -265,12 +275,80 @@ def test_hidden_directory_uses_selected_help_output(theme, args, capsys):
     captured = capsys.readouterr()
     assert not captured.out and not captured.err
     output = Text.from_ansi(stdout.getvalue())
-    assert "Hidden Commands:" in output.plain
-    assert "Usage: too hidden [OPTIONS]" in output.plain
+    assert output.plain.splitlines()[0] == "Additional Commands:"
+    assert "Usage:" not in output.plain
     assert all(len(line) <= 44 for line in output.plain.splitlines())
-    style = output.get_style_at_offset(console, output.plain.index("Hidden Commands:"))
+    style = output.get_style_at_offset(
+        console, output.plain.index("Additional Commands:")
+    )
     assert style.bold
     assert (style.color is not None) is (theme is UV)
+
+
+def test_additional_directory_help_forms_are_identical():
+    outputs = []
+    for args in (["more"], ["more", "-h"], ["more", "--help"]):
+        stdout = StringIO()
+        assert (
+            run(
+                app,
+                args=args,
+                prog_name="too",
+                theme=PLAIN,
+                console=Console(file=stdout),
+            )
+            == 0
+        )
+        outputs.append(stdout.getvalue())
+    assert outputs[0] == outputs[1] == outputs[2]
+
+
+@pytest.mark.parametrize("tail", [["extra"], ["--unknown"]])
+def test_additional_directory_rejects_unexpected_input(tail):
+    stderr = StringIO()
+    assert (
+        run(
+            app,
+            args=["more", *tail],
+            prog_name="too",
+            theme=PLAIN,
+            console=Console(file=StringIO()),
+            error_console=Console(file=stderr),
+        )
+        == 2
+    )
+    assert stderr.getvalue().startswith("Error: ")
+
+
+def test_root_help_hint_uses_the_invoked_executable():
+    for prog_name in ("too", "toolang"):
+        stdout = StringIO()
+        console = Console(file=stdout, width=120)
+        assert (
+            run(app, args=["--help"], prog_name=prog_name, theme=PLAIN, console=console)
+            == 0
+        )
+        assert (
+            stdout.getvalue()
+            .rstrip()
+            .endswith(f"Run '{prog_name} more' to see additional commands.")
+        )
+
+
+def test_hidden_is_no_longer_a_command():
+    stderr = StringIO()
+    assert (
+        run(
+            app,
+            args=["hidden"],
+            prog_name="too",
+            theme=PLAIN,
+            console=Console(file=StringIO()),
+            error_console=Console(file=stderr),
+        )
+        == 2
+    )
+    assert "No such command 'hidden'." in stderr.getvalue()
 
 
 @pytest.mark.parametrize("args, status", [([], 0), (["--help"], 0), (["--unknown"], 2)])
