@@ -84,7 +84,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "compact")
+_HIDDEN_COMMAND_ORDER = ("query", "parse", "fmt", "highlight", "compact")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -542,14 +542,21 @@ _registered_command(
 _registered_command(
     "fmt",
     "toolang.cli.toolang.commands.program:fmt",
-    help="Format .too files",
+    help="Format .too source",
     hidden=True,
     no_args_is_help=True,
 )
 _registered_command(
     "parse",
     "toolang.cli.toolang.commands.program:parse_program",
-    help="Parse a .too file and print its AST",
+    help="Parse .too source",
+    hidden=True,
+    no_args_is_help=True,
+)
+_registered_command(
+    "highlight",
+    "toolang.cli.toolang.commands.program:highlight_source",
+    help="Highlight .too source",
     hidden=True,
     no_args_is_help=True,
 )

@@ -103,6 +103,9 @@ To stop a background agent:
 toolang stop alice
 ```
 
+Format, inspect, and highlight source without agent setup using the
+[source commands](./docs/source-commands.md).
+
 ## Common Commands
 
 ```bash
@@ -116,6 +119,12 @@ toolang stop <agent>                 # Stop a running agent
 # Scripts
 toolang init <dir>                   # Create work.too without overwriting files
 toolang run <file.too> [runnable]     # Execute authored main or a named runnable
+
+# Source development (offline)
+too parse work.too --cst --json       # Inspect the complete concrete syntax tree
+too fmt work.too --check              # Check formatting without writing files
+too fmt work.too --highlight          # Preview formatted source in color
+too highlight work.too                # Highlight original source
 
 # Inspection
 toolang models                       # List model catalog entries and availability

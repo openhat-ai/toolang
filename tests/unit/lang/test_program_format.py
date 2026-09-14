@@ -113,6 +113,7 @@ agic review( _:Part[],path?:Path)->Json:
         "\n"
         "agic review(_: Part[], path?: Path) -> Json:\n"
         "  models = gpt-5\n"
+        "\n"
         "  skills += review, patch\n"
         "\n"
         "  user: Review the target carefully.\n"
@@ -288,6 +289,7 @@ agic followup:
         "\n"
         "agic followup:\n"
         "  models = deepseek/*\n"
+        "\n"
         "  recall = none\n"
         "\n"
         "  context: none\n"
@@ -318,6 +320,7 @@ agic review(_:Part[]):
     assert format_source(source) == (
         "agic review(_: Part[]):\n"
         "  models = gpt-5\n"
+        "\n"
         "  tools = shell\n"
         "\n"
         "  context: repo\n"
@@ -350,6 +353,7 @@ agic followup:
     assert format_source(source) == (
         "agic followup:\n"
         "  models = deepseek/*\n"
+        "\n"
         "  recall = none\n"
         "\n"
         "  context: none\n"
@@ -708,7 +712,7 @@ context repo:
 instruct concise:
   Be concise.
 
-agic review(_: Part[], focus?: Text) -> Result:
+agic review(_, focus?: Text) -> Result:
   models = gpt-5, claude
 
   context: repo

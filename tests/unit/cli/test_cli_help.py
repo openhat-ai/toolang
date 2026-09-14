@@ -217,6 +217,14 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert isinstance(root, TyperGroup)
     assert root.commands["_serve"].hidden
     assert root.commands["compact"].hidden
+    source_commands = {
+        "parse": "Parse .too source",
+        "fmt": "Format .too source",
+        "highlight": "Highlight .too source",
+    }
+    for name, description in source_commands.items():
+        assert root.commands[name].hidden
+        assert root.commands[name].help == description
     assert not root.commands["serve"].hidden
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -233,6 +241,13 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "_serve" not in plain
     assert "channel" not in plain
     assert "compact Compact a thread" in " ".join(plain.split())
+    for name, description in source_commands.items():
+        assert f"{name} {description}" in " ".join(plain.split())
+    assert too_main(["--help"]) == 0
+    main_help = strip_ansi(capsys.readouterr().out)
+    assert "Source Commands:" not in main_help
+    for description in source_commands.values():
+        assert description not in main_help
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])

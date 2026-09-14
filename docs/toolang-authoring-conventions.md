@@ -175,6 +175,35 @@ Avoid comments that narrate the syntax, long design notes, and frequent inline
 comments. Prefer a short standalone line when a comment is necessary, and keep
 comments outside natural-language content.
 
+## Automatic Formatting
+
+`too fmt` applies mechanical conventions consistently to file writes, `--check`,
+`--stdout`, and `--highlight`:
+
+- Use two spaces for structural indentation by default (`--tab-size` overrides).
+- Preserve omitted signature types: `agic rewrite(_, instruction):` remains
+  concise. Keep explicit types, return annotations, `()`, and optional `?`.
+- Keep adjacent `with` clauses of the same cap kind together, with one blank
+  line between different kinds. Preserve source order; do not alphabetize.
+- Group adjacent resource directives by key using the same spacing rule.
+  Preserve operator/value order and interleaved keys; do not move statements.
+- Keep adjacent inline `user:`/`assistant:`/`tool:` messages compact. Keep block
+  messages as blocks and preserve role names.
+- Separate prose and explicit flow statements with a structural blank line,
+  while preserving whitespace inside each literal text body.
+- Normalize comment/tag spacing using the 0.3.2 grammar. Preserve documentation
+  attachment and deliberate detachment, exact parameter names, legacy marker
+  spellings, module boundaries, and the executable shebang.
+
+Comments and text ownership take precedence over compact grouping. Formatting
+must be idempotent and preserve semantic content and documentation bindings.
+The formatter works on syntax-valid source even when semantic validation fails.
+
+Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
+capability directives, hoisting `context`/`instruct`, and omitting a sole `user:`
+role remain authoring decisions. The formatter does not make those rewrites.
+See [source commands](./source-commands.md) for output modes and color controls.
+
 ## Review Checklist
 
 - Can clearer source or a better name remove the comment?

@@ -90,6 +90,7 @@ class _Line:
     control_owner: int | None = None
     separate: bool = False
     follows_doc: bool = False
+    group: tuple[str, str] | None = None
 
 
 def format_source(source: str, *, tab_size: int = 2) -> str:
@@ -266,6 +267,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             _Line(
                 rendered_prefix + value,
                 kind,
+                group=_spacing_group(kind, value=value, ancestors=ancestors, row=row),
                 text_owner=text.id if text is not None else None,
                 control_owner=control.id if control is not None else None,
                 separate=previous_doc_indent is not None
@@ -280,6 +282,27 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
     return _normalize_blank_lines(
         _order_program_comments(_order_control_segments(formatted))
     )
+
+
+def _spacing_group(
+    kind: str, *, value: str, ancestors: tuple[Node, ...], row: int
+) -> tuple[str, str] | None:
+    if ancestors[0].type in _COMMENT_TYPES:
+        return None
+    types = {node.type for node in ancestors}
+    if "flow_body" in types and types & (
+        _FLOW_STATEMENT_TYPES | {"implicit_run_statement"}
+    ):
+        return ("flow", "prose" if "implicit_run_statement" in types else "statement")
+    if any(node.type == "with" for node in ancestors):
+        return ("with", value.split()[1])
+    if kind == "directive":
+        return ("directive", value.split()[0])
+    if kind == "message_header":
+        owner = next(node for node in ancestors if node.type == "message")
+        if owner.end_point.row <= row + 1:
+            return ("message", "inline")
+    return None
 
 
 def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> str:
@@ -530,8 +553,6 @@ def _format_signature_params(raw: str) -> str:
             continue
         type_name = match.group("type")
         raw_name = match.group("name")
-        if raw_name == "_":
-            type_name = type_name or "Part[]"
         type_text = f": {type_name}" if type_name else ""
         rendered.append(f"{raw_name}{match.group('optional') or ''}{type_text}")
     return ", ".join(rendered)
@@ -652,6 +673,17 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
         if same_text or (line.follows_doc and not pending_blank):
             # Preserve text whitespace and authored item-doc adjacency.
             _append_blank_lines(normalized, pending_blank)
+        elif (
+            not line.separate
+            and previous is not None
+            and previous.group is not None
+            and line.group is not None
+            and previous.group[0] == line.group[0]
+        ):
+            if previous.group != line.group:
+                _append_blank_line(normalized)
+            elif line.group[0] == "flow":
+                _append_blank_lines(normalized, pending_blank)
         elif line.separate or _needs_blank_line(
             previous_kind, kind, pending_blank=bool(pending_blank)
         ):

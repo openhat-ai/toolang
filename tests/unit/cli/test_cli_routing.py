@@ -397,6 +397,18 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
             "{AGENT}",
         ),
         (
+            ["parse"],
+            "Usage: pytest parse [OPTIONS] <SOURCE>",
+            "SOURCE",
+            "{SOURCE}",
+        ),
+        (
+            ["highlight"],
+            "Usage: pytest highlight [OPTIONS] <SOURCE>",
+            "SOURCE",
+            "{SOURCE}",
+        ),
+        (
             ["fmt"],
             "Usage: pytest fmt [OPTIONS] [PATH...]",
             "PATH",
