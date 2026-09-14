@@ -209,6 +209,85 @@ def test_prose_flow_boundaries_keep_literal_body_whitespace():
     assert format_source(formatted) == formatted
 
 
+@pytest.mark.parametrize("tab_size", [2, 4])
+def test_prose_flow_spacing_respects_nested_statement_ownership(tab_size):
+    source = (
+        "flow work:\n"
+        "  Start.\n"
+        "  repeat 2 times:\n"
+        "    First.\n"
+        "    repeat 1 time:\n"
+        "      Nested.\n"
+        "    Second.\n"
+        "    run:\n"
+        "      Keep this.\n\n\n      And this.\n"
+        "    Third.\n"
+        "  Finish.\n"
+    )
+    expected = (
+        "flow work:\n"
+        "  Start.\n\n"
+        "  repeat 2 times:\n"
+        "    First.\n\n"
+        "    repeat 1 time:\n"
+        "      Nested.\n\n"
+        "    Second.\n\n"
+        "    run:\n"
+        "      Keep this.\n\n\n      And this.\n\n"
+        "    Third.\n\n"
+        "  Finish.\n"
+    )
+    if tab_size == 4:
+        expected = "\n".join(
+            " " * (len(line) - len(line.lstrip())) + line
+            for line in expected.split("\n")
+        )
+    formatted = format_source(source, tab_size=tab_size)
+    assert formatted == expected
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted, tab_size=tab_size) == formatted
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "flow work:\n  repeat 2 times:\n    run: Work.\n  Finish.\n",
+            "flow work:\n  repeat 2 times:\n    run: Work.\n\n  Finish.\n",
+        ),
+        (
+            "flow work:\n  repeat 2 times:\n    First.\n    until: Done?\n  Finish.\n",
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    First.\n"
+            "    until: Done?\n\n"
+            "  Finish.\n",
+        ),
+        (
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    repeat 1 time:\n"
+            "      run: Work.\n"
+            "    run: Publish.\n"
+            "  Finish.\n",
+            "flow work:\n"
+            "  repeat 2 times:\n"
+            "    repeat 1 time:\n"
+            "      run: Work.\n"
+            "    run: Publish.\n\n"
+            "  Finish.\n",
+        ),
+    ],
+)
+def test_nested_flow_boundaries_cover_explicit_statements_and_until(
+    source: str, expected: str
+) -> None:
+    formatted = format_source(source)
+    assert formatted == expected
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
 @pytest.mark.parametrize("module_marker", ["#@", "##!"])
 def test_new_documentation_conventions_preserve_parameter_bindings(module_marker):
     source = (
