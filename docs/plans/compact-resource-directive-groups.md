@@ -2,7 +2,7 @@
 
 ## Status and Goal
 
-Defined on 2026-09-14; awaiting human confirmation before implementation.
+Approved for implementation by the user on 2026-09-14.
 
 Format each contiguous runnable resource-directive section as compact, stable
 key groups. Success means directives with the same key are adjacent, key groups
@@ -65,11 +65,12 @@ a barrier. For each section:
 4. emit every directive line contiguously, with no blank lines between same-key
    or different-key groups.
 
-A comment or any non-directive syntax line ends the current section. Do not move
-a directive across plain comments, item/module documentation comments,
-context/instruct settings, messages, flow statements, literal text, or runnable
-boundaries. Documentation attachment and detachment are therefore unchanged. A
-later section starts a new first-occurrence order and is grouped independently.
+A plain or documentation comment ends the current directive section. Group a
+later directive section independently and do not move directives across the
+comment, so documentation attachment and detachment remain unchanged. Any other
+non-directive syntax ends the runnable's directive region under the grammar;
+never move directives across context/instruct settings, messages, flow
+statements, literal text, or runnable boundaries.
 
 Examples:
 
@@ -120,6 +121,8 @@ This definition adds only this plan. A later implementation is limited to:
 - `tests/unit/lang/test_format_contract.py`: replace the current no-reordering
   expectation with exact stable-grouping cases, comment/non-directive barriers,
   inline comments, semantic preservation, and idempotence.
+- `tests/unit/lang/test_program_format.py`: update existing exact formatter
+  fixtures so different directive keys no longer require blank separators.
 - `tests/integration/cli/test_source_commands.py`: verify the shared `fmt`
   surfaces expose the same grouped result and `--check` recognizes it.
 - `docs/toolang-authoring-conventions.md`: state stable first-seen key grouping,
@@ -137,8 +140,8 @@ grammar, or runtime behavior changes.
    directives within each group preserve authored order, and no directive lines
    have blank separators.
 2. Existing blank lines between directives are removed and do not split a
-   section; comments and every non-directive syntax category remain barriers,
-   and documentation comment ownership is unchanged.
+   section; plain and documentation comments split independently grouped
+   sections, and documentation comment ownership is unchanged.
 3. Both `agic` and `flow` bodies follow the rule, including all resource keys and
    mixed `=`, `+=`, and `-=` operators accepted for that key.
 4. Inline comments remain attached to their original directive, source values
@@ -159,5 +162,4 @@ grammar, or runtime behavior changes.
 - A later directive section does not merge with an earlier one across any
   non-directive line.
 
-No unresolved implementation choices. Human confirmation of this definition is
-pending.
+No unresolved implementation choices.

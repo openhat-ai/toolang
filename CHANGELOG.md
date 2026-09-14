@@ -16,6 +16,9 @@ and this project uses semantic versioning.
 
 ### Changed
 
+- Group contiguous resource directives stably by first-seen key without blank
+  separators, while preserving each key's operation order and comment barriers.
+
 - Replace the undisclosed `hidden` command directory with `more`, advertise it at
   the end of root help, and list additional commands without description or usage.
 

@@ -185,8 +185,10 @@ comments outside natural-language content.
   concise. Keep explicit types, return annotations, `()`, and optional `?`.
 - Keep adjacent `with` clauses of the same cap kind together, with one blank
   line between different kinds. Preserve source order; do not alphabetize.
-- Group adjacent resource directives by key using the same spacing rule.
-  Preserve operator/value order and interleaved keys; do not move statements.
+- Group each contiguous resource-directive section by key, ordering key groups
+  by first appearance and preserving each key's operator/value order. Keep all
+  groups compact without blank lines. Never move directives across comments or
+  other syntax, so documentation ownership remains unchanged.
 - Keep adjacent inline `user:`/`assistant:`/`tool:` messages compact. Keep block
   messages as blocks and preserve role names.
 - Separate prose and explicit flow statements with a structural blank line,

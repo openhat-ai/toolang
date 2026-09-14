@@ -180,19 +180,98 @@ def test_import_grouping_retains_source_order_and_documentation_barriers():
     assert format_source(formatted) == formatted
 
 
-def test_directive_runs_and_inline_conversations_are_compact_without_reordering():
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("tab_size", [2, 4])
+def test_directives_group_stably_by_first_key_without_blank_lines(
+    kind: str, tab_size: int
+) -> None:
     source = (
-        "agic work:\n  models = first\n\n  models += second\n"
-        "  tools = fs/*\n  models -= third\n  tools += shell/*\n"
-        "  user: First.\n\n  assistant: Second.\n\n  user: Third.\n"
+        f"{kind} work:\n"
+        "  models = first\n\n"
+        "  tools = fs/*  # Keep with tools.\n"
+        "  models += second\n"
+        "  skills = org/review\n"
+        "  tools += shell/*\n"
+        "  models -= third\n" + ("  Work.\n" if kind == "flow" else "  user: Work.\n")
+    )
+    indent = " " * tab_size
+    expected = (
+        f"{kind} work:\n"
+        f"{indent}models = first\n"
+        f"{indent}models += second\n"
+        f"{indent}models -= third\n"
+        f"{indent}tools = fs/*  # Keep with tools.\n"
+        f"{indent}tools += shell/*\n"
+        f"{indent}skills = org/review\n"
+        + ("" if kind == "flow" else "\n")
+        + f"{indent}{'Work.' if kind == 'flow' else 'user: Work.'}\n"
+    )
+    formatted = format_source(source, tab_size=tab_size)
+    assert formatted == expected
+    assert _directive_operations(formatted) == _directive_operations(source)
+    assert format_source(formatted, tab_size=tab_size) == formatted
+
+
+def _directive_operations(source: str) -> dict[str, list[tuple[str, tuple[str, ...]]]]:
+    program = Program.from_source(source)
+    runnable = program.flows[0] if program.flows else program.agics[0]
+    operations: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+    for directive in runnable.directives:
+        operations.setdefault(directive.name, []).append(
+            (directive.operator, directive.values)
+        )
+    return operations
+
+
+def test_directive_grouping_stops_at_comment_and_documentation_barriers() -> None:
+    source = (
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        "  # Plain barrier.\n"
+        "  tools += shell/*\n"
+        "  models += second\n"
+        "  ## Message documentation.\n"
+        "  user: Work.\n"
     )
     formatted = format_source(source)
     assert formatted == (
-        "agic work:\n  models = first\n  models += second\n\n"
-        "  tools = fs/*\n\n  models -= third\n\n  tools += shell/*\n\n"
-        "  user: First.\n  assistant: Second.\n  user: Third.\n"
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        "  # Plain barrier.\n\n"
+        "  tools += shell/*\n"
+        "  models += second\n"
+        "  ## Message documentation.\n"
+        "  user: Work.\n"
     )
-    assert _semantics(formatted) == _semantics(source)
+    assert Program.from_source(formatted).agics[0].messages[0].doc == (
+        "Message documentation."
+    )
+    assert _directive_operations(formatted) == _directive_operations(source)
+    assert format_source(formatted) == formatted
+
+
+def test_directive_groups_keep_inline_conversations_compact() -> None:
+    source = (
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        "  models += second\n"
+        "  user: First.\n\n"
+        "  assistant: Second.\n\n"
+        "  user: Third.\n"
+    )
+    formatted = format_source(source)
+    assert formatted == (
+        "agic work:\n"
+        "  models = first\n"
+        "  models += second\n"
+        "  tools = fs/*\n\n"
+        "  user: First.\n"
+        "  assistant: Second.\n"
+        "  user: Third.\n"
+    )
     assert format_source(formatted) == formatted
 
 
