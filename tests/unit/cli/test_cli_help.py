@@ -38,7 +38,7 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
     )
     assert run(app, args=["--help"], prog_name="too", theme=theme, console=console) == 0
     output = Text.from_ansi(stdout.getvalue())
-    description = "Toolang is a language and runtime for agents and humans."
+    description = "Toolang — a language and runtime for agents and humans."
     version = "(0.3.0-12-g12345678*)"
     assert " ".join(output.plain.split()).startswith(f"{description} {version}")
     start = output.plain.index(version)

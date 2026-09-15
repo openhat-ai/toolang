@@ -56,7 +56,19 @@ def test_toolang_version_describes_development_source(
         lambda root: "v0.2.7-87-g3b492a92*" if root == tmp_path else None,
     )
 
-    assert version.toolang_version() == "v0.2.7-87-g3b492a92*"
+    assert version.toolang_version() == "0.2.7-87-g3b492a92*"
+
+
+@pytest.mark.parametrize(
+    ("version_value", "expected"),
+    [("0.3.0", "v0.3.0"), ("unknown", "unknown")],
+)
+def test_displayed_toolang_version_adds_only_a_numeric_prefix(
+    version_value: str, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(version, "toolang_version", lambda: version_value)
+
+    assert version.displayed_toolang_version() == expected
 
 
 def test_toolang_version_reads_embedded_info_without_git(
@@ -85,7 +97,7 @@ def test_toolang_version_reads_embedded_info_without_git(
         lambda *_args: pytest.fail("installed artifacts must not inspect a repository"),
     )
 
-    assert version.toolang_version() == "v0.2.7-87-g3b492a92*"
+    assert version.toolang_version() == "0.2.7-87-g3b492a92*"
 
 
 @pytest.mark.parametrize(
@@ -134,8 +146,8 @@ def test_toolang_version_is_cached_once_per_process(
     monkeypatch.setattr(version, "development_source", lambda: (True, tmp_path))
     monkeypatch.setattr(version, "repository_source_version", describe)
 
-    assert version.toolang_version() == "v0.3.0"
-    assert version.toolang_version() == "v0.3.0"
+    assert version.toolang_version() == "0.3.0"
+    assert version.toolang_version() == "0.3.0"
     assert calls == 1
 
 

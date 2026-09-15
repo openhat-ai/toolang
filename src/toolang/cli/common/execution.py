@@ -10,7 +10,7 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.common.ids import IdIssuer
-from toolang.common.version import toolang_version
+from toolang.common.version import displayed_toolang_version
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.store import RunStore
 
@@ -63,7 +63,7 @@ def run_store_schema_error(error: RunStoreSchemaError, *, path: object) -> str:
             "the old store, then create new execution history."
         )
     return (
-        f"execution history is incompatible with toolang {toolang_version()}: "
+        f"execution history is incompatible with toolang {displayed_toolang_version()}: "
         f"{path} uses schema {error.version}, while this build requires schema "
         f"{error.current}. {advice} The database was not changed."
     )

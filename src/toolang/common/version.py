@@ -26,8 +26,17 @@ def toolang_version() -> str:
         source_root = source if source is not None else source_project_root()
         if source_root is None:
             return _UNKNOWN_SOURCE_VERSION
-        return repository_source_version(source_root) or _UNKNOWN_SOURCE_VERSION
-    return embedded_source_version()
+        version = repository_source_version(source_root) or _UNKNOWN_SOURCE_VERSION
+    else:
+        version = embedded_source_version()
+    return version.removeprefix("v")
+
+
+def displayed_toolang_version() -> str:
+    """Return the source version with its human-readable display prefix."""
+
+    version = toolang_version()
+    return version if version == _UNKNOWN_SOURCE_VERSION else f"v{version}"
 
 
 def base_toolang_version() -> str:

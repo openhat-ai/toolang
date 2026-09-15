@@ -162,7 +162,8 @@ class _CompactCommand(_TargetAgentCommand):
 class _ToolangHelpFormatter(HelpFormatter):
     def write_description(self, ctx: Context) -> None:
         description = Text(f"{ctx.command.help}.")
-        description.append(f" ({_version.toolang_version()})", style="dim")
+        version = _version.toolang_version()
+        description.append(f" ({version})", style="dim")
         self.write_text(description)
         self.write_paragraph()
 
@@ -197,13 +198,13 @@ class _ToolangGroup(CliGroup):
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(f"toolang {_version.toolang_version()}")
+    typer.echo(f"toolang {_version.displayed_toolang_version()}")
     raise typer.Exit()
 
 
 app = typer.Typer(
     cls=_ToolangGroup,
-    help="Toolang is a language and runtime for agents and humans",
+    help="Toolang — a language and runtime for agents and humans",
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,

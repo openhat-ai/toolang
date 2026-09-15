@@ -61,7 +61,7 @@ def test_init_creates_only_a_packaged_script(
     neighbor.write_text("keep")
     before = {p for p in tmp_path.rglob("*") if p.is_file()}
     assert cli.main(["init", directory]) == 0
-    destination = (tmp_path / directory / "work.too").resolve()
+    destination = (tmp_path / directory / "aide.too").resolve()
     assert destination.read_text() == load_template("script").raw_text
     assert destination.read_text().startswith("#!/usr/bin/env too\n")
     assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {destination}
@@ -101,7 +101,7 @@ def test_initialized_script_help_exposes_the_language_examples(
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
     )
-    assert cli.main(["run", "work.too", *([entry] if entry else []), "--help"]) == 0
+    assert cli.main(["run", "aide.too", *([entry] if entry else []), "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     if entry is None:
         for name in ("agic:main", "agic:chat", "agic:rewrite", "flow:polish"):
@@ -119,7 +119,7 @@ def test_initialized_script_help_exposes_the_language_examples(
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])
 def test_init_never_overwrites_existing_output(kind, tmp_path, capsys):
-    output = tmp_path / "work.too"
+    output = tmp_path / "aide.too"
     target = tmp_path / "target"
     if kind == "file":
         output.write_text("keep")
@@ -151,7 +151,7 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
     original = Path.open
 
     def denied(self, *args, **kwargs):
-        if self == tmp_path / "work.too":
+        if self == tmp_path / "aide.too":
             raise PermissionError("permission denied")
         return original(self, *args, **kwargs)
 
@@ -171,7 +171,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: create(), range(2)))
     assert sorted(results) == [False, True]
-    assert (tmp_path / "work.too").read_text() == load_template("script").raw_text
+    assert (tmp_path / "aide.too").read_text() == load_template("script").raw_text
 
 
 @pytest.mark.parametrize("explicit", [False, True])

@@ -117,7 +117,7 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Scripts
-toolang init <dir>                   # Create work.too without overwriting files
+toolang init <dir>                   # Create aide.too without overwriting files
 toolang run <file.too> [runnable]     # Execute authored main or a named runnable
 
 # Source development (offline)
