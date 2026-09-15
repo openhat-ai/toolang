@@ -106,7 +106,8 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
             agics = client.get("/api/v1/agics")
             flows_response = client.get("/api/v1/flows")
 
-        assert agics.json()["items"] == [{"name": "default"}]
+        assert agics.json()["items"] == []
+        assert agics.json()["default"] is None
         assert flows_response.json()["items"] == [{"name": "research"}]
     finally:
         asyncio.run(core.close())

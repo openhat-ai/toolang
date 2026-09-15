@@ -143,6 +143,10 @@ Never store `agic:<entry>` or `agic:<adhoc>` for unnamed or adhoc.
 - `agic:<entry:3>` is the exact / standard ref.
 - Adhoc is not a Script/Chat selector.
 - `run <entry>` / `run <adhoc:5>` invalid source.
+- The runtime never generates a runnable. A surface resolves `chat`, then the
+  unnamed entry, and otherwise reports a failure. `too agent new` writes an
+  `agent.too` whose only declaration is the minimal unnamed `agic: {{_}}`, so a
+  new agent always has an entry.
 
 ## Display
 
@@ -157,7 +161,7 @@ Never store `agic:<entry>` or `agic:<adhoc>` for unnamed or adhoc.
 
 In: ref parse; public/local index; module id `flows::research`; inline
 lowering (`name=None`, statement/run stores lined qualified adhoc); run
-strings; UI; docs; tests.
+strings; UI; the `too agent new` template; docs; tests.
 
 Out: CST changes; RunStore migration; filename public names; unnamed as
 `run` targets.

@@ -12,6 +12,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
     resolve_public_runnable_query,
+    available_runnable_defaults,
     runnable_binding_defaults,
 )
 from toolang.execution.calls import prompt_definitions
@@ -356,6 +357,8 @@ def _runnable_defaults(
     binding: str | None,
 ) -> tuple[str | None, str | None]:
     try:
+        if binding is None:
+            return available_runnable_defaults(program, fallback_agic="chat")
         return runnable_binding_defaults(
             program,
             binding,

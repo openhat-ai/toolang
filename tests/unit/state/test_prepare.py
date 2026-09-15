@@ -1194,10 +1194,9 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     state = prepare_agent_state(_layout(toolang_root))
 
     assert [(item.kind, name) for name, item in state.runnables.items()] == [
-        ("agic", "default"),
         ("flow", "research"),
     ]
-    assert tuple(state.agics) == ("default",)
+    assert tuple(state.agics) == ()
     assert tuple(state.flows) == ("research",)
     program = state.modules["flows::research"]
     assert not hasattr(state, "program")
@@ -1212,9 +1211,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     assert state.runnable_modules["research"] == "flows::research"
     assert exported is program.flows[0]
     assert exported.name is None
-    default = state.runnables["default"]
-    assert state.runnable_modules["default"] == "agent"
-    assert default.name == "default"
+    assert state.runnable_modules["research"] == "flows::research"
 
 
 def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:

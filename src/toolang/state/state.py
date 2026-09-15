@@ -38,9 +38,7 @@ from ..lang.ast import (
     AgicDecl,
     CapDecl,
     FlowDecl,
-    Parameter,
     Program,
-    Span,
     to_data,
 )
 from toolang.lang.types import unnamed_runnable_name
@@ -348,30 +346,20 @@ class StateCap:
         )
 
 
-_RUNTIME_DEFAULT_AGIC = AgicDecl(
-    name="default",
-    input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
-    span=Span(line=1),
-)
-
-
 def program_runnable_index(
     program: Program,
-    *,
-    include_default: bool = True,
 ) -> dict[str, AgicDecl | FlowDecl]:
-    """Bind authored names to module-local identities without changing the AST."""
+    """Bind authored names to module-local identities without changing the AST.
 
-    declarations = (*program.agics, *program.flows)
-    if include_default and not any(item.name == "default" for item in declarations):
-        declarations = (*program.agics, _RUNTIME_DEFAULT_AGIC, *program.flows)
+    An unnamed top-level agic or flow binds to `<entry:LINE>`. Declarations
+    keep their AST names, and the runtime never invents an entry.
+    """
+
     result: dict[str, AgicDecl | FlowDecl] = {}
     adhoc_lines = program.adhoc_lines
     unnamed_entry: AgicDecl | FlowDecl | None = None
-    for declaration in declarations:
-        if declaration is _RUNTIME_DEFAULT_AGIC:
-            name = "default"
-        elif declaration.name is not None:
+    for declaration in (*program.agics, *program.flows):
+        if declaration.name is not None:
             if declaration.name.startswith("<"):
                 continue
             name = declaration.name
@@ -409,14 +397,7 @@ def public_runnable_index(
     agent = modules.get("agent")
     if agent is None:
         raise ValueError("home State layer is missing the agent module")
-    exported_names = {
-        Path(source).stem
-        for module, source in module_sources.items()
-        if module != "agent"
-    }
     for name, declaration in program_runnable_index(agent).items():
-        if declaration is _RUNTIME_DEFAULT_AGIC and name in exported_names:
-            continue
         add(name, "agent", declaration)
     for module, program in modules.items():
         if module == "agent":
@@ -443,7 +424,7 @@ def flow_export(source: str, program: Program) -> tuple[str, str]:
     public_name = Path(source).stem
     candidates = tuple(
         name
-        for name, flow in program_runnable_index(program, include_default=False).items()
+        for name, flow in program_runnable_index(program).items()
         if isinstance(flow, FlowDecl)
         and (flow.name is None or not flow.name_explicit or flow.name == public_name)
     )

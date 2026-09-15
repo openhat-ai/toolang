@@ -1,2 +1,6 @@
 # Customize this agent here.
 # Docs: https://toolang.ai/docs
+
+## Answer the user's request.
+agic:
+  {{_}}

@@ -473,8 +473,8 @@ class JobScheduler:
     def _build_spec(self, job: Job) -> RunSpec:
         setup = self.get_agent_setup()
         state = self.get_agent_state()
-        runnable = runnable_fallback(state, preferred=job.kind)
         override, input = parse_call(job.body)
+        runnable = override.runnable or runnable_fallback(state, preferred=job.kind)
         base = job.path.parent if job.path is not None else setup.layout.home
         spec = resolve_spec(
             override,

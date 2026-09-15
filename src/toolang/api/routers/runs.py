@@ -42,7 +42,7 @@ from toolang.execution.types import RunStatus
 from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
-    runnable_binding_defaults,
+    available_runnable_defaults,
     resolve_public_runnable_query,
 )
 from toolang.state.state import AgentState
@@ -334,9 +334,8 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
         model = ModelRequest(fallback) if fallback is not None else None
     runnable = setup.defaults.runnable
     if runnable is None:
-        default_agic, default_flow = runnable_binding_defaults(
+        default_agic, default_flow = available_runnable_defaults(
             state,
-            None,
             fallback_agic="chat",
         )
         if default_agic is not None:
