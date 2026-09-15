@@ -282,7 +282,9 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
         previous_doc_indent = prefix if node.type == "item_doc_comment" else None
 
     return _normalize_blank_lines(
-        _order_program_comments(_order_control_segments(formatted))
+        _order_program_comments(
+            _order_control_segments(_order_directive_sections(formatted))
+        )
     )
 
 
@@ -323,14 +325,14 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
         if node.type in _COMMENT_TYPES:
             return "top_comment"
         return "agic_header" if "agic" in types else "top_level"
+    if "directive" in types:
+        return "directive"
     if "agic_body" not in types:
         return "indented"
     if node.type == "indented_raw_text":
         return "message_body" if "unroled_message" in types else "block_body"
     if node.type in _COMMENT_TYPES:
         return "comment"
-    if "directive" in types:
-        return "directive"
     owner = next(
         (item for item in ancestors if item.type in _CONTROL_TYPES | {"message"}), None
     )
@@ -631,6 +633,33 @@ def _order_program_comments(lines: list[_Line]) -> list[_Line]:
     ]
 
 
+def _order_directive_sections(lines: list[_Line]) -> list[_Line]:
+    ordered: list[_Line] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].kind != "directive":
+            ordered.append(lines[index])
+            index += 1
+            continue
+        groups: dict[str, list[_Line]] = {}
+        trailing_blanks: list[_Line] = []
+        while index < len(lines) and lines[index].kind == "directive":
+            directive = lines[index]
+            assert directive.group is not None
+            groups.setdefault(directive.group[1], []).append(directive)
+            index += 1
+            blank_start = index
+            while index < len(lines) and not lines[index].value:
+                index += 1
+            if index >= len(lines) or lines[index].kind != "directive":
+                trailing_blanks = lines[blank_start:index]
+                break
+        for group in groups.values():
+            ordered.extend(group)
+        ordered.extend(trailing_blanks)
+    return ordered
+
+
 def _order_control_segments(lines: list[_Line]) -> list[_Line]:
     ordered: list[_Line] = []
     index = 0
@@ -704,7 +733,7 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
             and line.group is not None
             and previous.group[0] == line.group[0]
         ):
-            if previous.group != line.group:
+            if previous.group[0] != "directive" and previous.group != line.group:
                 _append_blank_line(normalized)
         elif line.separate or _needs_blank_line(
             previous_kind, kind, pending_blank=bool(pending_blank)
@@ -743,7 +772,7 @@ def _needs_blank_line(
     if current_kind == "comment":
         return previous_kind in {"block_body", "message_body", "message_header"}
     if current_kind == "directive":
-        return previous_kind not in {"agic_header", "directive"}
+        return previous_kind not in {"agic_header", "top_level", "directive"}
     if current_kind == "control":
         return previous_kind in {
             "directive",

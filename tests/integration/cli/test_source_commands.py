@@ -197,6 +197,42 @@ def test_format_output_modes_and_shared_highlighting(tmp_path, options):
             assert direct.stdout == result.stdout
 
 
+def test_fmt_surfaces_share_stable_compact_directive_grouping(tmp_path):
+    source = (
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        "  models += second\n"
+        "  services = org/search\n"
+        "  tools += shell/*\n"
+        "  user: Work.\n"
+    )
+    expected = (
+        "agic work:\n"
+        "  models = first\n"
+        "  models += second\n"
+        "  tools = fs/*\n"
+        "  tools += shell/*\n"
+        "  services = org/search\n\n"
+        "  user: Work.\n"
+    )
+    stdout = runner.invoke(app, ["fmt", "-", "--stdout"], input=source)
+    highlighted = runner.invoke(
+        app, ["fmt", "-", "--highlight", "--color", "never"], input=source
+    )
+    assert stdout.exit_code == highlighted.exit_code == 0
+    assert stdout.stdout == highlighted.stdout == expected
+
+    path = tmp_path / "work.too"
+    path.write_text(source)
+    check = runner.invoke(app, ["fmt", str(path), "--check"])
+    assert check.exit_code == 1
+    assert path.read_text() == source
+    assert runner.invoke(app, ["fmt", str(path)]).exit_code == 0
+    assert path.read_text() == expected
+    assert runner.invoke(app, ["fmt", str(path), "--check"]).exit_code == 0
+
+
 def test_check_keeps_files_and_returns_change_status(tmp_path):
     source = tmp_path / "work.too"
     source.write_text(SOURCE)
