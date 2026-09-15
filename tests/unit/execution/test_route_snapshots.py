@@ -314,18 +314,18 @@ def test_dual_authorization_counts_both_declarations_in_byte_budget(
 @pytest.mark.parametrize("authored_name", ["main", ""])
 @pytest.mark.parametrize("as_state", [False, True])
 @pytest.mark.parametrize("preferred", ["chat", "task", "chore"])
-def test_main_fallback_preserves_the_selected_kind(
+def test_entry_fallback_prefers_the_unnamed_entry_or_fails(
     kind, as_state, preferred, authored_name
 ):
     from toolang.execution.runnables import runnable_binding_defaults
 
     state = _state(f"{kind} {authored_name}:\n  pass\n")
     program = state if as_state else state.modules["agent"]
-    bound = runnable_binding_defaults(program, None, fallback_agic=preferred)
     if authored_name:
-        expected = ("default", None)
-        assert bound == expected
+        with pytest.raises(ToolangError, match="or unnamed entry"):
+            runnable_binding_defaults(program, None, fallback_agic=preferred)
     else:
+        bound = runnable_binding_defaults(program, None, fallback_agic=preferred)
         name = bound[0] or bound[1]
         assert name is not None and name.startswith("<entry:")
         assert bound == ((name, None) if kind == "agic" else (None, name))

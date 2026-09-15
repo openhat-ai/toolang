@@ -541,9 +541,7 @@ def _public_runnables(program: Program) -> dict[str, Runnable]:
 
     return {
         name: runnable
-        for name, runnable in program_runnable_index(
-            program, include_default=False
-        ).items()
+        for name, runnable in program_runnable_index(program).items()
         if not name.startswith("<adhoc:") and name != "<adhoc>"
     }
 
@@ -1046,7 +1044,7 @@ async def _remote_script_defaults(
             raise ValueError
         model = payload.get("model")
         runnable = payload.get("runnable")
-        if not isinstance(runnable, str):
+        if runnable is not None and not isinstance(runnable, str):
             raise ValueError
         model_request = (
             TypeAdapter(ModelRequest).validate_python(model)

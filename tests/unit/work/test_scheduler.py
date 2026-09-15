@@ -17,6 +17,7 @@ from toolang.lang.types import Array
 from toolang.work.authoring import new_job_file
 from toolang.work.records import JobRecord
 from toolang.work.scheduler import JobScheduler
+from toolang.base.errors import ToolangError
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from tests.support.execution_harness import (
@@ -466,10 +467,10 @@ def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
 @pytest.mark.parametrize("job_kind", ["task", "chore"])
 @pytest.mark.parametrize("runnable_kind", ["agic", "flow"])
 @pytest.mark.parametrize("specialized", [False, True])
-def test_job_selects_its_kind_before_authored_main(
+def test_job_selects_its_kind_before_the_unnamed_entry(
     tmp_path, job_kind, runnable_kind, specialized
 ):
-    source = f"{runnable_kind} main:\n  pass\n"
+    source = f"{runnable_kind}:\n  pass\n"
     if specialized:
         source += f"\n{runnable_kind} {job_kind}:\n  pass\n"
     harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
@@ -482,13 +483,32 @@ def test_job_selects_its_kind_before_authored_main(
     try:
         (job,) = load_ready_jobs(harness.setup.layout)
         spec = _scheduler(harness)._build_spec(job)
-        expected = (
-            job_kind
-            if specialized
-            else ("default" if runnable_kind == "agic" else "default")
+        entry = next(
+            name for name in harness.state.runnables if name.startswith("<entry:")
         )
-        assert spec.bindings.runnable == (
-            f"{runnable_kind}:{expected}" if specialized else "agic:default"
-        )
+        expected = job_kind if specialized else entry
+        assert spec.bindings.runnable in {
+            f"{runnable_kind}:{expected}",
+            f"flow:{expected}",
+        }
+    finally:
+        harness.store.close()
+
+
+@pytest.mark.parametrize("job_kind", ["task", "chore"])
+def test_job_without_a_kind_or_entry_runnable_fails(tmp_path, job_kind) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path, source="agic review:\n  pass\n", responses=[]
+    )
+    _create_job(
+        AuthoredJobs(harness.setup.layout.home),
+        job_kind,
+        "entry",
+        "Handle this request.",
+    )
+    try:
+        (job,) = load_ready_jobs(harness.setup.layout)
+        with pytest.raises(ToolangError, match="or unnamed entry"):
+            _scheduler(harness)._build_spec(job)
     finally:
         harness.store.close()

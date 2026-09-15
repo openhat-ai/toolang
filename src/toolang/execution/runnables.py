@@ -374,7 +374,9 @@ def runnable_fallback(program: Program | AgentState, *, preferred: str) -> str:
     matches = [name for name in index if name.startswith("<entry:")]
     if len(matches) == 1:
         return matches[0]
-    return "default"
+    raise ToolangError(
+        f"agent has no {preferred} entry or unnamed entry; add one to agent.too"
+    )
 
 
 def runnable_binding_defaults(
@@ -394,6 +396,23 @@ def runnable_binding_defaults(
         name, kind = parse_runnable_ref(binding)
         runnable = resolve_runnable(program, name, kind=kind)
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
+
+
+def available_runnable_defaults(
+    program: Program | AgentState,
+    *,
+    fallback_agic: str,
+) -> tuple[str | None, str | None]:
+    """Project a default runnable, or empty when the agent declares none."""
+
+    try:
+        return runnable_binding_defaults(
+            program,
+            None,
+            fallback_agic=fallback_agic,
+        )
+    except ToolangError:
+        return None, None
 
 
 def runnable_descriptions(

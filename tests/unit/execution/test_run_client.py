@@ -627,12 +627,19 @@ agic relay(_: Part[]) -> Part[]:
   instruct: none
   user: {{_}}
 
+agic:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
 flow chat(_: Part[]) -> Part[]:
   run relay
 """,
         responses=[ModelCallResult(message=Message.assistant("default reply"))],
     )
     client = LocalRunClient(harness.executor)
+    entry = next(name for name in harness.state.runnables if name.startswith("<entry:"))
 
     async def scenario() -> None:
         await client.connect()
@@ -640,12 +647,12 @@ flow chat(_: Part[]) -> Part[]:
         handle = await client.run(
             _request(
                 thread,
-                runnable_fallbacks=("agic:default",),
+                runnable_fallbacks=(f"agic:{entry}",),
             )
         )
         detail = await handle.wait()
 
-        assert (detail.runnable_kind, detail.runnable_name) == ("agic", "default")
+        assert (detail.runnable_kind, detail.runnable_name) == ("agic", entry)
         assert len(harness.store.list_runs(thread_id=thread, limit=None)) == 1
         await client.disconnect()
 

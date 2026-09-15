@@ -493,7 +493,7 @@ agic chat(_: Part[]) -> Part[]:
             name = setting.removeprefix("agic:")
         assert session.list_runnables("agic") == {
             "default": name,
-            "items": [{"name": name}, {"name": "default"}],
+            "items": [{"name": name}],
         }
         assert session.list_prompts(None) == {"items": []}
         thread_id = session.create_thread()

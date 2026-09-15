@@ -49,3 +49,16 @@ def test_render_template_replaces_bindings() -> None:
 def test_load_template_rejects_unknown_name() -> None:
     with pytest.raises(FileNotFoundError, match="template not found: task.unknown"):
         templates.load_template("task", "unknown")
+
+
+def test_agent_template_declares_a_minimal_unnamed_entry() -> None:
+    from toolang.lang import Program
+
+    assert templates.load_template("agent").raw_text == "agic:\n  {{_}}\n"
+    program = Program.from_source(templates.load_template("agent").raw_text)
+
+    assert program.flows == ()
+    (agic,) = program.agics
+    assert agic.name is None
+    assert agic.input is not None and agic.input.name == "_"
+    assert [message.content for message in agic.messages] == ["{{_}}"]

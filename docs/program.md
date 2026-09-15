@@ -630,14 +630,15 @@ Surfaces resolve a default runnable by name:
 
 ```text
 script  explicit name, else unnamed entry, else file help
-chat    chat, else unnamed entry, else runtime default
-task    task, else unnamed entry, else runtime default
-chore   chore, else unnamed entry, else runtime default
+chat    chat, else unnamed entry, else reported failure
+task    task, else unnamed entry, else reported failure
+chore   chore, else unnamed entry, else reported failure
 ```
 
 Explicit selections take precedence over these fallbacks. The chosen entry may
-be an agic or a flow. Script exposes authored declarations only; it never selects
-the runtime-generated `agic:default`.
+be an agic or a flow. The runtime never generates a runnable, so a surface with
+no `chat`/`task`/`chore` entry and no unnamed entry reports a failure instead of
+inventing one. Script exposes authored declarations only.
 
 Every run surface must resolve one `RunnableInput`, including all required named
 inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for
