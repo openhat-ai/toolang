@@ -104,8 +104,11 @@ def test_initialized_script_help_exposes_the_language_examples(
     assert cli.main(["run", "aide.too", *([entry] if entry else []), "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     if entry is None:
-        for name in ("agic:main", "agic:chat", "agic:rewrite", "flow:polish"):
-            assert name in output
+        assert "agic:chat" in output
+        assert "agic:rewrite" in output
+        assert "flow:polish" in output
+        assert "agic:<entry>" in output
+        assert "agic:main" not in output
         assert "<agic:" not in output
         assert "agic:default" not in output
     else:
@@ -175,9 +178,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize(
-    "declaration", ["agic()", "agic main()", "flow()", "flow main()"]
-)
+@pytest.mark.parametrize("declaration", ["agic()", "flow()"])
 def test_script_defaults_to_authored_main(explicit, declaration, monkeypatch):
     path = _source(f"{declaration}:\n  pass\n")
     captured = []
@@ -186,11 +187,11 @@ def test_script_defaults_to_authored_main(explicit, declaration, monkeypatch):
     )
     assert cli.main([*(["run"] if explicit else []), path]) == 0
     assert len(captured) == 1
-    assert captured[0]["runnable"] == "main"
+    assert captured[0]["runnable"].startswith("<entry:")
     assert captured[0]["runnable_kind"] == declaration.split("(")[0].split()[0]
 
 
-@pytest.mark.parametrize("selector", ["main", "agic:main", "runnable:main"])
+@pytest.mark.parametrize("selector", ["<entry>", "agic:<entry>", "runnable:<entry>"])
 def test_explicit_main_selection(selector, monkeypatch):
     path = _source()
     captured = []
@@ -198,7 +199,7 @@ def test_explicit_main_selection(selector, monkeypatch):
         script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
     )
     assert cli.main(["run", path, selector]) == 0
-    assert captured[0]["runnable"] == "main"
+    assert captured[0]["runnable"].startswith("<entry:")
 
 
 @pytest.mark.parametrize("name", ["run", "serve", "init", "default"])
@@ -246,7 +247,7 @@ def test_default_main_preserves_options_named_inputs_and_stdin(
     )
 
 
-@pytest.mark.parametrize("arguments", [[], ["--help"], ["main", "--help"]])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["<entry>", "--help"]])
 def test_main_help_and_missing_input_never_execute(arguments, monkeypatch, capsys):
     path = _source("## Handle the request.\nagic:\n  {{_}}\n")
     monkeypatch.setattr(
@@ -288,7 +289,7 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS]" in output
     assert "* FILE" in output
     assert "Path to a .too file" in output
-    assert "Runnable name [default: main]" in output
+    assert "RUNNABLE" in output
     assert "Runnable-specific arguments" in output
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
@@ -302,7 +303,7 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])
 @pytest.mark.parametrize("file_boundary", [[], ["--"]])
-@pytest.mark.parametrize("tail", [[], ["main"], ["--", "literal --help"]])
+@pytest.mark.parametrize("tail", [[], ["<entry>"], ["--", "literal --help"]])
 def test_explicit_run_preserves_arguments_after_option_boundaries(
     root_boundary, file_boundary, tail, monkeypatch
 ):
@@ -315,7 +316,7 @@ def test_explicit_run_preserves_arguments_after_option_boundaries(
     )
     assert cli.main([*root_boundary, "run", *file_boundary, path, *tail]) == 0
     assert len(captured) == 1
-    assert captured[0]["runnable"] == "main"
+    assert captured[0]["runnable"].startswith("<entry:")
     if tail[:1] == ["--"]:
         assert captured[0]["input"].get("_") == "literal --help"
 
@@ -331,7 +332,7 @@ def test_explicit_run_preserves_special_filenames(monkeypatch, name):
     assert len(captured) == 1
 
 
-@pytest.mark.parametrize("tail", [["--help"], ["main", "--help"]])
+@pytest.mark.parametrize("tail", [["--help"], ["<entry>", "--help"]])
 def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, capsys):
     path = _source()
     monkeypatch.setattr(
@@ -350,7 +351,7 @@ def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, cap
         ["run", "--help"],
         ["serve", "--help"],
         ["run", "demo.too", "--help"],
-        ["run", "demo.too", "main", "--help"],
+        ["run", "demo.too", "<entry>", "--help"],
     ],
 )
 def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
@@ -367,7 +368,7 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert f"Usage: {executable} {page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
-        assert "Runnable name [default: main]" in " ".join(output.split())
+        assert "agic:<entry>" in " ".join(output.split())
         assert output.index("Arguments:") < output.index("Runnables:")
         assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
@@ -440,7 +441,7 @@ def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
-def test_script_help_rejects_main_binding_conflicts(
+def test_script_help_allows_unnamed_entry_with_explicit_main(
     kind, tmp_path, monkeypatch, capsys
 ):
     source = tmp_path / "conflict.too"
@@ -448,5 +449,7 @@ def test_script_help_rejects_main_binding_conflicts(
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("executed help")
     )
-    assert cli.main(["run", str(source), "--help"]) == 1
-    assert "Runnable name is not unique: main" in capsys.readouterr().err
+    assert cli.main(["run", str(source), "--help"]) == 0
+    output = capsys.readouterr().out
+    assert "agic:<entry>" in output or "flow:<entry>" in output
+    assert f"{kind}:main" in output

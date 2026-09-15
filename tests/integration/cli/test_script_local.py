@@ -46,7 +46,7 @@ flow research(_: Part[]) -> Text[]:
 """
 
 
-@pytest.mark.parametrize("entry", ["echo", "implicit", "main"])
+@pytest.mark.parametrize("entry", ["echo", "implicit"])
 @pytest.mark.parametrize(
     ("save_mode", "expected_status", "expected_stdout"),
     (
@@ -164,9 +164,12 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert durable_output == (TextPart("done"),)
     assert control is not None
     assert isinstance(control.payload, RunControlPayload)
-    assert control.payload.runnable == (
-        "agent$agic:echo" if entry == "echo" else "agent$agic:main"
-    )
+    if entry == "echo":
+        assert control.payload.runnable == "agic:echo"
+    elif entry == "implicit":
+        assert control.payload.runnable.startswith("agent::agic:<entry:")
+    else:
+        assert False, entry
 
 
 @pytest.mark.parametrize("entry", ["chat", "rewrite", "polish"])

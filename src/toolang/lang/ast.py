@@ -12,6 +12,7 @@ from pydantic import Discriminator, Tag, TypeAdapter
 from tree_sitter import Node as TreeSitterNode, Tree
 
 from .cst import parse as parse_cst
+from .types import parse_runnable_ref_parts
 
 from toolang.common.immutable import freeze_mapping
 from .text import source_lines
@@ -328,8 +329,48 @@ class Program(Node):
     agics: tuple[AgicDecl, ...] = ()
     flows: tuple[FlowDecl, ...] = ()
 
+    @property
+    def adhoc_lines(self) -> frozenset[int]:
+        """Return the source lines of every inline adhoc agic in this Program."""
+
+        lines: set[int] = set()
+
+        def visit(statements: tuple[FlowStmt, ...]) -> None:
+            for statement in statements:
+                runnable = getattr(statement, "runnable", None)
+                if isinstance(runnable, str):
+                    try:
+                        parsed = parse_runnable_ref_parts(runnable)
+                    except ValueError:
+                        pass
+                    else:
+                        if parsed.role == "adhoc" and parsed.line is not None:
+                            lines.add(parsed.line)
+                if isinstance(statement, RepeatStmt):
+                    visit(statement.stmts)
+
+        for flow in self.flows:
+            visit(flow.stmts)
+        return frozenset(lines)
+
     def find_agic(self, name: str) -> AgicDecl | None:
-        return next((item for item in self.agics if item.name == name), None)
+        match = next((item for item in self.agics if item.name == name), None)
+        if match is not None:
+            return match
+        try:
+            parsed = parse_runnable_ref_parts(name)
+        except ValueError:
+            return None
+        if parsed.role != "adhoc" or parsed.line is None:
+            return None
+        return next(
+            (
+                item
+                for item in self.agics
+                if item.name is None and item.span.line == parsed.line
+            ),
+            None,
+        )
 
     def find_flow(self, name: str) -> FlowDecl | None:
         return next((item for item in self.flows if item.name == name), None)

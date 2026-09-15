@@ -68,26 +68,34 @@ def test_authored_default_flow_takes_precedence_over_synthetic_default(
         layout.program.write_text("flow default():\n  pass\n")
     state = prepare_agent_state(layout)
     module, runnable = resolve_state_runnable(state, "default", kind="flow")
-    assert module == ("_flow_default" if exported else "agent")
+    assert module == ("flows::default" if exported else "agent")
     assert runnable.name == (None if exported else "default")
     assert state.runnables["default"].kind == "flow"
 
 
 @pytest.mark.parametrize("first", ["agic", "flow"])
 @pytest.mark.parametrize("second", ["agic", "flow"])
-@pytest.mark.parametrize("explicit", [False, True])
-def test_state_rejects_colliding_main_bindings(tmp_path, first, second, explicit):
+def test_state_rejects_colliding_unnamed_entries(tmp_path, first, second):
     layout = _layout(tmp_path)
     layout.home.mkdir(parents=True)
-    name = " main" if explicit else ""
-    source = f"{first}{name}:\n  pass\n\n{second}:\n  pass\n"
+    source = f"{first}:\n  pass\n\n{second}:\n  pass\n"
     program = Program.from_source(source)
     assert any(item.name is None for item in (*program.agics, *program.flows))
     layout.program.write_text(source)
     with pytest.raises(
-        StatePreparationError, match="Runnable name is not unique: main"
+        StatePreparationError, match="Runnable name is not unique: entry"
     ):
         prepare_agent_state(layout)
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_unnamed_entry_can_coexist_with_explicit_main(tmp_path, kind):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(f"{kind}:\n  pass\n\n{kind} main:\n  pass\n")
+    state = prepare_agent_state(layout)
+    assert any(name.startswith("<entry:") for name in state.runnables)
+    assert "main" in state.runnables
 
 
 def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
@@ -116,43 +124,25 @@ def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
     current = prepare_agent_state(layout)
     assert current.home_revision != old.home_revision
     assert current.modules["agent"].agics[0].name is None
-    assert current.runnables["main"] is current.modules["agent"].agics[0]
+    assert (
+        next(v for k, v in current.runnables.items() if k.startswith("<entry:"))
+        is current.modules["agent"].agics[0]
+    )
     assert load_agent_state(layout, old.revision).modules["agent"] == old_program
     assert prepare_agent_state(layout).home_revision == current.home_revision
 
 
-def test_prepare_rebuilds_unnamed_flow_ast_and_preserves_historical_export(
-    tmp_path, monkeypatch
-):
+def test_unnamed_flow_export_is_locally_entry(tmp_path):
     layout = _layout(tmp_path)
     source = layout.home / "flows" / "research.too"
     source.parent.mkdir(parents=True)
     source.write_text("flow:\n  pass\n")
-    parse = ProgramSource.parse
-
-    def legacy_parse(self):
-        program = parse(self)
-        return replace(
-            program, flows=tuple(replace(flow, name="main") for flow in program.flows)
-        )
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(ProgramSource, "parse", legacy_parse)
-        old = prepare_agent_state(layout)
-    assert old.runnables["research"].name == "main"
-
-    current = prepare_agent_state(layout)
-    assert current.home_revision != old.home_revision
-    assert current.runnables["research"].name is None
+    state = prepare_agent_state(layout)
+    assert state.runnables["research"].name is None
     assert (
-        current.module_runnable("_flow_research", "main")
-        is current.runnables["research"]
+        state.module_runnable("flows::research", "<entry>")
+        is state.runnables["research"]
     )
-    historical = load_agent_state(layout, old.revision)
-    assert historical.modules == old.modules
-    assert historical.runnables["research"].name == "main"
 
 
 def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):
@@ -170,7 +160,7 @@ def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeyp
         old = prepare_agent_state(layout)
 
     with pytest.raises(
-        StatePreparationError, match="Runnable name is not unique: main"
+        StatePreparationError, match="Runnable name is not unique: entry"
     ):
         prepare_agent_state(layout)
     assert load_agent_state(layout, old.revision).modules == old.modules
@@ -449,7 +439,7 @@ def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> 
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    cap = state.module_caps["_flow_report"][0]
+    cap = state.module_caps["flows::report"][0]
     assert cap.name == "style"
     assert cap.read_content() == "Flow style."
     assert not (home / "agent.too").exists()
@@ -1209,17 +1199,17 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     ]
     assert tuple(state.agics) == ("default",)
     assert tuple(state.flows) == ("research",)
-    program = state.modules["_flow_research"]
+    program = state.modules["flows::research"]
     assert not hasattr(state, "program")
-    assert tuple(state.modules) == ("_flow_research", "agent")
-    assert state.module_sources["_flow_research"] == "flows/research.too"
+    assert tuple(state.modules) == ("agent", "flows::research")
+    assert state.module_sources["flows::research"] == "flows/research.too"
     assert program.find_agic("helper") is not None
     assert "helper" not in state.runnables
-    helper = state.module_runnable("_flow_research", "helper", kind="agic")
+    helper = state.module_runnable("flows::research", "helper", kind="agic")
     assert helper is not None
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
-    assert state.runnable_modules["research"] == "_flow_research"
+    assert state.runnable_modules["research"] == "flows::research"
     assert exported is program.flows[0]
     assert exported.name is None
     default = state.runnables["default"]
@@ -1238,8 +1228,8 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     first = prepare_agent_state(_layout(toolang_root))
 
     public_module, public = resolve_state_runnable(first, "research", kind="flow")
-    local = resolve_bound_runnable(first, "_flow_research", "flow:research")
-    assert public_module == "_flow_research"
+    local = resolve_bound_runnable(first, "flows::research", "flow:research")
+    assert public_module == "flows::research"
     assert public is local
     assert public.name is local.name is None
 
@@ -1360,16 +1350,16 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     agent_cap = next(item for item in state.caps_for("agent") if item.name == "style")
     flow_cap = next(
-        item for item in state.caps_for("_flow_research") if item.name == "style"
+        item for item in state.caps_for("flows::research") if item.name == "style"
     )
     assert agent_cap.read_content() == "Agent style."
     assert flow_cap.read_content() == "Flow style."
     assert agent_cap.path != flow_cap.path
-    assert all(item.name != "only_agent" for item in state.caps_for("_flow_research"))
+    assert all(item.name != "only_agent" for item in state.caps_for("flows::research"))
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    assert loaded.modules["_flow_research"].flows[0].name is None
+    assert loaded.modules["flows::research"].flows[0].name is None
 
 
 def test_flow_modules_can_reference_the_same_cap(
@@ -1399,8 +1389,8 @@ def test_flow_modules_can_reference_the_same_cap(
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    one = state.module_caps["_flow_one"][0]
-    two = state.module_caps["_flow_two"][0]
+    one = state.module_caps["flows::one"][0]
+    two = state.module_caps["flows::two"][0]
     assert one.ref == two.ref
     assert one.path != two.path
     assert one.read_content() == "Review carefully."
@@ -1446,7 +1436,7 @@ def test_prepare_rebinds_parameter_docs_without_rewriting_history(
     old_home = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
     old_document = old_home.read_bytes()
     current = prepare_agent_state(layout)
-    module = "agent" if module_file == "agent.too" else "_flow_review"
+    module = "agent" if module_file == "agent.too" else "flows::review"
     program = current.modules[module]
     runnable = program.flows[0]
     assert current.home_revision != old.home_revision

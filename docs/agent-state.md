@@ -149,11 +149,13 @@ Module-local capability files include the module name in their path:
 files/caps/<inline|referenced>/<module>/<kind>/<name>/...
 ```
 
-Programs preserve omitted agic and flow names as `None`. State binds them locally
-as `main`, applies filename-based public exports, and rejects duplicate local or
-public names across both kinds. It indexes the original declarations without
-mutating their AST names. The indexes are derived from Programs and are not
-duplicated in `layer.json`. Script help uses the same binding rules.
+Programs preserve omitted agic and flow names as `None`. State binds an unnamed
+top-level declaration under the lined lookup key `<entry:LINE>`, applies
+filename-based public exports, and rejects duplicate local or public names across
+both kinds. It indexes the original declarations without mutating their AST names.
+Inline agic bodies stay unnamed and out of the index; they are addressed only as
+`agic:<adhoc:LINE>`. The indexes are derived from Programs and are not duplicated
+in `layer.json`. Script help uses the same binding rules.
 
 ## Prepare, Publish, and Load
 

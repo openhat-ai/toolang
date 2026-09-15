@@ -39,7 +39,7 @@ def _root():
     return RunBegin(
         run="run_root",
         control=ControlRef.for_run("run_root", 0),
-        runnable="agent$agic:chat",
+        runnable="agic:chat",
         started_at=START,
     )
 

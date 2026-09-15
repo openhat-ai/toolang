@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from toolang.lang.ast import FlowStmt, RepeatStmt
 from toolang.lang.description import statement_description
+from toolang.lang.types import is_generated_ref
 
 from .formatting import one_line
 
@@ -29,4 +30,4 @@ def until_header(statement: RepeatStmt) -> str:
 
 
 def _generated(value: str) -> bool:
-    return not value or value.startswith("<agic:")
+    return not value or is_generated_ref(value)

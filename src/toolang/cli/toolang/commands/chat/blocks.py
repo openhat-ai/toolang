@@ -40,6 +40,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 )
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.cli.common.human_values import parts_response_text, response_renderable
+from toolang.lang.types import display_runnable_ref
 
 from .base import ChatExecutorMetadata, friendly_error
 from .rendering import (
@@ -173,7 +174,11 @@ def _control_bar_lines(
 def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
     """Fit snapshot fields, shortening the runnable before the model."""
 
-    fields = [runnable.rpartition("$")[2], model, *([reasoning] if reasoning else [])]
+    fields = [
+        display_runnable_ref(runnable.rsplit("::", 1)[-1], surface="chat"),
+        model,
+        *([reasoning] if reasoning else []),
+    ]
     widths = [display_width(value) for value in fields]
     overflow = max(0, sum(widths) + 3 * (len(fields) - 1) - width)
     for index, size in enumerate(widths):

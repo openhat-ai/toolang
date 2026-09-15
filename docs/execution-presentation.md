@@ -232,8 +232,9 @@ without truncation. Script and Chat use the same rendering.
 A Flow Step uses its non-empty authored doc comment as the header. Without a
 doc comment, the presenter generates a short sentence from the typed AST. Named
 and inline runnables use the same templates and preserve their names exactly,
-including generated names such as `<agic:32>` (the inline declaration's source
-line). For example, an inline map displays `Map each item with <agic:32>`.
+including the inline adhoc identity `agic:<adhoc:32>` (the inline
+declaration's source line). For example, an inline map displays
+`Map each item with agic:<adhoc:32>`.
 
 | Statement | Automatic description |
 | --- | --- |

@@ -18,6 +18,7 @@ from toolang.base.types.model import ModelTarget
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import AgicDecl
+from toolang.lang.types import is_generated_ref
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
@@ -109,7 +110,7 @@ def build_agic_frame(
     routes = resolve_agic_routes(run.state, agic)
     runtime_tools = (
         {}
-        if name.startswith("<agic:")
+        if is_generated_ref(name)
         else {
             name: tool
             for name, tool in run.setup.tools.runtime.items()

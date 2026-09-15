@@ -17,6 +17,7 @@ from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
 from toolang.cli.common.execution_progress.formatting import truncate
+from toolang.lang.types import display_runnable_ref
 from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
     TerminalSurfaces,
@@ -63,6 +64,12 @@ def _chat_ui_palette(
         "status.error": "fg:ansired",
         "dim": "dim",
     }
+
+
+def _chat_runnable_label(reference: str) -> str:
+    """Return one Chat status label without module or source line."""
+
+    return display_runnable_ref(reference.rsplit("::", 1)[-1], surface="chat")
 
 
 def _format_elapsed_seconds(seconds: int) -> str:
@@ -711,12 +718,12 @@ class StatusBar:
                 ("class:status.error", message),
                 ("class:status", padding),
             ]
-        displayed_runnable = (
+        displayed_runnable = _chat_runnable_label(
             self.active_runnable_label or self.runnable_label
             if self.running
             else self.runnable_label
-        ).rpartition("$")[2]
-        default_runnable = self.runnable_label.rpartition("$")[2]
+        )
+        default_runnable = _chat_runnable_label(self.runnable_label)
         default_runnable = (
             default_runnable
             if self.running and displayed_runnable != default_runnable

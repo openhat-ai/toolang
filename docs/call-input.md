@@ -191,8 +191,8 @@ not prompt calls nested inside another prompt call.
 ## Script Runnable Calls
 
 Use `too run FILE [RUNNABLE]` for a local `.too` file; `too FILE [RUNNABLE]`
-remains a shorthand. Omitting the selector executes authored `main`. Without
-`main`, omitting arguments shows file help. Bare words in the selector position
+remains a shorthand. Omitting the selector executes the module's unnamed entry.
+Without an unnamed entry, omitting arguments shows file help. Bare words in the selector position
 are runnable names, so default-entry text uses `--`, `-`, or redirected stdin:
 
 ```sh

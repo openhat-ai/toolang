@@ -28,6 +28,9 @@ Boolean: TypeAlias = bool
 
 _VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
 _RUNNABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+_UNNAMED_RUNNABLE_RE = re.compile(
+    r"^<(?P<role>entry|adhoc)(?::(?P<line>[1-9][0-9]*))?>$"
+)
 _PART_TYPES = (
     TextPart,
     ImagePart,
@@ -67,22 +70,117 @@ def validate_struct_type(type_name: str) -> str:
     return type_name
 
 
+@dataclass(frozen=True, slots=True)
+class RunnableRef:
+    """One parsed runnable reference, including optional module and kind."""
+
+    name: str
+    kind: str | None = None
+    module: str | None = None
+
+    @property
+    def role(self) -> str | None:
+        match = _UNNAMED_RUNNABLE_RE.fullmatch(self.name)
+        return None if match is None else match.group("role")
+
+    @property
+    def line(self) -> int | None:
+        match = _UNNAMED_RUNNABLE_RE.fullmatch(self.name)
+        if match is None or match.group("line") is None:
+            return None
+        return int(match.group("line"))
+
+
+def parse_runnable_ref_parts(value: str) -> RunnableRef:
+    """Parse one runnable reference: optional module, optional kind, name."""
+
+    if not isinstance(value, str) or value != value.strip() or not value:
+        raise ValueError(f"invalid public runnable ref: {value!r}")
+    module: str | None = None
+    runnable = value
+    if "::" in value:
+        module, runnable = value.rsplit("::", 1)
+        if not module or not runnable:
+            raise ValueError(f"invalid public runnable ref: {value!r}")
+        parts = module.split("::")
+        if any(not _RUNNABLE_NAME_RE.fullmatch(part) for part in parts):
+            raise ValueError(f"invalid public runnable ref: {value!r}")
+    kind: str | None = None
+    name = runnable
+    if not name.startswith("<") and ":" in name:
+        head, rest = name.split(":", 1)
+        if head in {"agic", "flow"}:
+            kind = head
+            name = rest
+    if _RUNNABLE_NAME_RE.fullmatch(name):
+        return RunnableRef(name=name, kind=kind, module=module)
+    if _UNNAMED_RUNNABLE_RE.fullmatch(name) is None:
+        raise ValueError(f"invalid public runnable ref: {value!r}")
+    return RunnableRef(name=name, kind=kind, module=module)
+
+
 def parse_public_runnable_ref(value: str) -> tuple[str, str | None]:
     """Parse one exact public runnable reference owned by the language."""
 
-    if not isinstance(value, str) or value != value.strip():
-        raise ValueError(f"invalid public runnable ref: {value!r}")
-    kind, separator, name = value.partition(":")
-    if not separator:
-        name = value
-        kind = ""
-    if (
-        (kind and kind not in {"agic", "flow"})
-        or not _RUNNABLE_NAME_RE.fullmatch(name)
-        or ":" in name
-    ):
-        raise ValueError(f"invalid public runnable ref: {value!r}")
-    return name, kind or None
+    parsed = parse_runnable_ref_parts(value)
+    return parsed.name, parsed.kind
+
+
+def display_runnable_ref(value: str, *, surface: str) -> str:
+    """Return a surface-specific unnamed/named runnable label.
+
+    Unparseable labels are returned unchanged so presentation never fails.
+    """
+
+    try:
+        parsed = parse_runnable_ref_parts(value)
+    except ValueError:
+        return value
+    if parsed.role is None:
+        kind = f"{parsed.kind}:" if parsed.kind else ""
+        return f"{kind}{parsed.name}"
+    kind = parsed.kind or "agic"
+    if surface in {"help", "chat"}:
+        return f"{kind}:<{parsed.role}>"
+    if surface == "progress":
+        if parsed.line is None:
+            return f"{kind}:<{parsed.role}>"
+        return f"{kind}:<{parsed.role}:{parsed.line}>"
+    return value
+
+
+def is_unnamed_ref(value: str) -> bool:
+    """Return whether one ref names an unnamed entry or adhoc declaration."""
+
+    try:
+        return parse_runnable_ref_parts(value).role is not None
+    except ValueError:
+        return value.startswith("<")
+
+
+def is_generated_ref(value: str) -> bool:
+    """Return whether one ref is adhoc or a historical generated inline name."""
+
+    return "<adhoc:" in value or value.startswith("<agic:")
+
+
+def is_agic_ref(value: str) -> bool:
+    """Return whether one stored ref names an agic rather than a flow."""
+
+    try:
+        return parse_runnable_ref_parts(value).kind == "agic"
+    except ValueError:
+        return value.startswith("agic:")
+
+
+def unnamed_runnable_name(role: str, line: int) -> str:
+    """Return the lined unnamed lookup key for one declaration."""
+
+    if role not in {"entry", "adhoc"}:
+        raise ValueError(f"invalid unnamed runnable role: {role!r}")
+    if not isinstance(line, int) or isinstance(line, bool) or line < 1:
+        raise ValueError(f"invalid unnamed runnable line: {line!r}")
+    return f"<{role}:{line}>"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,5 +334,12 @@ __all__ = [
     "validate_type",
     "validate_struct_type",
     "parse_public_runnable_ref",
+    "parse_runnable_ref_parts",
+    "RunnableRef",
+    "display_runnable_ref",
+    "is_agic_ref",
+    "is_generated_ref",
+    "is_unnamed_ref",
+    "unnamed_runnable_name",
     "value_type",
 ]

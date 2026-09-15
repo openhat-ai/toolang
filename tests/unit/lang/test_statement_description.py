@@ -31,10 +31,10 @@ def test_automatic_statement_description_is_independent_of_docs(
     doc: str | None,
 ) -> None:
     statement = MapStmt(
-        span=SPAN, runnable="<agic:32>", lanes=2, binding="findings", doc=doc
+        span=SPAN, runnable="agic:<adhoc:32>", lanes=2, binding="findings", doc=doc
     )
     description = (
-        "Map each item with <agic:32>, up to 2 at once, save result to findings"
+        "Map each item with agic:<adhoc:32>, up to 2 at once, save result to findings"
     )
 
     assert statement_description(statement) == description
@@ -61,8 +61,10 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         == "Set value to topic"
     )
     assert (
-        statement_description(RunStmt(span=SPAN, runnable="<agic:12>", binding=None))
-        == "Run <agic:12>, discard result"
+        statement_description(
+            RunStmt(span=SPAN, runnable="agic:<adhoc:12>", binding=None)
+        )
+        == "Run agic:<adhoc:12>, discard result"
     )
     assert (
         statement_description(KeepStmt(span=SPAN, position="first", count=1))
@@ -75,8 +77,10 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         == "Storm into 3 items with review_item independently, up to 2 at once"
     )
     assert (
-        statement_description(RepeatStmt(span=SPAN, count=3, runnable="<agic:20>"))
-        == "Repeat up to 3 times, until <agic:20> is true"
+        statement_description(
+            RepeatStmt(span=SPAN, count=3, runnable="agic:<adhoc:20>")
+        )
+        == "Repeat up to 3 times, until agic:<adhoc:20> is true"
     )
 
 
@@ -97,8 +101,8 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Ask agent researcher to run search_web",
         ),
         (
-            SeekStmt(span=SPAN, name="researcher", runnable="<agic:4>"),
-            "Ask agent researcher to run <agic:4>",
+            SeekStmt(span=SPAN, name="researcher", runnable="agic:<adhoc:4>"),
+            "Ask agent researcher to run agic:<adhoc:4>",
         ),
         (
             AskStmt(span=SPAN, name=None, request="question"),
@@ -113,24 +117,24 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Scatter into 3 items with expand_queries",
         ),
         (
-            ScatterStmt(span=SPAN, count=1, runnable="<agic:5>"),
-            "Scatter into 1 item with <agic:5>",
+            ScatterStmt(span=SPAN, count=1, runnable="agic:<adhoc:5>"),
+            "Scatter into 1 item with agic:<adhoc:5>",
         ),
         (
             GatherStmt(span=SPAN, runnable="synthesize"),
             "Gather all items into one with synthesize",
         ),
         (
-            GatherStmt(span=SPAN, runnable="<agic:6>"),
-            "Gather all items into one with <agic:6>",
+            GatherStmt(span=SPAN, runnable="agic:<adhoc:6>"),
+            "Gather all items into one with agic:<adhoc:6>",
         ),
         (
             SettleStmt(span=SPAN, runnable="merge_pair"),
             "Settle all items into one with merge_pair sequentially",
         ),
         (
-            MapStmt(span=SPAN, runnable="<agic:7>"),
-            "Map each item with <agic:7>",
+            MapStmt(span=SPAN, runnable="agic:<adhoc:7>"),
+            "Map each item with agic:<adhoc:7>",
         ),
         (
             MapStmt(span=SPAN, runnable="search_web", lanes=1),
@@ -145,12 +149,12 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Drop the last 2 items",
         ),
         (
-            DropStmt(span=SPAN, runnable="<agic:8>"),
-            "Drop items where <agic:8> is true",
+            DropStmt(span=SPAN, runnable="agic:<adhoc:8>"),
+            "Drop items where agic:<adhoc:8> is true",
         ),
         (
-            SortStmt(span=SPAN, runnable="<agic:9>", order="ascending"),
-            "Sort items by <agic:9> in ascending order",
+            SortStmt(span=SPAN, runnable="agic:<adhoc:9>", order="ascending"),
+            "Sort items by agic:<adhoc:9> in ascending order",
         ),
         (
             RepeatStmt(span=SPAN, count=2),
@@ -184,37 +188,40 @@ def test_statement_description_covers_every_statement(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("Review the findings.", "Run <agic:2>"),
-        ("run: Review the findings.", "Run <agic:2>"),
-        ("seek researcher: Find evidence.", "Ask agent researcher to run <agic:2>"),
+        ("Review the findings.", "Run agic:<adhoc:2>"),
+        ("run: Review the findings.", "Run agic:<adhoc:2>"),
+        (
+            "seek researcher: Find evidence.",
+            "Ask agent researcher to run agic:<adhoc:2>",
+        ),
         (
             "scatter 3 using: Expand the query.",
-            "Scatter into 3 items with <agic:2>",
+            "Scatter into 3 items with agic:<adhoc:2>",
         ),
         (
             "storm 3 in 2 lanes using: Review the findings.",
-            "Storm into 3 items with <agic:2> independently, up to 2 at once",
+            "Storm into 3 items with agic:<adhoc:2> independently, up to 2 at once",
         ),
         (
             "gather using: Combine the findings.",
-            "Gather all items into one with <agic:2>",
+            "Gather all items into one with agic:<adhoc:2>",
         ),
         (
             "settle using: Merge the next finding.",
-            "Settle all items into one with <agic:2> sequentially",
+            "Settle all items into one with agic:<adhoc:2> sequentially",
         ),
         (
             "let results = map in 2 lanes using:\n    Search for evidence.",
-            "Map each item with <agic:2>, up to 2 at once, save result to results",
+            "Map each item with agic:<adhoc:2>, up to 2 at once, save result to results",
         ),
-        ("keep if: Check relevance.", "Keep items where <agic:2> is true"),
+        ("keep if: Check relevance.", "Keep items where agic:<adhoc:2> is true"),
         (
             "let drop if: Check relevance.",
-            "Drop items where <agic:2> is true, discard result",
+            "Drop items where agic:<adhoc:2> is true, discard result",
         ),
         (
             "sort descending by: Score relevance.",
-            "Sort items by <agic:2> in descending order",
+            "Sort items by agic:<adhoc:2> in descending order",
         ),
     ],
 )

@@ -11,7 +11,7 @@ from toolang.common.errors import ToolangError
 from . import ast
 from .errors import ToolangValidationError
 from .runnable_query import RUNNABLE_SCHEMA
-from .types import validate_struct_type
+from .types import parse_runnable_ref_parts, validate_struct_type
 
 _CAP_SOURCE_FIELDS: dict[ast.CapKind, frozenset[str]] = {
     "psyche": frozenset(),
@@ -42,6 +42,7 @@ def _validate(program: ast.Program) -> None:
     contexts = _namespace(program.contexts, label="context")
     instructs = _namespace(program.instructs, label="instruct")
     runnables = _runnable_namespace(program)
+    runnables.update(_adhoc_runnables(program))
 
     for agic in program.agics:
         owner = f"Agic {agic.name!r}" if agic.name is not None else "Unnamed agic"
@@ -439,7 +440,7 @@ def _validate_stmts(
     for stmt in stmts:
         _validate_binding(stmt)
         if isinstance(stmt, ast.SeekStmt):
-            if stmt.runnable.startswith("<"):
+            if _adhoc_ref(stmt.runnable):
                 _require_runnable(stmt.runnable, runnables, stmt=stmt)
             continue
         if isinstance(stmt, ast.AskStmt | ast.LetStmt):
@@ -526,6 +527,23 @@ def _stmt_runnable(stmt: ast.FlowStmt) -> str:
     ):
         return stmt.runnable
     raise RuntimeError(f"Statement {stmt.kind!r} has no runnable field.")
+
+
+def _adhoc_ref(name: str) -> bool:
+    try:
+        parsed = parse_runnable_ref_parts(name)
+    except ValueError:
+        return name.startswith("<")
+    return parsed.role == "adhoc"
+
+
+def _adhoc_runnables(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
+    lines = program.adhoc_lines
+    return {
+        f"agic:<adhoc:{agic.span.line}>": agic
+        for agic in program.agics
+        if agic.name is None and agic.span.line in lines
+    }
 
 
 def _require_runnable(

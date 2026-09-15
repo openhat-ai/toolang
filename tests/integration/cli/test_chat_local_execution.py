@@ -402,7 +402,7 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself(steer: bool) -> N
     assert receipts == ([receipt] if steer else [])
 
 
-@pytest.mark.parametrize("entry", ["chat", "main"])
+@pytest.mark.parametrize("entry", ["chat", "<entry>"])
 def test_local_chat_uses_run_client_and_canonical_tracer(
     tmp_path: Path,
     monkeypatch: Any,
@@ -416,7 +416,7 @@ agic chat(_: Part[]) -> Part[]:
   context: none
   instruct: none
   user: {{_}}
-""".replace("agic chat", "agic" if entry == "main" else "agic chat"),
+""".replace("agic chat", "agic" if entry == "<entry>" else "agic chat"),
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
     )
     harness.store.close()
@@ -484,11 +484,17 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_selector="host",
             sandbox_detail="macOS 27.0 arm64",
         )
+        setting = session.initial_setting().runnable or ""
+        if entry == "chat":
+            assert setting == "agic:chat"
+            name = "chat"
+        else:
+            assert setting.startswith("agic:<entry:")
+            name = setting.removeprefix("agic:")
         assert session.list_runnables("agic") == {
-            "default": entry,
-            "items": [{"name": entry}, {"name": "default"}],
+            "default": name,
+            "items": [{"name": name}, {"name": "default"}],
         }
-        assert session.initial_setting().runnable == f"agic:{entry}"
         assert session.list_prompts(None) == {"items": []}
         thread_id = session.create_thread()
         request = session.build_request(

@@ -37,6 +37,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.runnables import parse_runnable_ref
+from toolang.lang.types import display_runnable_ref
 from toolang.common.errors import ToolangError
 from toolang.common.version import displayed_toolang_version
 from toolang.execution.types import SessionSetting
@@ -134,7 +135,8 @@ def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> 
                     matches.add(as_text(values.get("kind")))
             if len(matches) == 1:
                 kind = matches.pop()
-    return f"{kind}:{name}" if kind in {"agic", "flow"} else reference
+    labeled = f"{kind}:{name}" if kind in {"agic", "flow"} else reference
+    return display_runnable_ref(labeled, surface="chat")
 
 
 class ChatTuiAppContext:

@@ -675,7 +675,6 @@ class _Lowerer:
         params: tuple[ast.Parameter, ...] = (),
         evaluator: bool = False,
     ) -> str:
-        name = self._generated_name("agic", node)
         params = self._captured_params(body, params=params, span=self._span(node))
         directives = (
             (
@@ -697,7 +696,7 @@ class _Lowerer:
         )
         self.agics.append(
             ast.AgicDecl(
-                name=name,
+                name=None,
                 input=self._default_input(node),
                 params=params,
                 output=output or "Part[]",
@@ -708,7 +707,7 @@ class _Lowerer:
                 span=self._span(node),
             )
         )
-        return name
+        return f"agic:<adhoc:{self._line(node)}>"
 
     def _captured_params(
         self,

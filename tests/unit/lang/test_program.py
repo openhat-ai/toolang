@@ -10,7 +10,13 @@ from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang.errors import ToolangValidationError
 from toolang.lang import Program, to_data
-from toolang.lang.ast import LetStmt, RepeatStmt, ScatterStmt, SettleStmt
+from toolang.lang.ast import (
+    LetStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
+    SettleStmt,
+)
 from toolang.base.types.message import TextPart
 from toolang.lang.input import resolve_input_parts, resolve_input_parts_with_provenance
 from toolang.state.source import read_authored_source
@@ -419,7 +425,11 @@ flow summarize(_: Text[]) -> Text:
 
     statement = program.flows[0].stmts[0]
     assert isinstance(statement, SettleStmt)
-    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    generated = next(
+        agic
+        for agic in program.agics
+        if agic.span.line == statement.span.line and agic.name is None
+    )
     assert generated.input is not None
     assert generated.input.type_name == "Part[]"
     assert [(param.name, param.type_name) for param in generated.params] == [
@@ -446,7 +456,11 @@ flow expand(_: Text, topic: Text) -> Text[]:
 
     statement = program.flows[0].stmts[2]
     assert isinstance(statement, ScatterStmt)
-    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    generated = next(
+        agic
+        for agic in program.agics
+        if agic.span.line == statement.span.line and agic.name is None
+    )
     assert [(param.name, param.type_name) for param in generated.params] == [
         ("source", "Part[]"),
         ("topic", "Text"),
@@ -461,7 +475,11 @@ def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None
 
     statement = program.flows[0].stmts[0]
     assert isinstance(statement, ScatterStmt)
-    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    generated = next(
+        agic
+        for agic in program.agics
+        if agic.span.line == statement.span.line and agic.name is None
+    )
     assert generated.output == "Part[][]"
 
 
@@ -480,11 +498,7 @@ flow evaluate:
 """
     )
 
-    generated = [
-        agic
-        for agic in program.agics
-        if agic.name is not None and agic.name.startswith("<agic:")
-    ]
+    generated = [agic for agic in program.agics if agic.name is None]
 
     assert sorted(agic.output for agic in generated if agic.output) == [
         "Boolean",
@@ -934,3 +948,65 @@ def _write_program(tmp_path: Path, body_text: str) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+def test_parse_runnable_ref_parts_accepts_module_kind_and_unnamed() -> None:
+    from toolang.lang.types import parse_runnable_ref_parts
+
+    named = parse_runnable_ref_parts("agic:chat")
+    assert (named.module, named.kind, named.name, named.role, named.line) == (
+        None,
+        "agic",
+        "chat",
+        None,
+        None,
+    )
+    entry = parse_runnable_ref_parts("agent::agic:<entry:3>")
+    assert (entry.module, entry.kind, entry.name, entry.role, entry.line) == (
+        "agent",
+        "agic",
+        "<entry:3>",
+        "entry",
+        3,
+    )
+    adhoc = parse_runnable_ref_parts("flows::research::agic:<adhoc:5>")
+    assert (adhoc.module, adhoc.kind, adhoc.role, adhoc.line) == (
+        "flows::research",
+        "agic",
+        "adhoc",
+        5,
+    )
+    selector = parse_runnable_ref_parts("agic:<entry>")
+    assert selector.role == "entry" and selector.line is None
+    with pytest.raises(ValueError):
+        parse_runnable_ref_parts("agent:research")
+
+
+def test_inline_agic_stays_unnamed_and_uses_adhoc_ref() -> None:
+    from toolang.lang import Program
+
+    program = Program.from_source("flow work:\n  run:\n    Inline body.\n")
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, RunStmt)
+    assert statement.runnable.startswith("agic:<adhoc:")
+    agic = program.find_agic(statement.runnable)
+    assert agic is not None
+    assert agic.name is None
+    assert f"agic:<adhoc:{agic.span.line}>" == statement.runnable
+
+
+def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
+    from toolang.lang.types import display_runnable_ref
+
+    assert (
+        display_runnable_ref("agent::agic:<entry:3>", surface="help") == "agic:<entry>"
+    )
+    assert (
+        display_runnable_ref("agent::agic:<adhoc:5>", surface="chat") == "agic:<adhoc>"
+    )
+    assert (
+        display_runnable_ref("flows::research::agic:<adhoc:5>", surface="progress")
+        == "agic:<adhoc:5>"
+    )
+    assert display_runnable_ref("agic:chat", surface="progress") == "agic:chat"
+    assert display_runnable_ref("agic:研究", surface="chat") == "agic:研究"

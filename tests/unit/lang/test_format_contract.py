@@ -12,8 +12,15 @@ def _semantics(source: str) -> object:
         item.name: f"<{kind}:{index}>"
         for kind in ("agics", "contexts", "instructs")
         for index, item in enumerate(getattr(program, kind))
-        if item.name.startswith("<")
+        if item.name is not None and item.name.startswith("<")
     }
+    unnamed = {
+        f"agic:<adhoc:{item.span.line}>": f"<adhoc:{index}>"
+        for index, item in enumerate(program.agics)
+        if item.name is None
+    }
+    names.update(unnamed)
+    names.update({key.removeprefix("agic:"): value for key, value in unnamed.items()})
 
     def normalize(value: object) -> object:
         if isinstance(value, dict):

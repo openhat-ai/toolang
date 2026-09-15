@@ -43,6 +43,7 @@ from ..lang.ast import (
     Span,
     to_data,
 )
+from toolang.lang.types import unnamed_runnable_name
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
@@ -365,8 +366,25 @@ def program_runnable_index(
     if include_default and not any(item.name == "default" for item in declarations):
         declarations = (*program.agics, _RUNTIME_DEFAULT_AGIC, *program.flows)
     result: dict[str, AgicDecl | FlowDecl] = {}
+    adhoc_lines = program.adhoc_lines
+    unnamed_entry: AgicDecl | FlowDecl | None = None
     for declaration in declarations:
-        name = declaration.name if declaration.name is not None else "main"
+        if declaration is _RUNTIME_DEFAULT_AGIC:
+            name = "default"
+        elif declaration.name is not None:
+            if declaration.name.startswith("<"):
+                continue
+            name = declaration.name
+        else:
+            if (
+                isinstance(declaration, AgicDecl)
+                and declaration.span.line in adhoc_lines
+            ):
+                continue
+            if unnamed_entry is not None:
+                raise ValueError("Runnable name is not unique: entry")
+            unnamed_entry = declaration
+            name = unnamed_runnable_name("entry", declaration.span.line)
         if name in result:
             raise ValueError(f"Runnable name is not unique: {name}")
         result[name] = declaration
@@ -464,7 +482,7 @@ def program_term_data(
 
 
 def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
-    return f"{module}${kind}:{local_name}"
+    return f"{module}::{kind}:{local_name}"
 
 
 def state_program(
@@ -647,6 +665,21 @@ class AgentState:
     ) -> AgicDecl | FlowDecl | None:
         """Return one Program-local runnable declaration."""
 
+        if local_name in {"<entry>", "entry"}:
+            program = self.modules.get(module)
+            if program is None:
+                return None
+            adhoc = program.adhoc_lines
+            matches = tuple(
+                entry
+                for entry in (*program.agics, *program.flows)
+                if entry.name is None
+                and not (isinstance(entry, AgicDecl) and entry.span.line in adhoc)
+                and (kind is None or entry.kind == kind)
+            )
+            if len(matches) != 1:
+                return None
+            return matches[0]
         matches = tuple(
             entry
             for candidate_kind in ((kind,) if kind is not None else ("agic", "flow"))
@@ -889,7 +922,7 @@ def flow_module_name(authored_path: str) -> str:
         raise ValueError(f"Flow module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
         raise ValueError(f"Flow module filename is reserved on Windows: {stem!r}")
-    return f"_flow_{stem}"
+    return f"flows::{stem}"
 
 
 def effective_caps(

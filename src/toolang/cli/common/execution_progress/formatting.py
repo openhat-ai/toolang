@@ -13,7 +13,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.ast import FlowStmt
-from toolang.lang.types import Array
+from toolang.lang.types import Array, display_runnable_ref
 from wcwidth import wcwidth, wcswidth
 
 
@@ -109,6 +109,7 @@ def run_label(given: StepGiven, *, fallback: str = "runnable") -> str:
     if not isinstance(value, str):
         return fallback
     safe = "".join(character if character.isprintable() else " " for character in value)
+    safe = display_runnable_ref(safe, surface="progress")
     return one_line(safe)[:240] or fallback
 
 

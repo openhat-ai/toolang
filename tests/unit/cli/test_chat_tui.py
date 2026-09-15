@@ -3057,7 +3057,7 @@ def test_chat_model_label_preserves_explicit_reasoning_values(
     assert slashes.chat_model_label({"items": []}, setting) == expected
 
 
-@pytest.mark.parametrize("module", ["", "agent$"])
+@pytest.mark.parametrize("module", ["", "agent::"])
 @pytest.mark.parametrize("runnable", ["agic:chat", "agic:main", "flow:main"])
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
     monkeypatch: Any,
@@ -3111,7 +3111,7 @@ def test_chat_status_bar_shows_running_and_elapsed_time_without_a_marker() -> No
     assert status._render() == idle
 
 
-@pytest.mark.parametrize("module", ["", "agent$"])
+@pytest.mark.parametrize("module", ["", "agent::"])
 def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     monkeypatch: Any,
     module: str,
@@ -3138,8 +3138,8 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     ("default", "active"),
     [
         ("agic:chat", "agic:chat"),
-        ("agent$agic:chat", "agent$agic:chat"),
-        ("agic:chat", "agent$agic:chat"),
+        ("agic:chat", "agic:chat"),
+        ("agic:chat", "agic:chat"),
     ],
 )
 def test_chat_status_bar_omits_the_matching_default_runnable(
@@ -3161,10 +3161,10 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar(
-        "agent$flow:a_very_long_default_runnable",
+        "flow:a_very_long_default_runnable",
         "openai/gpt-5",
     )
-    status.set_active_runnable("agent$agic:a_very_long_active_runnable")
+    status.set_active_runnable("agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(18)
 
@@ -3201,10 +3201,10 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
         staticmethod(lambda: terminal_width),
     )
     status = widgets.StatusBar(
-        "agent$flow:a_very_long_default_runnable",
+        "flow:a_very_long_default_runnable",
         "openai/a-very-long-model · high",
     )
-    status.set_active_runnable("agent$agic:a_very_long_active_runnable")
+    status.set_active_runnable("agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(3661)
 
@@ -3302,7 +3302,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
         RunBegin(
             run="run_compact",
             control=ControlRef.for_run("run_compact", 0),
-            runnable="agent$agic:chat",
+            runnable="agic:chat",
             started_at=now[0],
         ),
         app.app_context,
@@ -5795,7 +5795,7 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
         ),
     ],
 )
-@pytest.mark.parametrize("module", ["", "agent$"])
+@pytest.mark.parametrize("module", ["", "agent::"])
 def test_chat_root_context_uses_request_and_authoritative_runnable(
     model: ModelRequest | None,
     model_label: str,
@@ -5835,7 +5835,7 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         thread_id="term_1",
         request_id="one",
         runnable=RunnableRequest(
-            "agent$agic:研究研究研究研究研究", CallInput({"_": "hello"})
+            "agic:研究研究研究研究研究", CallInput({"_": "hello"})
         ),
         model=ModelRequest(
             "provider/a-very-long-model",
@@ -6170,3 +6170,16 @@ def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
     assert len(body) == 2
     assert all(line.startswith("  ") and line.endswith("  ") for line in body)
     assert all(get_cwidth(line) == 20 for line in body)
+
+
+def test_chat_status_and_run_context_use_unlined_entry_labels() -> None:
+    from toolang.cli.toolang.commands.chat.blocks import _run_context
+    from toolang.cli.toolang.commands.chat.widgets import _chat_runnable_label
+
+    assert _chat_runnable_label("agent::agic:<entry:3>") == "agic:<entry>"
+    assert _chat_runnable_label("agent::agic:<adhoc:5>") == "agic:<adhoc>"
+    assert _chat_runnable_label("agic:chat") == "agic:chat"
+    assert (
+        _run_context("agent::agic:<entry:3>", "openai/gpt-5", "", 200)
+        == "agic:<entry> · openai/gpt-5"
+    )

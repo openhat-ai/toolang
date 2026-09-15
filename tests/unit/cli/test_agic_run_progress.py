@@ -140,7 +140,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
             started_at="2026-01-01T00:00:00Z",
         )
     )
@@ -162,7 +162,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$agic:summarize",
+            runnable="agic:summarize",
             parent=dynamic,
             started_at="2026-01-01T00:00:00.100Z",
         )
@@ -227,7 +227,7 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
         )
     )
     starting = projector.handle(
@@ -272,7 +272,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
@@ -331,7 +331,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     starting = projector.handle(
@@ -361,7 +361,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     step = StepRef.parse("run_root.0")
@@ -411,7 +411,7 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     assert _execute_step(projector).committed == ()
@@ -437,7 +437,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$flow:parent",
+            runnable="flow:parent",
         )
     )
     projector.handle(
@@ -452,7 +452,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             run="run_worker",
             parent=par,
             control=ControlRef.for_run("run_worker", 0),
-            runnable="agent$agic:worker",
+            runnable="agic:worker",
             occurrence=Occurrence(
                 item=OccurrencePosition(index=0, count=1),
                 lane=OccurrencePosition(index=0, count=1),
@@ -524,7 +524,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
@@ -565,7 +565,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:caller",
+            runnable="agic:caller",
         )
     )
     projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
@@ -699,7 +699,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$flow:publish",
+            runnable="flow:publish",
         )
     )
 
@@ -715,7 +715,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$agic:summarize",
+            runnable="agic:summarize",
             parent=step,
         )
     )
@@ -737,7 +737,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
         )
     )
     projector.handle(
@@ -751,7 +751,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
         RunBegin(
             run="run_publish",
             control=ControlRef.for_run("run_publish", 0),
-            runnable="agent$flow:publish",
+            runnable="flow:publish",
             parent=dynamic,
         )
     )
@@ -767,7 +767,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
         RunBegin(
             run="run_validate",
             control=ControlRef.for_run("run_validate", 0),
-            runnable="agent$agic:validate",
+            runnable="agic:validate",
             parent=authored,
         )
     )
@@ -797,7 +797,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
         )
     )
     projector.handle(StepBegin(step=outer, kind="run", given=_run_stmt("agic:child")))
@@ -805,7 +805,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$agic:child",
+            runnable="agic:child",
             parent=outer,
         )
     )
@@ -814,7 +814,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
         RunBegin(
             run="run_leaf",
             control=ControlRef.for_run("run_leaf", 0),
-            runnable="agent$agic:leaf",
+            runnable="agic:leaf",
             parent=inner,
         )
     )
@@ -846,7 +846,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$flow:batch",
+            runnable="flow:batch",
         )
     )
     projector.handle(
@@ -860,7 +860,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$agic:worker",
+            runnable="agic:worker",
             parent=parallel,
             occurrence=Occurrence(
                 item=OccurrencePosition(index=0, count=1),
@@ -882,7 +882,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
         RunBegin(
             run="run_leaf",
             control=ControlRef.for_run("run_leaf", 0),
-            runnable="agent$agic:leaf",
+            runnable="agic:leaf",
             parent=dynamic,
         )
     )
@@ -954,7 +954,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
         )
     )
     projector.handle(StepBegin(step=model, kind="model", given=_model_given()))
@@ -985,7 +985,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$agic:child",
+            runnable="agic:child",
             parent=dynamic,
         )
     )
@@ -1032,7 +1032,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         RunBegin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
-            runnable="agent$agic:parent",
+            runnable="agic:parent",
         )
     )
 
@@ -1047,7 +1047,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         RunBegin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="agent$flow:missing",
+            runnable="flow:missing",
             parent=path,
         )
     )

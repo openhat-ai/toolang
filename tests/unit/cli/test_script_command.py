@@ -1225,11 +1225,11 @@ agic review:
 
     assert _flow_outline_lines(capsys.readouterr().out) == [
         "[0] Refine the result.",
-        "    Repeat up to 3 times, until <agic:9> is true",
+        "    Repeat up to 3 times, until agic:<adhoc:9> is true",
         "  [0] Revise the draft.",
         "      Run review",
-        "  [1] Repeat until <agic:8> is true",
-        "    [0] Run <agic:7>",
+        "  [1] Repeat until agic:<adhoc:8> is true",
+        "    [0] Run agic:<adhoc:7>",
         "[1] Run pipeline",
         "[2] Repeat 2 times",
         "  [0] Run review",
@@ -1407,7 +1407,7 @@ flow pipeline:
     assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
     assert f"Execute a runnable from {filename}" in stdout
-    assert "Runnable name [default: main]" in " ".join(stdout.split())
+    assert "default: <entry>" in " ".join(stdout.split())
     assert "Omit RUNNABLE" not in stdout
     assert (
         stdout.index("Arguments:")
@@ -1429,8 +1429,8 @@ flow pipeline:
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "agic:main Agic main" in descriptions
-    assert "<agic:" not in stdout
+    assert "agic:<entry>" in descriptions
+    assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
 

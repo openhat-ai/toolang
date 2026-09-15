@@ -361,7 +361,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
     control = store.accept_execute_control(
         run_id="run_a",
         state="0" * 64,
-        runnable="agent$agic:target",
+        runnable="agic:target",
         triggered_by=trigger.ref,
         input=CallInput(
             {

@@ -295,7 +295,7 @@ flow relay(_: Part[]) -> Part[]:
             assert root_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert isinstance(root_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "agent$agic:echo"
+            assert child_run_control.payload.runnable == "agic:echo"
             assert child_run_control.payload.sandbox is None
             assert root_run_control.payload.sandbox == "host"
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
@@ -1102,7 +1102,7 @@ flow research(brief: Brief) -> Text:
             accepted = harness.store.get_run_control(run_id=root.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "_flow_research$flow:research"
+            assert accepted.payload.runnable == "flow:research"
             child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -1111,7 +1111,7 @@ flow research(brief: Brief) -> Text:
             child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert child_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "_flow_research$agic:echo"
+            assert child_run_control.payload.runnable == "agic:echo"
             assert "Module-Local Input" in message_text(
                 without_route_snapshots(harness.adapter.invocations[0].call.messages)[
                     0

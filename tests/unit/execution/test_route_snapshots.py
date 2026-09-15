@@ -321,22 +321,29 @@ def test_main_fallback_preserves_the_selected_kind(
 
     state = _state(f"{kind} {authored_name}:\n  pass\n")
     program = state if as_state else state.modules["agent"]
-    expected = ("main", None) if kind == "agic" else (None, "main")
-    assert runnable_binding_defaults(program, None, fallback_agic=preferred) == expected
+    bound = runnable_binding_defaults(program, None, fallback_agic=preferred)
+    if authored_name:
+        expected = ("default", None)
+        assert bound == expected
+    else:
+        name = bound[0] or bound[1]
+        assert name is not None and name.startswith("<entry:")
+        assert bound == ((name, None) if kind == "agic" else (None, name))
 
     state = _state(f"{kind} {authored_name}:\n  pass\n\n{kind} {preferred}:\n  pass\n")
     program = state if as_state else state.modules["agent"]
     expected = (preferred, None) if kind == "agic" else (None, preferred)
     assert runnable_binding_defaults(program, None, fallback_agic=preferred) == expected
-    explicit = ("main", None) if kind == "agic" else (None, "main")
-    assert (
-        runnable_binding_defaults(program, f"{kind}:main", fallback_agic=preferred)
-        == explicit
-    )
+    if authored_name:
+        explicit = ("main", None) if kind == "agic" else (None, "main")
+        assert (
+            runnable_binding_defaults(program, f"{kind}:main", fallback_agic=preferred)
+            == explicit
+        )
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
-@pytest.mark.parametrize("authored_name", ["main", ""])
+@pytest.mark.parametrize("authored_name", ["main"])
 def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
     kind, authored_name, capsys
 ):
@@ -422,15 +429,16 @@ def test_fallback_keeps_an_exported_flows_public_name(binding):
 
     state = _state("agic:\n  General request.\n")
     flow = Program.from_source("flow:\n  pass\n")
+    modules = {"agent": state.modules["agent"], "flows::chat": flow}
     state = replace(
         state,
-        modules={"_flow_chat": flow, **state.modules},
-        module_sources={**state.module_sources, "_flow_chat": "flows/chat.too"},
+        modules=modules,
+        module_sources={"agent": "agent.too", "flows::chat": "flows/chat.too"},
         module_digests={
-            **state.module_digests,
-            "_flow_chat": sha256(b"chat").hexdigest(),
+            "agent": state.module_digests["agent"],
+            "flows::chat": sha256(b"chat").hexdigest(),
         },
-        module_caps={**state.module_caps, "_flow_chat": ()},
+        module_caps={"agent": (), "flows::chat": ()},
     )
     assert runnable_binding_defaults(state, binding, fallback_agic="chat") == (
         None,

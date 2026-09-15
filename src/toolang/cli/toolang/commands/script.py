@@ -39,6 +39,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.description import statement_description
 from toolang.lang.input import CallInput, parse_input
+from toolang.lang.types import display_runnable_ref
 
 from ...common.context import load_runtime_environ
 from ...common.output import echo_error
@@ -128,13 +129,13 @@ class _ScriptHelpFormatter(UIHelpFormatter):
 
     def write_commands(self, ctx: Context) -> None:
         if isinstance(ctx.command, _ScriptGroup):
-            has_main = "main" in ctx.command.commands
+            has_main = _entry_command_name(ctx.command) is not None
             argument = TyperArgument(
                 param_decls=["runnable"],
                 metavar="RUNNABLE",
                 help="Runnable name",
                 required=not has_main,
-                default="main" if has_main else None,
+                default=_entry_command_name(ctx.command) if has_main else None,
                 show_default=True,
             )
             self._sections(((None, self._argument_row(argument, ctx)),), "Arguments")
@@ -158,11 +159,15 @@ class _ScriptHelpFormatter(UIHelpFormatter):
             command = ctx.command.get_command(ctx, label.plain)
             if isinstance(command, _RunnableCommand):
                 kind = "flow" if command._flow is not None else "agic"
+                shown = display_runnable_ref(
+                    f"{kind}:{label.plain}",
+                    surface="help",
+                )
                 yield (
                     "Runnables",
                     (
                         marker,
-                        Text(f"{kind}:{label.plain}", style="cli.command.name"),
+                        Text(shown, style="cli.command.name"),
                         Text.from_markup(command.short_help or ""),
                     ),
                 )
@@ -200,6 +205,28 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             ctx.exit(2)
 
 
+def _resolve_script_command_name(group: TyperGroup, name: str) -> str | None:
+    if name in group.commands:
+        return name
+    if name in {"<entry>", "entry"} or name.startswith("<entry:"):
+        return _entry_command_name(group)
+    return None
+
+
+def _entry_command_name(commands: object) -> str | None:
+    names = getattr(commands, "commands", commands)
+    if isinstance(names, Mapping):
+        if "<entry>" in names:
+            return "<entry>"
+        matches = [
+            name
+            for name in names
+            if isinstance(name, str) and name.startswith("<entry:")
+        ]
+        return matches[0] if len(matches) == 1 else None
+    return None
+
+
 class _ScriptGroup(OptionalValueGroup, CliGroup):
     """List runnable descriptions before the script's options."""
 
@@ -210,11 +237,12 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         rest = super().parse_args(ctx, args)
         if not ctx._protected_args and not ctx.resilient_parsing:
-            if "main" not in self.commands:
+            entry = _entry_command_name(self)
+            if entry is None:
                 raise UsageError(
-                    "This script has no main entry; select a runnable.", ctx
+                    "This script has no unnamed entry; select a runnable.", ctx
                 )
-            ctx._protected_args = ["main"]
+            ctx._protected_args = [entry]
         return rest
 
     def resolve_command(
@@ -222,26 +250,39 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     ) -> tuple[str | None, Any, list[str]]:
         token = args[0]
         if token in {_LINE_INPUT_MARKER, "-"} or "=" in token or token.startswith(":"):
-            if "main" not in self.commands:
+            entry = _entry_command_name(self)
+            if entry is None:
                 raise UsageError(
-                    "this Script has no main entry; select a runnable", ctx
+                    "this Script has no unnamed entry; select a runnable", ctx
                 )
             if token == _LINE_INPUT_MARKER:
                 args = ["--", *args[1:]]
-            args = ["main", *args]
-        kind, separator, name = args[0].partition(":")
+            args = [entry, *args]
+        token = args[0]
+        kind, separator, name = token.partition(":")
+        requested_kind = None
+        lookup = token
         if separator and kind in {"agic", "flow", "runnable"}:
-            name = name.strip()
-            if not name:
+            lookup = name.strip()
+            if not lookup:
                 raise ValueError(f"{kind} selector cannot be empty")
-            command = self.get_command(ctx, name)
+            requested_kind = None if kind == "runnable" else kind
+        else:
+            lookup = token
+        resolved = _resolve_script_command_name(self, lookup)
+        if resolved is not None:
+            lookup = resolved
+        command = self.get_command(ctx, lookup)
+        if separator and kind in {"agic", "flow", "runnable"}:
             if not isinstance(command, _RunnableCommand):
-                raise ValueError(f"runnable not found: {name}")
-            if kind == "agic" and command._flow is not None:
-                raise ValueError(f"runnable is not an agic: {name}")
-            if kind == "flow" and command._flow is None:
-                raise ValueError(f"runnable is not a flow: {name}")
-            args = [name, *args[1:]]
+                raise ValueError(f"runnable not found: {lookup}")
+            if requested_kind == "agic" and command._flow is not None:
+                raise ValueError(f"runnable is not an agic: {lookup}")
+            if requested_kind == "flow" and command._flow is None:
+                raise ValueError(f"runnable is not a flow: {lookup}")
+            args = [lookup, *args[1:]]
+        elif resolved is not None:
+            args = [lookup, *args[1:]]
         return super().resolve_command(ctx, args)
 
 
@@ -275,8 +316,8 @@ def run_script(
     file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
     runnable: Annotated[
         str | None,
-        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=True),
-    ] = "main",
+        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
+    ] = None,
     arguments: Annotated[
         list[str] | None,
         typer.Argument(metavar="ARGUMENTS", help="Runnable-specific arguments"),
@@ -329,7 +370,8 @@ def dispatch(
             stdin=stdin or sys.stdin,
         )
         result = command.main(
-            args=argv[1:] or ([] if "main" in command.commands else ["--help"]),
+            args=argv[1:]
+            or ([] if _entry_command_name(command) is not None else ["--help"]),
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -355,7 +397,10 @@ def _program_command(
         None, program=program, source_path=source_path, stdin=stdin
     ).params
     runnables = _public_runnables(program)
-    default = runnables.get("main")
+    default = next(
+        (item for name, item in runnables.items() if name.startswith("<entry:")),
+        None,
+    )
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
@@ -365,10 +410,12 @@ def _program_command(
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
     for name, runnable in runnables.items():
+        command_name = "<entry>" if name.startswith("<entry:") else name
         group.add_command(
             _runnable_command(
                 runnable,
-                name=name,
+                name=command_name,
+                identity=name,
                 program=program,
                 source_path=source_path,
                 stdin=stdin,
@@ -381,10 +428,13 @@ def _runnable_command(
     runnable: Runnable | None,
     *,
     name: str = "script",
+    identity: str | None = None,
     program: Program,
     source_path: Path,
     stdin: TextIO,
 ) -> TyperCommand:
+    identity = identity or name
+
     def callback(
         ctx: typer.Context,
         quiet: Annotated[
@@ -447,7 +497,7 @@ def _runnable_command(
         override = _materialize_script_runnable_override(override, program=program)
         return _run(
             source_path,
-            runnable=name,
+            runnable=identity,
             runnable_kind=runnable.kind,
             override=override,
             input=input,
@@ -494,7 +544,7 @@ def _public_runnables(program: Program) -> dict[str, Runnable]:
         for name, runnable in program_runnable_index(
             program, include_default=False
         ).items()
-        if not name.startswith("<")
+        if not name.startswith("<adhoc:") and name != "<adhoc>"
     }
 
 
