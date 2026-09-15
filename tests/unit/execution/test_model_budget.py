@@ -1,4 +1,4 @@
-"""Input reservation and calibration use the exact normalized request."""
+"""Output allowance resolution, input admission, and context clipping."""
 
 from dataclasses import replace
 from types import SimpleNamespace
@@ -13,8 +13,16 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.execution.executor.budget import InputEstimate, message_tokens
 from toolang.execution.executor.frame import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState
-from toolang.execution.executor.steps.model import _boundary
-from toolang.plugin.models.budget import input_budget, output_budget
+from toolang.execution.executor.steps.model import (
+    _boundary,
+    _clip_output,
+    _estimate_binding,
+)
+from toolang.plugin.models.budget import (
+    context_capacity,
+    input_budget,
+    output_budget,
+)
 
 
 INFO = ModelInfo(ref="test/model", provider="test", name="model", model="model")
@@ -23,42 +31,80 @@ TARGET = ModelTarget(
 )
 
 
-def test_input_budget_reserves_output_and_independent_limit() -> None:
+def test_input_budget_reserves_only_an_estimation_margin() -> None:
     info = replace(INFO, context_window=32000, max_output_tokens=8000)
-    assert output_budget(TARGET, info) == 4096
-    assert input_budget(info, 4096) == 26508
-    assert (
-        input_budget(replace(info, metadata={"limit": {"input": 10000}}), 4096) == 8976
+    assert input_budget(info) == 30400
+    assert input_budget(replace(info, metadata={"limit": {"input": 10000}})) == 8976
+    assert input_budget(INFO) is None
+    assert input_budget(replace(INFO, metadata={"limit": {"input": 10000}})) == 8976
+    assert input_budget(replace(INFO, context_window=4000)) == 2976
+
+
+def test_context_capacity_tracks_the_joint_window() -> None:
+    assert context_capacity(INFO) is None
+    assert context_capacity(replace(INFO, context_window=32000)) == 32000
+
+
+def test_output_allowance_defaults_to_the_model_maximum() -> None:
+    assert output_budget(TARGET, INFO) is None
+    assert output_budget(TARGET, replace(INFO, max_output_tokens=100_000)) == 100_000
+
+
+def test_explicit_max_output_is_clamped_by_the_model_limit() -> None:
+    info = replace(INFO, max_output_tokens=8000)
+    assert output_budget(replace(TARGET, max_output=4096), info) == 4096
+    assert output_budget(replace(TARGET, max_output=99_000), info) == 8000
+    assert output_budget(replace(TARGET, max_output=4096), INFO) == 4096
+
+
+def test_output_allowance_must_exceed_an_explicit_reasoning_budget() -> None:
+    info = replace(INFO, max_output_tokens=20_000)
+    target = replace(TARGET, reasoning={"budget_tokens": 8000}, max_output=4096)
+
+    with pytest.raises(ValueError, match="must exceed the reasoning budget"):
+        output_budget(target, info)
+
+    assert output_budget(replace(target, max_output=16_384), info) == 16_384
+    assert output_budget(replace(target, max_output=None), info) == 20_000
+
+
+def test_output_allowance_rejects_a_nonpositive_value() -> None:
+    with pytest.raises(ValueError, match="max_output must be a positive integer"):
+        output_budget(replace(TARGET, max_output=0), INFO)
+
+
+def test_reliable_count_requires_calibration() -> None:
+    request = ModelCall("instruct", [Message.user("input")])
+    estimate = InputEstimate()
+
+    assert estimate.reliable_count(request, "binding") is None
+
+    estimate.observe(request, "binding", 900)
+
+    assert estimate.reliable_count(request, "binding") == 900
+    assert estimate.reliable_count(request, "other") is None
+
+
+def test_clipping_trims_an_explicit_allowance_to_the_remaining_window() -> None:
+    request = ModelCall("instruct", [Message.user("input")], max_output_tokens=50_000)
+    frame = cast(
+        _AgicFrame,
+        SimpleNamespace(
+            context_capacity=32_000,
+            model=TARGET,
+            run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
+            recall=("near",),
+        ),
     )
-    assert input_budget(INFO, 4096) is None
-    assert (
-        input_budget(replace(INFO, metadata={"limit": {"input": 10000}}), 4096) == 8976
-    )
-    assert input_budget(replace(INFO, context_window=4000), 4096) == 0
+    estimate = InputEstimate()
+    state = cast(_AgicState, SimpleNamespace(estimate=estimate))
 
+    # Without a calibrated count the request is sent unchanged.
+    assert _clip_output(state, frame, request).max_output_tokens == 50_000
 
-@pytest.mark.parametrize(
-    "adapter, options",
-    [
-        ("responses", {"max_output_tokens": 1200}),
-        ("chat_completions", {"max_completion_tokens": 1200}),
-        ("chat_completions", {"max_tokens": 1200}),
-        ("messages", {"max_tokens": 1200}),
-        ("generate_content", {"generationConfig": {"maxOutputTokens": 1200}}),
-    ],
-)
-def test_native_configuration_and_model_output_limit(adapter, options) -> None:
-    target = replace(TARGET, adapter=adapter, options=options)
-    assert output_budget(target, INFO) == 1200
-    assert output_budget(target, replace(INFO, max_output_tokens=1000)) == 1000
+    estimate.observe(request, _estimate_binding(frame), 31_000)
 
-
-def test_reasoning_is_included_once_in_output_budget() -> None:
-    target = replace(TARGET, adapter="messages", reasoning={"budget_tokens": 5000})
-    assert output_budget(target, INFO) == 5001
-    assert output_budget(replace(target, options={"max_tokens": 6000}), INFO) == 6000
-    with pytest.raises(ValueError, match="thinking"):
-        output_budget(target, replace(INFO, max_output_tokens=4000))
+    assert _clip_output(state, frame, request).max_output_tokens == 1000
 
 
 def test_estimate_calibrates_only_an_unchanged_prefix() -> None:

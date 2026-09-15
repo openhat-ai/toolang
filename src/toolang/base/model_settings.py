@@ -10,6 +10,7 @@ from typing import cast
 
 from toolang.base.types.model import (
     ModelEffort,
+    ModelMaxOutput,
     ModelOverride,
     ModelRequest,
     ReasoningEffort,
@@ -18,7 +19,7 @@ from toolang.base.types.model import (
 
 _BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
 _REASONING_EFFORTS = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 
 
@@ -36,6 +37,7 @@ def parse_model_body(body: str) -> ModelOverride:
 
     identity: str | None = None
     effort: ModelEffort | None = None
+    max_output: ModelMaxOutput | None = None
     for index, token in enumerate(tokens):
         if "=" not in token:
             if index != 0 or identity is not None:
@@ -51,12 +53,17 @@ def parse_model_body(body: str) -> ModelOverride:
                 ModelRequest(identity)
             continue
         field, raw = _assignment(token)
-        if field != "effort":
+        if field == "effort":
+            if effort is not None:
+                raise ValueError("duplicate model parameter: effort")
+            effort = _effort_value(raw)
+        elif field == "max_output":
+            if max_output is not None:
+                raise ValueError("duplicate model parameter: max_output")
+            max_output = _max_output_value(raw)
+        else:
             raise ValueError(f"unknown model parameter: {field}")
-        if effort is not None:
-            raise ValueError("duplicate model parameter: effort")
-        effort = _effort_value(raw)
-    return ModelOverride(identity=identity, effort=effort)
+    return ModelOverride(identity=identity, effort=effort, max_output=max_output)
 
 
 def apply_model_override(
@@ -76,20 +83,27 @@ def apply_model_override(
         model = ModelRequest(override.identity)
     else:
         model = current
-    if override.effort is None:
+    if override.effort is None and override.max_output is None:
         return model
     if model is None:
-        raise ValueError("model effort requires an effective model")
-    if override.effort == "auto":
-        reasoning = None
-    elif isinstance(override.effort, int):
-        reasoning = ReasoningParameters(budget_tokens=override.effort)
-    else:
-        reasoning = ReasoningParameters(effort=override.effort)
-    return replace(
-        model,
-        parameters=replace(model.parameters, reasoning=reasoning),
-    )
+        if override.effort is not None:
+            raise ValueError("model effort requires an effective model")
+        raise ValueError("model max_output requires an effective model")
+    parameters = model.parameters
+    if override.effort is not None:
+        if override.effort == "auto":
+            reasoning = None
+        elif isinstance(override.effort, int):
+            reasoning = ReasoningParameters(budget_tokens=override.effort)
+        else:
+            reasoning = ReasoningParameters(effort=override.effort)
+        parameters = replace(parameters, reasoning=reasoning)
+    if override.max_output is not None:
+        parameters = replace(
+            parameters,
+            max_output=(None if override.max_output == "auto" else override.max_output),
+        )
+    return replace(model, parameters=parameters)
 
 
 def compose_model_overrides(
@@ -99,17 +113,21 @@ def compose_model_overrides(
 
     identity: str | None = None
     effort: ModelEffort | None = None
+    max_output: ModelMaxOutput | None = None
     for override in overrides:
         if override.identity is not None:
             identity = override.identity
             effort = None
+            max_output = None
         if override.effort is not None:
             effort = override.effort
-        if identity == "unset" and effort is not None:
+        if override.max_output is not None:
+            max_output = override.max_output
+        if identity == "unset" and (effort is not None or max_output is not None):
             raise ValueError("model unset cannot combine with parameters")
-    if identity is None and effort is None:
+    if identity is None and effort is None and max_output is None:
         return None
-    return ModelOverride(identity=identity, effort=effort)
+    return ModelOverride(identity=identity, effort=effort, max_output=max_output)
 
 
 def format_model_body(override: ModelOverride) -> str:
@@ -120,6 +138,8 @@ def format_model_body(override: ModelOverride) -> str:
         tokens.append(override.identity)
     if override.effort is not None:
         tokens.append(f"effort={override.effort}")
+    if override.max_output is not None:
+        tokens.append(f"max_output={override.max_output}")
     return shlex.join(tokens)
 
 
@@ -128,6 +148,17 @@ def _assignment(token: str) -> tuple[str, str]:
     if not separator or not field or not raw:
         raise ValueError("model parameter expects name=value")
     return field, raw
+
+
+def _max_output_value(raw: str) -> ModelMaxOutput:
+    if raw == "auto":
+        return "auto"
+    if _BUDGET_RE.fullmatch(raw):
+        value = int(raw)
+        if value <= 0:
+            raise ValueError("model max_output must be a positive integer")
+        return value
+    raise ValueError(f"unknown max output: {raw!r}")
 
 
 def _effort_value(raw: str) -> ModelEffort:

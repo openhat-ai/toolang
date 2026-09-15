@@ -563,22 +563,13 @@ def _apply_reasoning(
         if isinstance(raw_thinking, Mapping)
         else {}
     )
-    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    unknown = set(reasoning) - {"effort", "budget_tokens"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise ToolangError(f"unknown Generate Content reasoning controls: {joined}")
-    enabled = reasoning.get("enabled")
     effort = reasoning.get("effort")
     budget = reasoning.get("budget_tokens")
-    if enabled is False and effort not in (None, "none"):
-        raise ToolangError(
-            "disabled Generate Content reasoning conflicts with an effort"
-        )
-    if enabled is True and effort == "none":
-        raise ToolangError(
-            "enabled Generate Content reasoning conflicts with effort 'none'"
-        )
-    if (enabled is False or effort == "none") and budget is not None:
+    if effort == "none" and budget is not None:
         raise ToolangError(
             "disabled Generate Content reasoning conflicts with a token budget"
         )
@@ -588,13 +579,11 @@ def _apply_reasoning(
         )
     thinking.pop("thinkingBudget", None)
     thinking.pop("thinkingLevel", None)
-    if enabled is False or effort == "none":
+    if effort == "none":
         thinking["thinkingBudget"] = 0
     elif isinstance(budget, int) and not isinstance(budget, bool):
         thinking["thinkingBudget"] = budget
     elif isinstance(effort, str):
         thinking["thinkingLevel"] = effort.upper()
-    elif enabled is True:
-        thinking["thinkingBudget"] = -1
     generation["thinkingConfig"] = thinking
     payload["generationConfig"] = generation

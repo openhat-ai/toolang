@@ -263,9 +263,37 @@ provider state and restores them on subsequent tool-call turns. The Messages
 adapter likewise preserves signed Anthropic thinking and redacted-thinking
 blocks and replays them before the associated tool use.
 
-Canonical reasoning controls use `enabled`, `effort`, and `budget_tokens`.
-Adapters translate those names to their wire protocol and reject unsupported or
-conflicting combinations. The Chat Completions adapter includes only small,
+Canonical model-call resource controls are `effort` and `max_output`:
+
+```text
+effort     = auto | LEVEL | TOKENS
+max_output = auto | TOKENS
+```
+
+`auto` imposes no extra restriction: the model or provider applies its native
+reasoning behavior or output allowance. `effort = TOKENS` is a reasoning-token
+budget and is valid only where the model advertises budget support;
+`max_output = TOKENS` caps one call's output and must exceed an explicit
+reasoning budget. An omitted control inherits the value in effect, while `auto`
+restores native behavior and cancels an inherited value. `effort = none`
+disables reasoning, including for models that only advertise a toggle.
+
+Catalog `reasoning_options` map to the canonical controls: an `effort` option
+advertises `LEVEL`, a `budget_tokens` option advertises `TOKENS`, and a `toggle`
+option advertises `none`. A toggle-only model therefore reports `none`, and
+reasoning control applies whenever the model advertises any of the three. `auto`
+is always available and never derives from the catalog.
+
+The enumerations are evidence rather than authority: an unlisted effort level is
+rejected locally only when the source marks its enumeration exhaustive;
+otherwise it passes through and the provider decides. An output allowance of
+`auto` resolves to the catalog maximum, or is omitted when the provider treats
+omission as that same allowance.
+
+Adapters translate `effort` and `budget_tokens` to their wire protocol and
+reject unsupported or conflicting combinations. A provider-native reasoning
+toggle is an adapter implementation detail, not a third canonical control:
+`effort = none` becomes the adapter's disabled form. The Chat Completions adapter includes only small,
 explicit dialect mappings for well-known compatible providers; unknown provider
 extensions are not inferred.
 
@@ -356,7 +384,8 @@ Provider configuration participates in the one-time provider resolution.
 `ModelCollection`; request and runnable policy can only narrow that base.
 `default.model` uses the same model body as invocation, Chat, and run-input
 settings: an optional concrete ref followed by typed assignments. The current
-assignment is `effort=LEVEL`, `effort=TOKENS`, or `effort=auto`. The effective
+assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,
+`max_output=TOKENS`, or `max_output=auto`. The effective
 ref must be present in the Setup collection, and its parameters are validated
 before Setup publication. An agent config may use a parameter-only body such
 as `effort=high` to modify the inherited root default. Setup keeps an absent

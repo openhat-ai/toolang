@@ -62,13 +62,17 @@ Model bodies contain an optional identity followed by assignments:
 /model effort=high
 /model effort=4096
 /model openai/gpt-5 effort=high
-/model effort=auto
+/model max_output=8192
+/model effort=auto max_output=auto
 ```
 
 `effort` is input convenience. A canonical unsigned integer becomes
 `reasoning.budget_tokens`; a recognized level becomes `reasoning.effort`; and
 `auto` removes explicit reasoning so the model or provider chooses its default
-reasoning behavior. An effort or budget is validated against the effective model
+reasoning behavior. `max_output` is a canonical unsigned integer ceiling for one
+model call, or `auto` to use the model's native output allowance. Omitting a
+control inherits the value in effect; passing `auto` cancels an inherited value.
+An effort, budget, or output ceiling is validated against the effective model
 before run acceptance. Parameter-only input retains the model identity. Selecting
 an identity clears unmentioned explicit model parameters. Bare one-run model
 `default` restores the surface model, while `:model unset` removes the inherited
@@ -131,7 +135,7 @@ normalized submission:
 
 ```text
 /help                     /?                       /keys
-/model [MODEL] [effort=VALUE]
+/model [MODEL] [effort=VALUE] [max_output=VALUE]
 /runnable RUNNABLE
 /agic AGIC                /flow FLOW
 /allow FIELD=QUERY...

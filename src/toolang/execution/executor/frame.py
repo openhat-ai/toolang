@@ -22,7 +22,11 @@ from toolang.lang.types import is_generated_ref
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
-from toolang.plugin.models.budget import input_budget, output_budget
+from toolang.plugin.models.budget import (
+    context_capacity,
+    input_budget,
+    output_budget,
+)
 from toolang.state.state import (
     StateCap,
 )
@@ -66,8 +70,9 @@ class _AgicFrame:
     declarations: tuple[RecallControlPayload, ...] = ()
     workspaces: tuple[RecallControlPayload, ...] = ()
     recall: tuple[str, ...] = ("far", "near")
-    output_budget: int = 4096
+    output_budget: int | None = None
     input_budget: int | None = None
+    context_capacity: int | None = None
 
 
 def build_agic_frame(
@@ -175,7 +180,8 @@ def build_agic_frame(
             next((item.values for item in agic.directives if item.name == "recall"), ())
         ),
         output_budget=output,
-        input_budget=input_budget(entry.info, output),
+        input_budget=input_budget(entry.info),
+        context_capacity=context_capacity(entry.info),
     )
     _log_frame(prepared)
     return prepared

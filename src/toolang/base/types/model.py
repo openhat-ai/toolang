@@ -19,11 +19,11 @@ ReasoningEffort: TypeAlias = Literal[
     "high",
     "xhigh",
     "max",
-    "default",
 ]
 ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
+ModelMaxOutput: TypeAlias = int | Literal["auto"]
 _REASONING_EFFORTS = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 
 
@@ -65,12 +65,19 @@ class ModelParameters:
     """Typed call parameters attached to one model request."""
 
     reasoning: ReasoningParameters | None = None
+    max_output: int | None = None
 
     def __post_init__(self) -> None:
         if self.reasoning is not None and not isinstance(
             self.reasoning, ReasoningParameters
         ):
             raise TypeError("model reasoning parameters must be ReasoningParameters")
+        if self.max_output is not None and (
+            isinstance(self.max_output, bool)
+            or not isinstance(self.max_output, int)
+            or self.max_output <= 0
+        ):
+            raise ValueError("model max_output must be a positive integer or none")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +109,7 @@ class ModelOverride:
 
     identity: str | None = None
     effort: ModelEffort | None = None
+    max_output: ModelMaxOutput | None = None
 
     def __post_init__(self) -> None:
         if self.identity is not None:
@@ -120,9 +128,20 @@ class ModelOverride:
                     raise ValueError("model effort token budget must be non-negative")
             elif self.effort not in {*_REASONING_EFFORTS, "auto"}:
                 raise ValueError(f"unknown model effort: {self.effort!r}")
-        if self.identity is None and self.effort is None:
-            raise ValueError("model override requires an identity or effort")
-        if self.identity == "unset" and self.effort is not None:
+        if self.max_output is not None and self.max_output != "auto":
+            if isinstance(self.max_output, bool) or not isinstance(
+                self.max_output, int
+            ):
+                raise TypeError("model max_output must be a token count or auto")
+            if self.max_output <= 0:
+                raise ValueError("model max_output tokens must be positive")
+        if self.identity is None and self.effort is None and self.max_output is None:
+            raise ValueError(
+                "model override requires an identity, effort, or max_output"
+            )
+        if self.identity == "unset" and (
+            self.effort is not None or self.max_output is not None
+        ):
             raise ValueError("model unset cannot combine with parameters")
 
 
@@ -508,6 +527,7 @@ class ModelTarget:
     catalog: str | None = None
     catalog_revision: str | None = None
     reasoning: Mapping[str, Any] = field(default_factory=dict)
+    max_output: int | None = None
     mode: str | None = None
 
     def __post_init__(self) -> None:

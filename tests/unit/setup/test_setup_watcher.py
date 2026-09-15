@@ -1271,8 +1271,10 @@ def test_compact_config_republishes_without_rebuilding_model_projection(
     )
 
     config["compact"] = {"model": "test/two effort=max"}
-    assert asyncio.run(watcher.refresh()) is second
-    assert "does not advertise reasoning effort" in watcher.diagnostics()[0].message
+    third = asyncio.run(watcher.refresh())
+    assert third is not second
+    assert third.models == second.models
+    assert third.compact_model == parse_model_body("test/two effort=max")
 
 
 def test_setup_watcher_rejects_compact_excluded_from_effective_models(
@@ -1306,7 +1308,12 @@ def test_setup_watcher_validates_default_model_parameters_before_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",), reasoning=True)
+    _write_catalog(
+        tmp_path / "catalog.json",
+        ("one",),
+        reasoning=True,
+        exhaustive_reasoning=True,
+    )
     config: dict[str, object] = {"default": {"model": "test/one effort=high"}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
@@ -1463,6 +1470,7 @@ def _write_catalog(
     model_ids: tuple[str, ...],
     *,
     reasoning: bool = False,
+    exhaustive_reasoning: bool = False,
 ) -> None:
     models = {
         model_id: {
@@ -1471,7 +1479,15 @@ def _write_catalog(
             "attachment": False,
             "reasoning": reasoning,
             "reasoning_options": (
-                [{"type": "effort", "values": ["low", "high"]}] if reasoning else None
+                [
+                    {
+                        "type": "effort",
+                        "values": ["low", "high"],
+                        "exhaustive": exhaustive_reasoning,
+                    }
+                ]
+                if reasoning
+                else None
             ),
             "tool_call": True,
             "structured_output": True,

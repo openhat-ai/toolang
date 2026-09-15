@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Message
 from toolang.base.types.policy import RunLimits
-from toolang.base.types.run import ModelContinuation, ModelUsage
+from toolang.base.types.run import ModelCallResult, ModelContinuation, ModelUsage
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.time import utc_now
@@ -19,6 +19,7 @@ from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
 
+from ...errors import EmptyModelOutput
 from ...events import StepBegin, StepEnd
 from ...assembly import prompting
 from ...records import ControlRecord
@@ -360,4 +361,38 @@ async def _execute(state: _AgicState) -> Message | None:
         if inputs := state.pending_inputs():
             state.claimed_inputs = inputs
             continue
+        if not _declares_repairable_output(state):
+            _require_visible_output(result)
         return result.message
+
+
+def _declares_repairable_output(state: _AgicState) -> bool:
+    """Return whether an unusable response still gets an output repair.
+
+    A typed, non-text contract already fails loudly when its value cannot be
+    coerced, so the empty-output guard applies only to the contracts that would
+    otherwise accept an empty message as success.
+    """
+
+    return state.output_binding.type_name not in {None, "Part", "Part[]", "Text"}
+
+
+def _require_visible_output(result: ModelCallResult) -> None:
+    """Reject a terminal model step that returned nothing a caller can see."""
+
+    message = result.message
+    if message is not None and message.parts:
+        return
+    usage = result.usage
+    if (
+        usage is not None
+        and usage.output_tokens > 0
+        and usage.output_reasoning_tokens is not None
+        and usage.output_reasoning_tokens >= usage.output_tokens
+    ):
+        raise EmptyModelOutput(
+            "model produced no visible output: reasoning consumed the output "
+            f"budget ({usage.output_reasoning_tokens} of {usage.output_tokens} "
+            "output tokens); raise the output limit or lower the reasoning effort"
+        )
+    raise EmptyModelOutput("model produced no visible output")

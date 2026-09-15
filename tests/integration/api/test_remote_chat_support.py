@@ -380,7 +380,10 @@ agic chat(_: Part[]) -> Part[]:
         assert defaults.status_code == 200
         assert defaults.json()["model"] == {
             "ref": TEST_MODEL_REF,
-            "parameters": {"reasoning": {"effort": "high", "budget_tokens": None}},
+            "parameters": {
+                "reasoning": {"effort": "high", "budget_tokens": None},
+                "max_output": None,
+            },
         }
         assert defaults.json()["runnable"] == "agic:chat"
         assert models.status_code == 200
