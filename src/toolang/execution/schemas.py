@@ -26,8 +26,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import CallInput, validate_runnable_input_names
-from toolang.lang.types import parse_runnable_ref_parts
-from toolang.lang.types import Array, Struct
+from toolang.lang.types import Array, Struct, parse_runnable_ref_parts
 from .records import (
     ControlPayloadField,
     run_preparation,

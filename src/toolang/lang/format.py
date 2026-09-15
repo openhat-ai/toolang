@@ -12,6 +12,7 @@ from toolang.common.query import format_query_text
 from . import ast
 from .ast import _first_syntax_error, _parse_tree
 from .errors import ToolangFormatError
+from .types import is_generated_ref
 from .text import dedent_text_lines, source_lines, text_indent_width
 
 
@@ -192,7 +193,7 @@ def _statement_words(*values: str | None) -> str:
 
 
 def _authored_runnable(value: str) -> str:
-    return "" if "<adhoc:" in value or value.startswith("<agic:") else value
+    return "" if is_generated_ref(value) else value
 
 
 def _parallel_clause(value: int | None) -> str:

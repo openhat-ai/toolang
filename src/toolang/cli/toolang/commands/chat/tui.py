@@ -136,10 +136,7 @@ def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> 
             if len(matches) == 1:
                 kind = matches.pop()
     labeled = f"{kind}:{name}" if kind in {"agic", "flow"} else reference
-    try:
-        return display_runnable_ref(labeled, surface="chat")
-    except ValueError:
-        return labeled
+    return display_runnable_ref(labeled, surface="chat")
 
 
 class ChatTuiAppContext:

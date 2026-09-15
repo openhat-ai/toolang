@@ -127,9 +127,15 @@ def parse_public_runnable_ref(value: str) -> tuple[str, str | None]:
 
 
 def display_runnable_ref(value: str, *, surface: str) -> str:
-    """Return a surface-specific unnamed/named runnable label."""
+    """Return a surface-specific unnamed/named runnable label.
 
-    parsed = parse_runnable_ref_parts(value)
+    Unparseable labels are returned unchanged so presentation never fails.
+    """
+
+    try:
+        parsed = parse_runnable_ref_parts(value)
+    except ValueError:
+        return value
     if parsed.role is None:
         kind = f"{parsed.kind}:" if parsed.kind else ""
         return f"{kind}{parsed.name}"
@@ -141,6 +147,30 @@ def display_runnable_ref(value: str, *, surface: str) -> str:
             return f"{kind}:<{parsed.role}>"
         return f"{kind}:<{parsed.role}:{parsed.line}>"
     return value
+
+
+def is_unnamed_ref(value: str) -> bool:
+    """Return whether one ref names an unnamed entry or adhoc declaration."""
+
+    try:
+        return parse_runnable_ref_parts(value).role is not None
+    except ValueError:
+        return value.startswith("<")
+
+
+def is_generated_ref(value: str) -> bool:
+    """Return whether one ref is adhoc or a historical generated inline name."""
+
+    return "<adhoc:" in value or value.startswith("<agic:")
+
+
+def is_agic_ref(value: str) -> bool:
+    """Return whether one stored ref names an agic rather than a flow."""
+
+    try:
+        return parse_runnable_ref_parts(value).kind == "agic"
+    except ValueError:
+        return value.startswith("agic:")
 
 
 def unnamed_runnable_name(role: str, line: int) -> str:
@@ -307,6 +337,9 @@ __all__ = [
     "parse_runnable_ref_parts",
     "RunnableRef",
     "display_runnable_ref",
+    "is_agic_ref",
+    "is_generated_ref",
+    "is_unnamed_ref",
     "unnamed_runnable_name",
     "value_type",
 ]

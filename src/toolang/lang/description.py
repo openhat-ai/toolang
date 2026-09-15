@@ -22,12 +22,7 @@ from .ast import (
 
 
 def _runnable_label(value: str | None) -> str:
-    if not value:
-        return ""
-    try:
-        return display_runnable_ref(value, surface="progress")
-    except ValueError:
-        return value
+    return display_runnable_ref(value, surface="progress") if value else ""
 
 
 def statement_description(statement: FlowStmt) -> str:

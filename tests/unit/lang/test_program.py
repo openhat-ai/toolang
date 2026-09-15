@@ -993,3 +993,20 @@ def test_inline_agic_stays_unnamed_and_uses_adhoc_ref() -> None:
     assert agic is not None
     assert agic.name is None
     assert f"agic:<adhoc:{agic.span.line}>" == statement.runnable
+
+
+def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
+    from toolang.lang.types import display_runnable_ref
+
+    assert (
+        display_runnable_ref("agent::agic:<entry:3>", surface="help") == "agic:<entry>"
+    )
+    assert (
+        display_runnable_ref("agent::agic:<adhoc:5>", surface="chat") == "agic:<adhoc>"
+    )
+    assert (
+        display_runnable_ref("flows::research::agic:<adhoc:5>", surface="progress")
+        == "agic:<adhoc:5>"
+    )
+    assert display_runnable_ref("agic:chat", surface="progress") == "agic:chat"
+    assert display_runnable_ref("agic:研究", surface="chat") == "agic:研究"

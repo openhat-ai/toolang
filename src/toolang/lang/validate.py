@@ -538,26 +538,12 @@ def _adhoc_ref(name: str) -> bool:
 
 
 def _adhoc_runnables(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
-    lines: set[int] = set()
-
-    def visit(stmts: tuple[ast.FlowStmt, ...]) -> None:
-        for stmt in stmts:
-            runnable = getattr(stmt, "runnable", None)
-            if isinstance(runnable, str) and _adhoc_ref(runnable):
-                parsed = parse_runnable_ref_parts(runnable)
-                if parsed.line is not None:
-                    lines.add(parsed.line)
-            if isinstance(stmt, ast.RepeatStmt):
-                visit(stmt.stmts)
-
-    for flow in program.flows:
-        visit(flow.stmts)
-    result: dict[str, ast.AgicDecl | ast.FlowDecl] = {}
-    for agic in program.agics:
-        if agic.name is None and agic.span.line in lines:
-            result[f"agic:<adhoc:{agic.span.line}>"] = agic
-            result[f"<adhoc:{agic.span.line}>"] = agic
-    return result
+    lines = program.adhoc_lines
+    return {
+        f"agic:<adhoc:{agic.span.line}>": agic
+        for agic in program.agics
+        if agic.name is None and agic.span.line in lines
+    }
 
 
 def _require_runnable(

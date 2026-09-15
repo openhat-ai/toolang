@@ -38,14 +38,12 @@ from ..lang.ast import (
     AgicDecl,
     CapDecl,
     FlowDecl,
-    FlowStmt,
     Parameter,
     Program,
-    RepeatStmt,
     Span,
     to_data,
 )
-from toolang.lang.types import parse_runnable_ref_parts, unnamed_runnable_name
+from toolang.lang.types import unnamed_runnable_name
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
@@ -368,7 +366,7 @@ def program_runnable_index(
     if include_default and not any(item.name == "default" for item in declarations):
         declarations = (*program.agics, _RUNTIME_DEFAULT_AGIC, *program.flows)
     result: dict[str, AgicDecl | FlowDecl] = {}
-    adhoc_lines = _adhoc_lines(program)
+    adhoc_lines = program.adhoc_lines
     unnamed_entry: AgicDecl | FlowDecl | None = None
     for declaration in declarations:
         if declaration is _RUNTIME_DEFAULT_AGIC:
@@ -485,31 +483,6 @@ def program_term_data(
 
 def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
     return f"{module}::{kind}:{local_name}"
-
-
-def _adhoc_lines(program: Program) -> frozenset[int]:
-    lines: set[int] = set()
-
-    def visit(statements: tuple[FlowStmt, ...]) -> None:
-        for statement in statements:
-            runnable = getattr(statement, "runnable", None)
-            if isinstance(runnable, str):
-                try:
-                    parsed = parse_runnable_ref_parts(runnable)
-                except ValueError:
-                    parsed = None
-                if (
-                    parsed is not None
-                    and parsed.role == "adhoc"
-                    and parsed.line is not None
-                ):
-                    lines.add(parsed.line)
-            if isinstance(statement, RepeatStmt):
-                visit(statement.stmts)
-
-    for flow in program.flows:
-        visit(flow.stmts)
-    return frozenset(lines)
 
 
 def state_program(
@@ -693,13 +666,16 @@ class AgentState:
         """Return one Program-local runnable declaration."""
 
         if local_name in {"<entry>", "entry"}:
-            prefix = f"{module}::"
+            program = self.modules.get(module)
+            if program is None:
+                return None
+            adhoc = program.adhoc_lines
             matches = tuple(
                 entry
-                for key, entry in self.module_runnables.items()
-                if key.startswith(prefix)
-                and ":<entry:" in key[len(prefix) :]
-                and (kind is None or key[len(prefix) :].startswith(f"{kind}:"))
+                for entry in (*program.agics, *program.flows)
+                if entry.name is None
+                and not (isinstance(entry, AgicDecl) and entry.span.line in adhoc)
+                and (kind is None or entry.kind == kind)
             )
             if len(matches) != 1:
                 return None

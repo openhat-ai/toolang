@@ -13,7 +13,7 @@ from toolang.lang.ast import (
     Program,
     StructDecl,
 )
-from toolang.lang.types import parse_runnable_ref_parts
+from toolang.lang.types import parse_runnable_ref_parts, unnamed_runnable_name
 from toolang.state.state import (
     AgentState,
     program_runnable_index,
@@ -141,12 +141,11 @@ def _directive_values(agic: AgicDecl, name: str) -> tuple[str, ...]:
     return directive.values if directive is not None else ()
 
 
-def unnamed_or_public_name(runnable: Runnable, *, fallback: str) -> str:
+def unnamed_ref_name(runnable: Runnable, *, role: str) -> str:
+    """Return the stored ref name for one unnamed or named declaration."""
+
     if runnable.name is not None:
         return runnable.name
-    from toolang.lang.types import unnamed_runnable_name
-
-    role = "adhoc" if fallback.startswith("<adhoc") or "adhoc" in fallback else "entry"
     return unnamed_runnable_name(role, runnable.span.line)
 
 
@@ -250,7 +249,7 @@ def resolve_module_runnable(
         ]
         if len(matches) != 1:
             raise ToolangError(f"Runnable not found: {name}")
-        return unnamed_or_public_name(matches[0], fallback=parsed.name), matches[0]
+        return unnamed_ref_name(matches[0], role="adhoc"), matches[0]
     if not callable(resolve_indexed):
         runnable = resolve_runnable(state_program(state, module_name), name, kind=kind)
         return name, runnable
@@ -389,16 +388,8 @@ def runnable_binding_defaults(
     if binding is None:
         binding = runnable_fallback(program, preferred=fallback_agic)
     if isinstance(program, AgentState):
-        name, kind = parse_runnable_ref(binding)
-        module, runnable = resolve_state_runnable(program, name, kind=kind)
-        name = next(
-            (
-                public
-                for public, item in program.runnables.items()
-                if item is runnable and program.runnable_modules[public] == module
-            ),
-            name,
-        )
+        resolved = resolve_public_runnable_query(program, binding)
+        name, runnable = resolved.name, resolved.executable
     else:
         name, kind = parse_runnable_ref(binding)
         runnable = resolve_runnable(program, name, kind=kind)

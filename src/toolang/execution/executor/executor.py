@@ -38,7 +38,7 @@ from toolang.lang.input import (
     validate_value,
 )
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.types import Array, Value
+from toolang.lang.types import Array, Value, is_unnamed_ref
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
@@ -3241,9 +3241,9 @@ def _bound_runnable(binding: BoundRun) -> str:
     runnable = binding.bindings.runnable
     if not runnable:
         raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    if "<" in runnable:
-        if "::" in runnable:
-            return runnable
+    if "::" in runnable:
+        return runnable
+    if is_unnamed_ref(runnable):
         return f"{binding.module}::{runnable}"
     return runnable
 
