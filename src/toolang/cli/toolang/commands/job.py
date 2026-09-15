@@ -34,7 +34,7 @@ from ...common.context import (
 from ...common.execution import open_execution
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand
-from toolang.common.version import toolang_version
+from toolang.common.version import displayed_toolang_version
 
 JobKind = Literal["task", "chore"]
 
@@ -478,7 +478,7 @@ def _job_store_schema_error(error: JobStoreSchemaError, *, path: Path) -> str:
             "scheduler state, then retry."
         )
     return (
-        f"scheduler state is incompatible with toolang {toolang_version()}: "
+        f"scheduler state is incompatible with toolang {displayed_toolang_version()}: "
         f"{path} uses schema {error.version}, while this build requires schema "
         f"{error.current}. {advice} The database was not changed."
     )

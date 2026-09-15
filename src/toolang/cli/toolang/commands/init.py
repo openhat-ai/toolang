@@ -21,7 +21,7 @@ def init_script(
 
     try:
         template = load_template("script").raw_text
-        destination = directory.expanduser().resolve() / "work.too"
+        destination = directory.expanduser().resolve() / "aide.too"
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8") as stream:
             stream.write(template.rstrip("\n") + "\n")

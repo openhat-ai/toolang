@@ -16,7 +16,7 @@ from toolang.common.typer.ui import run
 from toolang.cli.common.parameters import RootOption
 
 from ...up.logging import configure_logging
-from ...common.version import toolang_version
+from ...common.version import displayed_toolang_version
 from ..common.context import CliContext, resolve_root
 from ..common.output import echo_error
 from ..common.routing import (
@@ -118,7 +118,7 @@ def _version_callback(value: bool) -> None:
 
 
 def _caps_version() -> str:
-    return toolang_version()
+    return displayed_toolang_version()
 
 
 def _prog_name(argv0: str) -> str:

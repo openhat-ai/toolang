@@ -1,6 +1,6 @@
 #!/usr/bin/env too
 
-# An unnamed runnable is the default entry for `too run work.too`.
+# An unnamed runnable is the default entry for `too run aide.too`.
 ## Write a short greeting.
 agic():
   Say hello to someone trying Toolang for the first time.
@@ -12,14 +12,14 @@ agic chat:
   Help with the user's request: {{_}}
   Use polish when a piece of writing needs a rewrite and a final check.
 
-# too run work.too rewrite tone=warm -- "Thanks for the update."
+# too run aide.too rewrite tone=warm -- "Thanks for the update."
 ## Rewrite text in the requested tone.
 agic rewrite(_: Text, tone: Text) -> Text:
   Rewrite the following text in a {{tone}} tone, preserving its meaning.
   Return only the rewritten text.
   {{_}}
 
-# too run work.too polish tone=professional -- "Can you send the notes?"
+# too run aide.too polish tone=professional -- "Can you send the notes?"
 ## Rewrite text and check it for clarity and accuracy.
 flow polish(_: Text, tone: Text) -> Text:
   ## Rewrite in the requested tone.

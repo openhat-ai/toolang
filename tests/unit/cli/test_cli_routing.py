@@ -215,7 +215,7 @@ def test_cli_no_args_still_shows_root_help(
 
     assert result == 0
     assert "Usage: pytest [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
-    assert "Toolang is a language and runtime for agents and humans." in stdout
+    assert "Toolang — a language and runtime for agents and humans." in stdout
     assert output.err == ""
 
 

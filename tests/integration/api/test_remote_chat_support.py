@@ -300,7 +300,7 @@ def test_remote_chat_defaults_and_latest_result_endpoints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_version = "v0.2.7-88-gc73484a9"
+    source_version = "0.2.7-88-gc73484a9"
     monkeypatch.setattr(agent_router, "toolang_version", lambda: source_version)
     harness = ExecutionHarness.create(
         tmp_path,
@@ -416,7 +416,7 @@ def test_profile_preserves_source_version_and_short_docker_instance(
         sandbox_instance=_CONTAINER_ID[:12],
     )
     core = AgentCore(layout)
-    source_version = "v0.2.7-88-gc73484a9"
+    source_version = "0.2.7-88-gc73484a9"
     monkeypatch.setattr(
         agent_router,
         "toolang_version",

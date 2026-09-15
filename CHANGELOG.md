@@ -16,6 +16,11 @@ and this project uses semantic versioning.
 
 ### Changed
 
+- Present root CLI help as “Toolang — a language and runtime for agents and
+  humans,” make the shared source-version value prefix-free while display
+  surfaces add `v` as needed, and have `init` create `aide.too` instead of
+  `work.too`.
+
 - Group contiguous resource directives stably by first-seen key without blank
   separators, while preserving each key's operation order and comment barriers.
 
