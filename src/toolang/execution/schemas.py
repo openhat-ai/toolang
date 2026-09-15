@@ -26,6 +26,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import CallInput, validate_runnable_input_names
+from toolang.lang.types import parse_runnable_ref_parts
 from toolang.lang.types import Array, Struct
 from .records import (
     ControlPayloadField,
@@ -678,7 +679,9 @@ class RunInfo:
 
         preparation = run_preparation(run, controls)
         input_text = message_summary(input_parts)
-        kind, separator, name = preparation.runnable.partition("$")[2].partition(":")
+        parsed = parse_runnable_ref_parts(preparation.runnable)
+        kind, name = parsed.kind or "", parsed.name
+        separator = ":" if parsed.kind else ""
         last_message_step = next(
             (
                 step

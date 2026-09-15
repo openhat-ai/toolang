@@ -69,6 +69,22 @@ def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
     return override, input
 
 
+def _is_alias_ref(value: str, resolved: object) -> bool:
+    """Accept an unlined <entry> or <adhoc> selector for its lined target."""
+
+    from toolang.lang.types import parse_runnable_ref_parts
+
+    try:
+        parsed = parse_runnable_ref_parts(value)
+    except ValueError:
+        return False
+    if parsed.line is not None or parsed.role not in {"entry", "adhoc"}:
+        return False
+    executable = getattr(resolved, "executable", None)
+    target_kind = getattr(executable, "kind", None)
+    return parsed.kind is None or parsed.kind == target_kind
+
+
 def resolve_run_request(
     request: RunRequest,
     *,
@@ -83,7 +99,9 @@ def resolve_run_request(
         setup=setup,
     )
     resolved_runnable = resolve_public_runnable_query(state, request.runnable.ref)
-    if resolved_runnable.ref != request.runnable.ref:
+    if resolved_runnable.ref != request.runnable.ref and not _is_alias_ref(
+        request.runnable.ref, resolved_runnable
+    ):
         raise ValueError(
             f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
             f"{resolved_runnable.ref!r}"

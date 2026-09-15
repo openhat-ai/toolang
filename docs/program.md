@@ -45,10 +45,10 @@ flows declared in another file.
 
 The agent module publicly exports all of its agics and flows. A flow module
 exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
-`<name>` exactly matches its filename stem. State binds an unnamed Flow locally as
-`main` and uses the filename as its public name, so renaming the file also
-renames the public Flow. Other declarations in that module are private static
-helpers.
+`<name>` exactly matches its filename stem. State uses the filename as the
+public name and binds the unnamed Flow locally as its lined entry identity
+`<entry:LINE>`, so renaming the file also renames the public Flow. Other
+declarations in that module are private static helpers.
 
 Public runnable names must be unique across the complete home. Direct files
 under `flows/` are discovered; nested files, non-`.too` files, and a root-level
@@ -200,30 +200,27 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-In the agent or Script module, State binds an omitted agic or flow name to `main`:
+In the agent or Script module, an omitted agic or flow name is the module's
+unnamed entry:
 
 ```too
 agic:
-  Reply directly.
-
-agic main:
   Reply directly.
 
 flow:
   pass
 ```
 
-These examples bind to the same name and cannot appear together in one module.
-The AST preserves omitted names as `None`; State rejects the name collision when
-building its indexes. Script help uses the same binding rules. Explicitly named
-`main` has the same entry behavior, and named helpers may coexist. Explicit
-`default` remains an ordinary authored name and takes precedence over the
-synthetic runtime fallback. In a home flow module, State binds the unnamed Flow's
-public name from the filename as described above.
+The AST preserves omitted names as `None` and keeps the declaration's source
+line. State binds the unnamed entry under the lined lookup key `<entry:LINE>`
+without writing a name onto the AST. Two unnamed top-level declarations in one
+module collide. An explicit `main` is an ordinary named declaration and may
+coexist with the unnamed entry. In a home flow module, State binds the unnamed
+Flow's public name from the filename as described above.
 
-State's entry names do not add source declarations. Flow statements must reference
-explicitly named runnables or use inline agics; `run main` cannot target an unnamed
-declaration.
+State's entry bindings do not add source declarations. Flow statements must
+reference explicitly named runnables or use inline agics; the unnamed entry is
+not a static `run` target.
 
 
 ### Primary Input
@@ -572,9 +569,9 @@ executed in that flow. Nested flow calls reset again, even when the nested flow
 has no directives, so a flow's correction does not implicitly constrain
 another independently authored flow.
 
-Inline runnable bodies lower to generated `AgicDecl` values named
-`<agic:LINE>`. The `<...>` prefix cannot be authored as a runnable name, so
-generated names cannot collide with user declarations.
+Inline runnable bodies lower to unnamed `AgicDecl` values that keep the
+statement's source line. They are addressed only through the adhoc sentinel
+`agic:<adhoc:LINE>` and never appear in a module's runnable index.
 
 
 ## Prompts
@@ -632,10 +629,10 @@ catalog-owned frontmatter format.
 Surfaces resolve a default runnable by name:
 
 ```text
-script  explicit name, else authored main, else file help
-chat    chat, else authored main, else runtime default
-task    task, else authored main, else runtime default
-chore   chore, else authored main, else runtime default
+script  explicit name, else unnamed entry, else file help
+chat    chat, else unnamed entry, else runtime default
+task    task, else unnamed entry, else runtime default
+chore   chore, else unnamed entry, else runtime default
 ```
 
 Explicit selections take precedence over these fallbacks. The chosen entry may

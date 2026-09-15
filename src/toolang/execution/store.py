@@ -778,7 +778,8 @@ class RunStore:
                         _load_json(str(preparation_row["payload"])),
                     )
                     if not isinstance(preparation, RunControlPayload) or not (
-                        preparation.runnable.partition("$")[2].startswith("agic:")
+                        ":agic:" in f"::{preparation.runnable}"
+                        or preparation.runnable.startswith("agic:")
                     ):
                         raise ValueError("steer controls require an agic run")
                 row = self._conn.execute(
@@ -2556,7 +2557,10 @@ class RunStore:
                     control.payload,
                     RunControlPayload,
                 )
-                and control.payload.runnable.partition("$")[2].startswith("agic:")
+                and (
+                    ":agic:" in f"::{control.payload.runnable}"
+                    or control.payload.runnable.startswith("agic:")
+                )
             ):
                 cutoff = int(rows[0]["rowid"])
         current: StepRef | None = anchor

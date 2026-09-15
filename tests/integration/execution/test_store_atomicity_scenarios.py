@@ -754,7 +754,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         execute = store.accept_execute_control(
             run_id=run.id,
             state=entry.payload.state,
-            runnable="agent$agic:target",
+            runnable="agic:target",
             triggered_by=trigger.ref,
             input=CallInput(
                 {"_": TypedRef(source.select("input", "input", "_"), "Json")}

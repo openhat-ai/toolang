@@ -109,7 +109,7 @@ def build_agic_frame(
     routes = resolve_agic_routes(run.state, agic)
     runtime_tools = (
         {}
-        if name.startswith("<agic:")
+        if "<adhoc:" in name or name.startswith("<agic:")
         else {
             name: tool
             for name, tool in run.setup.tools.runtime.items()

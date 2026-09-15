@@ -29,4 +29,4 @@ def until_header(statement: RepeatStmt) -> str:
 
 
 def _generated(value: str) -> bool:
-    return not value or value.startswith("<agic:")
+    return not value or "<adhoc:" in value or value.startswith("<agic:")

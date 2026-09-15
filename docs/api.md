@@ -232,7 +232,7 @@ Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named authored agic or flow to run; omitting it
-  selects authored `main`, or shows file help when no `main` exists
+  selects the module's unnamed entry, or shows file help when none exists
 - `NAME=VALUE` supplies a named runnable parameter; repeat for other parameters
 - `INPUT` is one logical input. With an explicit selector, ordinary trailing
   words start input. Without a selector, use `--` to start primary text;
@@ -253,10 +253,10 @@ Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
 Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
 outline in normal style with blank lines between sibling steps.
-Top-level Script help identifies `main` as the default when present and marks
-`[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It lists **Runnables**
-before Options, with `agic:NAME` / `flow:NAME` labels and authored descriptions or
-`Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+Top-level Script help identifies `agic:<entry>` as the default when an unnamed
+entry exists and marks `[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It
+lists **Runnables** before Options, with `agic:NAME` / `flow:NAME` labels and
+authored descriptions or `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
 `-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then

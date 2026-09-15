@@ -192,7 +192,7 @@ def _statement_words(*values: str | None) -> str:
 
 
 def _authored_runnable(value: str) -> str:
-    return "" if value.startswith("<agic:") else value
+    return "" if "<adhoc:" in value or value.startswith("<agic:") else value
 
 
 def _parallel_clause(value: int | None) -> str:

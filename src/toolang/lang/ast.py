@@ -329,7 +329,25 @@ class Program(Node):
     flows: tuple[FlowDecl, ...] = ()
 
     def find_agic(self, name: str) -> AgicDecl | None:
-        return next((item for item in self.agics if item.name == name), None)
+        match = next((item for item in self.agics if item.name == name), None)
+        if match is not None:
+            return match
+        from toolang.lang.types import parse_runnable_ref_parts
+
+        try:
+            parsed = parse_runnable_ref_parts(name)
+        except ValueError:
+            return None
+        if parsed.role != "adhoc" or parsed.line is None:
+            return None
+        return next(
+            (
+                item
+                for item in self.agics
+                if item.name is None and item.span.line == parsed.line
+            ),
+            None,
+        )
 
     def find_flow(self, name: str) -> FlowDecl | None:
         return next((item for item in self.flows if item.name == name), None)

@@ -614,12 +614,16 @@ class RunExecutor:
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
         preparation = run_preparation(run, self.store.list_run_controls(run_id=run_id))
-        module, _, ref = preparation.runnable.partition("$")
+        module, _, ref = (
+            preparation.runnable.rpartition("::")
+            if "::" in preparation.runnable
+            else ("", "", preparation.runnable)
+        )
         runnable, kind = parse_runnable_ref(ref)
         resolved_module, declaration = resolve_state_runnable(
             state, runnable, kind=kind
         )
-        if resolved_module != module:
+        if module and resolved_module != module:
             raise ValueError(f"run runnable module changed: {preparation.runnable}")
         persisted_model_request = preparation.model_request
         persisted_model = (
@@ -1532,7 +1536,7 @@ class _Execution:
         self._run_outputs: dict[str, Output] = {}
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
         self._run_lineages: dict[str, tuple[str, ...]] = {
-            root.run_id: (_bound_runnable(root),)
+            root.run_id: (_qualified_identity(root),)
         }
         self._history: MessageHistory | None = None
         self._runtime_controls: dict[str, dict[int, ControlRecord]] = {}
@@ -1901,6 +1905,7 @@ class _Execution:
         if lineage is None:  # pragma: no cover - active Run invariant
             raise RuntimeError(f"active Run lineage is missing: {binding.run_id}")
         ref = _bound_runnable(binding)
+        identity = _qualified_identity(binding)
         control = self.store.accept_execute_control(
             run_id=binding.run_id,
             state=binding.state.revision,
@@ -1911,7 +1916,7 @@ class _Execution:
         )
         binding = replace(binding, control_index=control.index)
         self._preceding_controls.append(control.ref)
-        self._run_lineages[binding.run_id] = (*lineage, ref)
+        self._run_lineages[binding.run_id] = (*lineage, identity)
         self._active_bindings[binding.run_id] = binding
         self._run_outputs.pop(binding.run_id, None)
         self.executor._observe_control(control)
@@ -2252,11 +2257,7 @@ class _Execution:
                     module=parent.module,
                 )
             )
-            runnable_name, runnable_kind = (
-                parse_runnable_ref(name)
-                if name.startswith(("agic:", "flow:"))
-                else (name, None)
-            )
+            runnable_name, runnable_kind = parse_runnable_ref(name)
             effective_name, runnable = resolve_module_runnable(
                 state,
                 parent.module,
@@ -2406,7 +2407,7 @@ class _Execution:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
             try:
                 self._active_bindings[binding.run_id] = binding
-                self._run_lineages[binding.run_id] = (_bound_runnable(binding),)
+                self._run_lineages[binding.run_id] = (_qualified_identity(binding),)
                 self.store.accept_run(
                     run_id=binding.run_id,
                     parent=binding.parent,
@@ -3240,7 +3241,22 @@ def _bound_runnable(binding: BoundRun) -> str:
     runnable = binding.bindings.runnable
     if not runnable:
         raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    return f"{binding.module}${runnable}"
+    if "<" in runnable:
+        if "::" in runnable:
+            return runnable
+        return f"{binding.module}::{runnable}"
+    return runnable
+
+
+def _qualified_identity(binding: BoundRun) -> str:
+    """Return one module-qualified identity for lineage comparisons."""
+
+    runnable = binding.bindings.runnable
+    if not runnable:
+        raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
+    if "::" in runnable:
+        return runnable
+    return f"{binding.module}::{runnable}"
 
 
 def _bound_model(binding: BoundRun) -> str:

@@ -121,7 +121,7 @@ def accept_run(
         thread=thread,
         resources=resources if resources is not None else AgentResources(),
         limits=limits if limits is not None else RunLimits(),
-        runnable=f"agent${resolved_bindings.runnable or 'agic:test'}",
+        runnable=(resolved_bindings.runnable or "agic:test"),
         model=resolved_bindings.model or "test",
         input=resolved_input,
         sandbox=sandbox if sandbox is not None else "host" if parent is None else None,
@@ -185,9 +185,9 @@ def project_run_start(
         thread=thread_id,
         resources=AgentResources(),
         limits=RunLimits(),
-        runnable=f"agent${runnable_kind}:{runnable_name}"
+        runnable=f"{runnable_kind}:{runnable_name}"
         if runnable_name is not None
-        else f"agent${runnable_kind}:test",
+        else f"{runnable_kind}:test",
         model="test",
         input=CallInput({"_": Array("Part[]", tuple(input.parts))}),
         sandbox="host" if parent_path is None else None,
@@ -204,9 +204,9 @@ def project_run_start(
             parent=parent_path,
             control=ControlRef.for_run(run_id, 0),
             runnable=(
-                f"agent${runnable_kind}:{runnable_name}"
+                f"{runnable_kind}:{runnable_name}"
                 if runnable_name is not None
-                else f"agent${runnable_kind}:test"
+                else f"{runnable_kind}:test"
             ),
             occurrence=_occurrence_from_context(run_context),
             started_at=started,

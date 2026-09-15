@@ -316,7 +316,7 @@ def test_flat_input_references_survive_reordering_and_reopening(tmp_path: Path) 
             resources=AgentResources(),
             limits=RunLimits(),
             state="0" * 64,
-            runnable="agent$flow:demo",
+            runnable="flow:demo",
             model="none",
             input=CallInput(dict(reversed(tuple(input.items())))),
             sandbox="host",
@@ -631,7 +631,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             "execute",
             ExecuteControlPayload(
                 revision,
-                "agent$agic:next",
+                "agic:next",
                 CallInput(
                     {"_": TypedRef(source.select("input", "input", "_"), "Json")}
                 ),

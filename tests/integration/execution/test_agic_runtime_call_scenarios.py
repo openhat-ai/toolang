@@ -47,13 +47,13 @@ from toolang.state.watcher import StateWatcher
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("directive", ["hands", "handoffs"])
-def test_unnamed_main_can_be_called_through_authorized_routes(
+def test_named_main_can_be_called_through_authorized_routes(
     tmp_path: Path, kind: str, directive: str
 ) -> None:
     target = (
-        "agic() -> Text:\n  recall = none\n  context: none\n  user: Main.\n"
+        "agic main() -> Text:\n  recall = none\n  context: none\n  user: Main.\n"
         if kind == "agic"
-        else "flow() -> Text:\n  run helper\n"
+        else "flow main() -> Text:\n  run helper\n"
     )
     source = f"""
 agic caller() -> Text:
@@ -113,7 +113,7 @@ agic helper() -> Text:
             ]
             assert any(
                 isinstance(control.payload, (RunControlPayload, ExecuteControlPayload))
-                and control.payload.runnable == f"agent${kind}:main"
+                and control.payload.runnable == f"{kind}:main"
                 for control in controls
             )
             assert root.output is not None
@@ -200,7 +200,7 @@ agic child(_: Text) -> Text:
             )
             assert child_control is not None
             assert isinstance(child_control.payload, RunControlPayload)
-            assert child_control.payload.runnable == "agent$agic:child"
+            assert child_control.payload.runnable == "agic:child"
             followup = harness.adapter.invocations[2].call
             result = last_tool_result(followup)
             assert isinstance(result, ToolResultPart)
@@ -1599,7 +1599,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "_flow_research$flow:research"
+            assert accepted.payload.runnable == "flow:research"
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
@@ -1689,7 +1689,7 @@ agic target(_: Text) -> Text:
             assert isinstance(execute.payload, ExecuteControlPayload)
             source = FieldRef.from_path(steps[0].ref, "output", "local", "value", 0)
             assert execute.payload.state == harness.state.revision
-            assert execute.payload.runnable == "agent$agic:target"
+            assert execute.payload.runnable == "agic:target"
             assert execute.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (execute.ref,)
             assert len(execute.payload.input) == 1
@@ -2090,7 +2090,7 @@ agic target() -> Text:
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
             assert len(controls) == 1
             assert isinstance(controls[0].payload, ExecuteControlPayload)
-            assert controls[0].payload.runnable == "agent$agic:target"
+            assert controls[0].payload.runnable == "agic:target"
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
@@ -2178,8 +2178,8 @@ flow deliver(_: Text) -> Text:
                 for control in controls
                 if isinstance(control.payload, ExecuteControlPayload)
             ] == [
-                "agent$agic:middle",
-                "agent$flow:deliver",
+                "agic:middle",
+                "flow:deliver",
             ]
 
     asyncio.run(scenario())
@@ -2334,10 +2334,8 @@ agic target() -> Text:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("unnamed", [False, True])
 def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
     tmp_path: Path,
-    unnamed: bool,
 ) -> None:
     source = """
 flow outer(_: Text) -> Text:
@@ -2359,11 +2357,7 @@ agic target(_: Text) -> Text:
     bound route {{runnable.name}}
   user: {{_}}
 """
-    target = "main" if unnamed else "target"
-    if unnamed:
-        source = source.replace("agic target(", "agic(").replace(
-            "agic:target", "agic:main"
-        )
+    target = "target"
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")

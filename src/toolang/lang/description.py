@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from toolang.lang.types import display_runnable_ref
 from .ast import (
     AskStmt,
     DropStmt,
@@ -20,15 +21,26 @@ from .ast import (
 )
 
 
+def _runnable_label(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return display_runnable_ref(value, surface="progress")
+    except ValueError:
+        return value
+
+
 def statement_description(statement: FlowStmt) -> str:
     """Describe a statement's operation independently of its authored doc."""
 
     if isinstance(statement, LetStmt):
         return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):
-        action = f"Run {statement.runnable}"
+        action = f"Run {_runnable_label(statement.runnable)}"
     elif isinstance(statement, SeekStmt):
-        action = f"Ask agent {statement.name} to run {statement.runnable}"
+        action = (
+            f"Ask agent {statement.name} to run {_runnable_label(statement.runnable)}"
+        )
     elif isinstance(statement, AskStmt):
         action = (
             f"Ask {statement.name} for input"
@@ -36,36 +48,44 @@ def statement_description(statement: FlowStmt) -> str:
             else "Ask for human input"
         )
     elif isinstance(statement, ScatterStmt):
-        action = _scatter_description(statement.runnable, statement.count)
+        action = _scatter_description(
+            _runnable_label(statement.runnable), statement.count
+        )
     elif isinstance(statement, StormStmt):
         action = (
             f"Storm into {_count(statement.count, 'item')} "
-            f"with {statement.runnable} independently"
+            f"with {_runnable_label(statement.runnable)} independently"
         )
     elif isinstance(statement, GatherStmt):
-        action = f"Gather all items into one with {statement.runnable}"
+        action = f"Gather all items into one with {_runnable_label(statement.runnable)}"
     elif isinstance(statement, SettleStmt):
-        action = f"Settle all items into one with {statement.runnable} sequentially"
+        action = (
+            "Settle all items into one with "
+            f"{_runnable_label(statement.runnable)} sequentially"
+        )
     elif isinstance(statement, MapStmt):
-        action = f"Map each item with {statement.runnable}"
+        action = f"Map each item with {_runnable_label(statement.runnable)}"
     elif isinstance(statement, KeepStmt | DropStmt):
         verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
         if statement.position is not None and statement.count is not None:
             quantity = "item" if statement.count == 1 else f"{statement.count} items"
             action = f"{verb} the {statement.position} {quantity}"
         else:
-            action = f"{verb} items where {statement.runnable} is true"
+            action = f"{verb} items where {_runnable_label(statement.runnable)} is true"
     elif isinstance(statement, SortStmt):
-        action = f"Sort items by {statement.runnable} in {statement.order} order"
+        action = (
+            f"Sort items by {_runnable_label(statement.runnable)} "
+            f"in {statement.order} order"
+        )
     elif isinstance(statement, RepeatStmt):
         if statement.count is not None and statement.runnable is not None:
             return (
                 f"Repeat up to {_count(statement.count, 'time')}, "
-                f"until {statement.runnable} is true"
+                f"until {_runnable_label(statement.runnable)} is true"
             )
         if statement.count is not None:
             return f"Repeat {_count(statement.count, 'time')}"
-        return f"Repeat until {statement.runnable} is true"
+        return f"Repeat until {_runnable_label(statement.runnable)} is true"
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
 

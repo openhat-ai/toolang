@@ -38,11 +38,14 @@ from ..lang.ast import (
     AgicDecl,
     CapDecl,
     FlowDecl,
+    FlowStmt,
     Parameter,
     Program,
+    RepeatStmt,
     Span,
     to_data,
 )
+from toolang.lang.types import parse_runnable_ref_parts, unnamed_runnable_name
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
@@ -365,8 +368,25 @@ def program_runnable_index(
     if include_default and not any(item.name == "default" for item in declarations):
         declarations = (*program.agics, _RUNTIME_DEFAULT_AGIC, *program.flows)
     result: dict[str, AgicDecl | FlowDecl] = {}
+    adhoc_lines = _adhoc_lines(program)
+    unnamed_entry: AgicDecl | FlowDecl | None = None
     for declaration in declarations:
-        name = declaration.name if declaration.name is not None else "main"
+        if declaration is _RUNTIME_DEFAULT_AGIC:
+            name = "default"
+        elif declaration.name is not None:
+            if declaration.name.startswith("<"):
+                continue
+            name = declaration.name
+        else:
+            if (
+                isinstance(declaration, AgicDecl)
+                and declaration.span.line in adhoc_lines
+            ):
+                continue
+            if unnamed_entry is not None:
+                raise ValueError("Runnable name is not unique: entry")
+            unnamed_entry = declaration
+            name = unnamed_runnable_name("entry", declaration.span.line)
         if name in result:
             raise ValueError(f"Runnable name is not unique: {name}")
         result[name] = declaration
@@ -464,7 +484,32 @@ def program_term_data(
 
 
 def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
-    return f"{module}${kind}:{local_name}"
+    return f"{module}::{kind}:{local_name}"
+
+
+def _adhoc_lines(program: Program) -> frozenset[int]:
+    lines: set[int] = set()
+
+    def visit(statements: tuple[FlowStmt, ...]) -> None:
+        for statement in statements:
+            runnable = getattr(statement, "runnable", None)
+            if isinstance(runnable, str):
+                try:
+                    parsed = parse_runnable_ref_parts(runnable)
+                except ValueError:
+                    parsed = None
+                if (
+                    parsed is not None
+                    and parsed.role == "adhoc"
+                    and parsed.line is not None
+                ):
+                    lines.add(parsed.line)
+            if isinstance(statement, RepeatStmt):
+                visit(statement.stmts)
+
+    for flow in program.flows:
+        visit(flow.stmts)
+    return frozenset(lines)
 
 
 def state_program(
@@ -647,6 +692,18 @@ class AgentState:
     ) -> AgicDecl | FlowDecl | None:
         """Return one Program-local runnable declaration."""
 
+        if local_name in {"<entry>", "entry"}:
+            prefix = f"{module}::"
+            matches = tuple(
+                entry
+                for key, entry in self.module_runnables.items()
+                if key.startswith(prefix)
+                and ":<entry:" in key[len(prefix) :]
+                and (kind is None or key[len(prefix) :].startswith(f"{kind}:"))
+            )
+            if len(matches) != 1:
+                return None
+            return matches[0]
         matches = tuple(
             entry
             for candidate_kind in ((kind,) if kind is not None else ("agic", "flow"))
@@ -889,7 +946,7 @@ def flow_module_name(authored_path: str) -> str:
         raise ValueError(f"Flow module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
         raise ValueError(f"Flow module filename is reserved on Windows: {stem!r}")
-    return f"_flow_{stem}"
+    return f"flows::{stem}"
 
 
 def effective_caps(

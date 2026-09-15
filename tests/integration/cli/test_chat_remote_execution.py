@@ -37,7 +37,9 @@ class _Snapshot:
         raise AssertionError("remote run acceptance must not refresh publications")
 
 
-@pytest.mark.parametrize("entry", ["agic:chat", "agic:main", "flow:main", "flow:chat"])
+@pytest.mark.parametrize(
+    "entry", ["agic:chat", "agic:<entry>", "flow:<entry>", "flow:chat"]
+)
 def test_remote_chat_session_executes_against_the_agent_api(
     tmp_path: Path, entry: str
 ) -> None:
@@ -48,9 +50,9 @@ agic chat(_: Part[]) -> Part[]:
   instruct: none
   user: {{_}}
 """
-    if entry == "agic:main":
+    if entry == "agic:<entry>":
         source = source.replace("agic chat", "agic")
-    elif entry in {"flow:main", "flow:chat"}:
+    elif entry in {"flow:<entry>", "flow:chat"}:
         source = source.replace("agic chat", "agic helper")
         source += "\nflow(_: Part[]) -> Part[]:\n  run helper\n"
     harness = ExecutionHarness.create(
@@ -92,8 +94,13 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         assert session.list_models()["default"] == "test/scripted"
-        assert session.list_runnables("runnable")["default"] == entry
-        assert session.initial_setting().runnable == entry
+        setting = session.initial_setting().runnable or ""
+        if entry.endswith("<entry>"):
+            assert setting.startswith(entry.replace("<entry>", "<entry:"))
+            assert session.list_runnables("runnable")["default"] == setting
+        else:
+            assert session.list_runnables("runnable")["default"] == entry
+            assert setting == entry
         thread_id = session.create_thread()
         request = session.build_request(
             thread_id,

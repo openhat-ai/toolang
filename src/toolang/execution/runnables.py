@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypeAlias, cast
 
@@ -12,7 +13,7 @@ from toolang.lang.ast import (
     Program,
     StructDecl,
 )
-from toolang.lang.types import parse_public_runnable_ref
+from toolang.lang.types import parse_runnable_ref_parts
 from toolang.state.state import (
     AgentState,
     program_runnable_index,
@@ -57,7 +58,7 @@ class ResolvedRunnable:
     def qualified(self) -> str:
         """Return the stable State-local runnable identity."""
 
-        return f"{self.module}${self.ref}"
+        return f"{self.module}::{self.ref}"
 
 
 RouteAction: TypeAlias = Literal["run", "execute"]
@@ -140,6 +141,15 @@ def _directive_values(agic: AgicDecl, name: str) -> tuple[str, ...]:
     return directive.values if directive is not None else ()
 
 
+def unnamed_or_public_name(runnable: Runnable, *, fallback: str) -> str:
+    if runnable.name is not None:
+        return runnable.name
+    from toolang.lang.types import unnamed_runnable_name
+
+    role = "adhoc" if fallback.startswith("<adhoc") or "adhoc" in fallback else "entry"
+    return unnamed_runnable_name(role, runnable.span.line)
+
+
 def resolve_runnable(
     program: Program,
     name: str,
@@ -151,10 +161,11 @@ def resolve_runnable(
     if not name or name != name.strip():
         raise ValueError("run spec requires a canonical runnable name")
     try:
-        entry = program_runnable_index(program).get(name)
+        index = program_runnable_index(program)
     except ValueError as exc:
         raise ToolangError(str(exc)) from exc
-    if entry is None or (kind is not None and entry.kind != kind):
+    entry = _lookup_index(index, name, kind=kind)
+    if entry is None:
         raise ToolangError(f"Runnable not found: {name}")
     return entry
 
@@ -172,10 +183,10 @@ def resolve_state_runnable(
     index = getattr(state, "runnables", None)
     if index is None:
         return "agent", resolve_runnable(state_program(state), name, kind=kind)
-    entry = index.get(name)
-    if entry is None or (kind is not None and entry.kind != kind):
+    key, entry = _lookup_index_item(index, name, kind=kind)
+    if entry is None or key is None:
         raise ToolangError(f"Runnable not found: {name}")
-    return state.runnable_modules[name], entry
+    return state.runnable_modules[key], entry
 
 
 def resolve_state_runnable_query(
@@ -194,6 +205,16 @@ def resolve_public_runnable_query(
 ) -> ResolvedRunnable:
     """Resolve one singular query with its effective public identity."""
 
+    index = getattr(state, "runnables", None)
+    if isinstance(index, Mapping):
+        key, entry = _lookup_index_item(index, query)
+        if key is not None and entry is not None:
+            module = state.runnable_modules[key]
+            return ResolvedRunnable(
+                name=key,
+                module=module,
+                executable=entry,
+            )
     item = runnable_dataset(state).require_one(query, label="runnable")
     return ResolvedRunnable(
         name=item.name,
@@ -212,10 +233,39 @@ def resolve_module_runnable(
     """Resolve a module-local runnable and its effective public name."""
 
     resolve_indexed = getattr(state, "module_runnable", None)
+    parsed = (
+        parse_runnable_ref_parts(name) if name.startswith("<") or ":" in name else None
+    )
+    if parsed is not None and parsed.role == "adhoc":
+        if parsed.line is None:
+            raise ToolangError(f"Runnable not found: {name}")
+        program = state_program(state, module_name)
+        matches = [
+            item
+            for item in program.agics
+            if item.name is None
+            and item.span.line == parsed.line
+            and (kind in {None, "agic"})
+            and (parsed.kind in {None, "agic"})
+        ]
+        if len(matches) != 1:
+            raise ToolangError(f"Runnable not found: {name}")
+        return unnamed_or_public_name(matches[0], fallback=parsed.name), matches[0]
     if not callable(resolve_indexed):
         runnable = resolve_runnable(state_program(state, module_name), name, kind=kind)
         return name, runnable
-    entry = resolve_indexed(module_name, name, kind=kind)
+    lookup_name = parsed.name if parsed is not None else name
+    entry = resolve_indexed(
+        module_name, lookup_name, kind=kind or (parsed.kind if parsed else None)
+    )
+    if (
+        entry is None
+        and parsed is not None
+        and parsed.role == "entry"
+        and parsed.line is None
+    ):
+        program = state_program(state, module_name)
+        entry = resolve_runnable(program, name, kind=kind or parsed.kind)
     if entry is None:
         raise ToolangError(f"Runnable not found: {name}")
     public_name = next(
@@ -237,7 +287,10 @@ def resolve_bound_runnable(
 ) -> Runnable:
     """Resolve a stored effective ref back to its Program declaration."""
 
-    name, kind = parse_runnable_ref(ref)
+    parsed = parse_runnable_ref_parts(ref)
+    name, kind = parsed.name, parsed.kind
+    if parsed.module is not None:
+        module_name = parsed.module
     index = getattr(state, "runnables", None)
     if index is None:
         return resolve_runnable(state_program(state, module_name), name, kind=kind)
@@ -260,18 +313,69 @@ def resolve_bound_runnable(
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:
     """Split one optional kind-qualified runnable reference."""
 
-    return parse_public_runnable_ref(value)
+    parsed = parse_runnable_ref_parts(value)
+    return parsed.name, parsed.kind
+
+
+def _lookup_index(
+    index: dict[str, Runnable],
+    name: str,
+    *,
+    kind: str | None = None,
+) -> Runnable | None:
+    _key, entry = _lookup_index_item(index, name, kind=kind)
+    return entry
+
+
+def _lookup_index_item(
+    index: dict[str, Runnable],
+    name: str,
+    *,
+    kind: str | None = None,
+) -> tuple[str | None, Runnable | None]:
+    parsed = None
+    try:
+        parsed = parse_runnable_ref_parts(name)
+        name = parsed.name
+        if kind is None:
+            kind = parsed.kind
+    except ValueError:
+        parsed = None
+    if parsed is not None and parsed.role == "entry" and parsed.line is None:
+        matches = [
+            (key, item)
+            for key, item in index.items()
+            if key.startswith("<entry:") and (kind is None or item.kind == kind)
+        ]
+        if len(matches) != 1:
+            return None, None
+        return matches[0]
+    entry = index.get(name)
+    if entry is None or (kind is not None and entry.kind != kind):
+        return None, None
+    if (
+        parsed is not None
+        and parsed.line is not None
+        and entry.span.line != parsed.line
+    ):
+        return None, None
+    return name, entry
 
 
 def runnable_fallback(program: Program | AgentState, *, preferred: str) -> str:
-    """Choose a surface entry, authored main, then the runtime fallback."""
+    """Choose a surface entry, then the runtime fallback."""
 
-    names = (
-        program.runnables.keys()
+    index = (
+        program.runnables
         if isinstance(program, AgentState)
-        else program_runnable_index(program).keys()
+        else program_runnable_index(program)
     )
-    return next((name for name in (preferred, "main") if name in names), "default")
+    if preferred in index:
+        return preferred
+    matches = [name for name in index if name.startswith("<entry:")]
+    if len(matches) == 1:
+        return matches[0]
+    return "default"
 
 
 def runnable_binding_defaults(
@@ -285,8 +389,16 @@ def runnable_binding_defaults(
     if binding is None:
         binding = runnable_fallback(program, preferred=fallback_agic)
     if isinstance(program, AgentState):
-        resolved = resolve_public_runnable_query(program, binding)
-        name, runnable = resolved.name, resolved.executable
+        name, kind = parse_runnable_ref(binding)
+        module, runnable = resolve_state_runnable(program, name, kind=kind)
+        name = next(
+            (
+                public
+                for public, item in program.runnables.items()
+                if item is runnable and program.runnable_modules[public] == module
+            ),
+            name,
+        )
     else:
         name, kind = parse_runnable_ref(binding)
         runnable = resolve_runnable(program, name, kind=kind)

@@ -38,16 +38,16 @@ class _Snapshot:
         return self.value
 
 
-@pytest.mark.parametrize("runnable", ["agic:echo", "agic:main", "flow:main"])
+@pytest.mark.parametrize("runnable", ["agic:echo", "agic:<entry>", "flow:<entry>"])
 def test_remote_script_uses_a_script_thread_and_native_progress(
     tmp_path: Path,
     capsys,
     runnable: str,
 ) -> None:
     source = _SOURCE
-    if runnable == "agic:main":
+    if runnable == "agic:<entry>":
         source = source.replace("agic echo", "agic")
-    elif runnable == "flow:main":
+    elif runnable == "flow:<entry>":
         source += "\nflow(_: Part[]) -> Part[]:\n  run echo\n"
     harness = ExecutionHarness.create(
         tmp_path,
@@ -97,7 +97,12 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)
-        assert control.payload.runnable == f"agent${runnable}"
+        if runnable == "agic:echo":
+            assert control.payload.runnable == "agic:echo"
+        elif runnable == "agic:<entry>":
+            assert control.payload.runnable.startswith("agent::agic:<entry:")
+        else:
+            assert control.payload.runnable.startswith("agent::flow:<entry:")
         output = capsys.readouterr()
         assert output.out == ""
         assert "• remote result" in output.err

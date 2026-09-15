@@ -240,7 +240,7 @@ class ProgressProjector:
         self._runs[event.run] = RunState(
             event,
             lane_owner,
-            agic=event.runnable.rpartition("$")[2].startswith("agic:"),
+            agic=event.runnable.rsplit("::", 1)[-1].startswith("agic:"),
         )
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)

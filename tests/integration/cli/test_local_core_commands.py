@@ -1472,7 +1472,7 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     assert len(empty_data) == 1
     assert empty_data[0]["pointer"] == empty.id
     assert empty_data[0]["parent"] is None
-    assert empty_data[0]["operation"] == "agent$agic:test"
+    assert empty_data[0]["operation"] == "agic:test"
     assert empty_data[0]["status"] == "succeeded"
     assert empty_data[0]["finished_at"] is not None
     assert empty_data[0]["metrics"] == {

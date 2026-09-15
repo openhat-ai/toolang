@@ -183,7 +183,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.runnable == "agent$agic:review"
+            assert control.payload.runnable == "agic:review"
             assert control.payload.input == CallInput(
                 {
                     "_": Array("Part[]", Message.user("Review this.").parts),
@@ -482,7 +482,13 @@ def test_job_selects_its_kind_before_authored_main(
     try:
         (job,) = load_ready_jobs(harness.setup.layout)
         spec = _scheduler(harness)._build_spec(job)
-        expected = job_kind if specialized else "main"
-        assert spec.bindings.runnable == f"{runnable_kind}:{expected}"
+        expected = (
+            job_kind
+            if specialized
+            else ("default" if runnable_kind == "agic" else "default")
+        )
+        assert spec.bindings.runnable == (
+            f"{runnable_kind}:{expected}" if specialized else "agic:default"
+        )
     finally:
         harness.store.close()
