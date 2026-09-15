@@ -142,8 +142,9 @@ grammar, or runtime behavior changes.
 2. Existing blank lines between directives are removed and do not split a
    section; plain and documentation comments split independently grouped
    sections, and documentation comment ownership is unchanged.
-3. Both `agic` and `flow` bodies follow the rule, including all resource keys and
-   mixed `=`, `+=`, and `-=` operators accepted for that key.
+3. Both `agic` and `flow` bodies follow the rule for every directive key
+   recognized by the current grammar and mixed `=`, `+=`, and `-=` operators
+   accepted for that key. Keyword-looking prose remains literal text.
 4. Inline comments remain attached to their original directive, source values
    and query ordering are unchanged, and parsed semantics before and after
    formatting are equal modulo spans/source-generated names.

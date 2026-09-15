@@ -252,6 +252,88 @@ def test_directive_grouping_stops_at_comment_and_documentation_barriers() -> Non
     assert format_source(formatted) == formatted
 
 
+@pytest.mark.parametrize(
+    ("barrier", "separator", "expected_separator"),
+    [
+        ("# Plain barrier.", "", "\n"),
+        ("## Documentation barrier.", "", ""),
+        ("## Documentation barrier.", "\n", "\n"),
+    ],
+)
+def test_directive_grouping_does_not_cross_comment_barriers(
+    barrier: str,
+    separator: str,
+    expected_separator: str,
+) -> None:
+    source = (
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        f"  {barrier}\n"
+        f"{separator}"
+        "  tools += shell/*\n"
+        "  models += second\n"
+        "  user: Work.\n"
+    )
+    formatted = format_source(source)
+    assert formatted == (
+        "agic work:\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        f"  {barrier}\n"
+        f"{expected_separator}"
+        "  tools += shell/*\n"
+        "  models += second\n\n"
+        "  user: Work.\n"
+    )
+    assert _directive_operations(formatted) == _directive_operations(source)
+    assert format_source(formatted) == formatted
+
+
+def test_directive_grouping_supports_every_current_agic_directive_key() -> None:
+    source = (
+        "agic work:\n"
+        "  hands = agic:review\n"
+        "  handoffs = flow:deliver\n"
+        "  recall = near\n"
+        "  models = first\n"
+        "  tools = fs/*\n"
+        "  models += second\n"
+        "  psyches = org/calm\n"
+        "  skills = org/review\n"
+        "  tools += shell/*\n"
+        "  services = org/search\n"
+        "  user: Work.\n"
+    )
+    formatted = format_source(source)
+    assert formatted == (
+        "agic work:\n"
+        "  hands = agic:review\n"
+        "  handoffs = flow:deliver\n"
+        "  recall = near\n"
+        "  models = first\n"
+        "  models += second\n"
+        "  tools = fs/*\n"
+        "  tools += shell/*\n"
+        "  psyches = org/calm\n"
+        "  skills = org/review\n"
+        "  services = org/search\n\n"
+        "  user: Work.\n"
+    )
+    assert _directive_operations(formatted) == _directive_operations(source)
+    assert format_source(formatted) == formatted
+
+
+def test_directive_grouping_does_not_reclassify_keyword_looking_prose() -> None:
+    source = "agic work:\n  models = first\n  prompts = literal prose.\n  user: Work.\n"
+    formatted = format_source(source)
+    assert "  prompts = literal prose.\n" in formatted
+    agic = Program.from_source(formatted).agics[0]
+    assert [directive.name for directive in agic.directives] == ["models"]
+    assert agic.messages[0].content == "prompts = literal prose."
+    assert format_source(formatted) == formatted
+
+
 def test_directive_groups_keep_inline_conversations_compact() -> None:
     source = (
         "agic work:\n"
