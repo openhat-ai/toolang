@@ -199,11 +199,17 @@ def messages_payload(
         else request.instructions
     )
     options = dict(target.options)
-    explicit_max_tokens = (
-        request.max_output_tokens is not None or "max_tokens" in options
+    configured_max_tokens = options.pop("max_tokens", None)
+    max_tokens = (
+        request.max_output_tokens
+        if request.max_output_tokens is not None
+        else configured_max_tokens
     )
-    configured_max_tokens = options.pop("max_tokens", 4096)
-    max_tokens = request.max_output_tokens or configured_max_tokens
+    if max_tokens is None:
+        raise ToolangError(
+            "Messages requires an output allowance; set max_output or a model "
+            "output limit"
+        )
     if (
         isinstance(max_tokens, bool)
         or not isinstance(max_tokens, int)
@@ -215,11 +221,9 @@ def messages_payload(
         if budget <= 0:
             raise ToolangError("Messages thinking budget_tokens must be positive")
         if budget >= max_tokens:
-            if explicit_max_tokens:
-                raise ToolangError(
-                    "Messages thinking budget_tokens must be lower than max_tokens"
-                )
-            max_tokens = budget + 1
+            raise ToolangError(
+                "Messages thinking budget_tokens must be lower than max_tokens"
+            )
     payload: dict[str, object] = {
         "model": target.model,
         "max_tokens": max_tokens,
@@ -542,18 +546,14 @@ def _apply_reasoning(
 ) -> None:
     if not reasoning:
         return
-    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    unknown = set(reasoning) - {"effort", "budget_tokens"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise ToolangError(f"unknown Messages reasoning controls: {joined}")
-    enabled = reasoning.get("enabled")
     effort = reasoning.get("effort")
     budget = reasoning.get("budget_tokens")
-    if enabled is False and effort not in (None, "none"):
-        raise ToolangError("disabled Messages reasoning conflicts with an effort")
-    if enabled is True and effort == "none":
-        raise ToolangError("enabled Messages reasoning conflicts with effort 'none'")
-    if (enabled is False or effort == "none") and budget is not None:
+    disabled = effort == "none"
+    if disabled and budget is not None:
         raise ToolangError("disabled Messages reasoning conflicts with a token budget")
     payload.pop("thinking", None)
     raw_output_config = payload.get("output_config")
@@ -565,13 +565,13 @@ def _apply_reasoning(
         else {}
     )
     output_config.pop("effort", None)
-    if enabled is False or effort == "none":
+    if disabled:
         payload["thinking"] = {"type": "disabled"}
     elif isinstance(budget, int) and not isinstance(budget, bool):
         payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
-    elif enabled is True or isinstance(effort, str):
+    elif isinstance(effort, str):
         payload["thinking"] = {"type": "adaptive"}
-    if isinstance(effort, str) and effort != "none":
+    if isinstance(effort, str) and not disabled:
         output_config["effort"] = effort
     if output_config:
         payload["output_config"] = output_config

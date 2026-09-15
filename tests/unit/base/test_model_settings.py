@@ -27,6 +27,12 @@ from toolang.base.types.model import (
             "openai/gpt-5 effort=high",
             ModelOverride(identity="openai/gpt-5", effort="high"),
         ),
+        ("max_output=8192", ModelOverride(max_output=8192)),
+        ("max_output=auto", ModelOverride(max_output="auto")),
+        (
+            "openai/gpt-5 effort=high max_output=8192",
+            ModelOverride(identity="openai/gpt-5", effort="high", max_output=8192),
+        ),
         ("DEFAULT", ModelOverride(identity="default")),
         ("UNSET", ModelOverride(identity="unset")),
     ],
@@ -48,7 +54,11 @@ def test_model_body_parses_canonical_identity_and_effort(
         ("effort=low effort=high", "duplicate model parameter"),
         ("none", "was removed"),
         ("unset effort=high", "unset cannot combine"),
+        ("unset max_output=100", "unset cannot combine"),
         ("effort=-1", "unknown reasoning effort"),
+        ("effort=default", "unknown reasoning effort"),
+        ("max_output=0", "must be a positive integer"),
+        ("max_output=half", "unknown max output"),
     ],
 )
 def test_model_body_rejects_invalid_or_untyped_forms(
@@ -92,6 +102,26 @@ def test_model_override_application_preserves_and_resets_typed_parameters() -> N
         "openai/gpt-5",
         ModelParameters(reasoning=ReasoningParameters(effort="low")),
     )
+
+
+def test_max_output_composes_and_cancels_inheritance() -> None:
+    base = ModelRequest("openai/gpt-5", ModelParameters(max_output=8192))
+
+    explicit = apply_model_override(base, None, ModelOverride(max_output=2048))
+    assert explicit is not None
+    assert explicit.parameters.max_output == 2048
+
+    automatic = apply_model_override(explicit, None, ModelOverride(max_output="auto"))
+    assert automatic is not None
+    assert automatic.parameters.max_output is None
+
+    assert apply_model_override(base, base, ModelOverride(identity="default")) == base
+    assert compose_model_overrides(
+        (
+            ModelOverride(identity="openai/gpt-5", max_output=8192),
+            ModelOverride(max_output="auto"),
+        )
+    ) == ModelOverride(identity="openai/gpt-5", max_output="auto")
 
 
 def test_setup_source_model_overrides_compose_in_order() -> None:

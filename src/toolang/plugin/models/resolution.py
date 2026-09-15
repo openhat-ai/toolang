@@ -298,21 +298,29 @@ def resolve_model_request(
     return target
 
 
+def _model_info(
+    context: SupportsModelSelection | ModelCollection,
+    target: ModelTarget,
+) -> ModelInfo | None:
+    """Return the catalog entry for one resolved target, when available."""
+
+    if isinstance(context, ModelCollection):
+        ref = model_target_ref(target)
+        return context.resolve(ref).info if context.contains(ref) else None
+    return _find_model_info_by_ref(
+        context.models,
+        provider=target.provider,
+        ref=target.ref,
+    )
+
+
 def model_reasoning_efforts(
     context: SupportsModelSelection | ModelCollection,
     target: ModelTarget,
 ) -> tuple[ReasoningEffort, ...]:
     """Return recognized catalog-advertised efforts in catalog order."""
 
-    if isinstance(context, ModelCollection):
-        ref = model_target_ref(target)
-        info = context.resolve(ref).info if context.contains(ref) else None
-    else:
-        info = _find_model_info_by_ref(
-            context.models,
-            provider=target.provider,
-            ref=target.ref,
-        )
+    info = _model_info(context, target)
     if info is None:
         return ()
     raw_options = info.metadata.get("reasoning_options")
@@ -329,9 +337,10 @@ def model_reasoning_efforts(
         "high",
         "xhigh",
         "max",
-        "default",
     }
     result: list[ReasoningEffort] = []
+    if any(option.get("type") == "toggle" for option in options):
+        result.append("none")
     for option in options:
         if option.get("type") != "effort":
             continue
@@ -350,22 +359,15 @@ def model_reasoning_effort_applicable(
 ) -> bool:
     """Return whether input-level effort or budget control applies."""
 
-    if model_reasoning_efforts(context, target):
-        return True
-    if isinstance(context, ModelCollection):
-        ref = model_target_ref(target)
-        info = context.resolve(ref).info if context.contains(ref) else None
-    else:
-        info = _find_model_info_by_ref(
-            context.models,
-            provider=target.provider,
-            ref=target.ref,
-        )
+    info = _model_info(context, target)
     if info is None:
         return False
     raw_options = info.metadata.get("reasoning_options")
-    return isinstance(raw_options, list | tuple) and any(
-        isinstance(option, Mapping) and option.get("type") == "budget_tokens"
+    if not isinstance(raw_options, list | tuple):
+        return False
+    return any(
+        isinstance(option, Mapping)
+        and option.get("type") in {"effort", "budget_tokens", "toggle"}
         for option in raw_options
     )
 
@@ -380,34 +382,25 @@ def apply_model_parameters(
     reasoning = parameters.reasoning
     effort = reasoning.effort if reasoning is not None else None
     budget = reasoning.budget_tokens if reasoning is not None else None
-    if effort is None and budget is None:
+    if effort is None and budget is None and parameters.max_output is None:
         return target
-    if effort is not None:
-        allowed = model_reasoning_efforts(context, target)
-        if effort not in allowed:
-            joined = ", ".join(allowed) or "none"
+    result = target
+    if effort is not None or budget is not None:
+        info = _model_info(context, target)
+        if info is None:
             raise ToolangError(
-                f"model {target.ref} does not advertise reasoning effort "
-                f"{effort!r} (allowed: {joined})"
+                f"model {target.ref} does not advertise reasoning controls"
             )
-        return replace(target, reasoning={"effort": effort})
-    if budget is None:  # pragma: no cover - closed ReasoningParameters invariant
-        return target
-    info = (
-        context.resolve(model_target_ref(target)).info
-        if isinstance(context, ModelCollection)
-        else _find_model_info_by_ref(
-            context.models,
-            provider=target.provider,
-            ref=target.ref,
-        )
-    )
-    if info is None:
-        raise ToolangError(
-            f"model {target.ref} does not advertise this reasoning token budget"
-        )
-    _validate_reasoning_request({"budget_tokens": budget}, info=info)
-    return replace(target, reasoning={"budget_tokens": budget})
+        request: dict[str, object] = {}
+        if effort is not None:
+            request["effort"] = effort
+        if budget is not None:
+            request["budget_tokens"] = budget
+        _validate_reasoning_request(request, info=info)
+        result = replace(result, reasoning=dict(request))
+    if parameters.max_output is not None:
+        result = replace(result, max_output=parameters.max_output)
+    return result
 
 
 def select_model_queries(
@@ -1231,27 +1224,32 @@ def _validate_reasoning_request(
         if isinstance(raw_options, list | tuple)
         else ()
     )
-    unknown = set(request) - {"enabled", "effort", "budget_tokens"}
+    unknown = set(request) - {"effort", "budget_tokens"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise ToolangError(f"model {info.ref} has unknown reasoning controls: {joined}")
-    enabled = request.get("enabled")
-    if enabled is not None and (
-        not isinstance(enabled, bool)
-        or not any(option.get("type") == "toggle" for option in options)
-    ):
-        raise ToolangError(f"model {info.ref} does not advertise a reasoning toggle")
     effort = request.get("effort")
     if effort is not None:
-        allowed = {
-            value
-            for option in options
-            if option.get("type") == "effort"
-            for value in option.get("values", ())
-            if isinstance(value, str)
-        }
-        if not isinstance(effort, str) or effort not in allowed:
-            joined = ", ".join(sorted(allowed)) or "none"
+        if not isinstance(effort, str):
+            raise ToolangError(f"model {info.ref} reasoning effort must be a level")
+        effort_options = tuple(
+            option for option in options if option.get("type") == "effort"
+        )
+        allowed: list[str] = []
+        for option in effort_options:
+            values = option.get("values")
+            if not isinstance(values, list | tuple):
+                continue
+            for value in values:
+                if isinstance(value, str) and value not in allowed:
+                    allowed.append(value)
+        # Catalog enumerations are evidence: they reject locally only when the
+        # source marks them exhaustive. Otherwise the provider decides.
+        exhaustive = any(option.get("exhaustive") is True for option in effort_options)
+        if not options:
+            raise ToolangError(f"model {info.ref} does not advertise reasoning")
+        if effort != "none" and exhaustive and effort not in allowed:
+            joined = ", ".join(allowed) or "none"
             raise ToolangError(
                 f"model {info.ref} does not advertise reasoning effort "
                 f"{effort!r} (allowed: {joined})"
@@ -1279,6 +1277,16 @@ def _validate_reasoning_request(
         if minimums and budget < min(minimums):
             raise ToolangError(
                 f"model {info.ref} reasoning budget must be at least {min(minimums)}"
+            )
+        maximums = tuple(
+            value
+            for option in budget_options
+            for value in (option.get("max"),)
+            if isinstance(value, int) and not isinstance(value, bool)
+        )
+        if maximums and budget > max(maximums):
+            raise ToolangError(
+                f"model {info.ref} reasoning budget must be at most {max(maximums)}"
             )
 
 

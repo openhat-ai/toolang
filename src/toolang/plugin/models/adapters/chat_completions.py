@@ -337,14 +337,17 @@ def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:
     reasoning = target.reasoning
     if not reasoning:
         return
-    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    unknown = set(reasoning) - {"effort", "budget_tokens"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise ToolangError(f"unknown Chat Completions reasoning controls: {joined}")
-    enabled = reasoning.get("enabled")
     effort = reasoning.get("effort")
     budget = reasoning.get("budget_tokens")
-    _validate_reasoning_combination(enabled=enabled, effort=effort, budget=budget)
+    disabled = effort == "none"
+    if disabled and budget is not None:
+        raise ToolangError(
+            "disabled Chat Completions reasoning conflicts with a budget"
+        )
     provider = target.provider.lower()
     if provider == "openrouter":
         payload.pop("reasoning", None)
@@ -354,9 +357,9 @@ def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:
                 "OpenRouter accepts either reasoning effort or budget_tokens"
             )
         wire: dict[str, object] = {}
-        if isinstance(enabled, bool):
-            wire["enabled"] = enabled
-        if isinstance(effort, str):
+        if disabled:
+            wire["enabled"] = False
+        if isinstance(effort, str) and not disabled:
             wire["effort"] = effort
         if isinstance(budget, int) and not isinstance(budget, bool):
             wire["max_tokens"] = budget
@@ -370,11 +373,11 @@ def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:
             raise ToolangError(
                 "DeepSeek Chat Completions does not support token budgets"
             )
-        if enabled is False or effort == "none":
+        if disabled:
             payload["thinking"] = {"type": "disabled"}
-        elif enabled is True or isinstance(effort, str):
+        elif isinstance(effort, str):
             payload["thinking"] = {"type": "enabled"}
-        if isinstance(effort, str) and effort != "none":
+        if isinstance(effort, str) and not disabled:
             payload["reasoning_effort"] = effort
         return
     if budget is not None:
@@ -382,9 +385,9 @@ def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:
             f"{target.provider} Chat Completions does not support token budgets"
         )
     payload.pop("reasoning_effort", None)
-    if provider == "xai" and (enabled is False or effort == "none"):
+    if provider == "xai" and disabled:
         raise ToolangError("xAI Chat Completions reasoning cannot be disabled")
-    if enabled is False or effort == "none":
+    if disabled:
         payload["reasoning_effort"] = "none"
     elif isinstance(effort, str):
         payload["reasoning_effort"] = effort
@@ -413,20 +416,6 @@ def _openai_sdk_payload(
     extra_body.update(extensions)
     result["extra_body"] = extra_body
     return result
-
-
-def _validate_reasoning_combination(
-    *,
-    enabled: object,
-    effort: object,
-    budget: object,
-) -> None:
-    if enabled is False and effort not in (None, "none"):
-        raise ToolangError("disabled reasoning conflicts with a reasoning effort")
-    if effort == "none" and enabled is True:
-        raise ToolangError("enabled reasoning conflicts with effort 'none'")
-    if (enabled is False or effort == "none") and budget is not None:
-        raise ToolangError("disabled reasoning conflicts with a token budget")
 
 
 def chat_messages(

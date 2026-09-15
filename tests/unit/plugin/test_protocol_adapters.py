@@ -59,6 +59,7 @@ def test_tool_error_text_reaches_each_provider_without_an_empty_output(adapter, 
                 ),
             ),
         ],
+        max_output_tokens=1024,
     )
     if adapter == "responses":
         payload = responses.response_payload(target, request, stateful=False)
@@ -320,6 +321,7 @@ def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> N
         instructions="Be concise.",
         messages=[Message.user("Inspect the workspace.")],
         tools=(_tool(),),
+        max_output_tokens=1024,
     )
 
     payload = messages_payload(target, request, stream=False)
@@ -661,7 +663,11 @@ def test_messages_stream_returns_normalized_final_usage(monkeypatch) -> None:
                 base_url="https://api.anthropic.com/v1",
                 api_key="secret",
             ),
-            ModelCall(instructions="", messages=[Message.user("hello")]),
+            ModelCall(
+                instructions="",
+                messages=[Message.user("hello")],
+                max_output_tokens=1024,
+            ),
             on_event=_ignore_event,
         )
     )
@@ -731,7 +737,7 @@ def test_messages_payload_supports_effort_with_a_token_budget() -> None:
         model="claude",
         adapter="messages",
         options={"max_tokens": 4096},
-        reasoning={"enabled": True, "effort": "high", "budget_tokens": 2048},
+        reasoning={"effort": "high", "budget_tokens": 2048},
     )
 
     payload = messages_payload(
@@ -758,7 +764,11 @@ def test_messages_canonical_reasoning_replaces_raw_reasoning_options() -> None:
             },
             reasoning={"effort": "high"},
         ),
-        ModelCall(instructions="", messages=[Message.user("hello")]),
+        ModelCall(
+            instructions="",
+            messages=[Message.user("hello")],
+            max_output_tokens=1024,
+        ),
         stream=False,
     )
 
@@ -837,19 +847,19 @@ def test_generate_content_canonical_reasoning_replaces_raw_reasoning_control() -
     (
         (
             "openrouter",
-            {"enabled": True, "budget_tokens": 2048},
-            {"reasoning": {"enabled": True, "max_tokens": 2048}},
+            {"budget_tokens": 2048},
+            {"reasoning": {"max_tokens": 2048}},
         ),
         (
             "deepseek",
-            {"enabled": True, "effort": "max"},
+            {"effort": "max"},
             {
                 "thinking": {"type": "enabled"},
                 "reasoning_effort": "max",
             },
         ),
         ("xai", {"effort": "high"}, {"reasoning_effort": "high"}),
-        ("groq", {"enabled": False}, {"reasoning_effort": "none"}),
+        ("groq", {"effort": "none"}, {"reasoning_effort": "none"}),
         ("custom", {"effort": "high"}, {"reasoning_effort": "high"}),
     ),
 )
@@ -938,7 +948,7 @@ def test_responses_maps_supported_reasoning_and_rejects_token_budgets() -> None:
         name="model",
         model="model",
         adapter="responses",
-        reasoning={"enabled": False},
+        reasoning={"effort": "none"},
     )
 
     assert responses.response_payload(disabled, request, stateful=False)[
@@ -1006,6 +1016,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
             adapter="messages",
             structured_output=True,
             reasoning={"effort": "high"},
+            options={"max_tokens": 1024},
         ),
         request,
         stream=False,
@@ -1274,7 +1285,7 @@ def test_messages_falls_back_without_native_structured_output_capability(
         model="model",
         adapter="messages",
         structured_output=capability,
-        options={"output_config": {"effort": "high"}},
+        options={"output_config": {"effort": "high"}, "max_tokens": 1024},
     )
 
     payload = messages_payload(target, request, stream=False)
@@ -1317,7 +1328,7 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
         stateful=False,
     )
     message_payload = messages_payload(
-        replace(target, adapter="messages"),
+        replace(target, adapter="messages", options={"max_tokens": 1024}),
         request,
         stream=False,
     )
@@ -1375,7 +1386,10 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
                 name="model",
                 model="model",
                 adapter="messages",
-                options={"output_config": {"format": {"type": "json_schema"}}},
+                options={
+                    "output_config": {"format": {"type": "json_schema"}},
+                    "max_tokens": 1024,
+                },
             ),
             lambda target, request: messages_payload(target, request, stream=False),
         ),
@@ -1449,3 +1463,38 @@ def _tool() -> ToolDefinition:
         description="Run a shell command.",
         parameters={"type": "object"},
     )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "build"),
+    (
+        (
+            "chat_completions",
+            lambda target, request: chat_completions.chat_completion_payload(
+                target, request, stream=False
+            ),
+        ),
+        (
+            "responses",
+            lambda target, request: responses.response_payload(
+                target, request, stateful=False
+            ),
+        ),
+        (
+            "generate_content",
+            generate_content_payload,
+        ),
+    ),
+)
+def test_adapters_omit_an_absent_output_allowance(adapter, build) -> None:
+    target = ModelTarget(
+        ref="test/model", provider="test", name="model", model="model", adapter=adapter
+    )
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+
+    payload = build(target, request)
+
+    assert "max_tokens" not in payload
+    assert "max_completion_tokens" not in payload
+    assert "max_output_tokens" not in payload
+    assert "generationConfig" not in payload

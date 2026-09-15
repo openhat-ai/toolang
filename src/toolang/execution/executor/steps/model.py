@@ -157,7 +157,36 @@ def _candidate(
         continuation=state.continuation,
         max_output_tokens=prepared.output_budget,
     )
-    return prepared, messages, preceding, request, recorded
+    return (
+        prepared,
+        messages,
+        preceding,
+        _clip_output(state, prepared, request),
+        recorded,
+    )
+
+
+def _clip_output(
+    state: _AgicState,
+    prepared: _AgicFrame,
+    request: ModelCall,
+) -> ModelCall:
+    """Trim an explicit output allowance to the provider's remaining window.
+
+    The runtime clips only from a calibrated input count. Without one it sends
+    the request unchanged and lets the provider enforce its own context limit.
+    """
+
+    capacity = prepared.context_capacity
+    if capacity is None or request.max_output_tokens is None:
+        return request
+    used = state.estimate.reliable_count(request, _estimate_binding(prepared))
+    if used is None:
+        return request
+    room = capacity - used
+    if room >= request.max_output_tokens:
+        return request
+    return replace(request, max_output_tokens=max(1, room))
 
 
 def _estimate_binding(prepared: _AgicFrame) -> object:

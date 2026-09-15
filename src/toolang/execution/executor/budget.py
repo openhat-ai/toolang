@@ -51,6 +51,13 @@ class InputEstimate:
             32 + text_tokens(fixed) + sum(message_tokens(m) for m in request.messages)
         )
 
+    def reliable_count(self, request: ModelCall, binding: object) -> int | None:
+        """Return the calibrated count, or None before provider usage is known."""
+
+        if self.tokens is None or binding != self.binding:
+            return None
+        return self.count(request, binding)
+
     def observe(self, request: ModelCall, binding: object, usage: int | None) -> None:
         tokens = (
             usage if usage is not None and usage > 0 else self.count(request, binding)

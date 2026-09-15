@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from toolang.base.errors import ToolangError
+
+
+class EmptyModelOutput(ToolangError):
+    """Raised when a terminal model step produced no visible output."""
+
 
 class HistoryChangedError(RuntimeError):
     """A captured history read can no longer be reconstructed from current facts."""

@@ -605,7 +605,7 @@ Empty text is always invalid.
 Default model values use one shared model body across TOML,
 `TOOLANG_DEFAULT_MODEL`, and startup `--default model=BODY`. A body contains an
 optional exact identity followed by typed assignments such as `effort=high`,
-`effort=4096`, or `effort=auto`. Setup publishes the resulting complete model
+`effort=4096`, `effort=auto`, `max_output=8192`, or `max_output=auto`. Setup publishes the resulting complete model
 request only after validating it against the effective model. Chat startup uses
 `--default model=BODY` for its multi-run session, while Script and rerun use
 `--model BODY` for one-run selection above the Setup default.

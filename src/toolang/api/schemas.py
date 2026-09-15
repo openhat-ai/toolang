@@ -64,7 +64,7 @@ def _reject_materialized_run_unknowns(value: object) -> None:
     if isinstance(model, Mapping):
         model_data = cast(Mapping[str, object], model)
         parameters = model_data.get("parameters")
-        _reject_keys(parameters, {"reasoning"}, "model parameters")
+        _reject_keys(parameters, {"reasoning", "max_output"}, "model parameters")
         if isinstance(parameters, Mapping):
             parameters_data = cast(Mapping[str, object], parameters)
             _reject_keys(

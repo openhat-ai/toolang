@@ -328,6 +328,7 @@ agic reply(_: Part[]) -> Part[]:
                                 {
                                     "type": "effort",
                                     "values": ["medium", "high", "low"],
+                                    "exhaustive": True,
                                 },
                             ],
                         },
@@ -2010,5 +2011,78 @@ agic fail(_: Part[]) -> Part[]:
                 f"step_end:{record.id}.0:model:failed",
                 f"run_end:{record.id}:failed",
             ]
+
+    asyncio.run(scenario())
+
+
+def test_agic_rejects_a_reasoning_exhausted_final_output(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Text):
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(
+                usage=ModelUsage(
+                    input_tokens=8,
+                    output_tokens=4096,
+                    output_visible_tokens=0,
+                    output_reasoning_tokens=4096,
+                )
+            )
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+
+            assert record.status == "failed"
+            assert isinstance(record.error, ErrorMessage)
+            assert "reasoning consumed" in record.error.message
+            steps = harness.store.list_steps(run_id=record.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded")
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_agic_rejects_a_blank_final_output(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Text):
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(usage=ModelUsage(input_tokens=8, output_tokens=1))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+
+            assert record.status == "failed"
+            assert isinstance(record.error, ErrorMessage)
+            assert record.error.message == "model produced no visible output"
 
     asyncio.run(scenario())

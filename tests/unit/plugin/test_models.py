@@ -428,10 +428,14 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
     )
     target = replace(
         resolve_unique_model_query(context, query="openai/gpt-5"),
-        reasoning={"enabled": True, "effort": "medium"},
+        reasoning={"effort": "medium"},
     )
 
-    assert model_reasoning_efforts(context, target) == ("medium", "high")
+    assert model_reasoning_efforts(context, target) == (
+        "none",
+        "medium",
+        "high",
+    )
     assert model_reasoning_effort_applicable(context, target)
     assert apply_model_parameters(context, target, ModelParameters()) == target
     selected = apply_model_parameters(
@@ -446,12 +450,20 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         ModelParameters(ReasoningParameters(budget_tokens=2048)),
     )
     assert budgeted.reasoning == {"budget_tokens": 2048}
-    with pytest.raises(ToolangError, match="allowed: medium, high"):
-        apply_model_parameters(
-            context,
-            target,
-            ModelParameters(ReasoningParameters("max")),
-        )
+    capped = apply_model_parameters(
+        context,
+        target,
+        ModelParameters(max_output=4096),
+    )
+    assert capped.max_output == 4096
+    # A catalog enumeration is evidence. Only an exhaustive list rejects an
+    # unlisted level locally; otherwise the provider decides.
+    passed = apply_model_parameters(
+        context,
+        target,
+        ModelParameters(ReasoningParameters("max")),
+    )
+    assert passed.reasoning == {"effort": "max"}
     with pytest.raises(ToolangError, match="budget must be at least 1024"):
         apply_model_parameters(
             context,
@@ -460,7 +472,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         )
 
 
-def test_toggle_only_reasoning_does_not_make_effort_applicable() -> None:
+def test_toggle_only_reasoning_advertises_none() -> None:
     provider = _FakeModels(
         name="openai",
         models=(
@@ -481,7 +493,8 @@ def test_toggle_only_reasoning_does_not_make_effort_applicable() -> None:
     )
     target = resolve_unique_model_query(context, query="openai/toggle-only")
 
-    assert not model_reasoning_effort_applicable(context, target)
+    assert model_reasoning_efforts(context, target) == ("none",)
+    assert model_reasoning_effort_applicable(context, target)
 
 
 def test_budget_only_reasoning_makes_effort_applicable() -> None:
@@ -509,6 +522,74 @@ def test_budget_only_reasoning_makes_effort_applicable() -> None:
 
     assert model_reasoning_efforts(context, target) == ()
     assert model_reasoning_effort_applicable(context, target)
+
+
+def test_exhaustive_effort_enumeration_rejects_an_unlisted_level() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="GPT-5",
+                model="gpt-5",
+                adapter="responses",
+                metadata={
+                    "reasoning_options": [
+                        {
+                            "type": "effort",
+                            "values": ["low", "high"],
+                            "exhaustive": True,
+                        }
+                    ]
+                },
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+    target = resolve_unique_model_query(context, query="openai/gpt-5")
+
+    with pytest.raises(ToolangError, match="allowed: low, high"):
+        apply_model_parameters(
+            context,
+            target,
+            ModelParameters(ReasoningParameters("max")),
+        )
+
+
+def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/toggle-only",
+                provider="openai",
+                name="Toggle only",
+                model="toggle-only",
+                metadata={"reasoning_options": [{"type": "toggle"}]},
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+    target = resolve_unique_model_query(context, query="openai/toggle-only")
+
+    selected = apply_model_parameters(
+        context,
+        target,
+        ModelParameters(ReasoningParameters(effort="none")),
+    )
+
+    assert selected.reasoning == {"effort": "none"}
 
 
 def test_reasoning_parameters_reject_effort_and_budget_together() -> None:
@@ -1398,6 +1479,7 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
                 ),
             ],
             continuation=result.continuation,
+            max_output_tokens=4096,
         ),
         stream=False,
     )
@@ -1413,7 +1495,7 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
     assert content[1]["id"] == "call_1"
 
 
-def test_messages_adapter_keeps_thinking_budget_below_max_tokens() -> None:
+def test_messages_adapter_requires_an_allowance_above_the_thinking_budget() -> None:
     target = ModelTarget(
         ref="anthropic/claude",
         provider="anthropic",
@@ -1422,23 +1504,33 @@ def test_messages_adapter_keeps_thinking_budget_below_max_tokens() -> None:
         adapter="messages",
         reasoning={"budget_tokens": 8_000},
     )
-    request = ModelCall(instructions="", messages=[Message.user("hello")])
 
-    payload = messages_models.messages_payload(target, request, stream=False)
+    with pytest.raises(ToolangError, match="output allowance"):
+        messages_models.messages_payload(
+            target,
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            stream=False,
+        )
 
-    assert payload["max_tokens"] == 8_001
+    bounded = messages_models.messages_payload(
+        target,
+        ModelCall(
+            instructions="",
+            messages=[Message.user("hello")],
+            max_output_tokens=20_000,
+        ),
+        stream=False,
+    )
+    assert bounded["max_tokens"] == 20_000
+
     with pytest.raises(ToolangError, match="lower than max_tokens"):
         messages_models.messages_payload(
-            ModelTarget(
-                ref=target.ref,
-                provider=target.provider,
-                name=target.name,
-                model=target.model,
-                adapter=target.adapter,
-                options={"max_tokens": 4_096},
-                reasoning=target.reasoning,
+            target,
+            ModelCall(
+                instructions="",
+                messages=[Message.user("hello")],
+                max_output_tokens=4_096,
             ),
-            request,
             stream=False,
         )
 
@@ -1563,7 +1655,7 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
         (
             "deepseek",
             {"extra_body": {"thinking": {"type": "disabled"}}},
-            {"enabled": True, "effort": "high"},
+            {"effort": "high"},
             "high",
             {"thinking": {"type": "enabled"}},
         ),
