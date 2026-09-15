@@ -54,6 +54,7 @@ def test_load_template_rejects_unknown_name() -> None:
 def test_agent_template_declares_a_minimal_unnamed_entry() -> None:
     from toolang.lang import Program
 
+    assert templates.load_template("agent").raw_text == "agic:\n  {{_}}\n"
     program = Program.from_source(templates.load_template("agent").raw_text)
 
     assert program.flows == ()
