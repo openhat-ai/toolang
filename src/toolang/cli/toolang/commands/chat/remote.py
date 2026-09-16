@@ -176,6 +176,15 @@ class RemoteChatSession:
             self._submit(self._list_prompts(runnable)).result(),
         )
 
+    def thread_title(self, thread_id: str) -> str | None:
+        """Return one thread's title, or ``None`` when it cannot be read."""
+
+        try:
+            title = self._submit(self._thread_title(thread_id)).result()
+        except Exception:
+            return None
+        return title if isinstance(title, str) and title else None
+
     def create_thread(self) -> str:
         return cast(str, self._submit(self._create_thread()).result())
 
@@ -797,6 +806,21 @@ class RemoteChatSession:
         if not response.is_success:
             raise _http_error(response, operation=operation)
         return response
+
+    async def _thread_title(self, thread_id: str) -> str | None:
+        try:
+            payload = await self._request_json(
+                "GET", f"/api/v1/threads/{thread_id}", operation="thread"
+            )
+        except RemoteChatError:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        data = cast("Mapping[str, object]", payload)
+        if not data.get("run_count"):
+            return None
+        title = data.get("title")
+        return title if isinstance(title, str) and title else None
 
     async def _close(self) -> None:
         if self._close_signal is not None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 import os
@@ -57,6 +57,7 @@ from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
+from toolang.cli.common.tmux import resolve_marks
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -78,6 +79,7 @@ from .input import (
     slash_command_name,
 )
 from .local import LocalChatSession
+from .marks import ChatMarks
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
@@ -139,23 +141,42 @@ def _chat_interactive(
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
             setting = replace(setting, runnable=None)
+        marks = _chat_marks(context_layout(ctx).name, client)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
-            _chat_interactive_scripted_local(
-                client=client,
-                thread_id=thread_id,
-                setting=setting,
-                progress_max_width=user_call(
-                    resolve_progress_max_width,
-                    load_runtime_environ(context_layout(ctx), base_environ=os.environ),
-                ),
-            )
+            marks.start(thread_id)
+            try:
+                _chat_interactive_scripted_local(
+                    client=client,
+                    thread_id=thread_id,
+                    setting=setting,
+                    marks=marks,
+                    progress_max_width=user_call(
+                        resolve_progress_max_width,
+                        load_runtime_environ(
+                            context_layout(ctx), base_environ=os.environ
+                        ),
+                    ),
+                )
+            finally:
+                marks.clear()
             return
         _chat_interactive_prompt_toolkit(
             ctx,
             thread_id=thread_id,
             setting=setting,
             client=client,
+            marks=marks,
         )
+
+
+def _chat_marks(agent: str, client: ChatClient) -> ChatMarks:
+    """Pane marks for one chat session; disabled outside tmux."""
+
+    return ChatMarks(
+        agent=agent,
+        marks=resolve_marks(),
+        title_lookup=client.thread_title,
+    )
 
 
 @contextmanager
@@ -296,6 +317,7 @@ def _chat_interactive_prompt_toolkit(
     thread_id: str | None,
     setting: SessionSetting,
     client: ChatClient,
+    marks: ChatMarks | None = None,
 ) -> None:
     environ = load_runtime_environ(context_layout(ctx), base_environ=os.environ)
     ChatTuiApp.run(
@@ -309,6 +331,7 @@ def _chat_interactive_prompt_toolkit(
             environ,
         ),
         surfaces=user_call(resolve_terminal_surfaces, environment=environ),
+        marks=marks,
     )
 
 
@@ -317,13 +340,16 @@ def _chat_interactive_scripted_local(
     client: ChatClient,
     thread_id: str | None,
     setting: SessionSetting,
+    marks: ChatMarks | None = None,
     progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
 ) -> None:
-    renderer = _ScriptedRunRenderer()
+    marks = marks if marks is not None else ChatMarks.disabled()
+    renderer = _ScriptedRunRenderer(on_run_end=marks.refresh_title)
     context = _ScriptedAppContext(
         client,
         setting=setting,
         thread_id=thread_id,
+        marks=marks,
         progress_max_width=progress_max_width,
     )
 
@@ -421,11 +447,13 @@ class _ScriptedAppContext(AppContext):
         *,
         setting: SessionSetting,
         thread_id: str | None,
+        marks: ChatMarks,
         progress_max_width: int,
     ) -> None:
         self.client = client
         self.setting = setting
         self.thread_id = thread_id
+        self.marks = marks
         self.live_blocks: list[MutableBlock] = []
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.exit_requested = False
@@ -448,6 +476,7 @@ class _ScriptedAppContext(AppContext):
     def ensure_thread_id(self) -> str:
         if self.thread_id is None:
             self.thread_id = self.client.create_thread()
+            self.marks.set_thread(self.thread_id)
         return self.thread_id
 
     def set_active_run(self, run_id: str | None) -> None:
@@ -496,7 +525,8 @@ def _echo_scripted_outcome(
 class _ScriptedRunRenderer:
     """Render assistant text from one directly traced run."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_run_end: Callable[[], None] | None = None) -> None:
+        self._on_run_end = on_run_end
         self._assistant_open = False
         self._text_delta_steps: set[StepRef] = set()
         self._terminal: RunEnd | None = None
@@ -542,6 +572,8 @@ class _ScriptedRunRenderer:
         if isinstance(event, RunEnd):
             self._terminal = event
             self._close()
+            if self._on_run_end is not None:
+                self._on_run_end()
 
     def handle_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunBlocked):

@@ -430,3 +430,32 @@ Thread and run detail endpoints are inspection surfaces used to:
 - recover state after refresh
 
 They are not the primary source for the in-flight assistant reply.
+
+## Tmux Pane Marks
+
+Chat running inside a tmux pane records what it hosts on that pane, so a
+tmux-side view can read it without knowing anything about Toolang:
+
+| option | value | written |
+| --- | --- | --- |
+| `@toolang_agent` | agent name | when chat starts |
+| `@toolang_thread_id` | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
+| `@toolang_thread_title` | thread title, single line, at most 60 display columns | once the thread has runs |
+
+Each value is published at both scopes: as a pane option (the process that owns the
+pane, which survives a window holding several panes) and as a window option (the
+session-level metadata a window-scoped format reads without resolving the active
+pane). A chat window also takes the thread id as its window name and the thread
+title as its pane title, but only while it holds a single pane — that is the shape
+tmux renders as `term_xxx: "hello world"`. The previous window name comes back when
+chat exits.
+
+Marks are best-effort. They are written only when the process runs inside a pane
+(`TMUX` and `TMUX_PANE` are set), they are unset when chat exits, and a failing tmux
+call never reaches the UI. `TOOLANG_TMUX_MARKS=0` disables the feature entirely, and
+`TOOLANG_TMUX_DEBUG=1` reports skipped writes on stderr.
+
+The values are not read back by the CLI: they exist for tmux. A status line can show
+the current window's thread with `#{@toolang_thread_title}`, and
+`tmux list-windows -a -F '#{window_name} #{@toolang_thread_id}'` finds the windows
+that host chat.
