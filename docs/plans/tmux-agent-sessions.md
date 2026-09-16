@@ -33,7 +33,7 @@ Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | run chat in the current terminal |
-| inside tmux, current session is the agent's session | run chat in this pane; publish window metadata |
+| inside tmux, current session is the agent's session | run chat in this pane; publish the pane and window metadata |
 | inside tmux, another session, `--thread` already open in the agent's session | `switch-client` to that window, print the notice, exit 0 |
 | inside tmux, another session, otherwise | `ensure` the agent's session, open a window running `too <agent> chat …`, `switch-client` to it, print the notice, exit 0 |
 
