@@ -34,8 +34,8 @@ Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 | --- | --- |
 | not inside tmux | run chat in the current terminal |
 | inside tmux, current session is the agent's session | run chat in this pane; publish the pane and window metadata |
-| inside tmux, another session, `--thread` already open in the agent's session | `switch-client` to that window, print the notice, exit 0 |
-| inside tmux, another session, otherwise | `ensure` the agent's session, open a window running `too <agent> chat …`, `switch-client` to it, print the notice, exit 0 |
+| inside tmux, another session, `--thread` already open in the agent's session | switch the client to that window, print the notice, exit 0 |
+| inside tmux, another session, otherwise | ensure the agent's session, open a window running `too <agent> chat …`, switch the client to it, print the notice, exit 0 |
 
 The notice is one line on stdout: `↪ opened in tmux session <agent>`.
 
@@ -68,14 +68,13 @@ Outside tmux, or when the thread is not known yet, only what exists is published
 
 ## Thread lookup
 
-The lookup only runs when `--thread ID` was given (a new chat has no id yet):
-
-```
-tmux list-windows -t <agent> -F '#{@toolang_thread_id}'   # or list-panes -a
-```
-
-A match switches to that window; several matches pick the newest. No thread data is read
-for this: the marks are the index.
+The lookup only runs when `--thread ID` was given (a new chat has no id yet), and it is a
+libtmux read: resolve `Server.from_env()`, walk `server.sessions` for the agent's session
+(`session.show_option("@toolang_agent")`), then `session.windows` and
+`window.show_option("@toolang_thread_id")`. When a bulk read matters, one
+`server.cmd("list-windows", "-F", …)` call is used instead — `Server.cmd` is still the
+library's own API. A match switches to that window; several matches pick the newest. No
+thread data is read for this: the marks are the index.
 
 ## Lifecycle
 
@@ -144,7 +143,14 @@ The agent's session is named after the agent, sanitized as recorded in
   present. `cli/common/tmux.py` exposes `resolve_marks()` returning a `Marks` object, and
   `chat/marks.py` keeps the lifecycle. The `resolve_pane_marks` / `PaneMarks` names from plan #1
   are superseded by that shape.
-- `cli/common/tmux.py` grows the operations the launcher needs (`list_windows`, `ensure_session`,
+- **Every tmux interaction goes through libtmux, never through a toolang-owned subprocess.**
+  Typed calls where the library has them (`Server.from_env`, `server.sessions`,
+  `session.windows`, `window.show_option`, `server.new_session`, `session.new_window`,
+  `server.switch_client`, `session.attach`), and `Server.cmd(...)` — the library's own escape
+  hatch — for one-shot format reads such as `list-windows -F`. libtmux itself invokes the tmux
+  binary, so the launcher keeps its reads few: one call per session it inspects, not one per
+  option.
+- `cli/common/tmux.py` grows the operations the launcher needs (`agent_session`,
   `open_window`, `switch_client`) instead of adding a second tmux layer; the launcher decision
   lives in `chat/main.py`.
 - Files: `src/toolang/cli/common/tmux.py`, `src/toolang/cli/toolang/commands/chat/main.py`,
