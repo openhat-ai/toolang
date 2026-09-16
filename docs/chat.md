@@ -459,3 +459,34 @@ The values are not read back by the CLI: they exist for tmux. A status line can 
 the current window's thread with `#{@toolang_thread_title}`, and
 `tmux list-windows -a -F '#{window_name} #{@toolang_thread_id}'` finds the windows
 that host chat.
+
+## Tmux Agent Sessions
+
+Inside tmux, `too <agent> chat` runs in the agent's own session in the user's own
+server, so `prefix w` lists one entry per open chat:
+
+```text
+eve
+  term_xxx: "hello world"
+  term_yyy: "debug parser"
+```
+
+| situation | behaviour |
+| --- | --- |
+| not inside tmux | chat runs in the current terminal |
+| the current session is the agent's session | chat runs in this pane |
+| another session, `--thread` already open | the client switches to that window |
+| another session, otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
+
+A run that is moved elsewhere prints one line, `↪ opened in tmux session <agent>`,
+and exits 0; the pane it started in returns to its shell.
+
+The agent's session is found by its `@toolang_agent` session option first and by
+its derived name second. The derived name is the agent name reduced to lowercase
+`[a-z0-9-]`; a name another agent already owns is suffixed (`eve-2`) instead of
+renamed. `--thread` reuses an open chat by reading the window marks, so no thread
+data is read to answer it.
+
+Placement is best-effort and shares the marks kill switch: outside tmux, with
+`TOOLANG_TMUX_MARKS=0`, or when a tmux call fails, chat runs in the current
+terminal.

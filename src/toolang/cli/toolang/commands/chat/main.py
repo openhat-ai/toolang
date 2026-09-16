@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
+import shlex
 import sys
 from typing import cast
 
@@ -57,7 +58,7 @@ from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
-from toolang.cli.common.tmux import resolve_marks
+from toolang.cli.common.tmux import resolve_launcher, resolve_marks
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -99,6 +100,8 @@ def chat_command(
     compact_model: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    if not _place_chat(ctx, thread_id=thread_id, argv=sys.argv):
+        return
     _chat_interactive(
         ctx,
         thread_id=thread_id,
@@ -110,6 +113,54 @@ def chat_command(
         limit_options=limits,
         compact_model=compact_model,
     )
+
+
+def _place_chat(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    argv: Sequence[str],
+) -> bool:
+    """Send this chat run to the agent's tmux session when tmux can host it.
+
+    Returns ``True`` when chat keeps running in this process. ``False`` means
+    the run now lives in the agent's session: the notice is printed and the
+    caller must return, because the client points at another window.
+    """
+
+    agent = context_layout(ctx).name
+    launcher = resolve_launcher(agent=agent)
+    if launcher is None:
+        return True
+    session = launcher.agent_session()
+    if session is not None and launcher.is_current(session):
+        return True
+    if session is not None and thread_id is not None:
+        window = launcher.thread_window(session, thread_id)
+        if window is not None:
+            launcher.switch_client(window)
+            _announce_session(agent)
+            return False
+    command = shlex.join(list(argv))
+    directory = os.getcwd()
+    session, window = launcher.ensure_session(command=command, directory=directory)
+    if session is None:
+        return True
+    if window is None:
+        window = launcher.open_window(session, command=command, directory=directory)
+    if window is None:
+        return True
+    if not launcher.switch_client(window):
+        launcher.close_window(window)
+        return True
+    _announce_session(agent)
+    return False
+
+
+def _announce_session(agent: str) -> None:
+    """Tell the user where chat went: one line on stdout."""
+
+    print(f"\u21aa opened in tmux session {agent}")
 
 
 def _chat_interactive(
