@@ -48,6 +48,12 @@ Out: everything that *consumes* the marks (picker, key bindings, dedicated tmux 
 that is the follow-up plan. Also out: window or session marks, tmux server management, and
 any change to execution records or history.
 
+Session names are deliberately not part of this plan: the marks are pane-scoped, so chat
+works in any session under any name. Verified while preparing this plan: `tmux list-panes -a
+-F '#{pane_id} #{@toolang_thread_id}'` discovers marked panes without touching session names,
+and `session_id` (`$N`) survives `rename-session`, so a user renaming a session breaks
+nothing. Naming rules for sessions that toolang itself creates belong to the follow-up plan.
+
 ## Design
 
 1. **Target resolution**: `libtmux.Pane.from_env()`. It parses `TMUX` and `TMUX_PANE`
@@ -156,3 +162,16 @@ Consume the marks: picker and key bindings, and optionally a dedicated tmux serv
 own configuration file. `/tmp/toomux` is a working prototype of that half (window options,
 subprocess calls, hand-rolled server management); this plan supersedes it for the marks
 themselves.
+
+### Session naming rules to carry over
+
+- Options are authoritative, names are cosmetic. Locate toolang panes by mark, and toolang
+  sessions by a `@toolang_agent` session option, never by parsing a name; address targets by
+  `session_id` / `pane_id`, which stay valid across renames.
+- Only name what toolang creates: derive `toolang-<sanitized agent>` (lowercase, `[a-z0-9-]`,
+  every other character replaced with `-`). If the derived name is already taken by a session
+  toolang does not own, add a numeric suffix rather than renaming someone else's session.
+- Respect tmux's own rewriting: session names silently turn `.` and `:` into `_` (verified:
+  `-s x.y` creates `x_y`), so sanitise before using a derived name as a target too.
+- With a dedicated server (`tmux -L <socket>`) the server is already toolang-scoped, so a plain
+  name is enough and the mark remains the identifier.
