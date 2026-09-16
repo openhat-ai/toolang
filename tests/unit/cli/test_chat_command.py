@@ -24,6 +24,7 @@ from toolang.cli.common.output import shorten_home_path
 from toolang.cli.common.context import context_layout
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
+from toolang.cli.toolang.commands.chat.marks import ChatMarks
 from toolang.cli.toolang.commands.chat.base import (
     ChatExecutorMetadata,
     ChatResult,
@@ -270,6 +271,12 @@ def test_chat_default_model_none_clears_the_configured_preference() -> None:
     assert not clear_runnable
 
 
+class _Layout:
+    """Minimal agent layout for chat dispatch tests."""
+
+    name = "c"
+
+
 class _Client:
     executor_metadata = ChatExecutorMetadata(
         sandbox_selector="host",
@@ -305,6 +312,9 @@ class _Client:
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
         del kind
         return {"default": None, "items": []}
+
+    def thread_title(self, thread_id: str) -> str | None:
+        return None
 
     def create_thread(self) -> str:
         self.created += 1
@@ -609,16 +619,20 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
+        marks: object = None,
     ) -> None:
         captured.update(
             thread=thread_id,
             setting=setting,
             client=client,
+            marks=marks,
         )
 
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "_chat_runtime", runtime)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
+    monkeypatch.setattr(chat, "resolve_marks", lambda **_kwargs: None)
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
 
     chat._chat_interactive(
@@ -626,11 +640,14 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id=thread_id,
     )
 
+    marks = captured.pop("marks")
     assert captured == {
         "thread": thread_id,
         "setting": client.initial_setting(),
         "client": client,
     }
+    assert isinstance(marks, ChatMarks)
+    assert marks.active is False
     assert client.created == 0
 
 
@@ -650,13 +667,17 @@ def test_chat_invocation_defaults_initialize_the_session(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
+        marks: object = None,
     ) -> None:
+        del marks
         del thread_id, client
         captured["setting"] = setting
 
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "_chat_runtime", runtime)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
+    monkeypatch.setattr(chat, "resolve_marks", lambda **_kwargs: None)
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
 
     chat._chat_interactive(

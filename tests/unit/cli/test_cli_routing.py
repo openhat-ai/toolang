@@ -945,6 +945,9 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
         def close(self) -> None:
             captured["closed"] = True
 
+        def thread_title(self, thread_id: str) -> str | None:
+            return None
+
         def initial_setting(self) -> SessionSetting:
             return SessionSetting(model=None, runnable=None)
 
@@ -1219,6 +1222,9 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
 
         def close(self) -> None:
             captured["closed"] = True
+
+        def thread_title(self, thread_id: str) -> str | None:
+            return None
 
         def initial_setting(self) -> SessionSetting:
             return SessionSetting(model=None, runnable=None)

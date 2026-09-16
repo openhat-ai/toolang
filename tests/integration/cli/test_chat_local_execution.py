@@ -593,3 +593,80 @@ def test_chat_session_does_not_create_a_thread_on_open(
         assert session.store.list_threads() == []
     finally:
         session.close()
+
+
+def test_local_chat_thread_title_comes_from_the_first_run(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A run-less thread has no title; the first run's input supplies it."""
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("hello back"))],
+    )
+    harness.store.close()
+    publication = harness.state
+
+    class SetupWatcher:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
+            pass
+
+        def current(self):
+            return harness.setup
+
+        async def refresh(self, *, force: bool = False):
+            del force
+            return harness.setup
+
+        async def run(self, *, stop_signal: asyncio.Event) -> None:
+            await stop_signal.wait()
+
+    class StateWatcher:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
+            self.state = publication
+
+        def current(self):
+            return self.state
+
+        async def refresh(self, *, force: bool = False):
+            del force
+            return self.state
+
+        async def refresh_result(self, *, force: bool = False):
+            del force
+            return StateRefresh(self.state)
+
+        async def run(self, *, stop_signal: asyncio.Event) -> None:
+            await stop_signal.wait()
+
+    monkeypatch.setattr(local, "SetupWatcher", SetupWatcher)
+    monkeypatch.setattr(local, "StateWatcher", StateWatcher)
+
+    session = local.LocalChatSession(
+        harness.setup.layout,
+    )
+    errors: list[str] = []
+    try:
+        thread_id = session.create_thread()
+        assert session.thread_title(thread_id) is None
+
+        request = session.build_request(
+            thread_id,
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            session.initial_setting(),
+        )
+        session.run(request, lambda _event: None, errors.append)
+
+        assert errors == []
+        assert session.thread_title(thread_id) == "hello"
+    finally:
+        session.close()

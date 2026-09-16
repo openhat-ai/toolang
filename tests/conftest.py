@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep the default suite offline: chat must not publish tmux pane marks."""
+
+    os.environ["TOOLANG_TMUX_MARKS"] = "0"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

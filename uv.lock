@@ -1016,6 +1016,15 @@ wheels = [
 ]
 
 [[package]]
+name = "libtmux"
+version = "0.62.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/b8/0410c8487f7673926d141a5aaaf60133984a564b3c90eb4f3f99e92e7740/libtmux-0.62.0.tar.gz", hash = "sha256:41e9e80602b2656fd119b13253b27bad46af5cfef32099be53cdd391e2936b61", size = 571757, upload-time = "2026-07-12T21:48:02.781Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/96/471ac01844ee157fe794446e17568e9bf219d323575c2acc7957a9a2d8c9/libtmux-0.62.0-py3-none-any.whl", hash = "sha256:626aa6fae45e3a423e1acc81604efafa63b7262b1d67b2c7a8778b1ad691456b", size = 127700, upload-time = "2026-07-12T21:48:01.52Z" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2078,6 +2087,7 @@ dependencies = [
     { name = "httpx-sse" },
     { name = "humanize" },
     { name = "json5" },
+    { name = "libtmux" },
     { name = "mcat-cli" },
     { name = "mstache" },
     { name = "openai" },
@@ -2119,6 +2129,7 @@ requires-dist = [
     { name = "httpx-sse", specifier = ">=0.4,<1" },
     { name = "humanize", specifier = ">=4.12,<5" },
     { name = "json5", specifier = ">=0.12,<1.0" },
+    { name = "libtmux", specifier = "==0.62.0" },
     { name = "mcat-cli", specifier = ">=0.2.0" },
     { name = "mstache", specifier = ">=0.3,<1" },
     { name = "openai", specifier = ">=1.109.1" },

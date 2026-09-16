@@ -430,3 +430,70 @@ Thread and run detail endpoints are inspection surfaces used to:
 - recover state after refresh
 
 They are not the primary source for the in-flight assistant reply.
+
+## Tmux Pane Marks
+
+Chat running inside a tmux pane records what it hosts on that pane, so a
+tmux-side view can read it without knowing anything about Toolang:
+
+| option | value | written |
+| --- | --- | --- |
+| `@toolang_agent` | agent name | when chat starts |
+| `@toolang_thread_id` | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
+| `@toolang_thread_title` | thread title, single line, at most 60 display columns | once the thread has runs |
+
+Each value is published at both scopes: as a pane option (the process that owns the
+pane, which survives a window holding several panes) and as a window option (the
+session-level metadata a window-scoped format reads without resolving the active
+pane). A chat window also takes the thread id as its window name and the thread
+title as its pane title, but only while it holds a single pane — that is the shape
+tmux renders as `term_xxx: "hello world"`. The previous window name comes back when
+chat exits.
+
+Marks are best-effort. They are written only when the process runs inside a pane
+(`TMUX` and `TMUX_PANE` are set), they are unset when chat exits, and a failing tmux
+call never reaches the UI. `TOOLANG_TMUX_MARKS=0` disables the feature entirely, and
+`TOOLANG_TMUX_DEBUG=1` reports skipped writes on stderr.
+
+The values are not read back by the CLI: they exist for tmux. A status line can show
+the current window's thread with `#{@toolang_thread_title}`, and
+`tmux list-windows -a -F '#{window_name} #{@toolang_thread_id}'` finds the windows
+that host chat.
+
+## Tmux Agent Sessions
+
+Inside tmux, `too <agent> chat` runs in the agent's own session in the user's own
+server, so `prefix w` lists one entry per open chat:
+
+```text
+eve
+  term_xxx: "hello world"
+  term_yyy: "debug parser"
+```
+
+| situation | behaviour |
+| --- | --- |
+| not inside tmux | chat runs in the current terminal |
+| the current session is the agent's session | chat runs in this pane |
+| another session, `--thread` already open | the client switches to that window |
+| another session, otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
+
+A run that is moved elsewhere prints one line, `↪ opened in tmux session <agent>`,
+and exits 0; the pane it started in returns to its shell.
+
+The agent's session is found by its `@toolang_agent` session option first and by
+its derived name second. The derived name is the agent name reduced to lowercase
+`[a-z0-9-]`; a name another agent already owns is suffixed (`eve-2`) instead of
+renamed. `--thread` reuses an open chat by reading the window marks, so no thread
+data is read to answer it.
+
+An opened window runs the chat command under tmux's own environment, like any
+other tmux window, so it does not inherit variables that only the calling shell
+exported. Exiting a chat destroys its window, and the agent's session with it
+when that was the only window; placement turns `detach-on-destroy` off on the
+sessions it creates, so the client returns to the session it came from instead
+of being detached.
+
+Placement is best-effort and shares the marks kill switch: outside tmux, with
+`TOOLANG_TMUX_MARKS=0`, or when a tmux call fails, chat runs in the current
+terminal.

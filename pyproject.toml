@@ -51,6 +51,7 @@ dependencies = [
     "typer==0.27.2",
     "uvicorn>=0.35,<1",
     "watchfiles>=1.1,<2",
+    "libtmux==0.62.0",
 ]
 
 [project.urls]

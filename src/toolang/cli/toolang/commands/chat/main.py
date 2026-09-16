@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
+import shlex
 import sys
 from typing import cast
 
@@ -57,6 +58,7 @@ from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
+from toolang.cli.common.tmux import resolve_launcher, resolve_marks
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -78,6 +80,7 @@ from .input import (
     slash_command_name,
 )
 from .local import LocalChatSession
+from .marks import ChatMarks
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
@@ -97,6 +100,8 @@ def chat_command(
     compact_model: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    if not _place_chat(ctx, thread_id=thread_id, argv=sys.argv):
+        return
     _chat_interactive(
         ctx,
         thread_id=thread_id,
@@ -108,6 +113,57 @@ def chat_command(
         limit_options=limits,
         compact_model=compact_model,
     )
+
+
+def _place_chat(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    argv: Sequence[str],
+) -> bool:
+    """Send this chat run to the agent's tmux session when tmux can host it.
+
+    Returns ``True`` when chat keeps running in this process. ``False`` means
+    the run now lives in the agent's session: the notice is printed and the
+    caller must return, because the client points at another window.
+    """
+
+    agent = context_layout(ctx).name
+    launcher = resolve_launcher(agent=agent)
+    if launcher is None:
+        return True
+    session = launcher.agent_session()
+    if session is not None and launcher.is_current(session):
+        return True
+    if session is not None and thread_id is not None:
+        window = launcher.thread_window(session, thread_id)
+        if window is not None:
+            # the thread is already open, so move to it: opening a second window
+            # on the same thread would be worse than keeping chat here
+            if not launcher.switch_client(window):
+                return True
+            _announce_session(agent)
+            return False
+    command = shlex.join(list(argv))
+    directory = os.getcwd()
+    session, window = launcher.ensure_session(command=command, directory=directory)
+    if session is None:
+        return True
+    if window is None:
+        window = launcher.open_window(session, command=command, directory=directory)
+    if window is None:
+        return True
+    if not launcher.switch_client(window):
+        launcher.close_window(window)
+        return True
+    _announce_session(agent)
+    return False
+
+
+def _announce_session(agent: str) -> None:
+    """Tell the user where chat went: one line on stdout."""
+
+    print(f"\u21aa opened in tmux session {agent}")
 
 
 def _chat_interactive(
@@ -139,23 +195,42 @@ def _chat_interactive(
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
             setting = replace(setting, runnable=None)
+        marks = _chat_marks(context_layout(ctx).name, client)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
-            _chat_interactive_scripted_local(
-                client=client,
-                thread_id=thread_id,
-                setting=setting,
-                progress_max_width=user_call(
-                    resolve_progress_max_width,
-                    load_runtime_environ(context_layout(ctx), base_environ=os.environ),
-                ),
-            )
+            marks.start(thread_id)
+            try:
+                _chat_interactive_scripted_local(
+                    client=client,
+                    thread_id=thread_id,
+                    setting=setting,
+                    marks=marks,
+                    progress_max_width=user_call(
+                        resolve_progress_max_width,
+                        load_runtime_environ(
+                            context_layout(ctx), base_environ=os.environ
+                        ),
+                    ),
+                )
+            finally:
+                marks.clear()
             return
         _chat_interactive_prompt_toolkit(
             ctx,
             thread_id=thread_id,
             setting=setting,
             client=client,
+            marks=marks,
         )
+
+
+def _chat_marks(agent: str, client: ChatClient) -> ChatMarks:
+    """Pane marks for one chat session; disabled outside tmux."""
+
+    return ChatMarks(
+        agent=agent,
+        marks=resolve_marks(),
+        title_lookup=client.thread_title,
+    )
 
 
 @contextmanager
@@ -296,6 +371,7 @@ def _chat_interactive_prompt_toolkit(
     thread_id: str | None,
     setting: SessionSetting,
     client: ChatClient,
+    marks: ChatMarks | None = None,
 ) -> None:
     environ = load_runtime_environ(context_layout(ctx), base_environ=os.environ)
     ChatTuiApp.run(
@@ -309,6 +385,7 @@ def _chat_interactive_prompt_toolkit(
             environ,
         ),
         surfaces=user_call(resolve_terminal_surfaces, environment=environ),
+        marks=marks,
     )
 
 
@@ -317,13 +394,16 @@ def _chat_interactive_scripted_local(
     client: ChatClient,
     thread_id: str | None,
     setting: SessionSetting,
+    marks: ChatMarks | None = None,
     progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
 ) -> None:
-    renderer = _ScriptedRunRenderer()
+    marks = marks if marks is not None else ChatMarks.disabled()
+    renderer = _ScriptedRunRenderer(on_run_end=marks.refresh_title)
     context = _ScriptedAppContext(
         client,
         setting=setting,
         thread_id=thread_id,
+        marks=marks,
         progress_max_width=progress_max_width,
     )
 
@@ -421,11 +501,13 @@ class _ScriptedAppContext(AppContext):
         *,
         setting: SessionSetting,
         thread_id: str | None,
+        marks: ChatMarks,
         progress_max_width: int,
     ) -> None:
         self.client = client
         self.setting = setting
         self.thread_id = thread_id
+        self.marks = marks
         self.live_blocks: list[MutableBlock] = []
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.exit_requested = False
@@ -448,6 +530,7 @@ class _ScriptedAppContext(AppContext):
     def ensure_thread_id(self) -> str:
         if self.thread_id is None:
             self.thread_id = self.client.create_thread()
+            self.marks.set_thread(self.thread_id)
         return self.thread_id
 
     def set_active_run(self, run_id: str | None) -> None:
@@ -496,7 +579,8 @@ def _echo_scripted_outcome(
 class _ScriptedRunRenderer:
     """Render assistant text from one directly traced run."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_run_end: Callable[[], None] | None = None) -> None:
+        self._on_run_end = on_run_end
         self._assistant_open = False
         self._text_delta_steps: set[StepRef] = set()
         self._terminal: RunEnd | None = None
@@ -542,6 +626,8 @@ class _ScriptedRunRenderer:
         if isinstance(event, RunEnd):
             self._terminal = event
             self._close()
+            if self._on_run_end is not None:
+                self._on_run_end()
 
     def handle_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunBlocked):

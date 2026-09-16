@@ -296,6 +296,18 @@ class LocalChatSession:
     def create_thread(self) -> str:
         return self.threads.create(prefix=ThreadPrefix.TERM)
 
+    def thread_title(self, thread_id: str) -> str | None:
+        """Return one thread's title, or ``None`` when it cannot be read.
+
+        The lookup runs on the session loop, where every other store read and
+        the runs themselves are serialized.
+        """
+
+        try:
+            return self._submit(self._thread_title(thread_id)).result()
+        except Exception:
+            return None
+
     def initial_setting(self) -> SessionSetting:
         if self._surface is None:
             raise RuntimeError("local chat session settings are not initialized")
@@ -509,6 +521,12 @@ class LocalChatSession:
             runnable=runnable,
             limits=setup.limits,
         )
+
+    async def _thread_title(self, thread_id: str) -> str | None:
+        detail = self.history.get_thread(thread_id, run_limit=0)
+        if detail is None or not detail.run_count:
+            return None
+        return detail.title or None
 
     async def _close(self) -> None:
         if self._stop_signal is not None:

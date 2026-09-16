@@ -54,6 +54,7 @@ from . import shortcuts
 from . import slashes
 from . import widgets
 from .completion import ChatInputCompleter
+from .marks import ChatMarks
 from .base import (
     AppContext,
     ChatClient,
@@ -170,6 +171,7 @@ class ChatTuiAppContext:
     def ensure_thread_id(self) -> str:
         if self._app.thread_id is None:
             self._app.thread_id = self._app.client.create_thread()
+            self._app.marks.set_thread(self._app.thread_id)
         thread_id = self._app.thread_id
         if thread_id is None:
             raise RuntimeError("failed to create chat thread")
@@ -203,6 +205,7 @@ class ChatTuiApp:
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
+        marks: ChatMarks | None = None,
     ) -> None:
         asyncio.run(
             ChatTuiApp(
@@ -214,6 +217,7 @@ class ChatTuiApp:
                 progress_max_width=progress_max_width,
                 resource_paths=resource_paths,
                 surfaces=surfaces,
+                marks=marks,
             ).run_loop()
         )
 
@@ -228,8 +232,10 @@ class ChatTuiApp:
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
+        marks: ChatMarks | None = None,
     ) -> None:
         self.thread_id = thread_id
+        self.marks = marks if marks is not None else ChatMarks.disabled()
         self.home = home
         self.input_history = input_history
         self.client = client
@@ -456,12 +462,14 @@ class ChatTuiApp:
             ).render(),
             hide_cursor=False,
         )
+        self.marks.start(self.thread_id)
         self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
         self.status_elapsed_task = asyncio.create_task(self._refresh_status_elapsed())
         try:
             with patch_stdout(raw=True):
                 await self.app.run_async()
         finally:
+            self.marks.clear()
             self._stop_status_activity()
             if self.status_elapsed_task is not None:
                 self.status_elapsed_task.cancel()
@@ -1028,6 +1036,8 @@ class ChatTuiApp:
         if isinstance(event, RunBegin) and event.parent is None and event.runnable:
             self.status_bar.set_active_runnable(event.runnable)
         events.handle_run_event(event, self.app_context)
+        if isinstance(event, RunEnd):
+            self.marks.refresh_title()
 
     def _handle_run_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunAccepted):
