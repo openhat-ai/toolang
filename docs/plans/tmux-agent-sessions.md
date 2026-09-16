@@ -139,9 +139,11 @@ The agent's session is named after the agent, sanitized as recorded in
 - Delta to plan #1 (decided): both scopes are published, pane and window, with the same three
   names. The pane mark stays the process-level truth defined by plan #1; the window mark is the
   session-level metadata this plan is built on. The chat process writes both, once per value.
-- The metadata half lands with the marks implementation: the same object writes the pane option,
-  the window option, the window name, and the pane title, so the launcher half can later rely on
-  all of it being present.
+- The metadata half lands with the marks implementation: one object owns both scopes, the
+  window name, and the pane title, so the launcher half can later rely on all of it being
+  present. `cli/common/tmux.py` exposes `resolve_marks()` returning a `Marks` object, and
+  `chat/marks.py` keeps the lifecycle. The `resolve_pane_marks` / `PaneMarks` names from plan #1
+  are superseded by that shape.
 - `cli/common/tmux.py` grows the operations the launcher needs (`list_windows`, `ensure_session`,
   `open_window`, `switch_client`) instead of adding a second tmux layer; the launcher decision
   lives in `chat/main.py`.
