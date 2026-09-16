@@ -350,6 +350,26 @@ def test_ensure_session_adopts_a_name_matched_session() -> None:
     assert server.created == []
 
 
+def test_ensure_session_keeps_the_client_when_the_new_session_dies() -> None:
+    server = FakeServer([FakeSession("$0", "shell")])
+    launcher = _launcher(server, FakePane(session_id="$0"))
+
+    session, _window = launcher.ensure_session(command="c")
+
+    assert session is not None
+    assert session.show_option(tmux.DETACH_ON_DESTROY) == "off"
+
+
+def test_ensure_session_leaves_an_existing_session_alone() -> None:
+    named = FakeSession("$0", "eve")
+    named.add_window(FakeWindow("@0"))
+    launcher = _launcher(FakeServer([named]), FakePane(session_id="$9"))
+
+    launcher.ensure_session(command="c")
+
+    assert tmux.DETACH_ON_DESTROY not in named.options
+
+
 def test_ensure_session_reports_a_refused_creation() -> None:
     launcher = _launcher(BrokenServer(), FakePane(session_id="$9"))
 
@@ -387,6 +407,19 @@ def test_switch_client_attaches_when_no_client_is_attached() -> None:
 
     assert launcher.switch_client(window) is True
     assert server.attached == ["eve"]
+
+
+def test_list_windows_ignores_a_session_that_will_not_list() -> None:
+    class Unlistable(FakeSession):
+        @property
+        def windows(self) -> list[FakeWindow]:
+            raise RuntimeError("session gone")
+
+    session = Unlistable("$0", "eve")
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$0"))
+
+    assert launcher.list_windows(session) == ()
+    assert launcher.thread_window(session, "term_x") is None
 
 
 def test_switch_client_reports_an_unreachable_client() -> None:
@@ -473,6 +506,23 @@ def test_place_chat_falls_back_when_a_session_cannot_be_created(
     launcher = _launcher(BrokenServer(), FakePane(session_id="$9"))
 
     assert _place(monkeypatch, launcher) is True
+    assert capsys.readouterr().out == ""
+
+
+def test_place_chat_keeps_chat_here_when_an_open_thread_cannot_be_reached(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1", "term_x"))
+    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    server = UnreachableServer([session])
+    launcher = _launcher(server, FakePane(session_id="$9"))
+
+    assert _place(monkeypatch, launcher, thread_id="term_x") is True
+
+    assert server.created == []
+    assert session.opened == []
+    assert window.selected is True
     assert capsys.readouterr().out == ""
 
 

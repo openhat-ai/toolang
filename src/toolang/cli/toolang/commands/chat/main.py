@@ -138,7 +138,10 @@ def _place_chat(
     if session is not None and thread_id is not None:
         window = launcher.thread_window(session, thread_id)
         if window is not None:
-            launcher.switch_client(window)
+            # the thread is already open, so move to it: opening a second window
+            # on the same thread would be worse than keeping chat here
+            if not launcher.switch_client(window):
+                return True
             _announce_session(agent)
             return False
     command = shlex.join(list(argv))

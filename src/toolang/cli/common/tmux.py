@@ -49,6 +49,11 @@ _SESSION_DASHES = re.compile(r"-{2,}")
 TITLE_WIDTH = 60
 ELLIPSIS = "\u2026"
 
+# tmux detaches an attached client when the session it is showing goes away.
+# A session toolang creates holds only chat windows, so chat exiting would take
+# the client with it; the option below keeps the client in tmux instead.
+DETACH_ON_DESTROY = "detach-on-destroy"
+
 MARKS_ENV = "TOOLANG_TMUX_MARKS"
 DEBUG_ENV = "TOOLANG_TMUX_DEBUG"
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off"})
@@ -295,19 +300,23 @@ def resolve_marks(
     if not pane_id:
         _debug("not publishing marks: resolved pane has no id")
         return None
-    window = getattr(pane, "window", None)
-    return Marks(
-        pane_id=pane_id,
-        window_id=_text(getattr(window, "window_id", None)),
-        _set_pane=pane.set_option,
-        _set_window=_window_method(window, "set_option"),
-        _unset_pane=_optional(pane, "unset_option"),
-        _unset_window=_optional(window, "unset_option"),
-        _rename_window=_optional(window, "rename_window"),
-        _set_pane_title=_optional(pane, "set_title"),
-        _window_name=_text(getattr(window, "window_name", None)),
-        _window_panes=len(getattr(window, "panes", ()) or ()),
-    )
+    try:
+        window = pane.window
+        return Marks(
+            pane_id=pane_id,
+            window_id=_text(getattr(window, "window_id", None)),
+            _set_pane=pane.set_option,
+            _set_window=_window_method(window, "set_option"),
+            _unset_pane=_optional(pane, "unset_option"),
+            _unset_window=_optional(window, "unset_option"),
+            _rename_window=_optional(window, "rename_window"),
+            _set_pane_title=_optional(pane, "set_title"),
+            _window_name=_text(getattr(window, "window_name", None)),
+            _window_panes=len(getattr(window, "panes", ()) or ()),
+        )
+    except Exception as exc:  # a pane without a usable window cannot carry marks
+        _debug(f"not publishing marks: {exc}")
+        return None
 
 
 # Placement: the agent's own session in the user's tmux server.
@@ -365,7 +374,11 @@ class Launcher:
     def list_windows(self, session: TmuxSession) -> Sequence[TmuxWindow]:
         """One session's windows in tmux order, oldest first."""
 
-        return tuple(getattr(session, "windows", ()) or ())
+        try:
+            return tuple(getattr(session, "windows", ()) or ())
+        except Exception as exc:
+            _debug(f"session windows not listed: {exc}")
+            return ()
 
     def thread_window(self, session: TmuxSession, thread_id: str) -> TmuxWindow | None:
         """The newest window in ``session`` marked with ``thread_id``.
@@ -405,6 +418,7 @@ class Launcher:
             _debug(f"session {name} not created: {exc}")
             return None, None
         self._own(session)
+        self._stay_attached(session)
         return session, _active_window(session)
 
     def open_window(
@@ -425,7 +439,13 @@ class Launcher:
         has to keep the chat where it started.
         """
 
-        name = _text(getattr(getattr(window, "session", None), "session_name", None))
+        try:
+            name = _text(
+                getattr(getattr(window, "session", None), "session_name", None)
+            )
+        except Exception as exc:
+            _debug(f"window session not resolved: {exc}")
+            name = ""
         try:
             window.select()
         except Exception as exc:
@@ -464,10 +484,14 @@ class Launcher:
 
     def _current_session_id(self) -> str:
         pane = self._pane
-        value = _text(getattr(pane, "session_id", None))
-        if value:
-            return value
-        return _text(getattr(getattr(pane, "session", None), "session_id", None))
+        try:
+            value = _text(getattr(pane, "session_id", None))
+            if value:
+                return value
+            return _text(getattr(getattr(pane, "session", None), "session_id", None))
+        except Exception as exc:
+            _debug(f"current session not resolved: {exc}")
+            return ""
 
     def _available_name(self) -> str:
         """The agent's session name, suffixed when a foreign session took it."""
@@ -492,6 +516,19 @@ class Launcher:
             session.set_option(SESSION_AGENT, self.agent)
         except Exception as exc:
             _debug(f"session not marked: {exc}")
+
+    def _stay_attached(self, session: TmuxSession) -> None:
+        """Keep the client in tmux when this session is destroyed.
+
+        Only sessions toolang creates are touched: chat owns their windows and
+        exits with them, so the client should fall back to where it came from
+        instead of being detached.
+        """
+
+        try:
+            session.set_option(DETACH_ON_DESTROY, "off")
+        except Exception as exc:
+            _debug(f"session not kept on destroy: {exc}")
 
 
 def resolve_launcher(

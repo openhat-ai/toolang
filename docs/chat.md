@@ -487,6 +487,13 @@ its derived name second. The derived name is the agent name reduced to lowercase
 renamed. `--thread` reuses an open chat by reading the window marks, so no thread
 data is read to answer it.
 
+An opened window runs the chat command under tmux's own environment, like any
+other tmux window, so it does not inherit variables that only the calling shell
+exported. Exiting a chat destroys its window, and the agent's session with it
+when that was the only window; placement turns `detach-on-destroy` off on the
+sessions it creates, so the client returns to the session it came from instead
+of being detached.
+
 Placement is best-effort and shares the marks kill switch: outside tmux, with
 `TOOLANG_TMUX_MARKS=0`, or when a tmux call fails, chat runs in the current
 terminal.

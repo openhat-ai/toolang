@@ -149,6 +149,27 @@ def test_resolve_marks_ignores_a_failing_lookup() -> None:
     assert tmux.resolve_marks(environment=TMUX_ENV, pane_factory=factory) is None
 
 
+def test_resolve_marks_ignores_a_window_that_cannot_carry_options() -> None:
+    class OddWindow:
+        window_id = "@1"
+        window_name = "zsh"
+
+    class OddPane:
+        pane_id = "%3"
+
+        def __init__(self) -> None:
+            self.window = OddWindow()
+
+        def set_option(self, option: str, value: str) -> object:
+            raise AssertionError("must not write")
+
+    resolved = tmux.resolve_marks(
+        environment=TMUX_ENV, pane_factory=cast(Any, lambda: OddPane())
+    )
+
+    assert resolved is None
+
+
 def test_resolve_marks_ignores_a_pane_without_an_id() -> None:
     class Anonymous:
         pane_id = ""
