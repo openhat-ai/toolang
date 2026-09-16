@@ -1,6 +1,6 @@
 # Tmux Agent Sessions
 
-Status: Proposed on 2026-09-16; needs human approval before implementation.
+Status: Approved for implementation on 2026-09-16.
 
 ## Goal
 
@@ -39,16 +39,24 @@ Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 
 The notice is one line on stdout: `↪ opened in tmux session <agent>`.
 
-## Window metadata
+## Metadata
 
-Each chat window carries the same three values as the pane marks defined in
-`docs/plans/tmux-pane-marks.md`:
+Each of the three values is published **twice**: as a pane option and as a window
+option with the same name.
 
-| option | value |
-| --- | --- |
-| `@toolang_agent` | agent name |
-| `@toolang_thread_id` | full thread id |
-| `@toolang_thread_title` | thread title, single line, at most 60 display columns |
+| option | value | pane | window |
+| --- | --- | --- | --- |
+| `@toolang_agent` | agent name | process truth | session metadata |
+| `@toolang_thread_id` | full thread id | process truth | session metadata |
+| `@toolang_thread_title` | thread title, single line, at most 60 display columns | process truth | session metadata |
+
+The pane option is what `docs/plans/tmux-pane-marks.md` defines: it describes the process
+that owns the pane, it survives a window that holds several panes, and it is what a consumer
+that already holds a pane reads. The window option is what this plan's session model is built
+on: the launcher looks a thread up with `list-windows -t <agent> -F '#{@toolang_thread_id}'`,
+and a window-scoped tmux format (status line, `prefix w` with a custom `-F`) sees it without
+resolving the active pane. Both scopes are written by the chat process, so the values can
+never disagree.
 
 Plus the presentation that makes `prefix w` readable without any configuration:
 
@@ -98,8 +106,8 @@ The agent's session is named after the agent, sanitized as recorded in
 
 1. Not inside tmux: chat runs in the current terminal, zero tmux calls.
 2. Inside tmux in the agent's session: chat runs in this pane, and once the thread exists the
-   window carries the three options, the window is named after the thread, and the pane title
-   is the title.
+   pane **and** its window carry the three options, the window is named after the thread, and
+   the pane title is the title.
 3. Inside tmux in another session with `--thread` already open: one `switch-client` to that
    window, no new window, notice printed, exit 0.
 4. Inside tmux in another session otherwise: session ensured, window opened with the chat
@@ -128,9 +136,12 @@ The agent's session is named after the agent, sanitized as recorded in
   the same three as **window** options (the window is what the launcher and any window-scoped
   tmux format read) plus the window name and pane title. The chat process publishes both, so
   an in-place chat needs no launcher-side writing.
-- Delta to plan #1 (open decision): pane marks could be dropped in favour of window marks
-  only. Recommendation: keep both — the pane mark is the process-level truth used by plan #1's
-  consumers and tests, the window mark is the session-level metadata this plan is built on.
+- Delta to plan #1 (decided): both scopes are published, pane and window, with the same three
+  names. The pane mark stays the process-level truth defined by plan #1; the window mark is the
+  session-level metadata this plan is built on. The chat process writes both, once per value.
+- The metadata half lands with the marks implementation: the same object writes the pane option,
+  the window option, the window name, and the pane title, so the launcher half can later rely on
+  all of it being present.
 - `cli/common/tmux.py` grows the operations the launcher needs (`list_windows`, `ensure_session`,
   `open_window`, `switch_client`) instead of adding a second tmux layer; the launcher decision
   lives in `chat/main.py`.
