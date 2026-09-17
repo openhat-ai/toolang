@@ -58,7 +58,11 @@ from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
-from toolang.cli.common.tmux import resolve_launcher, resolve_marks
+from toolang.cli.common.tmux import (
+    WINDOW_NAME_FALLBACK,
+    resolve_launcher,
+    resolve_marks,
+)
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -123,8 +127,10 @@ def _place_chat(
 ) -> bool:
     """Send this chat run to the agent's tmux session when tmux can host it.
 
-    Returns ``True`` when chat keeps running in this process. ``False`` means
-    the run now lives in the agent's session: the notice is printed and the
+    An existing container for ``--thread`` is resolved first, so a thread that is
+    already open is reused even when chat was started inside the agent's own
+    session. Returns ``True`` when chat keeps running in this process. ``False``
+    means the run now lives in the agent's session: the notice is printed and the
     caller must return, because the client points at another window.
     """
 
@@ -132,20 +138,31 @@ def _place_chat(
     launcher = resolve_launcher(agent=agent)
     if launcher is None:
         return True
+    command = shlex.join(list(argv))
+    directory = os.getcwd()
     session = launcher.agent_session()
-    if session is not None and launcher.is_current(session):
-        return True
     if session is not None and thread_id is not None:
         window = launcher.thread_window(session, thread_id)
         if window is not None:
-            # the thread is already open, so move to it: opening a second window
-            # on the same thread would be worse than keeping chat here
-            if not launcher.switch_client(window):
-                return True
-            _announce_session(agent)
-            return False
-    command = shlex.join(list(argv))
-    directory = os.getcwd()
+            pad = launcher.chat_pad(window)
+            if pad is not None:
+                # the thread is already open, so move to its chat rather than
+                # start a second one; when the client cannot move, chat runs
+                # here instead of adding another view of the thread
+                if not launcher.switch_client(window, pane=pad):
+                    return True
+                _announce_session(agent)
+                return False
+            # the container outlived its chat, so give it a fresh chat pad; the
+            # pad runs either way, and the notice is printed even when the
+            # client cannot be moved
+            if launcher.open_pad(window, command=command, directory=directory):
+                launcher.switch_client(window)
+                _announce_session(agent)
+                return False
+            return True
+    if session is not None and launcher.is_current(session):
+        return True
     session, window = launcher.ensure_session(command=command, directory=directory)
     if session is None:
         return True
@@ -153,6 +170,15 @@ def _place_chat(
         window = launcher.open_window(session, command=command, directory=directory)
     if window is None:
         return True
+    if thread_id is not None:
+        # the thread is known before chat starts, so the container is named and
+        # addressable by its option right away
+        launcher.mark_thread(window, thread_id)
+        launcher.name_window(window, thread_id)
+    else:
+        # a new thread id only exists after the first submit; chat renames the
+        # window once it knows the id
+        launcher.name_window(window, WINDOW_NAME_FALLBACK)
     if not launcher.switch_client(window):
         launcher.close_window(window)
         return True
@@ -195,7 +221,7 @@ def _chat_interactive(
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
             setting = replace(setting, runnable=None)
-        marks = _chat_marks(context_layout(ctx).name, client)
+        marks = _chat_marks(client)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             marks.start(thread_id)
             try:
@@ -223,11 +249,10 @@ def _chat_interactive(
         )
 
 
-def _chat_marks(agent: str, client: ChatClient) -> ChatMarks:
-    """Pane marks for one chat session; disabled outside tmux."""
+def _chat_marks(client: ChatClient) -> ChatMarks:
+    """Marks for one chat session; disabled outside tmux."""
 
     return ChatMarks(
-        agent=agent,
         marks=resolve_marks(),
         title_lookup=client.thread_title,
     )

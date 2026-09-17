@@ -13,8 +13,34 @@ from toolang.cli.toolang.commands.chat import main as chat
 TMUX_ENV = {"TMUX": "/tmp/tmux-1/sock,1,0", "TMUX_PANE": "%3"}
 
 
+class FakePad:
+    """One pane of a fake window, with the identity the protocol needs."""
+
+    def __init__(self, window: FakeWindow) -> None:
+        self.pane_id = "%1"
+        self.session_id = "$0"
+        self.window = window
+        self.options: dict[str, str] = {}
+        self.selected = False
+
+    def show_option(self, option: str) -> Any:
+        return self.options.get(option)
+
+    def set_option(self, option: str, value: str) -> object:
+        self.options[option] = value
+        return self
+
+    def unset_option(self, option: str) -> object:
+        self.options.pop(option, None)
+        return self
+
+    def select(self) -> object:
+        self.selected = True
+        return self
+
+
 class FakeWindow:
-    """A window that records options, selection, and its session."""
+    """A window that records options, splits, selection, and its session."""
 
     def __init__(self, window_id: str, name: str = "zsh") -> None:
         self.window_id = window_id
@@ -23,6 +49,8 @@ class FakeWindow:
         self.options: dict[str, str] = {}
         self.selected = False
         self.killed = False
+        self.panes: list[FakePad] = [FakePad(self)]
+        self.pads: list[tuple[str | None, str | None]] = []
 
     def show_option(self, option: str) -> Any:
         return self.options.get(option)
@@ -39,10 +67,6 @@ class FakeWindow:
         self.killed = True
         return self
 
-    @property
-    def panes(self) -> tuple[object, ...]:
-        return ()
-
     def unset_option(self, option: str) -> object:
         self.options.pop(option, None)
         return self
@@ -50,6 +74,14 @@ class FakeWindow:
     def rename_window(self, new_name: str) -> object:
         self.window_name = new_name
         return self
+
+    def split(
+        self, *, start_directory: str | None = None, shell: str | None = None
+    ) -> FakePad:
+        self.pads.append((start_directory, shell))
+        pane = FakePad(self)
+        self.panes.insert(0, pane)  # tmux makes the new pane active
+        return pane
 
 
 class FakeSession:
@@ -280,6 +312,16 @@ def test_agent_session_falls_back_to_an_unowned_name() -> None:
     assert launcher.agent_session() is named
 
 
+def test_agent_session_marks_a_session_it_adopts_by_name() -> None:
+    """Determining the session records the agent mark, so the name is a fallback."""
+
+    named = FakeSession("$0", "eve")
+    launcher = _launcher(FakeServer([named]), FakePane(session_id="$9"))
+
+    assert launcher.agent_session() is named
+    assert named.show_option(tmux.SESSION_AGENT) == "eve"
+
+
 def test_agent_session_skips_a_name_another_agent_owns() -> None:
     foreign = FakeSession("$0", "eve")
     foreign.set_option(tmux.SESSION_AGENT, "ta")
@@ -293,6 +335,53 @@ def test_is_current_compares_the_pane_session() -> None:
     launcher = _launcher(FakeServer([session]), FakePane(session_id="$1"))
 
     assert launcher.is_current(session) is False
+
+
+def test_chat_pad_finds_a_pad_in_any_pane() -> None:
+    window = FakeWindow("@1")
+    launcher = _launcher(
+        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
+    )
+
+    assert launcher.chat_pad(window) is None
+
+    background = FakePad(window)
+    background.options[tmux.MARK_PAD] = tmux.PAD_CHAT
+    window.panes.append(background)
+
+    assert launcher.chat_pad(window) is background
+
+
+def test_name_window_renames_a_container() -> None:
+    window = FakeWindow("@1")
+    launcher = _launcher(
+        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
+    )
+
+    launcher.name_window(window, "term_x")
+
+    assert window.window_name == "term_x"
+
+
+def test_mark_thread_records_the_window_option() -> None:
+    window = FakeWindow("@1")
+    launcher = _launcher(
+        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
+    )
+
+    launcher.mark_thread(window, "term_x")
+
+    assert window.options[tmux.MARK_THREAD_ID] == "term_x"
+
+
+def test_open_pad_splits_the_window_with_the_command() -> None:
+    window = FakeWindow("@1")
+    launcher = _launcher(
+        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
+    )
+
+    assert launcher.open_pad(window, command="too eve chat", directory="/work") is True
+    assert window.pads == [("/work", "too eve chat")]
 
 
 def test_thread_window_picks_the_newest_match() -> None:
@@ -399,6 +488,17 @@ def test_switch_client_selects_the_window_then_switches() -> None:
     assert server.attached == []
 
 
+def test_switch_client_focuses_the_given_pane() -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1"))
+    pane = window.panes[0]
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$0"))
+
+    assert launcher.switch_client(window, pane=pane) is True
+    assert pane.selected is True
+    assert window.selected is True
+
+
 def test_switch_client_attaches_when_no_client_is_attached() -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1"))
@@ -456,13 +556,78 @@ def test_place_chat_switches_to_an_open_thread_window(
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
     window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$9"))
 
     assert _place(monkeypatch, launcher, thread_id="term_x") is False
     assert server.created == []
     assert session.opened == []
+    assert window.pads == []
     assert window.selected is True
+    assert server.switched == ["eve"]
+    assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
+
+
+def test_place_chat_reuses_an_open_thread_inside_the_agent_session(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1", "term_x"))
+    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
+    server = FakeServer([session])
+    launcher = _launcher(server, FakePane(session_id="$0"))  # already in session eve
+
+    assert _place(monkeypatch, launcher, thread_id="term_x") is False
+
+    assert window.selected is True
+    assert window.pads == []
+    assert server.switched == ["eve"]
+    assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
+
+
+def test_place_chat_opens_a_pad_in_a_container_without_a_live_chat(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1", "term_x"))
+    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    server = FakeServer([session])
+    launcher = _launcher(server, FakePane(session_id="$9"))
+
+    assert _place(monkeypatch, launcher, thread_id="term_x") is False
+
+    assert window.pads == [(os.getcwd(), "too eve chat")]
+    assert server.created == []
+    assert session.opened == []
+    assert server.switched == ["eve"]
+    assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
+
+
+def test_place_chat_labels_a_new_window_for_a_known_thread(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    agent = FakeSession("$0", "eve")
+    agent.add_window(FakeWindow("@0"))
+    shell = FakeSession("$1", "shell")
+    server = FakeServer([shell, agent])
+    launcher = _launcher(server, FakePane(session_id="$1"))
+
+    assert (
+        _place(
+            monkeypatch,
+            launcher,
+            thread_id="term_x",
+            argv=["too", "eve", "chat", "--thread", "term_x"],
+        )
+        is False
+    )
+
+    window = agent.windows[-1]
+    assert agent.opened == [(None, os.getcwd(), "too eve chat --thread term_x")]
+    assert window.options[tmux.MARK_THREAD_ID] == "term_x"
+    assert window.window_name == "term_x"
     assert server.switched == ["eve"]
     assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
 
@@ -482,6 +647,7 @@ def test_place_chat_opens_a_window_in_the_agent_session(
 
     assert server.created == []
     assert agent.opened == [(None, os.getcwd(), "too eve chat --thread")]
+    assert agent.windows[-1].window_name == tmux.WINDOW_NAME_FALLBACK
     assert server.switched == ["eve"]
     assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
 
@@ -496,6 +662,7 @@ def test_place_chat_creates_the_agent_session(
     assert _place(monkeypatch, launcher) is False
 
     assert server.created == [("eve", os.getcwd(), "too eve chat")]
+    assert server.sessions[-1].windows[0].window_name == tmux.WINDOW_NAME_FALLBACK
     assert server.switched == ["eve"]
     assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
 
@@ -515,6 +682,7 @@ def test_place_chat_keeps_chat_here_when_an_open_thread_cannot_be_reached(
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
     window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
     server = UnreachableServer([session])
     launcher = _launcher(server, FakePane(session_id="$9"))
 

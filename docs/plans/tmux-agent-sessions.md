@@ -1,28 +1,35 @@
 # Tmux Agent Sessions
 
-Status: Approved for implementation on 2026-09-16.
+Status: Approved for implementation on 2026-09-16. Revised 2026-09-17 after review: every
+value now has one scope, and container state (session and window) is separated from the pad.
 
 ## Goal
 
 `too <agent> chat` should put chat windows where the user expects them, in the user's
 own tmux server:
 
-```
+```text
 tmux server = the user's server (not a dedicated one)
-session     = agent
-window      = chat / thread
-pane        = the chat process
+session     = agent   name = agent name    @toolang_agent
+window      = thread  name = thread id     @toolang_thread_id, @toolang_thread_title
+pane        = pad                          @toolang_pad (`chat` today)
 ```
 
-which makes `prefix w` show exactly one entry per open chat:
+The session and the window are **containers**: the launcher creates them and later chats
+reuse them, so their names and options outlive any one chat. The pad is the pane's role
+and ends with chat. A pad is a readable and writable thread view; `chat` is the only kind
+today, later `shell`, `logs` and friends share the thread id in the same window.
 
-```
+`prefix w` reads none of the options on its own, so it shows the container names:
+
+```text
 eve
-  term_xxx: "hello world"
-  term_yyy: "debug parser"
-ta
-  term_zzz: "fix tests"
+  term_xxx
+  new_chat
 ```
+
+`docs/chat.md` ships a recommended `-F` that shows the thread title (or the pad kind
+before the thread exists); that is the intended way to label chats.
 
 Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 
@@ -33,54 +40,63 @@ Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | run chat in the current terminal |
-| inside tmux, current session is the agent's session | run chat in this pane; publish the pane and window metadata |
-| inside tmux, another session, `--thread` already open in the agent's session | switch the client to that window, print the notice, exit 0 |
-| inside tmux, another session, otherwise | ensure the agent's session, open a window running `too <agent> chat …`, switch the client to it, print the notice, exit 0 |
+| `--thread` container with a live chat pad | switch the client to that window, focusing the chat pane, print the notice, exit 0 |
+| `--thread` container without a live chat pad | open a chat pad (split) in that window, switch the client to it, print the notice, exit 0 |
+| current session is the agent's session | run chat in this pane; publish the pad and thread metadata |
+| otherwise | ensure the agent's session, open a window running `too <agent> chat …`, switch the client to it, print the notice, exit 0 |
+
+The `--thread` rows come first: an open thread is reused even when chat was started
+inside the agent's session, so one thread never gets a second chat.
 
 The notice is one line on stdout: `↪ opened in tmux session <agent>`.
 
 ## Metadata
 
-Each of the three values is published **twice**: as a pane option and as a window
-option with the same name.
+Every value is written at exactly one scope:
 
-| option | value | pane | window |
+| option | scope | value | written |
 | --- | --- | --- | --- |
-| `@toolang_agent` | agent name | process truth | session metadata |
-| `@toolang_thread_id` | full thread id | process truth | session metadata |
-| `@toolang_thread_title` | thread title, single line, at most 60 display columns | process truth | session metadata |
+| `@toolang_agent` | session | agent name | the launcher, when it determines the agent's session |
+| `@toolang_thread_id` | window | full thread id, e.g. `term_6xp42qxg` | the launcher with `--thread`, chat otherwise, as soon as the id exists |
+| `@toolang_thread_title` | window | thread title, single line, at most 60 display columns | chat, once the thread has runs |
+| `@toolang_pad` | pane | `chat` | chat, when it starts |
 
-The pane option is what `docs/plans/tmux-pane-marks.md` defines: it describes the process
-that owns the pane, it survives a window that holds several panes, and it is what a consumer
-that already holds a pane reads. The window option is what this plan's session model is built
-on: the launcher looks a thread up with `list-windows -t <agent> -F '#{@toolang_thread_id}'`,
-and a window-scoped tmux format (status line, `prefix w` with a custom `-F`) sees it without
-resolving the active pane. Both scopes are written by the chat process, so the values can
-never disagree.
+One scope per value, because tmux inherits user options: a window with no value of its own
+reads its session's, so the agent is visible across the whole session while the thread
+marks stay on the one window that shows that thread. Those options are the index the
+launcher reads (`session.show_option("@toolang_agent")`,
+`window.show_option("@toolang_thread_id")`), so no thread data is read to answer a lookup
+and a user renaming a session or window breaks nothing.
 
-Plus the presentation that makes `prefix w` readable without any configuration:
+Names follow the same convention and are cosmetic: the agent's session is named after the
+agent, and a thread's window after its thread id — `new_chat` while a new chat has no id,
+the full id once chat knows it. Nothing else is renamed, no name is restored, and the pane
+title is left to the user's own shell or theme. Chat never writes the agent mark.
 
-- window name = thread id once known (so `term_xxx` identifies the chat);
-- pane title = thread title (tmux's built-in tree line already renders
-  `window_name: "pane_title"` for single-pane windows — verified against tmux 3.2a).
+Outside tmux, or before a value exists, only what exists is published.
 
-Outside tmux, or when the thread is not known yet, only what exists is published.
-
-## Thread lookup
+## Thread lookup and reuse
 
 The lookup only runs when `--thread ID` was given (a new chat has no id yet), and it is a
-libtmux read: resolve `Server.from_env()`, walk `server.sessions` for the agent's session
-(`session.show_option("@toolang_agent")`), then `session.windows` and
-`window.show_option("@toolang_thread_id")`. When a bulk read matters, one
-`server.cmd("list-windows", "-F", …)` call is used instead — `Server.cmd` is still the
-library's own API. A match switches to that window; several matches pick the newest. No
-thread data is read for this: the marks are the index.
+libtmux read: resolve `Server.from_env()`, walk `server.sessions` for the agent's session,
+then `session.windows` and `window.show_option("@toolang_thread_id")`. When a bulk read
+matters, one `server.cmd("list-windows", "-F", …)` call is used instead — `Server.cmd` is
+still the library's own API. Several matches pick the newest.
+
+A thread's window is a container that may have outlived its chat, so a match is not enough
+to switch to it: the launcher reads the pad of every pane in the window
+(`pane.show_option("@toolang_pad")`), because a chat running in a background pane still
+means the thread is open. A live chat pad means the client switches to that window and
+focuses that pane; otherwise the launcher splits a fresh chat pad into the same window and
+switches to it, instead of opening a second window for the thread.
 
 ## Lifecycle
 
-Chat exits → its pane exits → tmux destroys the window, so there is no bookkeeping and no
-stale entry in `prefix w`. The marks are unset on exit (plan #1), which covers windows that
-outlive the chat because they hold extra panes.
+Chat exits → its pane exits. A window whose only pane it was is destroyed, and the agent's
+session with it when that was its only window, so an unconfigured `prefix w` keeps no stale
+entry. A window that outlives the chat because it holds other pads keeps its name and
+thread options — they are container state. Only the pad mark is unset, so the pane stops
+claiming to be a chat and the container can host the next one.
 
 ## Session naming
 
@@ -92,67 +108,73 @@ The agent's session is named after the agent, sanitized as recorded in
 - if that name is taken by a session that is not this agent's, add a numeric suffix instead
   of renaming someone else's session;
 - never create a second session for the same agent: find it by the `@toolang_agent` session
-  option first, name second.
+  option first, name second. Determining the session records the option, so the name is
+  only a fallback.
 
 ## Non-goals
 
 - No dedicated server, no `tmux.conf` management, no status-line or key-binding
-  configuration (the `/tmp/toomux` prototype explored those; they are not part of this).
+  configuration. The recommended `-F` in `docs/chat.md` is a copy-paste example, not
+  something toolang installs. (The `/tmp/toomux` prototype explored the managed half; it is
+  not part of this.)
 - No change to `too inspect`, thread data, or trace behaviour.
-- Nothing for users who never use tmux: no new option, no new output.
+- Nothing for users who never use tmux: no new option to set, no new output.
 
 ## Acceptance Tests
 
 1. Not inside tmux: chat runs in the current terminal, zero tmux calls.
-2. Inside tmux in the agent's session: chat runs in this pane, and once the thread exists the
-   pane **and** its window carry the three options, the window is named after the thread, and
-   the pane title is the title.
-3. Inside tmux in another session with `--thread` already open: one `switch-client` to that
-   window, no new window, notice printed, exit 0.
-4. Inside tmux in another session otherwise: session ensured, window opened with the chat
-   command, `switch-client` to it, notice printed, exit 0, and the original pane returns to a
-   shell.
-5. `prefix w` shows `term_xxx: "title"` for an open chat, with no tmux configuration.
-6. Session naming: sanitization, foreign-name collision adds a suffix, an existing session is
-   never renamed.
-7. Every tmux interaction is best-effort: a failing tmux call falls back to running chat in
+2. Inside tmux in the agent's session: chat runs in this pane, the pane carries the pad, and
+   once the thread exists the window carries the thread id and title in its name and options.
+3. Inside tmux in another session with `--thread` on a live chat pad: one `switch-client` to
+   that window, no new window or pane, notice printed, exit 0.
+4. Inside tmux in another session with `--thread` on a container without a live chat pad: a
+   chat pad is opened in that window, the client switches to it, notice printed, exit 0.
+5. Inside tmux in another session otherwise: session ensured, window opened with the chat
+   command and named `new_chat` (or the thread id with `--thread`), `switch-client` to it,
+   notice printed, exit 0, and the original pane returns to a shell.
+6. `prefix w` lists the container names with no configuration; the recommended `-F` shows
+   the thread title, the thread id, or `[chat]` instead.
+7. Chat exit clears the pad only: a pane that outlives chat is no longer marked a chat, and
+   its window keeps its name and thread options.
+8. Session naming: sanitization, foreign-name collision adds a suffix, an existing session
+   is never renamed.
+9. Every tmux interaction is best-effort: a failing tmux call falls back to running chat in
    place instead of failing the command.
 
 ## Risks
 
 - Chat may start in a different place than before; `docs/chat.md` must state the rule.
-- Renaming a window is intrusive when it holds several panes, so only single-pane windows are
-  renamed (the same condition tmux uses to show the title suffix).
-- Two `too <agent> chat` calls racing on a brand-new thread both create windows, because the
-  thread id does not exist until the first message. Each window resolves to its own thread;
-  acceptable and identical to today's behaviour.
+- Window names are a convention, not the index: a user rename breaks nothing, but the
+  launcher also never repairs it, so `prefix w` can show a name that no longer matches the
+  thread until chat renames it again.
+- Two `too <agent> chat` calls racing on a brand-new thread both create windows, because
+  the thread id does not exist until the first message. Each window resolves to its own
+  thread; acceptable and identical to today's behaviour.
+- A container whose chat is gone is reused by `--thread`, but a plain `too <agent> chat`
+  opens a new window; the two differ only in whether the thread was named.
 - `switch-client` needs a client in the target server; when none is attached the launcher
   attaches instead of switching.
 
 ## Implementation Notes
 
-- Delta to plan #1 (merged): plan #1 publishes the three marks on the **pane**; this plan adds
-  the same three as **window** options (the window is what the launcher and any window-scoped
-  tmux format read) plus the window name and pane title. The chat process publishes both, so
-  an in-place chat needs no launcher-side writing.
-- Delta to plan #1 (decided): both scopes are published, pane and window, with the same three
-  names. The pane mark stays the process-level truth defined by plan #1; the window mark is the
-  session-level metadata this plan is built on. The chat process writes both, once per value.
-- The metadata half lands with the marks implementation: one object owns both scopes, the
-  window name, and the pane title, so the launcher half can later rely on all of it being
-  present. `cli/common/tmux.py` exposes `resolve_marks()` returning a `Marks` object, and
-  `chat/marks.py` keeps the lifecycle. The `resolve_pane_marks` / `PaneMarks` names from plan #1
-  are superseded by that shape.
+- Delta to plan #1 (superseded at scope level): plan #1 published all three marks on the
+  pane. The pad (`chat`) stays at pane scope as the pane's role and is the only mark cleared
+  on exit; the thread id and title move to the window that shows the thread; the agent moves
+  to the session, where every window reads it by inheritance.
+- `cli/common/tmux.py` owns the vocabulary and the tmux work: the option names and scopes,
+  `Marks` (one scope per name, rejects a name without one, `name_window`), `resolve_marks()`
+  for the running pane, and `Launcher` (`agent_session`, `thread_window`, `chat_pad_active`,
+  `name_window`, `mark_thread`, `open_pad`, `open_window`, `switch_client`,
+  `close_window`).
+- `chat/marks.py` keeps the lifecycle: it writes the pad, the thread id and title, and the
+  container name, and clears only the pad. `chat/main.py` implements the behaviour table.
 - **Every tmux interaction goes through libtmux, never through a toolang-owned subprocess.**
   Typed calls where the library has them (`Server.from_env`, `server.sessions`,
   `session.windows`, `window.show_option`, `server.new_session`, `session.new_window`,
-  `server.switch_client`, `session.attach`), and `Server.cmd(...)` — the library's own escape
-  hatch — for one-shot format reads such as `list-windows -F`. libtmux itself invokes the tmux
-  binary, so the launcher keeps its reads few: one call per session it inspects, not one per
-  option.
-- `cli/common/tmux.py` grows the operations the launcher needs (`agent_session`,
-  `open_window`, `switch_client`) instead of adding a second tmux layer; the launcher decision
-  lives in `chat/main.py`.
+  `window.split`, `server.switch_client`, `session.attach`), and `Server.cmd(...)` — the
+  library's own escape hatch — for one-shot format reads such as `list-windows -F`. libtmux
+  itself invokes the tmux binary, so the launcher keeps its reads few: one call per session
+  it inspects, not one per option.
 - Files: `src/toolang/cli/common/tmux.py`, `src/toolang/cli/toolang/commands/chat/main.py`,
-  `src/toolang/cli/toolang/commands/chat/marks.py`, `docs/chat.md`, and tests for the four
+  `src/toolang/cli/toolang/commands/chat/marks.py`, `docs/chat.md`, and tests for the
   behaviour rows above.
