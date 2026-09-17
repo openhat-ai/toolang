@@ -16,16 +16,8 @@ TMUX_ENV = {"TMUX": "/tmp/tmux-1/sock,1,0", "TMUX_PANE": "%3"}
 class RecordingWindow:
     """A window that records what is written to it."""
 
-    def __init__(
-        self,
-        *,
-        window_id: str = "@1",
-        window_name: str = "zsh",
-        panes: int = 1,
-    ) -> None:
+    def __init__(self, *, window_id: str = "@1") -> None:
         self.window_id = window_id
-        self.window_name = window_name
-        self.panes = tuple(range(panes))
         self.writes: list[tuple[str, str]] = []
         self.unset: list[str] = []
         self.renames: list[str] = []
@@ -44,7 +36,7 @@ class RecordingWindow:
 
 
 class RecordingPane:
-    """A pane that records options, titles, and its window."""
+    """A pane that records options and its window."""
 
     def __init__(
         self,
@@ -56,7 +48,6 @@ class RecordingPane:
         self.window = RecordingWindow() if window is None else window
         self.writes: list[tuple[str, str]] = []
         self.unset: list[str] = []
-        self.titles: list[str] = []
 
     def set_option(self, option: str, value: str) -> object:
         self.writes.append((option, value))
@@ -64,10 +55,6 @@ class RecordingPane:
 
     def unset_option(self, option: str) -> object:
         self.unset.append(option)
-        return self
-
-    def set_title(self, title: str) -> object:
-        self.titles.append(title)
         return self
 
 
@@ -139,7 +126,6 @@ def test_resolve_marks_uses_the_running_pane_and_window() -> None:
 
     assert marks.pane_id == pane.pane_id
     assert marks.window_id == pane.window.window_id
-    assert marks.labels_window is True
 
 
 def test_resolve_marks_ignores_a_failing_lookup() -> None:
@@ -152,7 +138,6 @@ def test_resolve_marks_ignores_a_failing_lookup() -> None:
 def test_resolve_marks_ignores_a_window_that_cannot_carry_options() -> None:
     class OddWindow:
         window_id = "@1"
-        window_name = "zsh"
 
     class OddPane:
         pane_id = "%3"
@@ -186,79 +171,65 @@ def test_resolve_marks_ignores_a_pane_without_an_id() -> None:
     )
 
 
-def test_marks_label_a_single_pane_window_only() -> None:
-    single = RecordingPane()
-    shared = RecordingPane(window=RecordingWindow(panes=2))
+def test_mark_scopes_are_disjoint() -> None:
+    """Each mark belongs to exactly one scope."""
 
-    assert _marks(single).labels_window is True
-    assert _marks(shared).labels_window is False
+    assert tmux.MARK_PAD in tmux.PANE_MARKS
+    assert tmux.MARK_THREAD_ID in tmux.WINDOW_MARKS
+    assert tmux.MARK_THREAD_TITLE in tmux.WINDOW_MARKS
+    assert tmux.MARK_AGENT not in tmux.PANE_MARKS | tmux.WINDOW_MARKS
 
 
-def test_marks_write_once_per_value_at_both_scopes() -> None:
+def test_marks_write_once_per_value_at_its_own_scope() -> None:
     pane = RecordingPane()
     marks = _marks(pane)
 
-    marks.set(tmux.MARK_AGENT, "c")
-    marks.set(tmux.MARK_AGENT, "c")
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
     marks.set(tmux.MARK_THREAD_ID, "")
     marks.set(tmux.MARK_THREAD_ID, "term_x")
 
-    assert pane.writes == [(tmux.MARK_AGENT, "c"), (tmux.MARK_THREAD_ID, "term_x")]
-    assert pane.window.writes == pane.writes
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
+    assert pane.window.writes == [(tmux.MARK_THREAD_ID, "term_x")]
 
 
-def test_marks_clear_only_what_they_wrote_at_both_scopes() -> None:
+def test_marks_clear_only_what_they_wrote_at_its_scope() -> None:
     pane = RecordingPane()
     marks = _marks(pane)
 
-    marks.set(tmux.MARK_AGENT, "c")
-    marks.clear(*tmux.MARK_NAMES)
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
+    marks.set(tmux.MARK_THREAD_ID, "term_x")
+    marks.clear(tmux.MARK_PAD, tmux.MARK_THREAD_ID)
 
-    assert pane.writes == [(tmux.MARK_AGENT, "c")]
-    assert pane.unset == [tmux.MARK_AGENT]
-    assert pane.window.unset == [tmux.MARK_AGENT]
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
+    assert pane.unset == [tmux.MARK_PAD]
+    assert pane.window.unset == [tmux.MARK_THREAD_ID]
 
 
-def test_marks_name_the_window_once_and_restore_it_on_clear() -> None:
-    pane = RecordingPane(window=RecordingWindow(window_name="my shell"))
+def test_marks_name_the_container_window_once_per_name() -> None:
+    pane = RecordingPane()
     marks = _marks(pane)
 
+    marks.name_window("term_x")
     marks.name_window("term_x")
     marks.name_window("term_y")
-    assert pane.window.renames == ["term_x"]
 
-    marks.set(tmux.MARK_AGENT, "c")
+    # a container name outlives chat, so clear leaves it alone
     marks.clear()
 
-    assert pane.window.renames == ["term_x", "my shell"]
+    assert pane.window.renames == ["term_x", "term_y"]
 
 
-def test_marks_leave_a_shared_window_name_alone() -> None:
-    pane = RecordingPane(window=RecordingWindow(panes=2))
-    marks = _marks(pane)
+def test_marks_reject_a_name_without_a_scope() -> None:
+    marks = _marks(RecordingPane())
 
-    marks.name_window("term_x")
-    marks.title_pane("hello world")
-
-    assert pane.window.renames == []
-    assert pane.titles == []
-
-
-def test_marks_title_the_pane_once() -> None:
-    pane = RecordingPane()
-    marks = _marks(pane)
-
-    marks.title_pane("hello world")
-    marks.title_pane("hello world")
-
-    assert pane.titles == ["hello world"]
+    with pytest.raises(ValueError):
+        marks.set(tmux.MARK_AGENT, "c")
 
 
 def test_marks_fall_back_to_an_empty_value_without_unset() -> None:
     class MinimalWindow:
         window_id = "@1"
-        window_name = "zsh"
-        panes = (1,)
 
         def __init__(self) -> None:
             self.writes: list[tuple[str, str]] = []
@@ -281,11 +252,11 @@ def test_marks_fall_back_to_an_empty_value_without_unset() -> None:
     pane = MinimalPane()
     marks = _marks(cast(Any, pane))
 
-    marks.set(tmux.MARK_AGENT, "c")
-    marks.clear(tmux.MARK_AGENT)
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
+    marks.clear(tmux.MARK_PAD)
 
-    assert pane.writes == [(tmux.MARK_AGENT, "c"), (tmux.MARK_AGENT, "")]
-    assert pane.window.writes == pane.writes
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT), (tmux.MARK_PAD, "")]
+    assert pane.window.writes == []
 
 
 def test_marks_survive_a_failing_write() -> None:
@@ -302,30 +273,53 @@ def test_marks_survive_a_failing_write() -> None:
         _set_window=failing,
     )
 
-    marks.set(tmux.MARK_AGENT, "c")
-    marks.clear(tmux.MARK_AGENT)
+    # a value that fails to write is not remembered, so the next call retries it
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
 
-    assert attempts == [(tmux.MARK_AGENT, "c"), (tmux.MARK_AGENT, "c")]
+    assert attempts == [(tmux.MARK_PAD, tmux.PAD_CHAT), (tmux.MARK_PAD, tmux.PAD_CHAT)]
 
 
-def test_chat_marks_publish_agent_thread_and_title() -> None:
+def test_marks_survive_a_failing_clear() -> None:
+    attempted: list[str] = []
+
+    def record(option: str, _value: str) -> object:
+        return option
+
+    def failing_unset(option: str) -> None:
+        attempted.append(option)
+        raise OSError("server exited")
+
+    marks = tmux.Marks(
+        pane_id="%3",
+        window_id="@1",
+        _set_pane=record,
+        _set_window=record,
+        _unset_pane=failing_unset,
+        _unset_window=failing_unset,
+    )
+
+    marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
+    marks.clear(tmux.MARK_PAD)
+
+    assert attempted == [tmux.MARK_PAD]
+
+
+def test_chat_marks_publish_pad_thread_and_title() -> None:
     pane = RecordingPane()
     marks = ChatMarks(
-        agent="c",
         marks=_marks(pane),
         title_lookup=lambda thread_id: "hello world",
     )
 
     marks.start("term_x")
 
-    assert pane.writes == [
-        (tmux.MARK_AGENT, "c"),
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
+    assert pane.window.writes == [
         (tmux.MARK_THREAD_ID, "term_x"),
         (tmux.MARK_THREAD_TITLE, "hello world"),
     ]
-    assert pane.window.writes == pane.writes
     assert pane.window.renames == ["term_x"]
-    assert pane.titles == ["hello world"]
 
 
 def test_chat_marks_publish_a_new_thread_id_before_its_title() -> None:
@@ -336,20 +330,19 @@ def test_chat_marks_publish_a_new_thread_id_before_its_title() -> None:
         lookups.append(thread_id)
         return "hello world"
 
-    marks = ChatMarks(agent="c", marks=_marks(pane), title_lookup=lookup)
+    marks = ChatMarks(marks=_marks(pane), title_lookup=lookup)
 
     marks.start(None)
-    assert pane.writes == [(tmux.MARK_AGENT, "c")]
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
     assert lookups == []
 
     marks.set_thread("term_new")
-    assert pane.writes[-1] == (tmux.MARK_THREAD_ID, "term_new")
+    assert pane.window.writes[-1] == (tmux.MARK_THREAD_ID, "term_new")
     assert pane.window.renames == ["term_new"]
     assert lookups == []
 
     marks.refresh_title()
-    assert pane.writes[-1] == (tmux.MARK_THREAD_TITLE, "hello world")
-    assert pane.titles == ["hello world"]
+    assert pane.window.writes[-1] == (tmux.MARK_THREAD_TITLE, "hello world")
 
     marks.refresh_title()
     assert lookups == ["term_new"]
@@ -359,7 +352,6 @@ def test_chat_marks_retry_a_title_that_is_not_there_yet() -> None:
     pane = RecordingPane()
     titles: list[str | None] = [None, "hello world"]
     marks = ChatMarks(
-        agent="c",
         marks=_marks(pane),
         title_lookup=lambda thread_id: titles.pop(0),
     )
@@ -368,9 +360,9 @@ def test_chat_marks_retry_a_title_that_is_not_there_yet() -> None:
     marks.refresh_title()
     marks.refresh_title()
 
-    assert [value for name, value in pane.writes if name == tmux.MARK_THREAD_TITLE] == [
-        "hello world"
-    ]
+    assert [
+        value for name, value in pane.window.writes if name == tmux.MARK_THREAD_TITLE
+    ] == ["hello world"]
 
 
 def test_chat_marks_ignore_a_failing_title_lookup() -> None:
@@ -379,44 +371,41 @@ def test_chat_marks_ignore_a_failing_title_lookup() -> None:
     def lookup(thread_id: str) -> str | None:
         raise RuntimeError("store unavailable")
 
-    marks = ChatMarks(agent="c", marks=_marks(pane), title_lookup=lookup)
+    marks = ChatMarks(marks=_marks(pane), title_lookup=lookup)
 
     marks.set_thread("term_x")
     marks.refresh_title()
 
-    assert [name for name, _value in pane.writes] == [tmux.MARK_THREAD_ID]
-    assert pane.titles == []
+    assert pane.window.writes == [(tmux.MARK_THREAD_ID, "term_x")]
 
 
-def test_chat_marks_clear_everything_on_exit() -> None:
-    pane = RecordingPane(window=RecordingWindow(window_name="shell"))
-    marks = ChatMarks(
-        agent="c", marks=_marks(pane), title_lookup=lambda thread_id: "hello world"
-    )
-
-    marks.start("term_x")
-    marks.clear()
-
-    assert pane.unset == [
-        tmux.MARK_AGENT,
-        tmux.MARK_THREAD_ID,
-        tmux.MARK_THREAD_TITLE,
-    ]
-    assert pane.window.unset == pane.unset
-    assert pane.window.renames == ["term_x", "shell"]
-
-
-def test_chat_marks_reset_after_clear() -> None:
+def test_chat_marks_clear_only_the_pad_on_exit() -> None:
     pane = RecordingPane()
-    marks = ChatMarks(agent="c", marks=_marks(pane), title_lookup=lambda _id: None)
+    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda thread_id: "hello world")
 
     marks.start("term_x")
     marks.clear()
-    marks.set_thread("term_x")
+
+    # the thread marks and the container name outlive chat
+    assert pane.unset == [tmux.MARK_PAD]
+    assert pane.window.unset == []
+    assert pane.window.renames == ["term_x"]
+
+
+def test_chat_marks_rename_the_container_for_a_new_thread() -> None:
+    pane = RecordingPane()
+    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda _id: None)
+
+    marks.start("term_x")
+    marks.clear()
+    marks.set_thread("term_y")
 
     assert [
-        value for name, value in pane.writes if name == tmux.MARK_THREAD_ID and value
-    ] == ["term_x", "term_x"]
+        value
+        for name, value in pane.window.writes
+        if name == tmux.MARK_THREAD_ID and value
+    ] == ["term_x", "term_y"]
+    assert pane.window.renames == ["term_x", "term_y"]
 
 
 def test_disabled_chat_marks_do_nothing() -> None:
@@ -433,7 +422,7 @@ def test_disabled_chat_marks_do_nothing() -> None:
 
 def test_chat_marks_expose_their_state() -> None:
     pane = RecordingPane()
-    marks = ChatMarks(agent="c", marks=_marks(pane), title_lookup=lambda _id: None)
+    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda _id: None)
 
     assert marks.active is True
     marks.set_thread("term_x")
@@ -463,7 +452,7 @@ def test_scripted_chat_publishes_and_clears_the_marks(monkeypatch: Any) -> None:
     from toolang.cli.toolang.commands.chat import main
     from toolang.execution.types import SessionSetting
 
-    pane = RecordingPane(window=RecordingWindow(window_name="shell"))
+    pane = RecordingPane()
     marks = _marks(pane)
 
     class Client:
@@ -494,14 +483,11 @@ def test_scripted_chat_publishes_and_clears_the_marks(monkeypatch: Any) -> None:
 
     main._chat_interactive(cast(Any, None), thread_id="term_x")
 
-    assert pane.writes == [
-        (tmux.MARK_AGENT, "c"),
+    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
+    assert pane.window.writes == [
         (tmux.MARK_THREAD_ID, "term_x"),
         (tmux.MARK_THREAD_TITLE, "hello world"),
     ]
-    assert pane.window.renames == ["term_x", "shell"]
-    assert pane.unset == [
-        tmux.MARK_AGENT,
-        tmux.MARK_THREAD_ID,
-        tmux.MARK_THREAD_TITLE,
-    ]
+    assert pane.unset == [tmux.MARK_PAD]
+    assert pane.window.unset == []
+    assert pane.window.renames == ["term_x"]

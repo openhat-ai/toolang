@@ -1,15 +1,15 @@
 """Publish toolang state as tmux options while chat runs in a pane.
 
-A chat that runs inside a tmux pane records what it is hosting, on the pane and
-on its window, so tmux-side views can read it with ``#{@toolang_thread_id}`` and
-friends. Both scopes carry the same three values: the pane option describes the
-process that owns the pane (it survives a window that holds several panes), and
-the window option is the session-level metadata that a window-scoped format or a
-launcher reads without resolving the active pane.
+A chat that runs inside a tmux pane records what it hosts, each value at its own
+scope, so tmux-side views can read it with ``#{@toolang_thread_id}`` and friends.
+The pane carries the pad kind (``chat`` today), its window carries the thread id
+and title, and the agent is a session option the launcher writes. A window with
+no value of its own reads its session's, so the agent is visible across the whole
+session while the thread marks stay on the one window that shows it.
 
-The window name and pane title are set too, but only while the window holds a
-single pane: tmux renders ``window_name: "pane_title"`` for single-pane windows,
-so a chat window reads as ``term_xxx: "hello world"`` with no configuration.
+Nothing is renamed: the marks are user options only, and a view that wants the
+agent, the thread, or the pad reads ``docs/chat.md``'s recommended ``prefix w``
+format.
 
 Detection and targeting are delegated to ``libtmux``, which reads ``TMUX`` and
 ``TMUX_PANE`` from the environment, so this module carries no socket or protocol
@@ -37,10 +37,23 @@ from wcwidth import wcwidth
 MARK_AGENT = "@toolang_agent"
 MARK_THREAD_ID = "@toolang_thread_id"
 MARK_THREAD_TITLE = "@toolang_thread_title"
-MARK_NAMES = (MARK_AGENT, MARK_THREAD_ID, MARK_THREAD_TITLE)
+MARK_PAD = "@toolang_pad"
 
-# The window/pane marks are mirrored at session scope so the launcher can own a
-# session without parsing its name.
+# One value per scope: the agent belongs to the session, the thread to the window
+# that shows it, and the pad to the pane it runs in. The scopes stay separate
+# because tmux inherits user options, so a window with no value of its own reads
+# its session's; a shared name would bleed a session-wide value into every
+# window a window-scoped format reads. A pad is a thread view (readable and
+# writable); ``chat`` is the only kind today, later ones are ``shell``, ``logs``
+# and friends, all in the same window under the same thread id.
+PAD_CHAT = "chat"
+# The window name a brand-new chat starts under, before its thread id exists.
+WINDOW_NAME_FALLBACK = "new_chat"
+PANE_MARKS = frozenset({MARK_PAD})
+WINDOW_MARKS = frozenset({MARK_THREAD_ID, MARK_THREAD_TITLE})
+
+# The agent is a session option: the launcher writes it when it determines the
+# agent's session, and every window in that session reads it by inheritance.
 SESSION_AGENT = MARK_AGENT
 SESSION_NAME_FALLBACK = "agent"
 _SESSION_CHARS = re.compile(r"[^a-z0-9-]+")
@@ -72,13 +85,10 @@ class TmuxWindow(Protocol):
     def window_id(self) -> str: ...
 
     @property
-    def window_name(self) -> str: ...
-
-    @property
-    def panes(self) -> Sequence[object]: ...
-
-    @property
     def session(self) -> "TmuxSession": ...
+
+    @property
+    def active_pane(self) -> "TmuxPane": ...
 
     def show_option(self, option: str) -> Any: ...
 
@@ -91,6 +101,13 @@ class TmuxWindow(Protocol):
     def unset_option(self, option: str) -> object: ...
 
     def rename_window(self, new_name: str) -> object: ...
+
+    def split(
+        self,
+        *,
+        start_directory: str | None = ...,
+        shell: str | None = ...,
+    ) -> "TmuxPane": ...
 
 
 class TmuxPane(Protocol):
@@ -108,8 +125,6 @@ class TmuxPane(Protocol):
     def set_option(self, option: str, value: str) -> object: ...
 
     def unset_option(self, option: str) -> object: ...
-
-    def set_title(self, title: str) -> object: ...
 
 
 class TmuxSession(Protocol):
@@ -162,7 +177,7 @@ class TmuxServer(Protocol):
 
 @dataclass(slots=True)
 class Marks:
-    """Best-effort writer for the toolang marks on one pane and its window.
+    """Best-effort writer for the toolang marks, each at its own scope.
 
     Writes are idempotent: a value is sent only when it differs from the last
     value written through this instance, empty values are never written, and a
@@ -176,31 +191,25 @@ class Marks:
     _unset_pane: OptionRemover | None = None
     _unset_window: OptionRemover | None = None
     _rename_window: TextSetter | None = None
-    _set_pane_title: TextSetter | None = None
-    _window_name: str = ""
-    _window_panes: int = 1
     _written: dict[str, str] = field(default_factory=dict)
-    _renamed: bool = False
-    _title: str = ""
-
-    @property
-    def labels_window(self) -> bool:
-        """Whether this window can carry a name and a pane title."""
-
-        return self._window_panes == 1
+    _named: str = ""
 
     def set(self, name: str, value: str) -> None:
+        """Write one mark at its scope; a name without a scope is a bug."""
+
         if not value or self._written.get(name) == value:
             return
-        wrote_pane = self._attempt(name, value, self._set_pane)
-        wrote_window = self._attempt(name, value, self._set_window)
-        if wrote_pane or wrote_window:
+        if self._attempt(name, value, self._writer(name)):
             self._written[name] = value
 
     def name_window(self, name: str) -> None:
-        """Name the window after the thread, once, for single-pane windows."""
+        """Name the container window after its thread, once per name.
 
-        if not name or self._renamed or not self.labels_window:
+        The name is a container convention and outlives chat, so it is never
+        restored; a window whose thread changed is renamed again.
+        """
+
+        if not name or name == self._named:
             return
         rename = self._rename_window
         if rename is None:
@@ -210,32 +219,16 @@ class Marks:
         except Exception as exc:
             _debug(f"window not renamed: {exc}")
             return
-        self._renamed = True
-
-    def title_pane(self, title: str) -> None:
-        """Title the pane after the thread for single-pane windows."""
-
-        if not title or title == self._title or not self.labels_window:
-            return
-        set_title = self._set_pane_title
-        if set_title is None:
-            return
-        try:
-            set_title(title)
-        except Exception as exc:
-            _debug(f"pane title not set: {exc}")
-            return
-        self._title = title
+        self._named = name
 
     def clear(self, *names: str) -> None:
-        """Remove the marks this instance wrote and restore the window name."""
+        """Remove the marks this instance wrote."""
 
         requested = names or tuple(self._written)
         for name in requested:
             if name not in self._written:
                 continue
             self._remove(name)
-        self._restore_window_name()
 
     def _attempt(self, name: str, value: str, writer: OptionWriter) -> bool:
         try:
@@ -245,32 +238,34 @@ class Marks:
             return False
         return True
 
-    def _remove(self, name: str) -> None:
-        for unset, write in (
-            (self._unset_pane, self._set_pane),
-            (self._unset_window, self._set_window),
-        ):
-            try:
-                if unset is None:
-                    write(name, "")
-                else:
-                    unset(name)
-            except Exception as exc:
-                _debug(f"option {name} not cleared: {exc}")
-                continue
-        del self._written[name]
+    def _writer(self, name: str) -> OptionWriter:
+        """The option writer for ``name``'s scope."""
 
-    def _restore_window_name(self) -> None:
-        if not self._renamed:
-            return
-        self._renamed = False
-        rename = self._rename_window
-        if rename is None or not self._window_name:
-            return
+        if name in PANE_MARKS:
+            return self._set_pane
+        if name in WINDOW_MARKS:
+            return self._set_window
+        raise ValueError(f"mark has no scope: {name}")
+
+    def _remover(self, name: str) -> OptionRemover | None:
+        """The option remover for ``name``'s scope, if it has one."""
+
+        if name in PANE_MARKS:
+            return self._unset_pane
+        if name in WINDOW_MARKS:
+            return self._unset_window
+        raise ValueError(f"mark has no scope: {name}")
+
+    def _remove(self, name: str) -> None:
+        remover = self._remover(name)
         try:
-            rename(self._window_name)
+            if remover is None:
+                self._writer(name)(name, "")
+            else:
+                remover(name)
         except Exception as exc:
-            _debug(f"window name not restored: {exc}")
+            _debug(f"option {name} not cleared: {exc}")
+        del self._written[name]
 
 
 def resolve_marks(
@@ -310,9 +305,6 @@ def resolve_marks(
             _unset_pane=_optional(pane, "unset_option"),
             _unset_window=_optional(window, "unset_option"),
             _rename_window=_optional(window, "rename_window"),
-            _set_pane_title=_optional(pane, "set_title"),
-            _window_name=_text(getattr(window, "window_name", None)),
-            _window_panes=len(getattr(window, "panes", ()) or ()),
         )
     except Exception as exc:  # a pane without a usable window cannot carry marks
         _debug(f"not publishing marks: {exc}")
@@ -348,10 +340,12 @@ class Launcher:
     _pane: TmuxPane
 
     def agent_session(self) -> TmuxSession | None:
-        """The agent's session: ``@toolang_agent`` first, session name second.
+        """The agent's session: its ``@toolang_agent`` mark first, name second.
 
         A name only identifies a session nobody else owns, so a name that a
-        different agent already marked is not adopted.
+        different agent already marked is not adopted. Determining the session
+        records the mark on it, so the next lookup reads the mark instead of the
+        name.
         """
 
         sessions = self._sessions()
@@ -362,8 +356,10 @@ class Launcher:
         for session in sessions:
             if _text(getattr(session, "session_name", None)) != name:
                 continue
-            if not _text(_option(session, SESSION_AGENT)):
-                return session
+            if _text(_option(session, SESSION_AGENT)):
+                continue
+            self._own(session)
+            return session
         return None
 
     def is_current(self, session: TmuxSession) -> bool:
@@ -392,6 +388,48 @@ class Launcher:
                 found = window
         return found
 
+    def chat_pad_active(self, window: TmuxWindow) -> bool:
+        """Whether ``window``'s active pane runs a chat pad.
+
+        The pad mark is cleared when chat exits, so this tells a live chat pad
+        apart from a thread container that still exists but runs no chat.
+        """
+
+        try:
+            pane = window.active_pane
+        except Exception as exc:
+            _debug(f"active pane not resolved: {exc}")
+            return False
+        return _text(_option(pane, MARK_PAD)) == PAD_CHAT
+
+    def name_window(self, window: TmuxWindow, name: str) -> None:
+        """Name a container window."""
+
+        _label_window(window, name)
+
+    def mark_thread(self, window: TmuxWindow, thread_id: str) -> None:
+        """Record the thread a container window belongs to."""
+
+        try:
+            window.set_option(MARK_THREAD_ID, thread_id)
+        except Exception as exc:
+            _debug(f"thread not marked: {exc}")
+
+    def open_pad(
+        self, window: TmuxWindow, *, command: str, directory: str | None = None
+    ) -> bool:
+        """Open a chat pad in an existing thread window."""
+
+        splitter = getattr(window, "split", None)
+        if not callable(splitter):
+            return False
+        try:
+            splitter(start_directory=directory, shell=command)
+        except Exception as exc:
+            _debug(f"chat pad not opened: {exc}")
+            return False
+        return True
+
     def ensure_session(
         self, *, command: str, directory: str | None = None
     ) -> tuple[TmuxSession | None, TmuxWindow | None]:
@@ -404,7 +442,6 @@ class Launcher:
 
         existing = self.agent_session()
         if existing is not None:
-            self._own(existing)
             return existing, None
         name = self._available_name()
         try:
@@ -561,6 +598,18 @@ def resolve_launcher(
         _debug("not placing chat: resolved pane has no id")
         return None
     return Launcher(agent=agent, _server=server, _pane=pane)
+
+
+def _label_window(window: TmuxWindow, name: str) -> None:
+    """Best-effort rename of one window."""
+
+    rename = _optional(window, "rename_window")
+    if rename is None:
+        return
+    try:
+        rename(name)
+    except Exception as exc:
+        _debug(f"window not renamed: {exc}")
 
 
 def _option(target: object, name: str) -> Any:

@@ -431,27 +431,34 @@ Thread and run detail endpoints are inspection surfaces used to:
 
 They are not the primary source for the in-flight assistant reply.
 
-## Tmux Pane Marks
+## Tmux Marks
 
-Chat running inside a tmux pane records what it hosts on that pane, so a
-tmux-side view can read it without knowing anything about Toolang:
+Chat running inside a tmux pane records what it hosts, each value at the scope it
+belongs to, so a tmux-side view can read it without knowing anything about Toolang:
 
-| option | value | written |
-| --- | --- | --- |
-| `@toolang_agent` | agent name | when chat starts |
-| `@toolang_thread_id` | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
-| `@toolang_thread_title` | thread title, single line, at most 60 display columns | once the thread has runs |
+| option | scope | value | written |
+| --- | --- | --- | --- |
+| `@toolang_agent` | session | agent name | when `too <agent> chat` determines the agent's session |
+| `@toolang_thread_id` | window | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
+| `@toolang_thread_title` | window | thread title, single line, at most 60 display columns | once the thread has runs |
+| `@toolang_pad` | pane | `chat` | when chat starts |
 
-Each value is published at both scopes: as a pane option (the process that owns the
-pane, which survives a window holding several panes) and as a window option (the
-session-level metadata a window-scoped format reads without resolving the active
-pane). A chat window also takes the thread id as its window name and the thread
-title as its pane title, but only while it holds a single pane — that is the shape
-tmux renders as `term_xxx: "hello world"`. The previous window name comes back when
-chat exits.
+Each value lives at exactly one scope, because tmux inherits user options: a window
+with no value of its own reads its session's, and a pane with none reads its
+window's. The agent is session metadata, so every window in the agent's session
+reports it; the thread marks stay on the one window that shows that thread; the pad
+mark names what the pane runs. A pad is a readable and writable thread view — `chat`
+today, later `shell`, `logs` and friends, all in the same window under the same
+thread id.
 
-Marks are best-effort. They are written only when the process runs inside a pane
-(`TMUX` and `TMUX_PANE` are set), they are unset when chat exits, and a failing tmux
+The names follow the same convention: the agent's session is named after the agent,
+and a thread's window after its thread id — `new_chat` while a new chat has no id yet,
+the full id once chat knows it. Names and options are container state: they outlive
+chat and are never restored, because the next chat reuses the same session and window.
+
+Marks are best-effort, and only the pad mark ends with chat: the pane stops claiming
+to be a chat while the container keeps its name and thread. They are written only when
+the process runs inside a pane (`TMUX` and `TMUX_PANE` are set), and a failing tmux
 call never reaches the UI. `TOOLANG_TMUX_MARKS=0` disables the feature entirely, and
 `TOOLANG_TMUX_DEBUG=1` reports skipped writes on stderr.
 
@@ -460,6 +467,32 @@ the current window's thread with `#{@toolang_thread_title}`, and
 `tmux list-windows -a -F '#{window_name} #{@toolang_thread_id}'` finds the windows
 that host chat.
 
+### Recommended Configuration
+
+tmux reads none of these options by default, so `prefix w` shows only the container
+names (`term_xxx`, or `new_chat` before the thread exists). This window line keeps the
+default tree and reads the marks instead — the thread title once it exists, the thread
+id until a run has named it, the pad kind for a pane that hosts a pad, and the window
+name for anything else:
+
+```tmux
+# ~/.tmux.conf
+bind -N 'Choose a window' w choose-tree -Zw -F '#{?pane_format,#{pane_index}: #{pane_current_command}#{pane_flags},#{?window_format,#{window_index}: #{?@toolang_thread_title,#{@toolang_thread_title},#{?@toolang_thread_id,#{@toolang_thread_id},#{?@toolang_pad,[#{@toolang_pad}],#{window_name}}}}#{window_flags},#{session_windows} windows#{?session_attached, (attached),}}}'
+```
+
+```text
+a: 3 windows (attached)
+  0: hello world
+  1: shell
+  2: [chat]
+```
+
+A window line reads the active pane's pad, so `[chat]` appears before the thread
+exists. A status line reads the same values from the current window, for example
+`set -g status-right '#{?@toolang_thread_title,#{@toolang_thread_title},#{?@toolang_agent,#{@toolang_agent},}}'`;
+prefixing the session branch with `#{?@toolang_agent,#{@toolang_agent} · ,}` shows the
+agent beside the session name.
+
 ## Tmux Agent Sessions
 
 Inside tmux, `too <agent> chat` runs in the agent's own session in the user's own
@@ -467,32 +500,44 @@ server, so `prefix w` lists one entry per open chat:
 
 ```text
 eve
-  term_xxx: "hello world"
-  term_yyy: "debug parser"
+  term_xxx
+  new_chat
 ```
+
+The session is named after the agent and each window after its thread, so the tree
+reads without any configuration; the
+[recommended configuration](#recommended-configuration) shows the thread titles
+instead.
 
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | chat runs in the current terminal |
 | the current session is the agent's session | chat runs in this pane |
-| another session, `--thread` already open | the client switches to that window |
+| another session, `--thread` open with a live chat pad | the client switches to that window |
+| another session, `--thread` container without a live chat pad | a chat pad opens in that window and the client switches to it |
 | another session, otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
 
 A run that is moved elsewhere prints one line, `↪ opened in tmux session <agent>`,
 and exits 0; the pane it started in returns to its shell.
 
 The agent's session is found by its `@toolang_agent` session option first and by
-its derived name second. The derived name is the agent name reduced to lowercase
+its derived name second; determining it records the option, so the name is only a
+fallback. The derived name is the agent name reduced to lowercase
 `[a-z0-9-]`; a name another agent already owns is suffixed (`eve-2`) instead of
-renamed. `--thread` reuses an open chat by reading the window marks, so no thread
-data is read to answer it.
+renamed.
+
+A thread's window is a container: the launcher creates it and names it after the
+thread (`new_chat` until the id exists, then `term_xxx`). Chat only adds or removes its
+pad, so a window whose chat exited is reused: `--thread` finds it by the window mark,
+switches when a live chat pad is on its active pane, and otherwise opens a fresh chat
+pad there instead of opening a second window for the thread.
 
 An opened window runs the chat command under tmux's own environment, like any
 other tmux window, so it does not inherit variables that only the calling shell
-exported. Exiting a chat destroys its window, and the agent's session with it
-when that was the only window; placement turns `detach-on-destroy` off on the
-sessions it creates, so the client returns to the session it came from instead
-of being detached.
+exported. Exiting a chat closes its pane: a window whose only pane it was is
+destroyed, and the agent's session with it when that was the only window; placement
+turns `detach-on-destroy` off on the sessions it creates, so the client returns to
+the session it came from instead of being detached.
 
 Placement is best-effort and shares the marks kill switch: outside tmux, with
 `TOOLANG_TMUX_MARKS=0`, or when a tmux call fails, chat runs in the current
