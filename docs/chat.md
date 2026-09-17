@@ -512,10 +512,13 @@ instead.
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | chat runs in the current terminal |
+| `--thread` container with a live chat pad | the client switches to that window, focusing the chat pane |
+| `--thread` container without a live chat pad | a chat pad opens in that window and the client switches to it |
 | the current session is the agent's session | chat runs in this pane |
-| another session, `--thread` open with a live chat pad | the client switches to that window |
-| another session, `--thread` container without a live chat pad | a chat pad opens in that window and the client switches to it |
-| another session, otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
+| otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
+
+The `--thread` rows come first: an open thread is reused even when chat was started
+inside the agent's session, so one thread never gets a second chat.
 
 A run that is moved elsewhere prints one line, `↪ opened in tmux session <agent>`,
 and exits 0; the pane it started in returns to its shell.
@@ -529,8 +532,8 @@ renamed.
 A thread's window is a container: the launcher creates it and names it after the
 thread (`new_chat` until the id exists, then `term_xxx`). Chat only adds or removes its
 pad, so a window whose chat exited is reused: `--thread` finds it by the window mark,
-switches when a live chat pad is on its active pane, and otherwise opens a fresh chat
-pad there instead of opening a second window for the thread.
+switches when a live chat pad is anywhere in it — focusing that pane — and otherwise
+opens a fresh chat pad there instead of opening a second window for the thread.
 
 An opened window runs the chat command under tmux's own environment, like any
 other tmux window, so it does not inherit variables that only the calling shell

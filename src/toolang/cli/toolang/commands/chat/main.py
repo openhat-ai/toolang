@@ -127,8 +127,10 @@ def _place_chat(
 ) -> bool:
     """Send this chat run to the agent's tmux session when tmux can host it.
 
-    Returns ``True`` when chat keeps running in this process. ``False`` means
-    the run now lives in the agent's session: the notice is printed and the
+    An existing container for ``--thread`` is resolved first, so a thread that is
+    already open is reused even when chat was started inside the agent's own
+    session. Returns ``True`` when chat keeps running in this process. ``False``
+    means the run now lives in the agent's session: the notice is printed and the
     caller must return, because the client points at another window.
     """
 
@@ -136,18 +138,18 @@ def _place_chat(
     launcher = resolve_launcher(agent=agent)
     if launcher is None:
         return True
-    session = launcher.agent_session()
-    if session is not None and launcher.is_current(session):
-        return True
     command = shlex.join(list(argv))
     directory = os.getcwd()
+    session = launcher.agent_session()
     if session is not None and thread_id is not None:
         window = launcher.thread_window(session, thread_id)
         if window is not None:
-            if launcher.chat_pad_active(window):
-                # a chat still runs there, so move to it: opening a second chat
-                # on the same thread would be worse than keeping chat here
-                if not launcher.switch_client(window):
+            pad = launcher.chat_pad(window)
+            if pad is not None:
+                # the thread is already open, so move to its chat rather than
+                # start a second one; when the client cannot move, chat runs
+                # here instead of adding another view of the thread
+                if not launcher.switch_client(window, pane=pad):
                     return True
                 _announce_session(agent)
                 return False
@@ -159,6 +161,8 @@ def _place_chat(
                 _announce_session(agent)
                 return False
             return True
+    if session is not None and launcher.is_current(session):
+        return True
     session, window = launcher.ensure_session(command=command, directory=directory)
     if session is None:
         return True

@@ -88,7 +88,7 @@ class TmuxWindow(Protocol):
     def session(self) -> "TmuxSession": ...
 
     @property
-    def active_pane(self) -> "TmuxPane": ...
+    def panes(self) -> Sequence["TmuxPane"]: ...
 
     def show_option(self, option: str) -> Any: ...
 
@@ -125,6 +125,8 @@ class TmuxPane(Protocol):
     def set_option(self, option: str, value: str) -> object: ...
 
     def unset_option(self, option: str) -> object: ...
+
+    def select(self) -> object: ...
 
 
 class TmuxSession(Protocol):
@@ -211,15 +213,8 @@ class Marks:
 
         if not name or name == self._named:
             return
-        rename = self._rename_window
-        if rename is None:
-            return
-        try:
-            rename(name)
-        except Exception as exc:
-            _debug(f"window not renamed: {exc}")
-            return
-        self._named = name
+        if _rename_window(self._rename_window, name):
+            self._named = name
 
     def clear(self, *names: str) -> None:
         """Remove the marks this instance wrote."""
@@ -388,24 +383,29 @@ class Launcher:
                 found = window
         return found
 
-    def chat_pad_active(self, window: TmuxWindow) -> bool:
-        """Whether ``window``'s active pane runs a chat pad.
+    def chat_pad(self, window: TmuxWindow) -> TmuxPane | None:
+        """The pane of ``window`` that runs a chat pad, if any.
 
-        The pad mark is cleared when chat exits, so this tells a live chat pad
-        apart from a thread container that still exists but runs no chat.
+        The pad mark is cleared when chat exits, so this tells a live chat apart
+        from a thread container that outlived it. Every pane is checked, not only
+        the active one: a chat running in a background pane still means the
+        thread is open, and starting a second chat there would be wrong.
         """
 
         try:
-            pane = window.active_pane
+            panes = tuple(getattr(window, "panes", ()) or ())
         except Exception as exc:
-            _debug(f"active pane not resolved: {exc}")
-            return False
-        return _text(_option(pane, MARK_PAD)) == PAD_CHAT
+            _debug(f"window panes not listed: {exc}")
+            return None
+        for pane in panes:
+            if _text(_option(pane, MARK_PAD)) == PAD_CHAT:
+                return pane
+        return None
 
     def name_window(self, window: TmuxWindow, name: str) -> None:
         """Name a container window."""
 
-        _label_window(window, name)
+        _rename_window(_optional(window, "rename_window"), name)
 
     def mark_thread(self, window: TmuxWindow, thread_id: str) -> None:
         """Record the thread a container window belongs to."""
@@ -469,13 +469,22 @@ class Launcher:
             _debug(f"chat window not opened: {exc}")
             return None
 
-    def switch_client(self, window: TmuxWindow) -> bool:
-        """Point the attached client at ``window``, attaching when none is.
+    def switch_client(
+        self, window: TmuxWindow, *, pane: TmuxPane | None = None
+    ) -> bool:
+        """Point the attached client at ``window``, focusing ``pane`` when given.
 
         Returns ``False`` when neither could be done, because the caller then
         has to keep the chat where it started.
         """
 
+        if pane is not None:
+            select_pane = getattr(pane, "select", None)
+            if callable(select_pane):
+                try:
+                    select_pane()
+                except Exception as exc:
+                    _debug(f"pane not selected: {exc}")
         try:
             name = _text(
                 getattr(getattr(window, "session", None), "session_name", None)
@@ -600,16 +609,17 @@ def resolve_launcher(
     return Launcher(agent=agent, _server=server, _pane=pane)
 
 
-def _label_window(window: TmuxWindow, name: str) -> None:
-    """Best-effort rename of one window."""
+def _rename_window(rename: TextSetter | None, name: str) -> bool:
+    """Best-effort rename through one window's own setter."""
 
-    rename = _optional(window, "rename_window")
     if rename is None:
-        return
+        return False
     try:
         rename(name)
     except Exception as exc:
         _debug(f"window not renamed: {exc}")
+        return False
+    return True
 
 
 def _option(target: object, name: str) -> Any:

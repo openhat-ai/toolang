@@ -40,10 +40,13 @@ Outside tmux nothing changes: `too <agent> chat` is still a plain terminal app.
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | run chat in the current terminal |
-| inside tmux, current session is the agent's session | run chat in this pane; publish the pad and thread metadata |
-| inside tmux, another session, `--thread` container with a live chat pad | switch the client to that window, print the notice, exit 0 |
-| inside tmux, another session, `--thread` container without a live chat pad | open a chat pad (split) in that window, switch the client to it, print the notice, exit 0 |
-| inside tmux, another session, otherwise | ensure the agent's session, open a window running `too <agent> chat …`, switch the client to it, print the notice, exit 0 |
+| `--thread` container with a live chat pad | switch the client to that window, focusing the chat pane, print the notice, exit 0 |
+| `--thread` container without a live chat pad | open a chat pad (split) in that window, switch the client to it, print the notice, exit 0 |
+| current session is the agent's session | run chat in this pane; publish the pad and thread metadata |
+| otherwise | ensure the agent's session, open a window running `too <agent> chat …`, switch the client to it, print the notice, exit 0 |
+
+The `--thread` rows come first: an open thread is reused even when chat was started
+inside the agent's session, so one thread never gets a second chat.
 
 The notice is one line on stdout: `↪ opened in tmux session <agent>`.
 
@@ -81,11 +84,11 @@ matters, one `server.cmd("list-windows", "-F", …)` call is used instead — `S
 still the library's own API. Several matches pick the newest.
 
 A thread's window is a container that may have outlived its chat, so a match is not enough
-to switch to it: the launcher also reads the active pane's pad
-(`window.active_pane.show_option("@toolang_pad")`). A live chat pad means the thread is
-open and the client switches to that window; otherwise the launcher splits a fresh chat
-pad into the same window and switches to that, instead of opening a second window for the
-thread.
+to switch to it: the launcher reads the pad of every pane in the window
+(`pane.show_option("@toolang_pad")`), because a chat running in a background pane still
+means the thread is open. A live chat pad means the client switches to that window and
+focuses that pane; otherwise the launcher splits a fresh chat pad into the same window and
+switches to it, instead of opening a second window for the thread.
 
 ## Lifecycle
 
