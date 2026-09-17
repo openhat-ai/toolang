@@ -492,6 +492,22 @@ class PromptBox:
             self._notify_input()
             self._next_history()
 
+        # Bare Up/Down stay out of input history: terminals and tmux translate
+        # the mouse wheel into Up/Down in the alternate screen, and the default
+        # prompt-toolkit bindings fall back to history there, so scrolling would
+        # rewrite the draft. Up/Down only move the cursor inside a multi-line
+        # draft; Ctrl+P/Ctrl+N remain the history keys.
+        def arrow_up(_event) -> None:
+            self._notify_input()
+            if self.buffer.document.cursor_position_row > 0:
+                self.buffer.cursor_up()
+
+        def arrow_down(_event) -> None:
+            self._notify_input()
+            document = self.buffer.document
+            if document.cursor_position_row < document.line_count - 1:
+                self.buffer.cursor_down()
+
         prompt_bindings = (
             (shortcuts.SUBMIT, submit),
             (shortcuts.STEER, steer),
@@ -505,6 +521,8 @@ class PromptBox:
         for shortcut, handler in prompt_bindings:
             for binding in shortcut.bindings:
                 keys.add(*binding, filter=prompt_focus)(handler)
+        keys.add("up", filter=prompt_focus)(arrow_up)
+        keys.add("down", filter=prompt_focus)(arrow_down)
         global_bindings = (
             (shortcuts.QUIT, quit_app),
             (shortcuts.CLEAR, clear_screen),

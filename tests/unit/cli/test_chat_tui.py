@@ -1914,6 +1914,36 @@ def test_chat_prompt_ctrl_j_inserts_a_newline() -> None:
     assert prompt.buffer.text == "first\nsecond"
 
 
+def test_chat_prompt_arrows_stay_out_of_input_history() -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    keys = KeyBindings()
+    prompt.bind(keys)
+    prompt.history.append_string("previous input")
+
+    def invoke(key: Keys) -> None:
+        binding = next(item for item in keys.bindings if item.keys == (key,))
+        cast(Any, binding.handler)(None)
+
+    invoke(Keys.Up)
+    invoke(Keys.Down)
+
+    assert prompt.buffer.text == ""
+    assert prompt.history_index is None
+
+    prompt.buffer.text = "first\nsecond"
+    prompt.buffer.cursor_position = len("first\nsecond")
+    invoke(Keys.Up)
+
+    assert prompt.buffer.document.cursor_position_row == 0
+    assert prompt.buffer.text == "first\nsecond"
+
+    invoke(Keys.ControlP)
+
+    assert prompt.buffer.text == "previous input"
+    assert shortcuts.PREVIOUS_HISTORY.bindings == (("c-p",),)
+    assert shortcuts.NEXT_HISTORY.bindings == (("c-n",),)
+
+
 def test_chat_prompt_bindings_cover_documented_shortcut_metadata() -> None:
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
     keys = KeyBindings()

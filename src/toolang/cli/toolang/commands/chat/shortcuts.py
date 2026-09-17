@@ -92,19 +92,21 @@ QUEUE_DELETE = ChatShortcut(
     "Delete selected input",
     aliases=("Del",),
 )
+# Bare Up and Down are deliberately absent: terminals and tmux translate the
+# mouse wheel into Up/Down in the alternate screen, and prompt_toolkit's default
+# Up/Down bindings fall back to history, which would rewrite the draft while the
+# user scrolls. History therefore keeps explicit Ctrl+P/Ctrl+N keys only.
 PREVIOUS_HISTORY = ChatShortcut(
     "previous_history",
-    (("up",), ("c-p",)),
-    QUEUE_PREVIOUS.label,
-    "Previous history on first line; otherwise move up",
-    aliases=QUEUE_PREVIOUS.aliases,
+    (("c-p",),),
+    "Ctrl+P",
+    "Previous input history",
 )
 NEXT_HISTORY = ChatShortcut(
     "next_history",
-    (("down",), ("c-n",)),
-    QUEUE_NEXT.label,
-    "Next history on last line; otherwise move down",
-    aliases=QUEUE_NEXT.aliases,
+    (("c-n",),),
+    "Ctrl+N",
+    "Next input history",
 )
 DISMISS_STATUS = ChatShortcut(
     "dismiss_status",
