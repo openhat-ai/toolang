@@ -359,6 +359,7 @@ class ModelCatalogSnapshot:
     models: tuple[Model, ...]
     revision: str
     source: Path | None = None
+    local: bool = False
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)

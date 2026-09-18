@@ -156,7 +156,6 @@ def _llama_cpp_model(
         limit={key: value for key, value in limit.items() if isinstance(value, int)},
         cost={"input": 0, "output": 0},
         extra={"runtime": runtime},
-        local=True,
     )
 
 

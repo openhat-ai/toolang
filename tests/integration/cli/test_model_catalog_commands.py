@@ -384,7 +384,6 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             name="local",
             modalities={"input": ("text",), "output": ("text",)},
             cost={"input": 0, "output": 0},
-            local=True,
         )
         provider = Provider(
             id="ollama",
@@ -394,12 +393,12 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             api="http://ollama.test/v1",
             models={model.id: model},
             extra={"runtime": {"status": "ready"}},
-            local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
             models=(model,),
             revision="runtime:ollama",
+            local=True,
         )
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
@@ -409,7 +408,6 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             name="offline",
             modalities={"input": ("text",), "output": ("text",)},
             cost={"input": 0, "output": 0},
-            local=True,
         )
         provider = Provider(
             id="llama_cpp",
@@ -419,12 +417,12 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             api="http://llama.test/v1",
             models={model.id: model},
             extra={"runtime": {"status": "offline"}},
-            local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
             models=(model,),
             revision="runtime:llama_cpp",
+            local=True,
         )
 
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", ollama_snapshot)
