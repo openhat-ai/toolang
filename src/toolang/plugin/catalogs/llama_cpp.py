@@ -17,15 +17,18 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
 )
 
-from ._local import (
+from toolang.plugin.values import (
     compact_mapping,
+    mapping,
+    optional_int,
+    optional_text,
+)
+
+from ._local import (
     config_environ,
     config_timeout,
     local_snapshot,
-    mapping,
     model_entries,
-    optional_string,
-    positive_int,
     resolve_local_endpoint,
 )
 
@@ -105,11 +108,11 @@ def _llama_cpp_model(
     meta = mapping(entry.get("meta"))
     settings = mapping(props.get("default_generation_settings"))
     params = mapping(settings.get("params"))
-    context = positive_int(settings.get("n_ctx")) or positive_int(
-        meta.get("n_ctx_train")
+    context = optional_int(settings.get("n_ctx"), minimum=1) or optional_int(
+        meta.get("n_ctx_train"), minimum=1
     )
-    output = positive_int(params.get("n_predict")) or positive_int(
-        params.get("max_tokens")
+    output = optional_int(params.get("n_predict"), minimum=1) or optional_int(
+        params.get("max_tokens"), minimum=1
     )
     modalities = _llama_cpp_modalities(props.get("modalities"))
     caps = mapping(props.get("chat_template_caps"))
@@ -140,8 +143,8 @@ def _llama_cpp_model(
         id=model_id,
         name=model_id,
         description=_llama_cpp_description(meta),
-        family=optional_string(meta.get("architecture"))
-        or optional_string(meta.get("general_architecture")),
+        family=optional_text(meta.get("architecture"))
+        or optional_text(meta.get("general_architecture")),
         attachment="image" in modalities
         if props.get("modalities") is not None
         else None,
@@ -180,7 +183,7 @@ def create_llama_cpp_model_catalog(config: Mapping[str, object]) -> ModelCatalog
 
     return LlamaCppModelCatalog(
         config_environ(config),
-        endpoint=optional_string(config.get("endpoint")),
+        endpoint=optional_text(config.get("endpoint")),
         timeout=config_timeout(config),
     )
 
@@ -211,7 +214,7 @@ def _props_match(
         return False
     if len(entries) == 1:
         return True
-    model_path = optional_string(props.get("model_path"))
+    model_path = optional_text(props.get("model_path"))
     return model_path == model_id
 
 
@@ -223,7 +226,7 @@ def _true_capability(caps: Mapping[str, object], *names: str) -> bool | None:
 
 
 def _llama_cpp_description(meta: Mapping[str, object]) -> str:
-    parameters = positive_int(meta.get("n_params"))
+    parameters = optional_int(meta.get("n_params"), minimum=1)
     suffix = f" ({parameters:,} parameters)" if parameters is not None else ""
     return f"Local llama.cpp model{suffix}."
 

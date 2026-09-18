@@ -304,6 +304,42 @@ def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -
     assert resolved.to_data()["_toolang"] == provider.extra["_toolang"]
 
 
+def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
+    adapters = {
+        "chat_completions": ChatCompletionsModelAdapter(),
+        "responses": ResponsesModelAdapter(),
+    }
+    declared = Provider(
+        id="local",
+        name="Local",
+        env=(),
+        models={},
+        adapter="chat_completions",
+        api="http://local.test/v1",
+        local=True,
+    )
+    both = Provider(
+        id="both",
+        name="Both",
+        env=(),
+        npm="@ai-sdk/openai",
+        adapter="chat_completions",
+        api="http://both.test/v1",
+        models={},
+    )
+
+    resolved = resolve_provider(declared, adapters=adapters, environ={})
+    preferred = resolve_provider(both, adapters=adapters, environ={})
+
+    assert resolved.resolved is not None
+    assert resolved.resolved.adapter == "chat_completions"
+    assert resolved.resolved.ready is True
+    assert "npm" not in resolved.to_data()
+    assert preferred.resolved is not None
+    assert preferred.resolved.adapter == "chat_completions"
+    assert preferred.to_data()["npm"] == "@ai-sdk/openai"
+
+
 def _provider(
     provider_id: str,
     *,

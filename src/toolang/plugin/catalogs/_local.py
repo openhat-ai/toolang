@@ -16,39 +16,6 @@ from toolang.base.types.model import (
 )
 
 
-def optional_string(value: object) -> str | None:
-    """Return stripped text, or ``None`` for an absent or empty value."""
-
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return text or None
-
-
-def positive_int(value: object) -> int | None:
-    """Return a positive integer, or ``None`` for any other value."""
-
-    return (
-        value
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0
-        else None
-    )
-
-
-def mapping(value: object) -> dict[str, object]:
-    """Return one decoded object with string keys, or an empty mapping."""
-
-    if not isinstance(value, Mapping):
-        return {}
-    return {str(key): item for key, item in value.items()}
-
-
-def compact_mapping(values: Mapping[str, object | None]) -> dict[str, object]:
-    """Drop ``None`` values from one mapping."""
-
-    return {key: value for key, value in values.items() if value is not None}
-
-
 def model_entries(items: list[object]) -> tuple[tuple[str, dict[str, object]], ...]:
     """Return unique, sorted ``(model_id, entry)`` pairs from a runtime listing."""
 
@@ -100,9 +67,9 @@ def local_snapshot(
         id=provider_id,
         name=provider_name,
         env=(),
-        npm="@ai-sdk/openai-compatible",
-        api=endpoint,
         models=by_id,
+        adapter="chat_completions",
+        api=endpoint,
         extra={LOCAL_RUNTIME_EXTRA: dict(provider_runtime)},
         local=True,
     )

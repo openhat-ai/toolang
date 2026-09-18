@@ -107,9 +107,11 @@ def resolve_provider(
 ) -> Provider:
     """Attach one provider's adapter, API, env rule, and readiness."""
 
-    provider_route = _NPM_ROUTES.get(provider.npm)
-    adapter_name = _configured_adapter(config) or (
-        provider_route.adapter if provider_route is not None else None
+    provider_route = _NPM_ROUTES.get(provider.npm) if provider.npm is not None else None
+    adapter_name = (
+        _configured_adapter(config)
+        or provider.adapter
+        or (provider_route.adapter if provider_route is not None else None)
     )
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
     api = _resolve_api(
