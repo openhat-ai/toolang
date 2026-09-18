@@ -315,6 +315,12 @@ stable. Only the unfinished block remains live. The transition does not visibly
 change already-rendered text. At Part closure the remaining tail is committed,
 and Step closure does not repeat the final output.
 
+Markdown blocks fill the lesser of the available width and
+`TOOLANG_PROGRESS_MAX_WIDTH`. Tables stretch to that width and fold cell
+overflow, list markers start at the row prefix, and quoted content keeps the
+two cells its `▌ ` bar does not use. Fenced code already fills the width as
+one rectangular Code surface.
+
 Tool activity uses the persisted running description, replaced at completion:
 
 ```text
