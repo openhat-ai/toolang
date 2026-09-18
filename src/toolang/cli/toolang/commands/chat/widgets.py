@@ -138,14 +138,14 @@ class QueuePanel:
         if not count or not self.width():
             return 0
         if not self.expanded:
-            return 2
+            return 1
         return 3 + self._entry_count(count)
 
     def minimum_rows(self) -> int:
         """Reserve the panel frame and one entry before sizing the input viewport."""
         if not self.get_items() or not self.width():
             return 0
-        return 4 if self.expanded else 2
+        return 4 if self.expanded else 1
 
     def _entry_count(self, count: int) -> int:
         limit = MAX_QUEUE_ENTRIES
@@ -196,7 +196,9 @@ class QueuePanel:
 
         if not self._has_focus():
             return shortcuts.SWITCH_AREA.hint_phrase("focus")
-        return shortcuts.QUEUE_TOGGLE.hint_phrase("expand/collapse")
+        return shortcuts.QUEUE_TOGGLE.hint_phrase(
+            "collapse" if self.expanded else "expand"
+        )
 
     def _rows(
         self,
@@ -227,8 +229,8 @@ class QueuePanel:
                 ]
                 for index in range(start, start + entry_count)
             )
-        # A trailing blank row separates Queue from the Input box below it.
-        rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
+            # A trailing blank row separates Queue from the Input box below it.
+            rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
         return rows
 
     def _entry_row(
@@ -278,19 +280,15 @@ class QueuePanel:
         style = "class:queue"
         left = min(_QUEUE_ENTRY_PADDING, width)
         available = max(0, width - left)
+        # The count keeps its space first; the state hint only follows when it
+        # fits whole, so narrow terminals still show how many items are queued.
+        label = self._truncate(self._count_label(count), available)
+        label_width = get_cwidth(label)
         hint = f"({self._title_hint()})"
         hint_width = get_cwidth(hint)
-        label = self._truncate(
-            self._count_label(count), max(0, available - hint_width - 1)
-        )
-        label_width = get_cwidth(label)
-        show_hint = bool(label) and label_width + hint_width + 1 <= available
-        if not show_hint:
-            label = self._truncate(self._count_label(count), available)
-            label_width = get_cwidth(label)
         cells: list[tuple[str, str]] = [(style, " " * left + label)]
         used = left + label_width
-        if show_hint:
+        if label_width and label_width + hint_width + 1 <= available:
             cells.append((style, " "))
             cells.append(("class:queue.hint", hint))
             used += hint_width + 1

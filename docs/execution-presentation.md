@@ -122,7 +122,7 @@ to its preserved position on Input focus.
 Unfocused Queue shows only `(tab to focus)`. Focused Queue shows
 `(space to expand/collapse)` and `m-enter steer · e edit · d delete` only on the
 selected entry. These hints are dim. On narrow terminals entry previews
-truncate first, then the summary's state hint, keeping the count.
+truncate first, then the summary drops its state hint, keeping the count.
 Previews and summaries truncate by display cells.
 ↑/↓ or Ctrl+P/Ctrl+N select without
 wrapping; e edits, Meta+Enter steers, and d or Del removes. `/keys` documents

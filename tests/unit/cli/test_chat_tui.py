@@ -1593,7 +1593,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_the_summary_hint(
     lines = "".join(text for _style, text in fragments).splitlines()
     summary, gap, selected, unselected, bottom = lines
     assert summary.strip() == (
-        "2 queued (space to expand/collapse)" if focused else "2 queued (tab to focus)"
+        "2 queued (space to collapse)" if focused else "2 queued (tab to focus)"
     )
     assert summary.index("2 queued") == 2
     assert gap.strip() == ""
@@ -1629,14 +1629,13 @@ def test_chat_queue_panel_collapses_to_a_left_aligned_summary(
     fragments = panel._render()
     lines = "".join(text for _style, text in fragments).splitlines()
 
-    assert panel.rows() == 2
+    assert panel.rows() == 1
     assert panel.container().filter()
     assert panel.view.is_focusable()
-    assert len(lines) == 2
-    hint = "space to expand/collapse" if focused else "tab to focus"
+    assert len(lines) == 1
+    hint = "space to expand" if focused else "tab to focus"
     assert lines[0].strip() == f"2 queued ({hint})"
     assert lines[0].index("2 queued") == 2
-    assert lines[1].strip() == ""
     assert all(get_cwidth(line) == terminal_width for line in lines)
     assert not any(
         item in lines[0]
@@ -1681,12 +1680,10 @@ def test_chat_queue_panel_keeps_the_count_hint_on_narrow_terminals(
     assert len(lines) == panel.rows() == 4
     assert all(get_cwidth(line) == terminal_width for line in lines)
     assert lines[0].startswith("  ")
-    if terminal_width >= 37:
-        assert lines[0].strip() == "1 queued (space to expand/collapse)"
-    elif terminal_width >= 30:
-        assert "space to expand/collapse" in lines[0]
+    if terminal_width >= 32:
+        assert lines[0].strip() == "1 queued (space to collapse)"
     else:
-        assert "(space to expand/collapse)" not in lines[0]
+        assert lines[0].strip() == "1 queued"
     assert lines[2].startswith("  ↳ ")
     assert lines[3].strip() == ""
 
@@ -1825,7 +1822,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert widgets.MAX_QUEUE_ENTRIES == 8
     assert panel.rows() == 11
     assert panel.selected_index == 9
-    assert lines[0].strip() == "10 queued (space to expand/collapse)"
+    assert lines[0].strip() == "10 queued (space to collapse)"
     assert lines[1].strip() == ""
     assert "queued input 3" in lines[2]
     assert "queued input 10" in lines[9]
@@ -2302,7 +2299,7 @@ def test_chat_queue_layout_left_aligns_summary_and_joins_input(
             lines = _screen_lines(screen, columns)
             summary_row = next(i for i, line in enumerate(lines) if "3 queued" in line)
             input_row = next(i for i, line in enumerate(lines) if "Keep typing" in line)
-            panel_rows = 6 if expanded else 2
+            panel_rows = 6 if expanded else 1
             panel_bottom = summary_row + panel_rows - 1
 
             assert app.queue_panel.width() == columns
@@ -2316,16 +2313,16 @@ def test_chat_queue_layout_left_aligns_summary_and_joins_input(
             assert get_cwidth(lines[input_row + 2].rstrip()) == columns - get_cwidth(
                 widgets._STATUS_INSET
             )
-            assert lines[panel_bottom].strip() == ""
             if expanded:
+                assert lines[panel_bottom].strip() == ""
                 assert lines[summary_row].strip() == (
-                    "3 queued (space to expand/collapse)"
+                    "3 queued (space to collapse)"
                     if focused
                     else "3 queued (tab to focus)"
                 )
                 assert lines[panel_bottom - 1].startswith("  ↳")
             else:
-                hint = "space to expand/collapse" if focused else "tab to focus"
+                hint = "space to expand" if focused else "tab to focus"
                 assert lines[summary_row].strip() == f"3 queued ({hint})"
 
     asyncio.run(exercise())
@@ -2346,7 +2343,7 @@ def test_chat_queue_focus_styles_respect_selection_padding(
             screen = _render_chat_layout(app)
             lines = _screen_lines(screen, output.columns)
             top = next(i for i, line in enumerate(lines) if "3 queued" in line)
-            bottom = top + (5 if expanded else 1)
+            bottom = top + (5 if expanded else 0)
 
             summary = _cell_attrs(app, screen, top, lines[top].index("3 queued"))
             assert not summary.dim
@@ -4200,7 +4197,7 @@ def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
 
             press(" ")
             assert not app.queue_panel.expanded
-            assert app.queue_panel.rows() == 2
+            assert app.queue_panel.rows() == 1
             assert app.app.layout.current_control is app.queue_panel.view
 
             for key in (
@@ -4456,10 +4453,8 @@ def test_chat_shortcuts_use_lowercase_inline_hints_without_changing_full_help() 
     assert shortcuts.SWITCH_AREA.hint("Input") == "tab input"
     assert shortcuts.QUEUE_TOGGLE.hint("Expand") == "sp expand"
     assert shortcuts.SWITCH_AREA.hint_phrase("Focus") == "tab to focus"
-    assert (
-        shortcuts.QUEUE_TOGGLE.hint_phrase("Expand/collapse")
-        == "space to expand/collapse"
-    )
+    assert shortcuts.QUEUE_TOGGLE.hint_phrase("Expand") == "space to expand"
+    assert shortcuts.QUEUE_TOGGLE.hint_phrase("Collapse") == "space to collapse"
     assert shortcuts.QUEUE_EDIT.hint("Edit") == "e edit"
     assert shortcuts.QUEUE_STEER.hint("Steer") == "m-enter steer"
     assert shortcuts.QUEUE_DELETE.hint("Delete") == "d delete"

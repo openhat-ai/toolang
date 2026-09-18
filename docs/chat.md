@@ -132,7 +132,8 @@ text without brackets; the summary states its action (`space to expand/collapse`
 while entry hints keep the short `key action` form (`e edit`), and `m-enter`
 abbreviates Meta+Enter. `/keys` retains standard labels and
 alternate keys in parentheses, such as `d (Del)`. On narrow terminals selected
-previews truncate first, then the summary's state hint, keeping the count. Queue
+previews truncate first, then the summary drops its state hint, keeping the
+count. Queue
 indicates focus only through its selection highlight; the summary always uses
 normal text. Its leading cell carries the accent bar and content never shifts.
 There is no separate header style.
