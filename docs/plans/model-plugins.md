@@ -185,14 +185,29 @@ prices are derived from `Model.cost` on read instead of stored again.
 
 One definition, two instances, and no `resolved` field.
 
-The catalog instance describes how to talk to the provider, because that is
-provider data: `id`, `name`, `env`, `api`, `headers`, `options`, `npm`,
-`adapter`, `models`, `doc`, `extra`, `local`, `catalog`, `catalog_revision`.
+A models.dev provider record has exactly `id`, `name`, `env`, `npm`, `api`,
+`doc`, and `models`; a models.dev model record has exactly the 21 fields the
+importer accepts. Anything else our records carry is a Toolang-side fact, not
+catalog data.
 
 The resolved instance is another `Provider` with the effective values under the
 same names: the `api` a call must use, the effective `adapter`, the normalized
-`env` rule, the merged `headers` and `options`, and `ready`. Configuration
-overrides are applied while producing that instance.
+`env` rule, the effective request `headers` and `options`, and `ready`.
+Configuration overrides are applied while producing that instance.
+
+### Request headers and options
+
+`headers` and `options` are not catalog data, and they are load-bearing: every
+built-in adapter sends them.
+
+| What | Read by |
+| --- | --- |
+| `headers` | `chat_completions` and `responses` as client default headers; `messages` and `generate_content` merged into the raw request headers |
+| `options` | all four adapters, merged into the provider request body, and read for `audio`, `modalities`, and `max_completion_tokens` |
+
+They come from core provider configuration (`[models.providers.<name>].options`),
+alias overrides, the built-in OpenRouter header defaults, and an advertised
+`experimental.modes.<mode>` body and headers.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
@@ -208,7 +223,6 @@ reintroduced under another name:
 | `tags` | `ModelAlias.tags` only | not model data; it stays on the alias |
 | `selectors` | composed from `id`, `identity`, `name`, `family` | a query index, computed where the query row is built |
 | `streaming` | today a constant `True` | not model data; whether to stream is an execution and adapter decision |
-| `mode` | a selector for the request body and headers declared under `Model.experimental["modes"]` | no catalog, configuration, or documentation declares or sets one, and only a unit test exercises it, so it is removed |
 | `api_key` | selected from the environment | never stored on a record; the adapter reads the credential names a provider declares from the environment it is given, as it does today |
 
 ### Field collisions and how they resolve
@@ -428,10 +442,14 @@ The cache is internal to the setup. Its contract is only:
 10. `local` belongs to the catalog, not to a record. The catalog declares it on
     its snapshot and the setup attaches it to the published providers and
     models.
-11. `scope`, `tags`, `selectors`, `streaming`, and `mode` are not model,
-    request, or call data; each is dropped, moved to its owner, or computed
-    where it is used.
-12. `api_key` is never a record field. Credentials stay with the adapter, which
+11. `scope`, `tags`, `selectors`, and `streaming` are not model, request, or
+    call data; each is dropped, moved to its owner, or computed where it is
+    used. `mode` is provider-declared catalog data (58 published models use it),
+    so it stays.
+12. `headers` and `options` are not catalog data but are request data: they are
+    carried on the resolved instance under the same names, never exported, and
+    never written to a durable record.
+13. `api_key` is never a record field. Credentials stay with the adapter, which
     reads the environment names a provider declares.
 
 ## Acceptance
