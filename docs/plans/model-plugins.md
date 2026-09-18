@@ -153,8 +153,11 @@ Catalog facts, verbatim and exportable: `provider_id`, `id`, `name`,
 `description`, `family`, `attachment`, `reasoning`, `reasoning_options`,
 `tool_call`, `interleaved`, `structured_output`, `temperature`, `knowledge`,
 `release_date`, `last_updated`, `modalities`, `open_weights`, `limit`, `status`,
-`experimental`, `provider`, `cost`, `extra`, `local`, `catalog`,
-`catalog_revision`.
+`experimental`, `provider`, `cost`, `extra`, `catalog`, `catalog_revision`.
+
+`local` is not catalog data. A catalog declares whether it is local
+(`ModelCatalogSnapshot.local`), and the setup attaches that property to every
+record it publishes; a record never declares it for itself.
 
 The setup produces a resolved instance of the same record with these filled in:
 
@@ -201,9 +204,11 @@ resolved instance carries the resolved value under the same field.
 | `adapter` | a declared protocol, for sources that are not models.dev records | the effective adapter |
 | `ready` | unset | the computed readiness |
 | `scope` | provider scope when the source declares one | provider scope |
+| `local` | never; it is the catalog's own property | attached from the catalog |
 
 `scope` names the provider scope. Whether a model is local or remote derives
-from `Model.local`, which is a catalog field and needs no second name.
+from `Model.local`, which the setup attaches from the declaring catalog, so no
+second name is needed and no catalog has to invent the field.
 
 The catalog instance is what `to_data()` exports, so `--json` never emits a
 resolved value: `to_data()` does not read `resolved`.
@@ -400,6 +405,9 @@ The cache is internal to the setup. Its contract is only:
    its own `default_api` only feeds resolution.
 9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
    they derive from the catalog fields that already exist.
+10. `local` belongs to the catalog, not to a record. The catalog declares it on
+    its snapshot and the setup attaches it to the published providers and
+    models.
 
 ## Acceptance
 

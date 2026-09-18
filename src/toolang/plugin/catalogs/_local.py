@@ -71,7 +71,6 @@ def local_snapshot(
         adapter="chat_completions",
         api=endpoint,
         extra={LOCAL_RUNTIME_EXTRA: dict(provider_runtime)},
-        local=True,
     )
     identity = json.dumps(
         provider.to_data(),
@@ -83,6 +82,7 @@ def local_snapshot(
         providers={provider_id: provider},
         models=tuple(by_id[key] for key in sorted(by_id)),
         revision=f"runtime:{sha256(identity.encode()).hexdigest()}",
+        local=True,
     )
 
 

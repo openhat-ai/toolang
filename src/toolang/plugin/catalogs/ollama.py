@@ -169,7 +169,6 @@ async def _ollama_model(
         limit={"context": context} if context is not None else {},
         cost={"input": 0, "output": 0},
         extra={"runtime": runtime},
-        local=True,
     )
 
 

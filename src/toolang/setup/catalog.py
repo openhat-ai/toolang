@@ -403,11 +403,14 @@ def _with_catalog_origin(
     models = {
         (model.provider_id, model.id): (
             model
-            if model.catalog is not None and model.catalog_revision is not None
+            if model.catalog is not None
+            and model.catalog_revision is not None
+            and model.local == snapshot.local
             else replace(
                 model,
                 catalog=model.catalog or catalog,
                 catalog_revision=model.catalog_revision or snapshot.revision,
+                local=snapshot.local,
             )
         )
         for model in snapshot.models
@@ -422,6 +425,7 @@ def _with_catalog_origin(
             provider
             if provider.catalog is not None
             and provider.catalog_revision is not None
+            and provider.local == snapshot.local
             and all(
                 provider_models[model_id] is model
                 for model_id, model in provider.models.items()
@@ -431,6 +435,7 @@ def _with_catalog_origin(
                 models=provider_models,
                 catalog=provider.catalog or catalog,
                 catalog_revision=provider.catalog_revision or snapshot.revision,
+                local=snapshot.local,
             )
         )
     return ModelCatalogSnapshot(
