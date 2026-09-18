@@ -92,7 +92,7 @@ class _ProgressCodeBlock(CodeBlock):
                 foreground=foreground or None,
             ),
             word_wrap=True,
-            padding=1,
+            padding=(1, 2),
         )
 
 
