@@ -86,6 +86,20 @@ def test_bullet_list_content_wraps_under_its_marker():
     assert wrapped.startswith(f"{CONTINUATION}  alpha")
 
 
+def test_block_quote_content_fills_the_progress_width():
+    text = _render("Intro:\n\n> " + "x" * 100 + "\n", width=60)
+    lines = text.splitlines()
+    assert any(line.startswith(f"{CONTINUATION}▌ x") for line in lines)
+    assert max(display_width(line) for line in lines) == 60
+
+
+def test_nested_block_quotes_fill_the_progress_width():
+    text = _render("Intro:\n\n> outer\n>\n> > " + "x" * 100 + "\n", width=60)
+    lines = text.splitlines()
+    assert any(line.startswith(f"{CONTINUATION}▌ ▌ x") for line in lines)
+    assert max(display_width(line) for line in lines) == 60
+
+
 def test_nested_list_markers_add_two_cells_per_level():
     text = _render("Seams:\n\n- outer\n  - inner\n    - deepest\n", width=60)
     assert "  • outer" in text.splitlines()

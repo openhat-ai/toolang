@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import (
+    BlockQuote,
     CodeBlock,
     Heading,
     HorizontalRule,
@@ -175,11 +176,32 @@ class _ProgressListItem(ListItem):
             yield new_line
 
 
+class _ProgressBlockQuote(BlockQuote):
+    """Give quoted content the cells its two-cell bar does not use.
+
+    Rich lays quote content out against ``max_width - 4`` while the ``"▌ "`` bar
+    occupies two cells, so every quote line stops two cells short of the
+    progress width. Widening the options by that difference keeps the bar at the
+    row prefix and restores the width for the quoted text.
+    """
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        yield from super().__rich_console__(
+            console,
+            options.update(width=options.max_width + 2),
+        )
+
+
 class _ProgressMarkdown(Markdown):
     elements = {
         **Markdown.elements,
         "code_block": _ProgressCodeBlock,
         "fence": _ProgressCodeBlock,
+        "blockquote_open": _ProgressBlockQuote,
         "heading_open": _ProgressHeading,
         "hr": _ProgressHorizontalRule,
         "list_item_open": _ProgressListItem,
