@@ -162,7 +162,10 @@ class Model:
     local: bool = False
     catalog: str | None = None
     catalog_revision: str | None = None
-    resolved: ResolvedModel | None = None
+    adapter: str | None = None
+    api: str | None = None
+    ready: bool = False
+    resolved: Model | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id or not self.id or not self.name:
@@ -197,8 +200,8 @@ class Model:
 
         return f"{self.provider_id}/{self.id}"
 
-    def with_resolution(self, resolved: ResolvedModel) -> Self:
-        """Attach runtime resolution without rebuilding frozen catalog fields."""
+    def with_resolution(self, resolved: Model) -> Self:
+        """Attach one resolved instance without rebuilding frozen catalog fields."""
 
         result = copy(self)
         object.__setattr__(result, "resolved", resolved)
@@ -241,38 +244,22 @@ class Model:
         return {key: value for key, value in data.items() if value is not None}
 
 
-@dataclass(frozen=True, slots=True)
-class ResolvedModel:
-    """One model's immutable load-time protocol route."""
+def _normalized_env(env: ResolvedEnv) -> ResolvedEnv:
+    """Normalize one provider environment rule for both instances."""
 
-    adapter: str | None
-    api: str | None
-    ready: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedProvider:
-    """One provider's immutable load-time runtime resolution."""
-
-    adapter: str | None
-    api: str | None
-    env: ResolvedEnv
-    ready: bool
-
-    def __post_init__(self) -> None:
-        normalized: list[str | tuple[str, ...]] = []
-        for alternative in self.env:
-            if isinstance(alternative, str):
-                name = alternative.strip()
-                if not name:
-                    raise ValueError("resolved provider env names must be non-empty")
-                normalized.append(name)
-                continue
-            group = tuple(name.strip() for name in alternative if name.strip())
-            if not group:
-                raise ValueError("resolved provider env groups must be non-empty")
-            normalized.append(group[0] if len(group) == 1 else group)
-        object.__setattr__(self, "env", tuple(normalized))
+    normalized: list[str | tuple[str, ...]] = []
+    for alternative in env:
+        if isinstance(alternative, str):
+            name = alternative.strip()
+            if not name:
+                raise ValueError("provider env names must be non-empty")
+            normalized.append(name)
+            continue
+        group = tuple(name.strip() for name in alternative if name.strip())
+        if not group:
+            raise ValueError("provider env groups must be non-empty")
+        normalized.append(group[0] if len(group) == 1 else group)
+    return tuple(normalized)
 
 
 LOCAL_RUNTIME_EXTRA = "runtime"
@@ -291,7 +278,7 @@ class Provider:
 
     id: str
     name: str
-    env: tuple[str, ...]
+    env: ResolvedEnv
     models: Mapping[str, Model]
     npm: str | None = None
     adapter: str | None = None
@@ -301,13 +288,15 @@ class Provider:
     local: bool = False
     catalog: str | None = None
     catalog_revision: str | None = None
-    resolved: ResolvedProvider | None = None
+    ready: bool = False
+    resolved: Provider | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("provider id and name are required")
         if not self.npm and not self.adapter:
             raise ValueError("provider npm or adapter is required")
+        object.__setattr__(self, "env", _normalized_env(self.env))
         normalized = dict(self.models)
         if any(key != model.id for key, model in normalized.items()):
             raise ValueError(f"provider {self.id!r} model keys must match model ids")
@@ -340,6 +329,16 @@ class Provider:
         if self.doc is not None:
             data["doc"] = self.doc
         return data
+
+
+def env_names(env: ResolvedEnv) -> tuple[str, ...]:
+    """Return every environment name one rule mentions, in order."""
+
+    return tuple(
+        name
+        for alternative in env
+        for name in ((alternative,) if isinstance(alternative, str) else alternative)
+    )
 
 
 def local_runtime_status(provider: Provider) -> str | None:

@@ -28,7 +28,6 @@ from toolang.base.types.model import (
     ModelTarget,
     Provider,
     Reasoning,
-    ResolvedProvider,
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
@@ -151,14 +150,18 @@ class _FakeModels(ModelAdapter):
             if self.name in {"deepseek", "google", "openrouter"}
             else "responses"
         )
-        return Provider(
+        provider = Provider(
             id=self.name,
             name=self.name,
             env=env,
             npm="@ai-sdk/openai-compatible",
             api=self._default_base_url,
             models={},
-            resolved=ResolvedProvider(
+        )
+        return replace(
+            provider,
+            resolved=replace(
+                provider,
                 adapter=adapter,
                 api=endpoint,
                 env=(tuple(env),) if len(env) > 1 else env,

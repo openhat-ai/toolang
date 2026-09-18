@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -21,7 +23,6 @@ from toolang.base.types.model import (
     ModelInfo,
     ModelTarget,
     Provider,
-    ResolvedProvider,
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
@@ -74,13 +75,17 @@ from toolang.setup import (
 
 
 def _provider() -> Provider:
-    return Provider(
+    provider = Provider(
         id="test",
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
         models={},
-        resolved=ResolvedProvider(
+    )
+    return replace(
+        provider,
+        resolved=replace(
+            provider,
             adapter="test",
             api="https://models.example/v1",
             env=(),
