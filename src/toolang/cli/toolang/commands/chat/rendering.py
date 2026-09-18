@@ -18,13 +18,12 @@ from wcwidth import wcswidth
 from toolang.cli.common.execution_progress.rich_rendering import (
     TERMINAL_MARKDOWN_THEME,
 )
-from toolang.cli.common.output import TOOLANG_COLOR
 
 ACCENT_CELL = " "
-QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
-RUN_CONTROL_ACCENT = TOOLANG_COLOR
+QUICK_COMMAND_CONTROL_ACCENT = "yellow"
+RUN_CONTROL_ACCENT = "bright_cyan"
 RUN_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"
-STEER_CONTROL_ACCENT = "#d7b3ff"
+STEER_CONTROL_ACCENT = "bright_magenta"
 _ANSI_NOT_DIM = "\x1b[22m"
 
 _PROMPT_TOOLKIT_ANSI_COLORS = (

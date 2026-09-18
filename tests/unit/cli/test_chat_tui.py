@@ -1223,11 +1223,14 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
         if fragment[1] == rendering.ACCENT_CELL
         and f"bg:{run_prompt_accent}" in fragment[0]
     )
+    steer_prompt_accent = rendering._prompt_toolkit_color(
+        Color.parse(rendering.STEER_CONTROL_ACCENT)
+    )
     steer_accent = next(
         fragment[0]
         for fragment in steer_fragments
         if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{rendering.STEER_CONTROL_ACCENT}" in fragment[0]
+        and f"bg:{steer_prompt_accent}" in fragment[0]
     )
     run_message = next(
         fragment[0] for fragment in run_fragments if "hello" in fragment[1]
@@ -1237,8 +1240,10 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     )
 
     assert rendering.RUN_CONTROL_ACCENT == "bright_cyan"
+    assert rendering.STEER_CONTROL_ACCENT == "bright_magenta"
+    assert rendering.QUICK_COMMAND_CONTROL_ACCENT == "yellow"
     assert run_accent == f"bg:{run_prompt_accent} nodim"
-    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT} nodim"
+    assert steer_accent == f"bg:{steer_prompt_accent} nodim"
     assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in run_message
     assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in steer_message
     assert "nodim" in run_message.split()
@@ -1287,11 +1292,12 @@ def test_chat_quick_command_control_bars_match_output_width(
 
 
 @pytest.mark.parametrize(
-    ("block", "accent"),
+    ("block", "accent", "expected_accent_cells"),
     [
         (
             blocks.RunControlBlock.create("first\nsecond"),
             rendering.RUN_CONTROL_ACCENT,
+            1,
         ),
         (
             blocks.RunSteerBlock.create(
@@ -1299,16 +1305,19 @@ def test_chat_quick_command_control_bars_match_output_width(
                 run_id="run_1",
             ),
             rendering.STEER_CONTROL_ACCENT,
+            1,
         ),
         (
             blocks.SlashBlock("first\nsecond", ()),
             rendering.QUICK_COMMAND_CONTROL_ACCENT,
+            1,
         ),
     ],
 )
 def test_chat_two_line_control_bars_keep_both_padding_rows(
     block: blocks.MutableBlock | blocks.SlashBlock,
     accent: str,
+    expected_accent_cells: int,
 ) -> None:
     segments = rendering.render_segments(block.render(), width=20)
     accent_cells = [
@@ -1321,7 +1330,7 @@ def test_chat_two_line_control_bars_keep_both_padding_rows(
         == Color.parse(accent).get_truecolor().hex
     ]
 
-    assert len(accent_cells) == 4
+    assert len(accent_cells) == expected_accent_cells
     assert [
         line.rstrip()
         for line in _render_text(block.render(), width=20).splitlines()
@@ -1638,7 +1647,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
 @pytest.mark.parametrize("terminal_width", [40, 100, 101])
 @pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("focused", [False, True])
-def test_chat_queue_panel_hints_are_inset_while_status_remains_edge_aligned(
+def test_chat_queue_panel_hints_and_status_share_the_same_right_inset(
     monkeypatch: pytest.MonkeyPatch,
     terminal_width: int,
     expanded: bool,
@@ -1657,7 +1666,9 @@ def test_chat_queue_panel_hints_are_inset_while_status_remains_edge_aligned(
         status_line = "".join(text for _style, text in status._render())
         assert get_cwidth(queue_line) == get_cwidth(status_line) == terminal_width
         assert get_cwidth(queue_line.rstrip()) == terminal_width - 2
-        assert get_cwidth(status_line.rstrip()) == terminal_width
+        assert get_cwidth(status_line.rstrip()) == terminal_width - get_cwidth(
+            widgets._STATUS_INSET
+        )
         assert queue_line.endswith("  ")
 
 
@@ -2308,7 +2319,9 @@ def test_chat_queue_layout_centers_summary_and_joins_input(
             assert app._input_spacer_rows() > 0
             assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 1
             assert get_cwidth(lines[panel_bottom].rstrip()) == columns - 2
-            assert get_cwidth(lines[input_row + 2].rstrip()) == columns
+            assert get_cwidth(lines[input_row + 2].rstrip()) == columns - get_cwidth(
+                widgets._STATUS_INSET
+            )
             if expanded:
                 assert lines[summary_row].strip() == "3 items queued"
                 assert lines[panel_bottom].strip() == (
@@ -2406,7 +2419,7 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             assert "[10]" in lines[top + entry_count]
             assert lines[bottom].endswith("tab input  ")
             assert "Ask or describe a task"[: columns - 5] in lines[bottom + 2]
-            assert "agic:chat" in lines[bottom + 4]
+            assert lines[bottom + 4].startswith(f"{widgets._STATUS_INSET}agic")
 
     asyncio.run(exercise())
 
@@ -2443,7 +2456,7 @@ def test_chat_queue_reserves_space_for_a_scrolling_draft_after_resize(
                 assert not any("Window too small" in line for line in lines)
                 assert any("3 items queued" in line for line in lines)
                 assert any("last" in line for line in lines)
-                assert "agic:chat" in lines[-1]
+                assert lines[-1].startswith(f"{widgets._STATUS_INSET}agic")
                 assert app.prompt.rows() + app.queue_panel.rows() + 1 <= terminal_rows
                 assert app.prompt.buffer.text == draft
                 assert app.prompt.buffer.cursor_position == len(draft)
@@ -2499,8 +2512,10 @@ def test_chat_widgets_share_output_width_after_resize(
                 input_width = columns - 4
                 assert app.prompt.rows() == (79 + input_width) // input_width + 2
                 assert app.queue_panel.width() == columns
-                assert lines[-1].endswith("openai/gpt-5")
-                assert get_cwidth(lines[-1].rstrip()) == columns
+                assert lines[-1].endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
+                assert get_cwidth(lines[-1].rstrip()) == columns - get_cwidth(
+                    widgets._STATUS_INSET
+                )
 
     asyncio.run(exercise())
 
@@ -2587,23 +2602,24 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert not rendered.endswith("\n")
     command = next(segment for segment in segments if segment.text == "/model")
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
+    quick_accent_hex = (
+        Color.parse(rendering.QUICK_COMMAND_CONTROL_ACCENT).get_truecolor().hex
+    )
     quick_accents = [
         segment
         for segment in all_segments
         if segment.text == rendering.ACCENT_CELL
         and segment.style is not None
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex
-        == rendering.QUICK_COMMAND_CONTROL_ACCENT
+        and segment.style.bgcolor.get_truecolor().hex == quick_accent_hex
     ]
 
-    assert len(quick_accents) == 3
+    assert len(quick_accents) == 1
     assert all(
         segment.style is not None
         and segment.style.color is None
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex
-        == rendering.QUICK_COMMAND_CONTROL_ACCENT
+        and segment.style.bgcolor.get_truecolor().hex == quick_accent_hex
         for segment in quick_accents
     )
     assert rendering.QUICK_COMMAND_CONTROL_ACCENT not in {
@@ -3104,8 +3120,8 @@ def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith(runnable)
-    assert text.endswith("runtime model")
+    assert text.startswith(f"{widgets._STATUS_INSET}{runnable}")
+    assert text.endswith(f"runtime model{widgets._STATUS_INSET}")
     assert get_cwidth(text) == 80
 
 
@@ -3120,21 +3136,25 @@ def test_chat_status_bar_shows_running_and_elapsed_time_without_a_marker() -> No
     status.set_elapsed_seconds(1)
     elapsed = status._render()
 
-    assert idle_text.startswith("agic:chat")
-    assert idle_text.endswith("runtime model")
-    assert running_text.startswith("agic:chat running")
+    assert idle_text.startswith(f"{widgets._STATUS_INSET}agic:chat")
+    assert idle_text.endswith(f"runtime model{widgets._STATUS_INSET}")
+    assert running_text.startswith(f"{widgets._STATUS_INSET}agic:chat running")
     assert "0s" not in running_text
-    assert running_text.endswith("runtime model")
-    assert idle[0] == ("class:status", "agic:chat")
-    assert running[:2] == [
+    assert running_text.endswith(f"runtime model{widgets._STATUS_INSET}")
+    assert idle[0] == ("class:status", widgets._STATUS_INSET)
+    assert idle[1] == ("class:status", "agic:chat")
+    assert running[:3] == [
+        ("class:status", widgets._STATUS_INSET),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " running"),
     ]
-    assert elapsed[:2] == [
+    assert elapsed[:3] == [
+        ("class:status", widgets._STATUS_INSET),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " running for 1s"),
     ]
-    assert elapsed[-1] == ("class:status", "runtime model")
+    assert elapsed[-2] == ("class:status", "runtime model")
+    assert elapsed[-1] == ("class:status", widgets._STATUS_INSET)
     assert status.elapsed_seconds == 1
 
     status.set_running(False)
@@ -3155,9 +3175,9 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     status.set_elapsed_seconds(18)
     running = "".join(text for _style, text in status._render())
 
-    assert idle.startswith("flow:research")
-    assert running.startswith("agic:chat running for 18s")
-    assert running.endswith("flow:research · openai/gpt-5")
+    assert idle.startswith(f"{widgets._STATUS_INSET}flow:research")
+    assert running.startswith(f"{widgets._STATUS_INSET}agic:chat running for 18s")
+    assert running.endswith(f"flow:research · openai/gpt-5{widgets._STATUS_INSET}")
     assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
     assert get_cwidth(idle) == get_cwidth(running) == 80
     assert status.runnable_label == f"{module}flow:research"
@@ -3183,7 +3203,7 @@ def test_chat_status_bar_omits_the_matching_default_runnable(
 
     assert text.count("agic:chat") == 1
     assert "$" not in text
-    assert text.endswith("openai/gpt-5")
+    assert text.endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
 
 
 def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
@@ -3201,7 +3221,7 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert get_cwidth(text) == 40
-    assert text.endswith("openai/gpt-5")
+    assert text.endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
     assert "· openai/gpt-5" in text
 
 
@@ -3217,7 +3237,7 @@ def test_chat_status_bar_truncates_model_before_effort_suffix(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert get_cwidth(text) == 28
-    assert text.endswith("… · high")
+    assert text.endswith(f"… · high{widgets._STATUS_INSET}")
 
 
 @pytest.mark.parametrize("terminal_width", [1, 2, 5, 10, 20])
@@ -3517,7 +3537,10 @@ def test_chat_tui_stops_short_run_activity_immediately() -> None:
 
     assert not app.status_bar.running
     assert app.status_bar.active_runnable_label is None
-    assert app.status_bar._render()[0] == ("class:status", "agic:chat")
+    assert app.status_bar._render()[:2] == [
+        ("class:status", widgets._STATUS_INSET),
+        ("class:status", "agic:chat"),
+    ]
 
 
 def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
@@ -3564,7 +3587,8 @@ def test_chat_status_bar_error_uses_red_foreground_without_a_background(
     assert rendered == [
         ("class:status.error.marker", "!"),
         ("class:status.error", " No active run to steer"),
-        ("class:status", " " * 16),
+        ("class:status", " " * 14),
+        ("class:status", widgets._STATUS_INSET),
     ]
     assert text.startswith("! No active run to steer")
     assert len(text) == 40
@@ -3579,7 +3603,7 @@ def test_chat_status_bar_error_is_single_line_and_truncated_to_width(
 
     text = "".join(fragment for _style, fragment in status._render())
 
-    assert text == "! First line seco…"
+    assert text == "! First line se…" + widgets._STATUS_INSET
     assert "\n" not in text
     assert get_cwidth(text) == 18
 
@@ -3596,8 +3620,8 @@ def test_chat_status_bar_persistent_error_survives_transient_updates() -> None:
     status.clear_persistent_error()
     assert status.error_message == ""
     text = "".join(fragment for _style, fragment in status._render())
-    assert text.startswith("flow:research")
-    assert text.endswith("openai/o3")
+    assert text.startswith(f"{widgets._STATUS_INSET}flow:research")
+    assert text.endswith(f"openai/o3{widgets._STATUS_INSET}")
 
 
 def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
@@ -3815,7 +3839,9 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.runnable_label == "flow:research"
-    assert runnable_changed.endswith("flow:research · openai/gpt-5")
+    assert runnable_changed.endswith(
+        f"flow:research · openai/gpt-5{widgets._STATUS_INSET}"
+    )
     assert app.queue == []
 
     app.handle_submit("/model effort=high")
@@ -3823,13 +3849,15 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     model_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.model_label == "openai/gpt-5 · high"
-    assert model_changed.endswith("flow:research · openai/gpt-5 · high")
+    assert model_changed.endswith(
+        f"flow:research · openai/gpt-5 · high{widgets._STATUS_INSET}"
+    )
 
     app.handle_submit("/agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
-    assert restored.endswith("openai/gpt-5 · high")
+    assert restored.endswith(f"openai/gpt-5 · high{widgets._STATUS_INSET}")
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
@@ -5893,7 +5921,8 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
             if s.text == rendering.ACCENT_CELL
             and s.style
             and s.style.bgcolor
-            and s.style.bgcolor.get_truecolor().hex == rendering.STEER_CONTROL_ACCENT
+            and s.style.bgcolor.get_truecolor().hex
+            == Color.parse(rendering.STEER_CONTROL_ACCENT).get_truecolor().hex
         ]
 
     assert accents(before) == accents(after)

@@ -105,13 +105,20 @@ def _control_bar_line(
     input_background: str,
     width: int | None = None,
     corner: str = "",
+    accent_head: bool = True,
 ) -> Text:
     output_width = width or terminal_width()
     left = min(2, max(0, output_width - 1))
     right = min(2, max(0, output_width - left - 1))
+    if not left:
+        head: tuple[str, str] = ("", "")
+    elif accent_head:
+        head = (ACCENT_CELL, f"not dim on {accent}")
+    else:
+        head = (" ", f"not dim on {input_background}")
     line = bar(
         [
-            (ACCENT_CELL if left else "", f"not dim on {accent}"),
+            head,
             (
                 " " * max(0, left - 1) + content if content else "",
                 f"not dim on {input_background}",
@@ -136,6 +143,8 @@ def _control_bar_lines(
     input_background: str,
     width: int | None = None,
     corner: str = "",
+    accent_column: bool = True,
+    accent_mark: bool = False,
 ) -> list[RenderableType]:
     output_width = width or terminal_width()
     content_width = max(1, output_width - 4)
@@ -152,14 +161,16 @@ def _control_bar_lines(
             accent=accent,
             input_background=input_background,
             width=output_width,
+            accent_head=accent_column or (accent_mark and index == 0),
         )
-        for line in wrapped_lines
+        for index, line in enumerate(wrapped_lines)
     ]
     return [
         _control_bar_line(
             accent=accent,
             input_background=input_background,
             width=output_width,
+            accent_head=accent_column,
         ),
         *lines,
         _control_bar_line(
@@ -167,6 +178,7 @@ def _control_bar_lines(
             input_background=input_background,
             width=output_width,
             corner=corner,
+            accent_head=accent_column,
         ),
     ]
 
@@ -200,6 +212,8 @@ def _slash_control_lines(
             accent=QUICK_COMMAND_CONTROL_ACCENT,
             input_background=input_background,
             width=width,
+            accent_column=False,
+            accent_mark=True,
         ),
         Text(),
     ]
@@ -301,6 +315,8 @@ class RunControlBlock(MutableBlock):
                     )
                     if self.model
                     else "",
+                    accent_column=False,
+                    accent_mark=True,
                 ),
                 Text(),
             ),
@@ -413,6 +429,8 @@ class RunSteerBlock(MutableBlock):
                     input_background=self.input_background,
                     width=width,
                     corner="not applied" if self.not_applied else "",
+                    accent_column=False,
+                    accent_mark=True,
                 ),
                 Text(),
             ),
