@@ -9,9 +9,8 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.run import ModelCallResult
 from toolang.base.types.policy import RunBindings, RunDefaults, RunPolicy
@@ -461,7 +460,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         defaults=RunDefaults(
             model=ModelRequest(
                 "test/scripted",
-                ModelParameters(reasoning=ReasoningParameters()),
+                reasoning=Reasoning(),
             ),
             runnable="agic:bound",
         ),

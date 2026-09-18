@@ -578,7 +578,12 @@ def _build_setup(
         ).compact()
     if defaults.model is not None:
         entry = models.resolve(defaults.model.ref)
-        apply_model_parameters(models, entry.target, defaults.model.parameters)
+        apply_model_parameters(
+            models,
+            entry.target,
+            reasoning=defaults.model.reasoning,
+            max_output=defaults.model.max_output,
+        )
     all_providers = dict(resolved_catalog.providers)
     provider_models: dict[str, set[str]] = {}
     for entry in models.entries:

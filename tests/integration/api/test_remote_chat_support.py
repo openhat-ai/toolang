@@ -17,9 +17,8 @@ from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult
@@ -318,7 +317,7 @@ agic chat(_: Part[]) -> Part[]:
         defaults=RunDefaults(
             model=ModelRequest(
                 TEST_MODEL_REF,
-                ModelParameters(reasoning=ReasoningParameters(effort="high")),
+                reasoning=Reasoning(effort="high"),
             ),
             runnable="chat",
         ),
@@ -357,7 +356,9 @@ agic chat(_: Part[]) -> Part[]:
                     "thread_id": thread_id,
                     "request_id": "term_remote_chat",
                     "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
-                    "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                    "model": {
+                        "ref": TEST_MODEL_REF,
+                    },
                     "policy": {"allow": [], "limits": {}},
                 },
             )
@@ -380,10 +381,8 @@ agic chat(_: Part[]) -> Part[]:
         assert defaults.status_code == 200
         assert defaults.json()["model"] == {
             "ref": TEST_MODEL_REF,
-            "parameters": {
-                "reasoning": {"effort": "high", "budget_tokens": None},
-                "max_output": None,
-            },
+            "reasoning": {"effort": "high", "budget_tokens": None},
+            "max_output": None,
         }
         assert defaults.json()["runnable"] == "agic:chat"
         assert models.status_code == 200

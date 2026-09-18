@@ -18,9 +18,8 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.execution.schemas import (
@@ -44,7 +43,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             },
             "model": {
                 "ref": "openai/test",
-                "parameters": {"reasoning": {"effort": "high"}},
+                "reasoning": {"effort": "high"},
             },
             "policy": {
                 "allow": [
@@ -69,7 +68,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             "agic:chat",
             CallInput({"_": "hello", "tone": "brief", "audience": "maintainers"}),
         ),
-        model=ModelRequest("openai/test", ModelParameters(ReasoningParameters("high"))),
+        model=ModelRequest("openai/test", reasoning=Reasoning("high")),
         policy=RunPolicy(
             allow=(
                 AgentCeiling(models=("one", "two")),
@@ -94,7 +93,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
             "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
             "model": {
                 "ref": "anthropic/claude",
-                "parameters": {"reasoning": {"budget_tokens": 4096}},
+                "reasoning": {"budget_tokens": 4096},
             },
             "policy": {},
         }
@@ -104,7 +103,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
 
     assert request.model == ModelRequest(
         "anthropic/claude",
-        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+        reasoning=Reasoning(budget_tokens=4096),
     )
 
 
@@ -117,9 +116,7 @@ def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "openai/gpt-5",
-                    "parameters": {
-                        "reasoning": {"effort": "high", "budget_tokens": 4096}
-                    },
+                    "reasoning": {"effort": "high", "budget_tokens": 4096},
                 },
                 "policy": {},
             }
@@ -135,7 +132,7 @@ def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "anthropic/claude",
-                    "parameters": {"reasoning": {"budget_tokens": "4096"}},
+                    "reasoning": {"budget_tokens": "4096"},
                 },
                 "policy": {},
             }
@@ -191,7 +188,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         AuthoredRetryRequest.model_validate(
             {
                 "request_id": "retry_request",
-                "model": {"ref": "openai/test", "parameters": {}},
+                "model": {"ref": "openai/test"},
             }
         )
     with pytest.raises(HTTPException, match="cannot replace the persisted runnable"):
@@ -224,7 +221,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
                 "input": {"named": [{"name": "focus", "source": "legacy"}]},
             }
         },
-        {"model": {"ref": "openai/test", "parameters": {"temperature": 1}}},
+        {"model": {"ref": "openai/test", "temperature": 1}},
         {"policy": {"allow": [], "limits": {"tokens": -1}}},
         {"policy": {"allow": [], "limits": {"tokens": True}}},
         {"policy": {"allow": [], "limits": {"tokens": "10"}}},

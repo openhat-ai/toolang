@@ -35,9 +35,8 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.run import (
     ModelCallResult,
@@ -341,11 +340,11 @@ agic reply(_: Part[]) -> Part[]:
     harness.executor._setup = lambda: harness.setup
     high = ModelRequest(
         TEST_MODEL_REF,
-        ModelParameters(ReasoningParameters("high")),
+        reasoning=Reasoning("high"),
     )
     low = ModelRequest(
         TEST_MODEL_REF,
-        ModelParameters(ReasoningParameters("low")),
+        reasoning=Reasoning("low"),
     )
 
     async def scenario() -> None:
@@ -467,7 +466,7 @@ agic reply(_: Part[]) -> Part[]:
                 source_spec,
                 model_request=ModelRequest(
                     TEST_MODEL_REF,
-                    ModelParameters(ReasoningParameters("max")),
+                    reasoning=Reasoning("max"),
                 ),
             )
             with pytest.raises(ToolangError, match="allowed: medium, high, low"):

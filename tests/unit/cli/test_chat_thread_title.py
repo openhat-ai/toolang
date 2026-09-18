@@ -34,7 +34,9 @@ def _session(thread_payload: object, *, status: int = 200) -> remote.RemoteChatS
             return httpx.Response(
                 200,
                 json={
-                    "model": {"ref": "test/model", "parameters": {}},
+                    "model": {
+                        "ref": "test/model",
+                    },
                     "runnable": "agic:chat",
                     "policy": {"allow": [], "limits": {}},
                 },
@@ -95,7 +97,9 @@ def test_remote_thread_title_survives_a_transport_failure() -> None:
             return httpx.Response(
                 200,
                 json={
-                    "model": {"ref": "test/model", "parameters": {}},
+                    "model": {
+                        "ref": "test/model",
+                    },
                     "runnable": "agic:chat",
                     "policy": {"allow": [], "limits": {}},
                 },

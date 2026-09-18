@@ -3053,7 +3053,12 @@ def _prepare_run_spec(
                 f"model ref is outside run resources: {spec.model_request.ref}"
             )
         target = entry.target
-        apply_model_parameters(selection, target, spec.model_request.parameters)
+        apply_model_parameters(
+            selection,
+            target,
+            reasoning=spec.model_request.reasoning,
+            max_output=spec.model_request.max_output,
+        )
     return runnable, input, agent_resources, resources
 
 

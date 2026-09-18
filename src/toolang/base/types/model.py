@@ -32,8 +32,8 @@ def _exclude_none(value: object) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class ReasoningParameters:
-    """Reasoning controls requested for one model selection."""
+class Reasoning:
+    """One reasoning control requested for a model selection or call."""
 
     effort: ReasoningEffort | None = field(
         default=None,
@@ -55,37 +55,16 @@ class ReasoningParameters:
             if self.budget_tokens < 0:
                 raise ValueError("reasoning budget_tokens must be non-negative")
         if self.effort is not None and self.budget_tokens is not None:
-            raise ValueError(
-                "reasoning parameters accept either effort or budget_tokens"
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class ModelParameters:
-    """Typed call parameters attached to one model request."""
-
-    reasoning: ReasoningParameters | None = None
-    max_output: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.reasoning is not None and not isinstance(
-            self.reasoning, ReasoningParameters
-        ):
-            raise TypeError("model reasoning parameters must be ReasoningParameters")
-        if self.max_output is not None and (
-            isinstance(self.max_output, bool)
-            or not isinstance(self.max_output, int)
-            or self.max_output <= 0
-        ):
-            raise ValueError("model max_output must be a positive integer or none")
+            raise ValueError("reasoning accepts either effort or budget_tokens")
 
 
 @dataclass(frozen=True, slots=True)
 class ModelRequest:
-    """One exact model ref and its typed call parameters."""
+    """One exact model ref and the controls this run asks for."""
 
     ref: str
-    parameters: ModelParameters = ModelParameters()
+    reasoning: Reasoning | None = None
+    max_output: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):
@@ -99,8 +78,16 @@ class ModelRequest:
             or any(character in self.ref for character in '*?[],;"')
         ):
             raise ValueError(f"model request ref must be exact: {self.ref!r}")
-        if not isinstance(self.parameters, ModelParameters):
-            raise TypeError("model request parameters must be ModelParameters")
+        if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
+            raise TypeError("model request reasoning must be Reasoning")
+        if self.max_output is not None and (
+            isinstance(self.max_output, bool)
+            or not isinstance(self.max_output, int)
+            or self.max_output <= 0
+        ):
+            raise ValueError(
+                "model request max_output must be a positive integer or none"
+            )
 
 
 @dataclass(frozen=True, slots=True)

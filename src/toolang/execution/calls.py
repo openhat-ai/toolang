@@ -294,7 +294,8 @@ def materialize_model_request(
     apply_model_parameters(
         selection,
         entry.target,
-        request.parameters,
+        reasoning=request.reasoning,
+        max_output=request.max_output,
     )
     return request
 

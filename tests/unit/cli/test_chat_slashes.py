@@ -8,7 +8,7 @@ import pytest
 from prompt_toolkit.utils import get_cwidth
 
 from toolang.base.types.message import TextPart
-from toolang.base.types.model import ModelParameters, ModelRequest, ReasoningParameters
+from toolang.base.types.model import ModelRequest, Reasoning
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.execution.policy import apply_session_setting
@@ -488,20 +488,20 @@ def test_model_identity_and_effort_update_independently() -> None:
     )
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
     assert slashes.outcome_lines(selected) == ("Model set to openai/gpt-5 · high",)
 
     slashes.handle(app, QuickCommand("model", "effort=low"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
 
     slashes.handle(app, QuickCommand("model", "effort=4096"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+        reasoning=Reasoning(budget_tokens=4096),
     )
 
     automatic = _outcome(slashes.handle(app, QuickCommand("model", "effort=auto")))
@@ -612,7 +612,7 @@ def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None
     app.setting = SessionSetting(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="agic:chat",
     )
@@ -636,7 +636,7 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     app = _App()
     selected = ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
     app.setting = SessionSetting(model=selected, runnable="agic:chat")
 
@@ -652,7 +652,7 @@ def test_model_reconciliation_prefers_the_available_configured_default() -> None
     setting = SessionSetting(
         model=ModelRequest(
             "excluded/model",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="agic:chat",
     )
@@ -737,7 +737,7 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
     )
     assert app.setting.model == ModelRequest(
         "openrouter/openai/o3",
-        ModelParameters(ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
     assert app.client.applied[-1].model == ModelOverride(
         identity="default",
