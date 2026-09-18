@@ -123,13 +123,14 @@ class ModelCatalog(Protocol):
     async def snapshot(self) -> ModelCatalogSnapshot: ...
 ```
 
-Built-in implementations are:
+Built-in catalog plugins live in `toolang.plugin.catalogs`:
 
 - `ModelsDevModelCatalog`, for the selected static file;
 - `OllamaModelCatalog`, for the configured Ollama endpoint;
-- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint;
-- `MergedModelCatalog`, which combines ordered snapshots and rejects identity
-  conflicts.
+- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint.
+
+`toolang.setup` combines ordered snapshots with `MergedModelCatalog`, which
+rejects identity conflicts, and projects them to runtime `ModelInfo`.
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe

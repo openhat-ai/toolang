@@ -16,29 +16,22 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import plugin_provenance
-from toolang.plugin.models.catalog import (
-    MergedModelCatalog,
-    ModelsDevModelCatalog,
-    model_info_from_catalog,
-    resolve_model_catalog_path,
-)
-from toolang.plugin.models.cache import (
-    CachedModelProjection,
+from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.catalogs.loading import load_model_catalogs
+from toolang.plugin.catalogs.models_dev.cache import (
     CatalogSource,
     FileObservation,
-    ModelProjectionCache,
+    ModelCatalogArtifactCache,
     capture_catalog_source,
-    environment_readiness,
-    hydrate_model_infos,
-    model_projection_key,
 )
+from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import (
     ProviderConfig,
     configure_catalog_providers,
     parse_provider_configs,
 )
 from toolang.plugin.models.collections import ModelQueryView
-from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
@@ -47,6 +40,14 @@ from toolang.plugin.models.resolution import (
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
+from .cache import (
+    CachedModelProjection,
+    ModelProjectionCache,
+    environment_readiness,
+    hydrate_model_infos,
+    model_projection_key,
+)
+from .catalog import MergedModelCatalog
 from .config import (
     load_agent_config,
     load_setup_config,
@@ -59,7 +60,7 @@ from .config import (
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import order_models, select_compact_model
+from .models import model_info_from_catalog, order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -154,10 +155,8 @@ class SetupWatcher:
             tuple[CatalogSource, ModelCatalogSnapshot] | None
         ) = None
         self._pending_model_cache: _PendingModelCache | None = None
-        self._model_cache = ModelProjectionCache(
-            layout.root_model_cache,
-            layout.home_model_cache,
-        )
+        self._artifact_cache = ModelCatalogArtifactCache(layout.root_model_cache)
+        self._model_cache = ModelProjectionCache(layout.home_model_cache)
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
@@ -264,7 +263,7 @@ class SetupWatcher:
                 max_source_bytes=max_source_bytes,
             )
             static = await asyncio.to_thread(
-                self._model_cache.load_catalog,
+                self._artifact_cache.load_catalog,
                 source,
                 source_path=catalog_path,
             )
@@ -487,7 +486,7 @@ class SetupWatcher:
             self._pending_catalog_cache = None
             try:
                 await asyncio.to_thread(
-                    self._model_cache.store_catalog,
+                    self._artifact_cache.store_catalog,
                     source=source,
                     snapshot=static,
                 )

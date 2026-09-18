@@ -20,7 +20,7 @@ from toolang.cli.common.parameters import (
 )
 
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
+from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
     resolve_default_overrides,
     resolve_compact_override,

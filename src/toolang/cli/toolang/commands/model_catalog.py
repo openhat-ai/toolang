@@ -24,9 +24,7 @@ from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
-from toolang.plugin.models.catalog import (
-    catalog_json_dumps,
-)
+from toolang.common.json import dumps
 from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
     CatalogProviderView,
@@ -87,7 +85,7 @@ def models_command(
                 f"local-only models cannot be exported: {local}",
                 param_hint="--query",
             )
-        content = catalog_json_dumps(snapshot.to_data(models=exportable))
+        content = dumps(snapshot.to_data(models=exportable))
         typer.echo(content, nl=False)
         return
     headers, rows = dataset.table(selected_views)
@@ -144,9 +142,7 @@ def providers_command(
     providers = tuple(item.record for item in selected_views)
     if json_:
         typer.echo(
-            catalog_json_dumps(
-                {provider.id: provider.to_data() for provider in providers}
-            ),
+            dumps({provider.id: provider.to_data() for provider in providers}),
             nl=False,
         )
         return
