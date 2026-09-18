@@ -86,6 +86,13 @@ def test_bullet_list_content_wraps_under_its_marker():
     assert wrapped.startswith(f"{CONTINUATION}  alpha")
 
 
+def test_nested_list_markers_add_two_cells_per_level():
+    text = _render("Seams:\n\n- outer\n  - inner\n    - deepest\n", width=60)
+    assert "  • outer" in text.splitlines()
+    assert "    • inner" in text.splitlines()
+    assert "      • deepest" in text.splitlines()
+
+
 def test_ordered_list_numbers_start_at_the_progress_prefix():
     text = _render("Steps:\n\n1. first\n2. second\n", width=60)
     assert "  1 first" in text.splitlines()

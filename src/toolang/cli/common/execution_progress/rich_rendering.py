@@ -129,12 +129,14 @@ class _ProgressTableElement(TableElement):
 
 
 class _ProgressListItem(ListItem):
-    """Drop the cell Rich indents list markers by.
+    """Start list markers at the progress row prefix.
 
-    Rich renders a marker as ``" • "`` (three cells) and shortens the item by the
-    same amount, which leaves every list item one cell right of the progress row
-    prefix. Two-cell markers keep the marker and the wrapped content aligned with
-    that prefix.
+    Rich renders a marker as a three-cell field (``" • "`` for bullets, ``" 1 "``
+    for numbers) and shortens the item by the same amount, which leaves every
+    item one cell right of that prefix and wraps its content one cell early.
+    Two-cell fields give the cell back. Markers are emitted inline as segments,
+    so this mirrors ``ListItem.render_bullet`` and ``ListItem.render_number``
+    instead of adjusting a rendered object.
     """
 
     def render_bullet(
