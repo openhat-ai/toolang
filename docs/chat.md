@@ -110,9 +110,9 @@ blank gap row, and up to eight one-line previews. There is no omitted-item
 count row. Short terminals show fewer entries to keep Input, status, the
 summary, and the gap visible. Entry icons (`↳`) align with Input text and
 remain dim; body text stays normal. While focused, selection is shown only by
-Input's background, starting one cell after the accent and ending one cell
-before Queue's right edge, with another cell of padding inside each end. There
-is no selection marker. The selected entry reserves its right side for
+Input's background, starting one cell after the accent and reaching Queue's
+right edge. There is no selection marker. The selected entry reserves its
+right side for
 slightly brighter dim action hints, separated from the body by at least two
 cells. Entry hints end two cells from Queue's right edge, both when expanded
 and when collapsed. The status bar insets its text by two cells on each side.

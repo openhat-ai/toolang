@@ -265,7 +265,9 @@ class QueuePanel:
             (icon_style, text[: len(prefix)]),
             (style, text[len(prefix) :] + gap),
             (hint_style, hint + right_padding),
-            ("class:queue", " " * right_inset),
+            # Keep the row background on the trailing cell so a selection
+            # reaches Queue's right edge.
+            (style, " " * right_inset),
         ]
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:

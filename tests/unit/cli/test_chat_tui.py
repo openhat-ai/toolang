@@ -2345,15 +2345,11 @@ def test_chat_queue_focus_styles_respect_selection_padding(
             assert not summary.bold
             for row in range(top, bottom + 1):
                 assert _cell_attrs(app, screen, row, 0).bgcolor == "ansibrightmagenta"
-                assert (
-                    _cell_attrs(app, screen, row, output.columns - 1).bgcolor
-                    == "121212"
-                )
                 selected = expanded and focused and row == top + 2 + selected_index
                 background = "1f1f1f" if selected else "121212"
                 assert all(
                     _cell_attrs(app, screen, row, col).bgcolor == background
-                    for col in range(1, output.columns - 1)
+                    for col in range(1, output.columns)
                 )
                 if expanded and top + 1 < row < bottom:
                     icon = _cell_attrs(app, screen, row, 2)
@@ -4010,7 +4006,7 @@ def test_chat_tui_meta_enter_without_an_active_run_preserves_the_draft() -> None
 
     assert app.prompt.buffer.text == "keep this draft"
     assert app.prompt.history.get_strings() == []
-    assert app.status_bar.error_message == "Start a run before steering"
+    assert app.status_bar.error_message == "No active run to steer"
 
 
 def test_chat_tui_queue_panel_edit_refuses_to_overwrite_a_draft() -> None:
@@ -4097,7 +4093,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
     rejected._steer_selected_queue_item()
 
     assert [item.source for item in rejected.queue] == ["queued without run"]
-    assert rejected.status_bar.error_message == "Start a run before steering"
+    assert rejected.status_bar.error_message == "No active run to steer"
 
 
 def test_chat_tui_queue_panel_delete_clamps_selection() -> None:

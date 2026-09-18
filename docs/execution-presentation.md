@@ -104,8 +104,7 @@ status, the summary, and the gap.
 Entry icons (`↳`) align with Input text
 and remain dim in every state; body text stays normal. While focused, the
 selected entry uses Input's background, starting one cell after the accent and
-ending one cell before Queue's right edge, with another cell of padding inside
-each end. It has no selection marker or bold text; only
+reaching Queue's right edge. It has no selection marker or bold text; only
 the background indicates selection. Slightly brighter dim action hints occupy
 the right side on that same background, separated from the body by at least two
 cells. Entry hints end two cells from Queue's edge; truncation preserves their
