@@ -1,4 +1,4 @@
-"""Markdown tables fill the progress width without dropping cell content."""
+"""Progress Markdown follows the progress layout for tables and lists."""
 
 from rich.console import Console
 
@@ -9,6 +9,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 )
 
 PREFIX = "• "
+CONTINUATION = "  "
 
 NARROW_TABLE = "| layer | meaning |\n| --- | --- |\n| one | two |\n"
 
@@ -68,3 +69,31 @@ def test_markdown_table_folds_cell_content_instead_of_dropping_it():
     text = _render(FOLDING_TABLE, width=60)
     assert "…" not in text
     assert "provider_resolver.resolve_catalog_providers" in "".join(text.split())
+
+
+def test_bullet_list_markers_start_at_the_progress_prefix():
+    text = _render("Seams:\n\n- ① first\n- ② second\n", width=60)
+    assert "  • ① first" in text.splitlines()
+    assert "  • ② second" in text.splitlines()
+
+
+def test_bullet_list_content_wraps_under_its_marker():
+    text = _render("Seams:\n\n- " + "alpha " * 30 + "\n", width=60)
+    lines = text.splitlines()
+    marker_line = next(line for line in lines if line.startswith("  • alpha"))
+    wrapped = lines[lines.index(marker_line) + 1]
+    # Continuation lines align with the marker's content, not its bullet.
+    assert wrapped.startswith(f"{CONTINUATION}  alpha")
+
+
+def test_ordered_list_numbers_start_at_the_progress_prefix():
+    text = _render("Steps:\n\n1. first\n2. second\n", width=60)
+    assert "  1 first" in text.splitlines()
+    assert "  2 second" in text.splitlines()
+
+
+def test_ordered_list_numbers_keep_multi_digit_alignment():
+    source = "Steps:\n\n" + "".join(f"{number}. item\n" for number in range(1, 12))
+    text = _render(source, width=60)
+    assert "   1 item" in text.splitlines()
+    assert "  10 item" in text.splitlines()

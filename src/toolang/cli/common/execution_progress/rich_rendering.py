@@ -6,7 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown, TableElement
+from rich.markdown import (
+    CodeBlock,
+    Heading,
+    HorizontalRule,
+    ListItem,
+    Markdown,
+    TableElement,
+)
 from rich.rule import Rule
 from rich.segment import Segment
 from rich.style import Style
@@ -121,6 +128,51 @@ class _ProgressTableElement(TableElement):
             yield renderable
 
 
+class _ProgressListItem(ListItem):
+    """Drop the cell Rich indents list markers by.
+
+    Rich renders a marker as ``" • "`` (three cells) and shortens the item by the
+    same amount, which leaves every list item one cell right of the progress row
+    prefix. Two-cell markers keep the marker and the wrapped content aligned with
+    that prefix.
+    """
+
+    def render_bullet(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        render_options = options.update(width=options.max_width - 2)
+        lines = console.render_lines(self.elements, render_options, style=self.style)
+        bullet_style = console.get_style("markdown.item.bullet", default="none")
+        bullet = Segment("• ", bullet_style)
+        padding = Segment("  ", bullet_style)
+        new_line = Segment("\n")
+        for index, line in enumerate(lines):
+            yield bullet if index == 0 else padding
+            yield from line
+            yield new_line
+
+    def render_number(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+        number: int,
+        last_number: int,
+    ) -> RenderResult:
+        number_width = len(str(last_number)) + 1
+        render_options = options.update(width=options.max_width - number_width)
+        lines = console.render_lines(self.elements, render_options, style=self.style)
+        number_style = console.get_style("markdown.item.number", default="none")
+        new_line = Segment("\n")
+        padding = Segment(" " * number_width, number_style)
+        numeral = Segment(f"{number}".rjust(number_width - 1) + " ", number_style)
+        for index, line in enumerate(lines):
+            yield numeral if index == 0 else padding
+            yield from line
+            yield new_line
+
+
 class _ProgressMarkdown(Markdown):
     elements = {
         **Markdown.elements,
@@ -128,6 +180,7 @@ class _ProgressMarkdown(Markdown):
         "fence": _ProgressCodeBlock,
         "heading_open": _ProgressHeading,
         "hr": _ProgressHorizontalRule,
+        "list_item_open": _ProgressListItem,
         "table_open": _ProgressTableElement,
     }
 
