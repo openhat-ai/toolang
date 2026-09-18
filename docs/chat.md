@@ -107,36 +107,35 @@ retain distinct backgrounds. Queue accents its leading cell with Steer's
 magenta, so a left accent bar runs beside the summary and entries much as
 Input's cyan accent frames the prompt. Expanded Queue has a left-aligned
 summary, a blank gap row, up to eight one-line previews, and a trailing blank
-row that separates Queue from Input. There is no omitted-item count row. Short
-terminals show fewer entries to keep Input, status, the summary, and the gap
-rows visible. Entry icons (`↳`) align with Input text and remain dim; body text
-stays normal. While focused, selection is shown only by Input's background,
-starting one cell after the accent and reaching Queue's right edge. There is no
-selection marker. The selected entry reserves its right side for slightly
-brighter dim action hints, separated from the body by at least two cells. Entry
-hints end two cells from Queue's right edge, both when expanded and when
-collapsed. The status bar insets its text by two cells on each side.
+row that separates Queue from Input; collapsed Queue keeps only its summary.
+There is no omitted-item count row. Short terminals show fewer entries to keep
+Input, status, and the summary frame visible. Entry icons (`↳`) align with
+Input text and remain dim; body text stays normal. While focused, selection is
+shown only by Input's background, starting one cell after the accent and
+reaching Queue's right edge. There is no selection marker. The selected entry
+reserves its right side for slightly brighter dim action hints, separated from
+the body by at least two cells. Entry hints end two cells from Queue's right
+edge, both when expanded and when collapsed. The status bar insets its text by
+two cells on each side.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
-Space toggles the focused Queue without moving focus or selection. Collapsed
-Queue occupies its left-aligned summary and the trailing blank row.
-Entry actions are disabled while collapsed. Input keeps normal typing and
-draft steering when focused.
-Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
-steering, and d or Del removal. Queue's summary reads `N queued` followed by one
-dim parenthesized state hint: `(tab to focus)` while unfocused and
-`(space to expand/collapse)` while focused. The selected entry shows
+Space toggles the focused Queue without moving focus or selection. Entry actions
+are disabled while collapsed. Input keeps normal typing and draft steering when
+focused. Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing,
+Meta+Enter steering, and d or Del removal. Queue's summary reads `N queued`
+followed by one dim parenthesized state hint: `(tab to focus)` while unfocused,
+`(space to collapse)` while focused and expanded, and `(space to expand)` while
+focused and collapsed. The selected entry shows
 `m-enter steer · e edit · d delete` at its right. Inline hints use dim lowercase
-text without brackets; the summary states its action (`space to expand/collapse`)
-while entry hints keep the short `key action` form (`e edit`), and `m-enter`
-abbreviates Meta+Enter. `/keys` retains standard labels and
-alternate keys in parentheses, such as `d (Del)`. On narrow terminals selected
-previews truncate first, then the summary drops its state hint, keeping the
-count. Queue
-indicates focus only through its selection highlight; the summary always uses
-normal text. Its leading cell carries the accent bar and content never shifts.
-There is no separate header style.
+text without brackets; the summary states its action (`space to collapse`) while
+entry hints keep the short `key action` form (`e edit`), and `m-enter`
+abbreviates Meta+Enter. `/keys` retains standard labels and alternate keys in
+parentheses, such as `d (Del)`. On narrow terminals selected previews truncate
+first, then the summary drops its state hint, keeping the count. Queue indicates
+focus only through its selection highlight; the summary always uses normal text.
+Its leading cell carries the accent bar and content never shifts. There is no
+separate header style.
 Input's accent stays cyan and Queue's stays magenta; Input's cursor hides while
 Queue has focus and returns to the preserved editing position afterward.
 

@@ -98,41 +98,38 @@ without a separator row. Queue and Input retain distinct backgrounds. Adaptive
 footer-stabilizing space belongs above Queue, never between Queue and Input.
 
 Expanded Queue has a left-aligned summary at the top, a blank gap row, up to
-eight single-line previews, and a trailing blank row before Input. There is no
-omitted-count row or special header fill. Available height may reduce the entry
-count to leave room for Input, status, the summary, and the gap rows.
-Entry icons (`↳`) align with Input text
-and remain dim in every state; body text stays normal. While focused, the
-selected entry uses Input's background, starting one cell after the accent and
-reaching Queue's right edge. It has no selection marker or bold text; only
-the background indicates selection. Slightly brighter dim action hints occupy
-the right side on that same background, separated from the body by at least two
-cells. Entry hints end two cells from Queue's edge; truncation preserves their
-padding. Losing focus hides the highlight and entry
-hints while preserving selection. The summary counts all items.
+eight single-line previews, and a trailing blank row before Input; collapsed
+Queue keeps only its summary. There is no omitted-count row or special header
+fill. Available height may reduce the entry count to leave room for Input,
+status, and the summary frame. Entry icons (`↳`) align with Input text and
+remain dim in every state; body text stays normal. While focused, the selected
+entry uses Input's background, starting one cell after the accent and reaching
+Queue's right edge. It has no selection marker or bold text; only the background
+indicates selection. Slightly brighter dim action hints occupy the right side on
+that same background, separated from the body by at least two cells. Entry hints
+end two cells from Queue's edge; truncation preserves their padding. Losing
+focus hides the highlight and entry hints while preserving selection. The
+summary counts all items.
 
-Collapsed Queue occupies its left-aligned summary with its inline state hint
-and the trailing blank row. Hidden entries cannot be selected or
-mutated. In both modes the summary keeps normal text; selection is the only
-focus cue. Key hints stay dim. Queue's leading cell carries its accent bar,
-independent of focus and expansion.
+Hidden entries cannot be selected or mutated. In both modes the summary keeps
+normal text; selection is the only focus cue. Key hints stay dim. Queue's
+leading cell carries its accent bar, independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
-Unfocused Queue shows only `(tab to focus)`. Focused Queue shows
-`(space to expand/collapse)` and `m-enter steer · e edit · d delete` only on the
-selected entry. These hints are dim. On narrow terminals entry previews
-truncate first, then the summary drops its state hint, keeping the count.
-Previews and summaries truncate by display cells.
-↑/↓ or Ctrl+P/Ctrl+N select without
-wrapping; e edits, Meta+Enter steers, and d or Del removes. `/keys` documents
-these Queue-focused bindings. Mutations preserve the expansion choice and clamp
-selection; an empty queue disappears, restores Input focus, and resets the next
-non-empty queue to expanded.
+Unfocused Queue shows only `(tab to focus)`. Focused, expanded Queue shows
+`(space to collapse)`; focused, collapsed Queue shows `(space to expand)`. The
+selected entry also shows `m-enter steer · e edit · d delete`. These hints are
+dim. On narrow terminals entry previews truncate first, then the summary drops
+its state hint, keeping the count. Previews and summaries truncate by display
+cells. ↑/↓ or Ctrl+P/Ctrl+N select without wrapping; e edits, Meta+Enter steers,
+and d or Del removes. `/keys` documents these Queue-focused bindings. Mutations
+preserve the expansion choice and clamp selection; an empty queue disappears,
+restores Input focus, and resets the next non-empty queue to expanded.
 
 Inline hints use dim lowercase text with no brackets and ` · ` between actions.
-The summary states its action as `key to action` (`space to expand/collapse`),
-entry hints keep the short `key action` form (`e edit`), and `m-enter` abbreviates
+The summary states its action as `key to action` (`space to collapse`), entry
+hints keep the short `key action` form (`e edit`), and `m-enter` abbreviates
 Meta+Enter. Chords retain `+`. Only the primary key appears inline; `/keys`
 retains standard labels and aliases such as `d (Del)`.
 

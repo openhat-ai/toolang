@@ -15,6 +15,7 @@ class ChatShortcut:
     summary: str
     optional_bindings: tuple[tuple[str, ...], ...] = ()
     aliases: tuple[str, ...] = ()
+    # Inline hints may shorten the key label; full help keeps ``label``.
     hint_label: str | None = None
 
     @property
@@ -23,13 +24,14 @@ class ChatShortcut:
         return self.label + suffix
 
     def hint(self, action: str) -> str:
-        """Keep inline hints short; list alternative keys only in full help."""
+        """Return one inline `key action` hint without alternative keys."""
+
         label = self.hint_label or self.label
-        label = "sp" if label == "Space" else label.lower()
-        return f"{label} {action.lower()}"
+        return f"{label.lower()} {action.lower()}"
 
     def hint_phrase(self, action: str) -> str:
         """Return an instructional inline hint such as `tab to focus`."""
+
         label = self.hint_label or self.label
         return f"{label.lower()} to {action.lower()}"
 

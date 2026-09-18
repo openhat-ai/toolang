@@ -1644,7 +1644,7 @@ def test_chat_queue_panel_collapses_to_a_left_aligned_summary(
 
 
 @pytest.mark.parametrize("terminal_width", [40, 100, 101])
-def test_chat_queue_entry_hints_and_status_share_the_same_right_inset(
+def test_chat_queue_entry_hints_and_status_share_the_same_right_margin(
     monkeypatch: pytest.MonkeyPatch,
     terminal_width: int,
 ) -> None:
@@ -1654,6 +1654,7 @@ def test_chat_queue_entry_hints_and_status_share_the_same_right_inset(
     monkeypatch.setattr(panel, "_has_focus", lambda: True)
     monkeypatch.setattr(status, "_terminal_width", lambda: terminal_width)
 
+    # The last panel row is the trailing gap; the entry above it carries hints.
     entry_line = "".join(text for _style, text in panel._render()).splitlines()[-2]
     for running in (False, True):
         status.set_running(running)
@@ -1680,8 +1681,9 @@ def test_chat_queue_panel_keeps_the_count_hint_on_narrow_terminals(
     assert len(lines) == panel.rows() == 4
     assert all(get_cwidth(line) == terminal_width for line in lines)
     assert lines[0].startswith("  ")
-    if terminal_width >= 32:
-        assert lines[0].strip() == "1 queued (space to collapse)"
+    summary = "1 queued (space to collapse)"
+    if terminal_width >= get_cwidth(summary) + 2:
+        assert lines[0].strip() == summary
     else:
         assert lines[0].strip() == "1 queued"
     assert lines[2].startswith("  ↳ ")
@@ -1703,8 +1705,8 @@ def test_chat_queue_preserves_action_gap_and_padding_when_truncating(
         text for style, text in fragments if style == "class:queue.selected.hint"
     )
     assert hint.strip()
-    assert hint.endswith(" ")
-    assert lines[2].endswith(hint + " ")
+    assert hint.endswith("  ")
+    assert lines[2].endswith(hint)
     assert lines[2][: lines[2].index(hint)].endswith("  ")
     assert lines[2].startswith("  ↳ ")
     assert all(get_cwidth(line) == terminal_width for line in lines)
@@ -4451,7 +4453,7 @@ def test_chat_queue_shortcut_help_includes_navigation_and_contextual_actions() -
 
 def test_chat_shortcuts_use_lowercase_inline_hints_without_changing_full_help() -> None:
     assert shortcuts.SWITCH_AREA.hint("Input") == "tab input"
-    assert shortcuts.QUEUE_TOGGLE.hint("Expand") == "sp expand"
+    assert shortcuts.QUEUE_TOGGLE.hint("Expand") == "space expand"
     assert shortcuts.SWITCH_AREA.hint_phrase("Focus") == "tab to focus"
     assert shortcuts.QUEUE_TOGGLE.hint_phrase("Expand") == "space to expand"
     assert shortcuts.QUEUE_TOGGLE.hint_phrase("Collapse") == "space to collapse"

@@ -36,8 +36,13 @@ MAX_INPUT_ROWS = 6
 MAX_QUEUE_ENTRIES = 8
 # Queue accents its leading cell like Input, reusing Steer's magenta.
 _QUEUE_ACCENT_WIDTH = 1
-_QUEUE_ENTRY_INSET = 1
-_QUEUE_ENTRY_PADDING = 1
+# An expanded panel frames its entries with a summary, a gap row, and a
+# trailing blank row that separates Queue from the Input box. A collapsed
+# panel keeps only its summary.
+_QUEUE_FRAME_ROWS = 3
+# One blank cell follows the accent; two blank cells end each entry row.
+_QUEUE_TEXT_INSET = 1
+_QUEUE_ROW_PADDING = 2
 _QUEUE_ENTRY_ICON = "↳"
 _QUEUE_HINT_GAP = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
@@ -139,18 +144,18 @@ class QueuePanel:
             return 0
         if not self.expanded:
             return 1
-        return 3 + self._entry_count(count)
+        return _QUEUE_FRAME_ROWS + self._entry_count(count)
 
     def minimum_rows(self) -> int:
         """Reserve the panel frame and one entry before sizing the input viewport."""
         if not self.get_items() or not self.width():
             return 0
-        return 4 if self.expanded else 1
+        return _QUEUE_FRAME_ROWS + 1 if self.expanded else 1
 
     def _entry_count(self, count: int) -> int:
         limit = MAX_QUEUE_ENTRIES
         if self._get_max_rows is not None:
-            available = self._get_max_rows() - 3
+            available = self._get_max_rows() - _QUEUE_FRAME_ROWS
             limit = min(limit, max(1, available))
         return min(count, limit)
 
@@ -191,6 +196,11 @@ class QueuePanel:
 
         return ("class:queue.accent", ACCENT_CELL)
 
+    def _blank_row(self, width: int) -> list[tuple[str, str]]:
+        """Return a blank row that only carries the accent and surface."""
+
+        return [self._accent_cell(), ("class:queue", " " * width)]
+
     def _title_hint(self) -> str:
         """Return the one panel action shown beside the count for this state."""
 
@@ -210,41 +220,41 @@ class QueuePanel:
         rows = [
             [self._accent_cell(), *self._summary_row(len(items), width=content_width)]
         ]
-        if self.expanded:
-            rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
-            entry_count = self._entry_count(len(items))
-            start = min(
-                max(0, self._selected_index - entry_count + 1),
-                max(0, len(items) - entry_count),
-            )
-            focused = self._has_focus()
-            rows.extend(
-                [
-                    self._accent_cell(),
-                    *self._entry_row(
-                        source=items[index],
-                        width=content_width,
-                        selected=focused and index == self._selected_index,
-                    ),
-                ]
-                for index in range(start, start + entry_count)
-            )
-            # A trailing blank row separates Queue from the Input box below it.
-            rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
+        if not self.expanded:
+            return rows
+        rows.append(self._blank_row(content_width))
+        entry_count = self._entry_count(len(items))
+        start = min(
+            max(0, self._selected_index - entry_count + 1),
+            max(0, len(items) - entry_count),
+        )
+        focused = self._has_focus()
+        rows.extend(
+            [
+                self._accent_cell(),
+                *self._entry_row(
+                    source=items[index],
+                    width=content_width,
+                    selected=focused and index == self._selected_index,
+                ),
+            ]
+            for index in range(start, start + entry_count)
+        )
+        # Keep a blank row between Queue and the Input box below it.
+        rows.append(self._blank_row(content_width))
         return rows
 
     def _entry_row(
         self, *, source: str, width: int, selected: bool
     ) -> list[tuple[str, str]]:
-        """Lay out one inset highlight with a dim icon and trailing actions."""
+        """Lay out one entry row with a dim icon and trailing action hints."""
         style = "class:queue.selected" if selected else "class:queue"
         # Use child styles so icon/hint attributes retain the row background.
         icon_style = f"{style}.icon"
         hint_style = f"{style}.hint" if selected else style
-        right_inset = min(_QUEUE_ENTRY_INSET, width)
-        right_padding = " " * min(_QUEUE_ENTRY_PADDING, max(0, width - right_inset))
-        available = max(0, width - right_inset - len(right_padding))
-        prefix = " " * _QUEUE_ENTRY_PADDING + _QUEUE_ENTRY_ICON
+        right_padding = " " * min(_QUEUE_ROW_PADDING, width)
+        available = max(0, width - len(right_padding))
+        prefix = " " * _QUEUE_TEXT_INSET + _QUEUE_ENTRY_ICON
         preview = " ".join(source.split())
         hint = ""
         if selected:
@@ -264,21 +274,19 @@ class QueuePanel:
         )
         text = self._truncate(f"{prefix} {preview}", text_width)
         gap = " " * (available - get_cwidth(text) - get_cwidth(hint))
+        # Highlighted padding lets a selection reach Queue's right edge.
         return [
             (icon_style, text[: len(prefix)]),
             (style, text[len(prefix) :] + gap),
             (hint_style, hint + right_padding),
-            # Keep the row background on the trailing cell so a selection
-            # reaches Queue's right edge.
-            (style, " " * right_inset),
         ]
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
-        """Left-align the count with its dim state hint at the entry inset."""
+        """Left-align the count with its dim state hint at the text inset."""
 
         # The summary keeps normal text; only selection shows Queue focus.
         style = "class:queue"
-        left = min(_QUEUE_ENTRY_PADDING, width)
+        left = min(_QUEUE_TEXT_INSET, width)
         available = max(0, width - left)
         # The count keeps its space first; the state hint only follows when it
         # fits whole, so narrow terminals still show how many items are queued.
