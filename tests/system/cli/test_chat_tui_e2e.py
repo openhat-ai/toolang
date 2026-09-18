@@ -199,7 +199,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
 
         session.send(b"queued follow-up\r")
         visible = session.wait_for(
-            "1 item queued",
+            "1 queued",
             "↳ queued follow-up",
             "tab focus",
         )
@@ -210,17 +210,18 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         session.send(b"\t")
         focused = session.wait_for(
             "↳ queued follow-up",
-            "1 item queued",
-            "tab input",
+            "1 queued",
             "sp collapse",
-            "↑↓ select",
             "e edit",
             "meta+enter steer",
             "d delete",
         )
         assert "Traceback" not in focused
         assert "meta+enter steer · e edit · d delete" in focused
-        assert "↑↓ select · sp collapse · tab input" in focused
+        # Prompt Toolkit redraws only changed cells; force a full redraw to
+        # read the summary and its inline hint as one contiguous row.
+        redrawn = _wait_redrawn(session, "1 queued (sp collapse)")
+        assert "1 queued (sp collapse)" in redrawn
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
@@ -242,7 +243,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"start run\r")
         session.wait_for("Thinking...")
         session.send(b"queued steer\r")
-        session.wait_for("1 item queued")
+        session.wait_for("1 queued")
         session.send(b"\t")
         session.wait_for("meta+enter steer")
         session.send(b"\x1b\r")
@@ -254,7 +255,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
-        output = _wait_redrawn(session, "tab input")
+        output = _wait_redrawn(session, "(sp collapse)")
         assert "queued follow-up" in output
         assert "sp collapse" in output
         assert "Window too small" not in output

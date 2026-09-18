@@ -40,7 +40,6 @@ _QUEUE_ENTRY_INSET = 1
 _QUEUE_ENTRY_PADDING = 1
 _QUEUE_ENTRY_ICON = "↳"
 _QUEUE_HINT_GAP = 2
-_QUEUE_HINT_INSET = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
 _INPUT_PLACEHOLDER = "Ask or describe a task"
 # The status bar insets its content on each side so its text lines up with the
@@ -137,26 +136,22 @@ class QueuePanel:
 
     def rows(self) -> int:
         count = len(self.get_items())
-        width = self.width()
-        if not count or not width:
+        if not count or not self.width():
             return 0
         if not self.expanded:
             return 1
-        return 1 + self._entry_count(count, width) + len(self._hint_lines(width))
+        return 2 + self._entry_count(count)
 
     def minimum_rows(self) -> int:
-        """Reserve summary, one entry, and hints before sizing the input viewport."""
-        width = self.width()
-        if not self.get_items() or not width:
+        """Reserve summary, gap, and one entry before sizing the input viewport."""
+        if not self.get_items() or not self.width():
             return 0
-        if not self.expanded:
-            return 1
-        return 2 + len(self._hint_lines(width))
+        return 3 if self.expanded else 1
 
-    def _entry_count(self, count: int, width: int) -> int:
+    def _entry_count(self, count: int) -> int:
         limit = MAX_QUEUE_ENTRIES
         if self._get_max_rows is not None:
-            available = self._get_max_rows() - 1 - len(self._hint_lines(width))
+            available = self._get_max_rows() - 2
             limit = min(limit, max(1, available))
         return min(count, limit)
 
@@ -197,6 +192,13 @@ class QueuePanel:
 
         return ("class:queue.accent", ACCENT_CELL)
 
+    def _title_hint(self) -> str:
+        """Return the one panel action shown beside the count for this state."""
+
+        if not self._has_focus():
+            return shortcuts.SWITCH_AREA.hint("Focus")
+        return shortcuts.QUEUE_TOGGLE.hint("Collapse" if self.expanded else "Expand")
+
     def _rows(
         self,
         items: Sequence[str],
@@ -209,7 +211,8 @@ class QueuePanel:
         ]
         if not self.expanded:
             return rows
-        entry_count = self._entry_count(len(items), width)
+        rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
+        entry_count = self._entry_count(len(items))
         start = min(
             max(0, self._selected_index - entry_count + 1),
             max(0, len(items) - entry_count),
@@ -225,9 +228,6 @@ class QueuePanel:
                 ),
             ]
             for index in range(start, start + entry_count)
-        )
-        rows.extend(
-            self._hint_row(hint, width=width) for hint in self._hint_lines(width)
         )
         return rows
 
@@ -269,82 +269,35 @@ class QueuePanel:
             ("class:queue", " " * right_inset),
         ]
 
-    def _hint_row(self, hint: str, *, width: int) -> list[tuple[str, str]]:
-        """Right-align one panel hint, carving the accent from its left padding."""
-
-        right_padding = " " * min(_QUEUE_HINT_INSET, width)
-        leading = max(0, width - get_cwidth(hint) - len(right_padding))
-        if leading >= _QUEUE_ACCENT_WIDTH:
-            return [
-                self._accent_cell(),
-                (
-                    "class:queue.hint",
-                    " " * (leading - _QUEUE_ACCENT_WIDTH) + hint + right_padding,
-                ),
-            ]
-        return [("class:queue.hint", hint + right_padding)]
-
-    def _hints(self) -> tuple[str, ...]:
-        if not self._has_focus():
-            return (shortcuts.SWITCH_AREA.hint("Focus"),)
-        hints = (
-            shortcuts.QUEUE_TOGGLE.hint("Collapse" if self.expanded else "Expand"),
-            shortcuts.SWITCH_AREA.hint("Input"),
-        )
-        if not self.expanded:
-            return hints
-        return (
-            f"{shortcuts.QUEUE_PREVIOUS.label}{shortcuts.QUEUE_NEXT.label} select",
-            *hints,
-        )
-
-    def _hint_lines(self, width: int) -> list[str]:
-        """Fit panel actions into right-aligned rows below the entries."""
-
-        available = max(0, width - _QUEUE_HINT_INSET)
-        if not available:
-            return [""]
-        lines: list[str] = []
-        current = ""
-        for hint in self._hints():
-            hint = self._truncate(hint, available)
-            combined = f"{current} · {hint}" if current else hint
-            if get_cwidth(combined) > available:
-                lines.append(current)
-                current = hint
-            else:
-                current = combined
-        return [*lines, current]
-
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
-        """Left-align the count at the entry icon inset, keeping hints right."""
+        """Left-align the count with its dim state hint at the entry inset."""
 
-        summary = self._truncate(
-            self._count_label(count), max(0, width - _QUEUE_HINT_INSET)
-        )
-        summary_width = get_cwidth(summary)
+        style = "class:queue" if self._has_focus() else "class:queue.info"
         left = min(_QUEUE_ENTRY_PADDING, width)
-        right = max(0, width - left - summary_width)
-        hint = ""
-        if not self.expanded:
-            for action in self._hints():
-                combined = f"{hint} · {action}" if hint else action
-                if get_cwidth(combined) > right - _QUEUE_HINT_GAP - _QUEUE_HINT_INSET:
-                    break
-                hint = combined
-        if hint:
-            hint += " " * _QUEUE_HINT_INSET
-        return [
-            (
-                "class:queue" if self._has_focus() else "class:queue.info",
-                " " * left + summary + " " * max(0, right - get_cwidth(hint)),
-            ),
-            ("class:queue.hint", hint),
-        ]
+        available = max(0, width - left)
+        hint = f"({self._title_hint()})"
+        hint_width = get_cwidth(hint)
+        label = self._truncate(
+            self._count_label(count), max(0, available - hint_width - 1)
+        )
+        label_width = get_cwidth(label)
+        show_hint = bool(label) and label_width + hint_width + 1 <= available
+        if not show_hint:
+            label = self._truncate(self._count_label(count), available)
+            label_width = get_cwidth(label)
+        cells: list[tuple[str, str]] = [(style, " " * left + label)]
+        used = left + label_width
+        if show_hint:
+            cells.append((style, " "))
+            cells.append(("class:queue.hint", hint))
+            used += hint_width + 1
+        if used < width:
+            cells.append((style, " " * (width - used)))
+        return cells
 
     @staticmethod
     def _count_label(count: int) -> str:
-        return f"{count} item{'' if count == 1 else 's'} queued"
+        return f"{count} queued"
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:
