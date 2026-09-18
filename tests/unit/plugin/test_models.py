@@ -25,10 +25,9 @@ from toolang.base.types.message import (
 from toolang.base.types.model import (
     ModelAlias,
     ModelInfo,
-    ModelParameters,
     ModelTarget,
     Provider,
-    ReasoningParameters,
+    Reasoning,
     ResolvedProvider,
 )
 from toolang.base.types.policy import RunBindings
@@ -435,23 +434,23 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         "high",
     )
     assert model_reasoning_effort_applicable(context, target)
-    assert apply_model_parameters(context, target, ModelParameters()) == target
+    assert apply_model_parameters(context, target) == target
     selected = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters("high")),
+        reasoning=Reasoning("high"),
     )
     assert selected.reasoning == {"effort": "high"}
     budgeted = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters(budget_tokens=2048)),
+        reasoning=Reasoning(budget_tokens=2048),
     )
     assert budgeted.reasoning == {"budget_tokens": 2048}
     capped = apply_model_parameters(
         context,
         target,
-        ModelParameters(max_output=4096),
+        max_output=4096,
     )
     assert capped.max_output == 4096
     # A catalog enumeration is evidence. Only an exhaustive list rejects an
@@ -459,14 +458,14 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
     passed = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters("max")),
+        reasoning=Reasoning("max"),
     )
     assert passed.reasoning == {"effort": "max"}
     with pytest.raises(ToolangError, match="budget must be at least 1024"):
         apply_model_parameters(
             context,
             target,
-            ModelParameters(ReasoningParameters(budget_tokens=512)),
+            reasoning=Reasoning(budget_tokens=512),
         )
 
 
@@ -556,7 +555,7 @@ def test_exhaustive_effort_enumeration_rejects_an_unlisted_level() -> None:
         apply_model_parameters(
             context,
             target,
-            ModelParameters(ReasoningParameters("max")),
+            reasoning=Reasoning("max"),
         )
 
 
@@ -584,7 +583,7 @@ def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
     selected = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters(effort="none")),
+        reasoning=Reasoning(effort="none"),
     )
 
     assert selected.reasoning == {"effort": "none"}
@@ -592,7 +591,7 @@ def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
 
 def test_reasoning_parameters_reject_effort_and_budget_together() -> None:
     with pytest.raises(ValueError, match="either effort or budget_tokens"):
-        ReasoningParameters(effort="high", budget_tokens=2048)
+        Reasoning(effort="high", budget_tokens=2048)
 
 
 def test_model_resolution_rejects_ambiguous_query() -> None:

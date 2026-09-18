@@ -62,7 +62,12 @@ def select_compact_model(
                 "tool calls and structured output"
             )
     target = eligible.resolve(request.ref).target
-    apply_model_parameters(eligible, target, request.parameters)
+    apply_model_parameters(
+        eligible,
+        target,
+        reasoning=request.reasoning,
+        max_output=request.max_output,
+    )
     return request
 
 

@@ -18,10 +18,9 @@ from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
     ModelInfo,
-    ModelParameters,
     ModelRequest,
     Provider,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.common.layout import AgentLayout
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
@@ -1300,7 +1299,7 @@ def test_setup_watcher_validates_default_model_parameters_before_publication(
 
     assert setup.defaults.model == ModelRequest(
         "test/one",
-        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
 
     config["default"] = {"model": "test/one effort=max"}

@@ -895,10 +895,7 @@ class ChatTuiApp:
                 runnable_input,
                 self.setting,
             )
-            if (
-                request.model is not None
-                and request.model.parameters.reasoning is not None
-            ):
+            if request.model is not None and request.model.reasoning is not None:
                 validate_model_reasoning_request(
                     self.client.list_models(), request.model
                 )

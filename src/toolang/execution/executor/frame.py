@@ -109,7 +109,8 @@ def build_agic_frame(
         model = apply_model_parameters(
             selection,
             model,
-            run.model_request.parameters,
+            reasoning=run.model_request.reasoning,
+            max_output=run.model_request.max_output,
         )
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(run.state, agic)

@@ -6,9 +6,8 @@ import pytest
 
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
@@ -196,7 +195,7 @@ def test_default_model_body_layers_identity_and_typed_parameters() -> None:
     ) == RunDefaults(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+            reasoning=Reasoning(budget_tokens=4096),
         )
     )
 

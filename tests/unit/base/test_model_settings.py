@@ -10,9 +10,8 @@ from toolang.base.model_settings import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 
 
@@ -72,7 +71,7 @@ def test_model_body_rejects_invalid_or_untyped_forms(
 def test_model_override_application_preserves_and_resets_typed_parameters() -> None:
     surface = ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="medium")),
+        reasoning=Reasoning(effort="medium"),
     )
 
     high = apply_model_override(
@@ -82,7 +81,7 @@ def test_model_override_application_preserves_and_resets_typed_parameters() -> N
     )
     assert high == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
     assert apply_model_override(
         high,
@@ -100,20 +99,20 @@ def test_model_override_application_preserves_and_resets_typed_parameters() -> N
         parse_model_body("default effort=low"),
     ) == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
 
 
 def test_max_output_composes_and_cancels_inheritance() -> None:
-    base = ModelRequest("openai/gpt-5", ModelParameters(max_output=8192))
+    base = ModelRequest("openai/gpt-5", max_output=8192)
 
     explicit = apply_model_override(base, None, ModelOverride(max_output=2048))
     assert explicit is not None
-    assert explicit.parameters.max_output == 2048
+    assert explicit.max_output == 2048
 
     automatic = apply_model_override(explicit, None, ModelOverride(max_output="auto"))
     assert automatic is not None
-    assert automatic.parameters.max_output is None
+    assert automatic.max_output is None
 
     assert apply_model_override(base, base, ModelOverride(identity="default")) == base
     assert compose_model_overrides(
