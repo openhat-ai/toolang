@@ -501,12 +501,17 @@ class PromptBox:
             (shortcuts.PREVIOUS_HISTORY, previous_history),
             (shortcuts.NEXT_HISTORY, next_history),
             (shortcuts.INTERRUPT, interrupt),
-            (shortcuts.EOF, eof),
         )
         prompt_focus = has_focus(self.buffer)
         for shortcut, handler in prompt_bindings:
             for binding in shortcut.bindings:
                 keys.add(*binding, filter=prompt_focus)(handler)
+        # Ctrl+D keeps its terminal meaning while the draft has text: the default
+        # binding deletes the character after the cursor. Chat claims the key only
+        # for the empty draft, where it ends input.
+        empty_draft = Condition(lambda: not self.buffer.text)
+        for binding in shortcuts.EOF.bindings:
+            keys.add(*binding, filter=prompt_focus & empty_draft)(eof)
         keys.add("up", filter=prompt_focus)(arrow_up)
         keys.add("down", filter=prompt_focus)(arrow_down)
         global_bindings = (
