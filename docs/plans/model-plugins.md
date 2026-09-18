@@ -131,8 +131,8 @@ Entry-point names are unchanged, so configured plugin tables and
 
 | Type | Role | Produced by | Read by |
 | --- | --- | --- | --- |
-| `Provider` | catalog record plus resolved route facts | catalog plugin, then setup | inspection |
-| `Model` | the single model record plus resolved/selection/capability facts | catalog plugin, then setup | inspection, executor, adapter |
+| `Provider` | one definition with a raw and a resolved instance | catalog plugin, then setup | inspection |
+| `Model` | one definition with a raw and a resolved instance | catalog plugin, then setup | inspection, executor, adapter |
 | `ModelCatalogSnapshot` | one immutable `{providers, models, revision, source}` | catalog plugin, merge | setup |
 | `ModelCollection` | effective selection index over `Model` | setup | inspection, executor |
 | `ModelAdapter` | protocol implementation | adapter plugin | setup, executor |
@@ -142,8 +142,9 @@ Entry-point names are unchanged, so configured plugin tables and
 | `ModelCall` | one call: content plus effective controls | execution assembly | adapter, durable record |
 | `ModelCallResult`, `ModelUsage` | one call's outcome and meters | adapter | execution, accounting |
 
-`ModelInfo`, `ModelTarget`, `ModelEntry`, `ModelParameters`,
-`ResolvedProvider`, and `ResolvedModel` are removed. The query engine keeps one
+`ModelInfo`, `ModelTarget`, `ModelEntry`, and `ModelParameters` are removed.
+There is no `ResolvedProvider` or `ResolvedModel`: resolution produces another
+instance of the same definition, not a second type. The query engine keeps one
 internal flat row type for schema columns; it is not a second model state.
 
 ### Model
@@ -155,11 +156,14 @@ Catalog facts, verbatim and exportable: `provider_id`, `id`, `name`,
 `experimental`, `provider`, `cost`, `extra`, `local`, `catalog`,
 `catalog_revision`.
 
-Facts the setup attaches once:
+The setup produces a resolved instance of the same record with these filled in:
 
 - selection: `ref` (`provider/id`), `selectors`, `scope`, `tags`;
-- connection: `adapter`, `base_url`, `api_key`, `headers`, `options`, `ready`;
+- connection: `adapter`, `api`, `api_key`, `headers`, `options`, `ready`;
 - capability: `reasoning_controls`.
+
+`Model.resolved: Model | None` holds that instance, and a resolved instance
+never carries its own `resolved`.
 
 `available` is `ready`; there is no second availability flag. `to_data()` emits
 only the catalog facts, so `too models --json` stays a raw catalog export and
@@ -175,29 +179,42 @@ prices are derived from `Model.cost` on read instead of stored again.
 
 ### Provider
 
-Catalog facts (`id`, `name`, `env`, `models`, `npm`, `adapter`, `api`, `doc`,
-`extra`, `local`, `catalog`, `catalog_revision`) plus resolved facts (`adapter`,
-`api`, `env`, `ready`). The nested `resolved` value and its wrappers are
-removed; those fields live directly on `Provider` and `Model`.
+One definition, two instances. The catalog instance carries `id`, `name`, `env`,
+`models`, `npm`, `adapter`, `api`, `doc`, `extra`, `local`, `catalog`, and
+`catalog_revision`. The resolved instance, held in `Provider.resolved: Provider
+| None`, carries the same field names with resolved values: the effective
+`adapter`, the effective `api`, the normalized `env` rule, and `ready`.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
 
 ### Field collisions and how they resolve
 
-Folding the derived types into the records collides on three names. Each is
-resolved once, here, before the code moves.
+A name that means something in the catalog and something else after resolution
+is handled by the two-instance rule rather than by inventing a second name: the
+resolved instance carries the resolved value under the same field.
 
-| Name | In the catalog record | In the derived type | Resolution |
-| --- | --- | --- | --- |
-| `api` | `Provider.api`: the raw catalog value, exported | `ResolvedProvider.api`: the effective base URL | keep both; the resolved facts stay in their own nested value |
-| `env` | `Provider.env`: the catalog's `tuple[str, ...]` of names | `ResolvedProvider.env`: the `ResolvedEnv` OR-of-AND rule | keep both; same nested value |
-| `scope` | `Model.local`: whether the record is local-only | `ModelInfo.scope` (`local`/`remote`) and `ModelTarget.scope` (provider scope) | `Model.scope` is the provider scope; local/remote derives from `Model.local` |
+| Name | Catalog instance | Resolved instance |
+| --- | --- | --- |
+| `api` | the catalog value, exported as-is | the effective base URL for a call |
+| `env` | the catalog's name rule | the normalized OR-of-AND rule used for readiness |
+| `adapter` | a declared protocol, for sources that are not models.dev records | the effective adapter |
+| `ready` | unset | the computed readiness |
+| `scope` | provider scope when the source declares one | provider scope |
 
-Because `api` and `env` mean two different things on the provider, the resolved
-facts keep a nested value on `Provider` (today's `resolved`) rather than
-flattening into colliding field names. `Model` has no such collision, so its
-resolved route facts (`adapter`, `api`, `ready`) fold directly onto the record.
+`scope` names the provider scope. Whether a model is local or remote derives
+from `Model.local`, which is a catalog field and needs no second name.
+
+The catalog instance is what `to_data()` exports, so `--json` never emits a
+resolved value: `to_data()` does not read `resolved`.
+
+### Which api a call uses
+
+Resolution picks one effective api, in this order: explicit provider
+configuration, then the catalog's `api`, then the adapter's own `default_api`.
+The winner is supplied with the resolved model, and that is the api the adapter
+must use when it sends a request. `ModelAdapter.default_api` is resolution
+input only; it is never consulted while building a request.
 
 ### Reasoning: capability, demand, effective control
 
@@ -359,9 +376,10 @@ The cache is internal to the setup. Its contract is only:
 
 ### Data decisions
 
-1. Fold `ResolvedProvider` and `ResolvedModel` into `Provider` and `Model`; the
-   nested `resolved` value disappears and its fields live directly on the
-   records.
+1. Keep one definition per record. `resolved` is a field of that same
+   definition (`Provider.resolved: Provider | None`,
+   `Model.resolved: Model | None`), so there are two instances of one type
+   instead of a raw type plus a `Resolved*` type.
 2. Keep `Provider` on the setup. Inspection reads it from the setup instead of
    re-running resolution.
 3. Keep `api_key` on the model state in setup memory only; `to_data()` and the
@@ -376,9 +394,10 @@ The cache is internal to the setup. Its contract is only:
 7. Model capability keeps the catalog name `limit.output`; the run's demand and
    the call's effective allowance are different values and keep different names
    (`ModelRequest.max_output` and `ModelCall.max_output_tokens`).
-8. `api` and `env` keep both meanings: the catalog value stays on the record and
-   the resolved route rule stays in the nested provider value. `scope` names the
-   provider scope; local/remote derives from `Model.local`.
+8. A catalog value and its resolved counterpart share one field name across the
+   two instances. `scope` names the provider scope; local/remote derives from
+   `Model.local`. The adapter uses the api supplied with the resolved model;
+   its own `default_api` only feeds resolution.
 9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
    they derive from the catalog fields that already exist.
 
