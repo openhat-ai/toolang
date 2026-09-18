@@ -201,17 +201,17 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         visible = session.wait_for(
             "1 queued",
             "↳ queued follow-up",
-            "tab focus",
+            "tab to focus",
         )
         assert "Traceback" not in visible
-        assert "sp collapse" not in visible
+        assert "expand/collapse" not in visible
         assert "e edit" not in visible
 
         session.send(b"\t")
         focused = session.wait_for(
             "↳ queued follow-up",
             "1 queued",
-            "sp collapse",
+            "space to expand/collapse",
             "e edit",
             "m-enter steer",
             "d delete",
@@ -220,8 +220,8 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         assert "m-enter steer · e edit · d delete" in focused
         # Prompt Toolkit redraws only changed cells; force a full redraw to
         # read the summary and its inline hint as one contiguous row.
-        redrawn = _wait_redrawn(session, "1 queued (sp collapse)")
-        assert "1 queued (sp collapse)" in redrawn
+        redrawn = _wait_redrawn(session, "1 queued (space to expand/collapse)")
+        assert "1 queued (space to expand/collapse)" in redrawn
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
@@ -255,9 +255,9 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
-        output = _wait_redrawn(session, "(sp collapse)")
+        output = _wait_redrawn(session, "(space to expand/collapse)")
         assert "queued follow-up" in output
-        assert "sp collapse" in output
+        assert "space to expand/collapse" in output
         assert "Window too small" not in output
         (tmp_path / "release-model").touch()
         output = session.wait_for("succeeded")

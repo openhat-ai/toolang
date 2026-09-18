@@ -138,19 +138,19 @@ class QueuePanel:
         if not count or not self.width():
             return 0
         if not self.expanded:
-            return 1
-        return 2 + self._entry_count(count)
+            return 2
+        return 3 + self._entry_count(count)
 
     def minimum_rows(self) -> int:
-        """Reserve summary, gap, and one entry before sizing the input viewport."""
+        """Reserve the panel frame and one entry before sizing the input viewport."""
         if not self.get_items() or not self.width():
             return 0
-        return 3 if self.expanded else 1
+        return 4 if self.expanded else 2
 
     def _entry_count(self, count: int) -> int:
         limit = MAX_QUEUE_ENTRIES
         if self._get_max_rows is not None:
-            available = self._get_max_rows() - 2
+            available = self._get_max_rows() - 3
             limit = min(limit, max(1, available))
         return min(count, limit)
 
@@ -195,8 +195,8 @@ class QueuePanel:
         """Return the one panel action shown beside the count for this state."""
 
         if not self._has_focus():
-            return shortcuts.SWITCH_AREA.hint("Focus")
-        return shortcuts.QUEUE_TOGGLE.hint("Collapse" if self.expanded else "Expand")
+            return shortcuts.SWITCH_AREA.hint_phrase("focus")
+        return shortcuts.QUEUE_TOGGLE.hint_phrase("expand/collapse")
 
     def _rows(
         self,
@@ -208,26 +208,27 @@ class QueuePanel:
         rows = [
             [self._accent_cell(), *self._summary_row(len(items), width=content_width)]
         ]
-        if not self.expanded:
-            return rows
+        if self.expanded:
+            rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
+            entry_count = self._entry_count(len(items))
+            start = min(
+                max(0, self._selected_index - entry_count + 1),
+                max(0, len(items) - entry_count),
+            )
+            focused = self._has_focus()
+            rows.extend(
+                [
+                    self._accent_cell(),
+                    *self._entry_row(
+                        source=items[index],
+                        width=content_width,
+                        selected=focused and index == self._selected_index,
+                    ),
+                ]
+                for index in range(start, start + entry_count)
+            )
+        # A trailing blank row separates Queue from the Input box below it.
         rows.append([self._accent_cell(), ("class:queue", " " * content_width)])
-        entry_count = self._entry_count(len(items))
-        start = min(
-            max(0, self._selected_index - entry_count + 1),
-            max(0, len(items) - entry_count),
-        )
-        focused = self._has_focus()
-        rows.extend(
-            [
-                self._accent_cell(),
-                *self._entry_row(
-                    source=items[index],
-                    width=content_width,
-                    selected=focused and index == self._selected_index,
-                ),
-            ]
-            for index in range(start, start + entry_count)
-        )
         return rows
 
     def _entry_row(

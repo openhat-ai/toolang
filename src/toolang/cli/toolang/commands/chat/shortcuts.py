@@ -28,6 +28,11 @@ class ChatShortcut:
         label = "sp" if label == "Space" else label.lower()
         return f"{label} {action.lower()}"
 
+    def hint_phrase(self, action: str) -> str:
+        """Return an instructional inline hint such as `tab to focus`."""
+        label = self.hint_label or self.label
+        return f"{label.lower()} to {action.lower()}"
+
 
 SUBMIT = ChatShortcut(
     "submit",
