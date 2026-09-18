@@ -2115,6 +2115,7 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
     ]
 
     assert background_widths == [40, 40, 40, 40, 40]
+    assert "".join(segment.text for segment in lines[1]).startswith("    x = 1")
     assert {
         segment.style.bgcolor.get_truecolor().hex
         for line in lines
