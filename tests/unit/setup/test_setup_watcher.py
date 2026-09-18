@@ -24,13 +24,14 @@ from toolang.base.types.model import (
     ReasoningParameters,
 )
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.models.adapters.chat_completions import (
+from toolang.plugin.adapters.responses import ResponsesModelAdapter
+from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
-from toolang.plugin.models.catalog import ModelsDevModelCatalog
-from toolang.plugin.models import cache as model_cache_module
-from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
+from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
+import toolang.setup.cache as model_cache_module
+from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
+from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 from toolang.plugin.models import collections as model_collections
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.setup import catalog as catalog_module
@@ -629,13 +630,15 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", count_probe)
     monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", count_probe)
     loaded_cache_files: list[str] = []
-    original_load_document = model_cache_module._load_document
+    original_load_document = model_cache_module.load_document
 
-    def track_cache_load(path: Path, *, kind: str, key: str) -> dict[str, object]:
+    def track_cache_load(
+        path: Path, *, kind: str, key: str, fast_json: bool = False
+    ) -> dict[str, object]:
         loaded_cache_files.append(path.name)
-        return original_load_document(path, kind=kind, key=key)
+        return original_load_document(path, kind=kind, key=key, fast_json=fast_json)
 
-    monkeypatch.setattr(model_cache_module, "_load_document", track_cache_load)
+    monkeypatch.setattr(model_cache_module, "load_document", track_cache_load)
 
     missing = asyncio.run(
         load_matching_catalog_inspection(

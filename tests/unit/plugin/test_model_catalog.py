@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from dataclasses import dataclass
 from decimal import Decimal
 import json
@@ -9,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-import toolang.plugin.models.catalog as catalog_module
+import toolang.plugin.catalogs.models_dev.path as catalog_path_module
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
     Model,
@@ -17,22 +18,20 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     Provider,
 )
-from toolang.common.errors import ToolangError
+from toolang.common.json import dumps
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.catalog import (
-    MergedModelCatalog,
-    PACKAGED_MODEL_CATALOG,
-    catalog_json_dumps,
-    read_model_catalog_snapshot,
-    model_info_from_catalog,
-    parse_model_catalog_data,
-    query_catalog_models,
-    resolve_model_catalog_path,
-)
-from toolang.plugin.models.adapters.chat_completions import (
+from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
-from toolang.plugin.models.adapters.messages import MessagesModelAdapter
+from toolang.plugin.adapters.messages import MessagesModelAdapter
+from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
+from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+from toolang.plugin.catalogs.models_dev.path import (
+    PACKAGED_MODEL_CATALOG,
+    resolve_model_catalog_path,
+)
+from toolang.setup.catalog import MergedModelCatalog
+from toolang.setup.models import model_info_from_catalog
 from toolang.plugin.models.discovery import default_provider_base_url
 from toolang.plugin.models.provider_resolver import resolve_provider
 from toolang.plugin.models.resolution import (
@@ -105,7 +104,7 @@ def test_catalog_reader_attaches_origin_without_rematerializing_records(
     def reject_replace(*args: object, **kwargs: object) -> None:
         raise AssertionError("catalog records must not be replaced after parsing")
 
-    monkeypatch.setattr(catalog_module, "replace", reject_replace)
+    monkeypatch.setattr(dataclasses, "replace", reject_replace)
 
     snapshot = read_model_catalog_snapshot(path)
     model = snapshot.find("test", "one")
@@ -261,7 +260,7 @@ def test_catalog_source_ignores_implicit_models_files(
         path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
     packaged = tmp_path / "packaged-catalog.json"
     packaged.write_text(json.dumps(_catalog_data()), encoding="utf-8")
-    monkeypatch.setattr(catalog_module, "PACKAGED_MODEL_CATALOG", packaged)
+    monkeypatch.setattr(catalog_path_module, "PACKAGED_MODEL_CATALOG", packaged)
 
     assert resolve_model_catalog_path(layout) == packaged.resolve()
     assert resolve_model_catalog_path(layout, include_agent=False) == packaged.resolve()
@@ -280,54 +279,13 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
     assert resolve_model_catalog_path(layout) == root.resolve()
 
 
-def test_catalog_query_handles_nested_identity_schema_fields_and_nullable_boolean() -> (
-    None
-):
-    provider = _provider(
-        {
-            "lab/model": _model(
-                "lab/model",
-                family="family",
-                reasoning=True,
-                temperature=None,
-            ),
-            "plain": _model(
-                "plain",
-                family="other",
-                reasoning=False,
-                temperature=False,
-            ),
-        }
-    )
-    snapshot = _snapshot(provider)
-
-    assert [item.id for item in query_catalog_models(snapshot, ("test/lab/*",))] == [
-        "lab/model"
-    ]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[reasoning=false]",))
-    ] == ["plain"]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[temperature=false]",))
-    ] == ["plain"]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[family=family]",))
-    ] == ["lab/model"]
-    assert [item.id for item in query_catalog_models(snapshot, None)] == [
-        "lab/model",
-        "plain",
-    ]
-    with pytest.raises(ToolangError, match="query cannot be empty"):
-        query_catalog_models(snapshot, ())
-
-
 def test_filtered_export_round_trips_deterministically() -> None:
     provider = _provider({"one": _model("one"), "two": _model("two")})
     snapshot = _snapshot(provider)
-    selected = query_catalog_models(snapshot, ("test/two",), include_local=False)
+    selected = tuple(model for model in snapshot.models if model.id == "two")
 
-    first = catalog_json_dumps(snapshot.to_data(models=selected))
-    second = catalog_json_dumps(snapshot.to_data(models=selected))
+    first = dumps(snapshot.to_data(models=selected))
+    second = dumps(snapshot.to_data(models=selected))
     imported = parse_model_catalog_data(json.loads(first, parse_float=Decimal))
 
     assert first == second

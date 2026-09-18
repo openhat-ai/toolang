@@ -4,31 +4,26 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
-from toolang.base.types.model import ModelCatalogSnapshot
+from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.common.layout import AgentLayout
 from toolang.common.query import MatchUnion, QueryDataset
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import plugin_provenance
-from toolang.plugin.models.cache import (
+from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.catalogs.loading import load_model_catalogs
+from toolang.plugin.catalogs.models_dev.cache import (
     CatalogSource,
-    ModelProjectionCache,
+    ModelCatalogArtifactCache,
     capture_catalog_source,
-    environment_readiness,
-    hydrate_model_infos,
-    model_projection_key,
 )
-from toolang.plugin.models.catalog import (
-    MergedModelCatalog,
-    ModelsDevModelCatalog,
-    model_info_from_catalog,
-    resolve_model_catalog_path,
-)
+from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.collections import (
     ModelCollection,
     ModelQueryView,
@@ -38,10 +33,15 @@ from toolang.plugin.models.config import (
     configure_catalog_providers,
     parse_provider_configs,
 )
-from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import build_model_collection
 
+from .cache import (
+    ModelProjectionCache,
+    environment_readiness,
+    hydrate_model_infos,
+    model_projection_key,
+)
 from .config import (
     load_agent_config,
     load_root_setup_envs,
@@ -49,6 +49,7 @@ from .config import (
     load_setup_envs,
     project_model_setup_config,
 )
+from .models import model_info_from_catalog
 
 _LOCAL_CATALOG_ENV = frozenset(
     {
@@ -95,7 +96,8 @@ class _CatalogLoad:
     ordered: tuple[ModelCatalog, ...]
     source: CatalogSource
     additional_snapshots: tuple[ModelCatalogSnapshot, ...]
-    cache: ModelProjectionCache
+    artifact_cache: ModelCatalogArtifactCache
+    context_cache: ModelProjectionCache
     plugin_provenance: tuple[dict[str, str | None], ...]
 
     @property
@@ -148,7 +150,7 @@ async def load_matching_catalog_inspection(
         agent_context=agent_context,
     )
     misses = await asyncio.to_thread(
-        load.cache.catalog_identity_misses,
+        load.context_cache.catalog_identity_misses,
         kind="inspection",
         scope=load.scope,
         catalog_revisions=load.catalog_revisions,
@@ -185,9 +187,9 @@ async def _prepare_catalog_load(
         catalog_path,
         max_source_bytes=max_source_bytes,
     )
-    cache = ModelProjectionCache(
-        layout.root_model_cache,
-        layout.home_model_cache if agent_context else layout.root_model_cache,
+    artifact_cache = ModelCatalogArtifactCache(layout.root_model_cache)
+    context_cache = ModelProjectionCache(
+        layout.home_model_cache if agent_context else layout.root_model_cache
     )
     additional_snapshots = tuple(
         await asyncio.gather(*(catalog.snapshot() for catalog in ordered[1:]))
@@ -202,7 +204,8 @@ async def _prepare_catalog_load(
         ordered=ordered,
         source=source,
         additional_snapshots=additional_snapshots,
-        cache=cache,
+        artifact_cache=artifact_cache,
+        context_cache=context_cache,
         plugin_provenance=_model_plugin_provenance(),
     )
 
@@ -219,13 +222,14 @@ async def _materialize_catalog_inspection(
     catalog_path = load.catalog_path
     ordered = load.ordered
     source = load.source
-    cache = load.cache
+    artifact_cache = load.artifact_cache
+    context_cache = load.context_cache
     adapters = load_model_adapters(
         merge_plugin_configs(configs, family="model_adapter")
     )
     models_dev = ordered[0]
     static = await asyncio.to_thread(
-        cache.load_catalog,
+        artifact_cache.load_catalog,
         source,
         source_path=catalog_path,
     )
@@ -235,7 +239,7 @@ async def _materialize_catalog_inspection(
             raise ValueError("models_dev revision does not match its source")
         try:
             await asyncio.to_thread(
-                cache.store_catalog,
+                artifact_cache.store_catalog,
                 source=source,
                 snapshot=static,
             )
@@ -274,7 +278,7 @@ async def _materialize_catalog_inspection(
         plugin_provenance=load.plugin_provenance,
         allow_models=None,
     )
-    cached = await asyncio.to_thread(cache.load_context, context_key)
+    cached = await asyncio.to_thread(context_cache.load_context, context_key)
     infos = (
         hydrate_model_infos(cached.model_infos, resolved)
         if cached is not None
@@ -318,7 +322,7 @@ async def _materialize_catalog_inspection(
     if cached is None or cached_catalog_queries is None:
         try:
             await asyncio.to_thread(
-                cache.store_context,
+                context_cache.store_context,
                 key=context_key,
                 model_infos=tuple(entry.info for entry in models.entries),
                 query_views=models.query_views(),
@@ -379,6 +383,93 @@ def _model_plugin_provenance() -> tuple[dict[str, str | None], ...]:
         item.to_data()
         for group in ("toolang.model_catalog", "toolang.model_adapter")
         for item in plugin_provenance(group=group)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MergedModelCatalog(ModelCatalog):
+    """Merge exact provider/model records from ordered catalog sources."""
+
+    sources: tuple[ModelCatalog, ...]
+    name: str = "merged"
+
+    async def snapshot(self) -> ModelCatalogSnapshot:
+        """Load sources in order and reject conflicting exact identities."""
+
+        snapshots = list(
+            await asyncio.gather(*(source.snapshot() for source in self.sources))
+        )
+        if not snapshots:
+            return ModelCatalogSnapshot(providers={}, models=(), revision="sha256:0")
+        providers: dict[str, Provider] = {}
+        models: dict[tuple[str, str], Model] = {}
+        for source, raw_snapshot in zip(self.sources, snapshots, strict=True):
+            snapshot = _with_catalog_origin(raw_snapshot, source.name)
+            for provider_id, provider in snapshot.providers.items():
+                existing = providers.get(provider_id)
+                if existing is not None and not (existing.local and provider.local):
+                    raise ValueError(f"duplicate catalog provider: {provider_id}")
+                providers[provider_id] = provider
+            for model in snapshot.models:
+                identity = (model.provider_id, model.id)
+                if identity in models:
+                    raise ValueError(f"duplicate catalog model: {model.identity}")
+                models[identity] = model
+        return ModelCatalogSnapshot(
+            providers=providers,
+            models=tuple(models[key] for key in sorted(models)),
+            revision=snapshots[0].revision,
+            source=snapshots[0].source,
+        )
+
+
+def _with_catalog_origin(
+    snapshot: ModelCatalogSnapshot,
+    name: str,
+) -> ModelCatalogSnapshot:
+    """Attach runtime-only source provenance to every raw catalog record."""
+
+    catalog = "models.dev" if name == "models_dev" else name
+    models = {
+        (model.provider_id, model.id): (
+            model
+            if model.catalog is not None and model.catalog_revision is not None
+            else replace(
+                model,
+                catalog=model.catalog or catalog,
+                catalog_revision=model.catalog_revision or snapshot.revision,
+            )
+        )
+        for model in snapshot.models
+    }
+    providers: dict[str, Provider] = {}
+    for provider_id, provider in snapshot.providers.items():
+        provider_models = {
+            model_id: models.get((provider_id, model_id), model)
+            for model_id, model in provider.models.items()
+        }
+        providers[provider_id] = (
+            provider
+            if provider.catalog is not None
+            and provider.catalog_revision is not None
+            and all(
+                provider_models[model_id] is model
+                for model_id, model in provider.models.items()
+            )
+            else replace(
+                provider,
+                models=provider_models,
+                catalog=provider.catalog or catalog,
+                catalog_revision=provider.catalog_revision or snapshot.revision,
+            )
+        )
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=tuple(
+            models[(model.provider_id, model.id)] for model in snapshot.models
+        ),
+        revision=snapshot.revision,
+        source=snapshot.source,
     )
 
 

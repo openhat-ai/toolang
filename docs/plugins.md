@@ -144,8 +144,8 @@ as external packages. The implementation packages are:
 - `toolang.plugin.toolsets.*`;
 - `toolang.plugin.channels.*`;
 - `toolang.plugin.sandboxes.*`;
-- `toolang.plugin.models` catalog implementations;
-- `toolang.plugin.models.adapters.*`.
+- `toolang.plugin.catalogs.*`;
+- `toolang.plugin.adapters.*`.
 
 Each entry point names one factory such as `create_toolset`, `create_channel`,
 `create_sandbox`, `create_models_dev_model_catalog`,

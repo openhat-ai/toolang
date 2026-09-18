@@ -13,7 +13,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
 from toolang.common.version import development_source
-from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
+from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import process as agents
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging

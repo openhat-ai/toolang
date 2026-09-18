@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from toolang.base.types.model import Model, Provider
-from toolang.plugin.models.adapters.chat_completions import (
+from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
-from toolang.plugin.models.adapters.generate_content import (
+from toolang.plugin.adapters.generate_content import (
     GenerateContentModelAdapter,
 )
-from toolang.plugin.models.adapters.messages import MessagesModelAdapter
-from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
+from toolang.plugin.adapters.messages import MessagesModelAdapter
+from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.config import ProviderConfig, configure_catalog_providers
 from toolang.plugin.models.provider_resolver import (
     env_is_ready,
