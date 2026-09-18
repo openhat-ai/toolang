@@ -8,7 +8,12 @@ import json
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import (
+    LOCAL_RUNTIME_EXTRA,
+    Model,
+    ModelCatalogSnapshot,
+    Provider,
+)
 
 
 def optional_string(value: object) -> str | None:
@@ -98,7 +103,7 @@ def local_snapshot(
         npm="@ai-sdk/openai-compatible",
         api=endpoint,
         models=by_id,
-        extra={"runtime": dict(provider_runtime)},
+        extra={LOCAL_RUNTIME_EXTRA: dict(provider_runtime)},
         local=True,
     )
     identity = json.dumps(
@@ -136,3 +141,21 @@ def replace_guest_loopback(value: str, environ: Mapping[str, str]) -> str:
     gateway_host = f"[{gateway}]" if ":" in gateway else gateway
     netloc = f"{gateway_host}:{port}" if port is not None else gateway_host
     return urlunsplit(parsed._replace(netloc=netloc))
+
+
+def resolve_local_endpoint(
+    endpoint: str | None,
+    *,
+    environ: Mapping[str, str],
+    env_name: str,
+    default_port: int,
+) -> str:
+    """Resolve one local runtime endpoint from config, environment, or loopback."""
+
+    value = endpoint or environ.get(env_name)
+    if value is None:
+        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
+        return f"http://{host}:{default_port}"
+    if endpoint is None:
+        value = replace_guest_loopback(value, environ)
+    return value.rstrip("/")

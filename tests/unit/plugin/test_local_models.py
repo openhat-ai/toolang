@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import logging
 from typing import cast
 
 import httpx
@@ -259,6 +260,48 @@ def test_explicit_local_catalog_endpoints_are_not_rewritten() -> None:
         )
         == "http://localhost:8080/v1"
     )
+
+
+def test_local_probes_distinguish_unreachable_from_invalid_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        ollama_models.httpx,
+        "AsyncClient",
+        _FakeClient(
+            gets={"http://ollama.test/api/tags": httpx.ConnectError("down")}
+        ).factory,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="toolang.plugin.catalogs.ollama"):
+        ollama = asyncio.run(
+            OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
+        )
+
+    runtime = cast(Mapping[str, object], ollama.providers["ollama"].extra["runtime"])
+    assert runtime["status"] == "offline"
+    assert "catalog.ollama.unreachable" in caplog.text
+
+    caplog.clear()
+    monkeypatch.setattr(
+        llama_cpp_models.httpx,
+        "AsyncClient",
+        _FakeClient(
+            gets={"http://llama.test/v1/models": ValueError("bad payload")}
+        ).factory,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="toolang.plugin.catalogs.llama_cpp"):
+        llama_cpp = asyncio.run(
+            LlamaCppModelCatalog({}, endpoint="http://llama.test/v1").snapshot()
+        )
+
+    runtime = cast(
+        Mapping[str, object], llama_cpp.providers["llama_cpp"].extra["runtime"]
+    )
+    assert runtime["status"] == "offline"
+    assert "catalog.llama_cpp.invalid_response" in caplog.text
 
 
 class _FakeResponse:

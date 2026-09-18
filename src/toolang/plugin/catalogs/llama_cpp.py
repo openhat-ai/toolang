@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import logging
 
 import httpx
 
 from toolang.base.protocols.model import ModelCatalog
-from toolang.base.types.model import Model, ModelCatalogSnapshot
+from toolang.base.types.model import (
+    LOCAL_RUNTIME_STATUS,
+    LOCAL_STATUS_OFFLINE,
+    LOCAL_STATUS_READY,
+    Model,
+    ModelCatalogSnapshot,
+)
 
 from ._local import (
     compact_mapping,
@@ -19,8 +26,10 @@ from ._local import (
     model_entries,
     optional_string,
     positive_int,
-    replace_guest_loopback,
+    resolve_local_endpoint,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,9 +58,18 @@ class LlamaCppModelCatalog(ModelCatalog):
                 props = await _optional_json(
                     client, f"{_llama_cpp_host(endpoint)}/props"
                 )
-        except (httpx.HTTPError, TypeError, ValueError):
-            entries = ()
-            props = {}
+        except httpx.HTTPError as exc:
+            logger.debug(
+                "catalog.llama_cpp.unreachable endpoint=%s error=%s",
+                endpoint,
+                type(exc).__name__,
+            )
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "catalog.llama_cpp.invalid_response endpoint=%s error=%s",
+                endpoint,
+                exc,
+            )
         models = tuple(
             _llama_cpp_model(
                 model_id,
@@ -64,7 +82,9 @@ class LlamaCppModelCatalog(ModelCatalog):
             {
                 "kind": "llama_cpp",
                 "endpoint": endpoint,
-                "status": "ready" if online else "offline",
+                LOCAL_RUNTIME_STATUS: (
+                    LOCAL_STATUS_READY if online else LOCAL_STATUS_OFFLINE
+                ),
                 "build_info": props.get("build_info"),
             }
         )
@@ -142,7 +162,15 @@ async def _optional_json(client: httpx.AsyncClient, url: str) -> dict[str, objec
         response = await client.get(url)
         response.raise_for_status()
         payload = response.json()
-    except (httpx.HTTPError, TypeError, ValueError):
+    except httpx.HTTPError as exc:
+        logger.debug(
+            "catalog.llama_cpp.props_unavailable url=%s error=%s",
+            url,
+            type(exc).__name__,
+        )
+        return {}
+    except (TypeError, ValueError) as exc:
+        logger.warning("catalog.llama_cpp.props_invalid url=%s error=%s", url, exc)
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -201,13 +229,12 @@ def _llama_cpp_description(meta: Mapping[str, object]) -> str:
 
 
 def _llama_cpp_endpoint(endpoint: str | None, environ: Mapping[str, str]) -> str:
-    value = endpoint or environ.get("LLAMA_CPP_HOST")
-    if value is None:
-        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
-        value = f"http://{host}:8080"
-    elif endpoint is None:
-        value = replace_guest_loopback(value, environ)
-    value = value.rstrip("/")
+    value = resolve_local_endpoint(
+        endpoint,
+        environ=environ,
+        env_name="LLAMA_CPP_HOST",
+        default_port=8080,
+    )
     return value if value.endswith("/v1") else f"{value}/v1"
 
 

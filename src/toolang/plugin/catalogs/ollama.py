@@ -5,11 +5,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import logging
 
 import httpx
 
 from toolang.base.protocols.model import ModelCatalog
-from toolang.base.types.model import Model, ModelCatalogSnapshot
+from toolang.base.types.model import (
+    LOCAL_RUNTIME_STATUS,
+    LOCAL_STATUS_OFFLINE,
+    LOCAL_STATUS_READY,
+    Model,
+    ModelCatalogSnapshot,
+)
 
 from ._local import (
     compact_mapping,
@@ -20,8 +27,10 @@ from ._local import (
     model_entries,
     optional_string,
     positive_int,
-    replace_guest_loopback,
+    resolve_local_endpoint,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +66,17 @@ class OllamaModelCatalog(ModelCatalog):
                         )
                     )
                 )
-        except (httpx.HTTPError, TypeError, ValueError):
+        except httpx.HTTPError as exc:
+            logger.debug(
+                "catalog.ollama.unreachable endpoint=%s error=%s",
+                host,
+                type(exc).__name__,
+            )
+            models = ()
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "catalog.ollama.invalid_response endpoint=%s error=%s", host, exc
+            )
             models = ()
         return local_snapshot(
             provider_id="ollama",
@@ -67,7 +86,9 @@ class OllamaModelCatalog(ModelCatalog):
             provider_runtime={
                 "kind": "ollama",
                 "endpoint": host,
-                "status": "ready" if online else "offline",
+                LOCAL_RUNTIME_STATUS: (
+                    LOCAL_STATUS_READY if online else LOCAL_STATUS_OFFLINE
+                ),
             },
         )
 
@@ -88,7 +109,15 @@ async def _ollama_model(
         payload = response.json()
         if isinstance(payload, dict):
             show = payload
-    except (httpx.HTTPError, TypeError, ValueError):
+    except httpx.HTTPError as exc:
+        logger.debug(
+            "catalog.ollama.show_failed model=%s error=%s",
+            model_id,
+            type(exc).__name__,
+        )
+        show = {}
+    except (TypeError, ValueError) as exc:
+        logger.warning("catalog.ollama.show_invalid model=%s error=%s", model_id, exc)
         show = {}
 
     tag_details = mapping(tag.get("details"))
@@ -199,11 +228,9 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 
 
 def _ollama_host(endpoint: str | None, environ: Mapping[str, str]) -> str:
-    value = endpoint or environ.get("OLLAMA_HOST")
-    if value is None:
-        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
-        value = f"http://{host}:11434"
-    elif endpoint is None:
-        value = replace_guest_loopback(value, environ)
-    value = value.rstrip("/")
-    return value.removesuffix("/v1")
+    return resolve_local_endpoint(
+        endpoint,
+        environ=environ,
+        env_name="OLLAMA_HOST",
+        default_port=11434,
+    ).removesuffix("/v1")

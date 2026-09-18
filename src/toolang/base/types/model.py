@@ -288,6 +288,12 @@ class ResolvedProvider:
         object.__setattr__(self, "env", tuple(normalized))
 
 
+LOCAL_RUNTIME_EXTRA = "runtime"
+LOCAL_RUNTIME_STATUS = "status"
+LOCAL_STATUS_READY = "ready"
+LOCAL_STATUS_OFFLINE = "offline"
+
+
 @dataclass(frozen=True, slots=True)
 class Provider:
     """One models.dev-compatible provider and its model catalog entries."""
@@ -339,6 +345,16 @@ class Provider:
         if self.doc is not None:
             data["doc"] = self.doc
         return data
+
+
+def local_runtime_status(provider: Provider) -> str | None:
+    """Return one provider's reported local runtime status, when present."""
+
+    runtime = provider.extra.get(LOCAL_RUNTIME_EXTRA)
+    if not isinstance(runtime, Mapping):
+        return None
+    status = cast(Mapping[str, object], runtime).get(LOCAL_RUNTIME_STATUS)
+    return status if isinstance(status, str) else None
 
 
 @dataclass(frozen=True, slots=True)
