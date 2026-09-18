@@ -58,7 +58,6 @@ def _chat_ui_palette(
         "queue.selected": f"bg:{surfaces.input_background}",
         "queue.selected.icon": "dim",
         "queue.selected.hint": "dim",
-        "queue.info": f"bg:{surfaces.queue_background} dim",
         "queue.hint": "dim",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"bg:{surfaces.input_background}",
@@ -272,7 +271,8 @@ class QueuePanel:
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
         """Left-align the count with its dim state hint at the entry inset."""
 
-        style = "class:queue" if self._has_focus() else "class:queue.info"
+        # The summary keeps normal text; only selection shows Queue focus.
+        style = "class:queue"
         left = min(_QUEUE_ENTRY_PADDING, width)
         available = max(0, width - left)
         hint = f"({self._title_hint()})"

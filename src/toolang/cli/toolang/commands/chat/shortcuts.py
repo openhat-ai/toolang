@@ -15,6 +15,7 @@ class ChatShortcut:
     summary: str
     optional_bindings: tuple[tuple[str, ...], ...] = ()
     aliases: tuple[str, ...] = ()
+    hint_label: str | None = None
 
     @property
     def help_label(self) -> str:
@@ -23,7 +24,8 @@ class ChatShortcut:
 
     def hint(self, action: str) -> str:
         """Keep inline hints short; list alternative keys only in full help."""
-        label = "sp" if self.label == "Space" else self.label.lower()
+        label = self.hint_label or self.label
+        label = "sp" if label == "Space" else label.lower()
         return f"{label} {action.lower()}"
 
 
@@ -84,6 +86,7 @@ QUEUE_STEER = ChatShortcut(
     STEER.bindings,
     STEER.label,
     "Steer with selected input",
+    hint_label="m-enter",
 )
 QUEUE_DELETE = ChatShortcut(
     "queue_delete",

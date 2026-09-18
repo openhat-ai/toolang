@@ -114,15 +114,15 @@ hints while preserving selection. The summary counts all items.
 
 Collapsed Queue occupies a single row: the left-aligned summary with its inline
 state hint, without extra padding rows. Hidden entries cannot be selected or
-mutated. In both modes, the summary indicates focus through normal text when
-focused and dim text when unfocused. Key hints stay dim. Queue's leading cell
-carries its accent bar, independent of focus and expansion.
+mutated. In both modes the summary keeps normal text; selection is the only
+focus cue. Key hints stay dim. Queue's leading cell carries its accent bar,
+independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
 Unfocused Queue shows only `(tab focus)`. Focused, collapsed Queue shows
 `(sp expand)`. Focused, expanded Queue shows `(sp collapse)` and
-`meta+enter steer · e edit · d delete` only on the
+`m-enter steer · e edit · d delete` only on the
 selected entry. These hints are dim. On narrow terminals entry previews
 truncate first, then the summary's state hint, keeping the count.
 Previews and summaries truncate by display cells.
@@ -133,7 +133,8 @@ selection; an empty queue disappears, restores Input focus, and resets the next
 non-empty queue to expanded.
 
 Inline hints use lowercase `key action` with dim styling, no brackets, and ` · `
-between actions. Space shortens to `sp`; chords retain `+`. Only the primary key
+between actions. Space shortens to `sp`, and Queue steering to `m-enter`; chords
+retain `+`. Only the primary key
 appears inline; `/keys` retains standard labels and aliases such as `d (Del)`.
 
 Flow headers also start in column zero and are followed by one blank line.

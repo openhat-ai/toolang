@@ -124,20 +124,16 @@ Queue occupies one row with the left-aligned summary and its inline state hint.
 Entry actions are disabled while collapsed. Input keeps normal typing and
 draft steering when focused.
 Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
-steering, and d or Del removal. Inline hints use dim lowercase `key action`
-without brackets, separated by ` · `; `sp` abbreviates Space. `/keys` retains
-standard labels and alternate keys in parentheses, such as `d (Del)`.
-Queue's summary reads `N queued` followed by one dim parenthesized state hint:
-`(tab focus)` while unfocused, `(sp collapse)` while focused and expanded, and
-`(sp expand)` while focused and collapsed. Expanded Queue provides ↑/↓ or
-Ctrl+P/Ctrl+N selection, e editing, Meta+Enter steering, and d or Del removal.
-The selected entry shows `meta+enter steer · e edit · d delete` at its right.
-Inline hints use dim lowercase `key action` without brackets; `sp` abbreviates
-Space. `/keys` retains standard labels and alternate keys in parentheses, such
-as `d (Del)`. On narrow terminals selected previews truncate first, then the
-summary's state hint, keeping the count. Queue indicates focus through its
-summary: normal text when focused and dim text when unfocused, in both modes.
-Its leading cell carries the accent bar and content never shifts.
+steering, and d or Del removal. Queue's summary reads `N queued` followed by one
+dim parenthesized state hint: `(tab focus)` while unfocused, `(sp collapse)`
+while focused and expanded, and `(sp expand)` while focused and collapsed. The
+selected entry shows `m-enter steer · e edit · d delete` at its right. Inline
+hints use dim lowercase `key action` without brackets; `sp` abbreviates Space
+and `m-enter` abbreviates Meta+Enter. `/keys` retains standard labels and
+alternate keys in parentheses, such as `d (Del)`. On narrow terminals selected
+previews truncate first, then the summary's state hint, keeping the count. Queue
+indicates focus only through its selection highlight; the summary always uses
+normal text. Its leading cell carries the accent bar and content never shifts.
 There is no separate header style.
 Input's accent stays cyan and Queue's stays magenta; Input's cursor hides while
 Queue has focus and returns to the preserved editing position afterward.

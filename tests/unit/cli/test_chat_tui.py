@@ -1597,7 +1597,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_the_summary_hint(
     assert selected.startswith("  ↳ 任务 preview")
     assert unselected.startswith("  ↳ 任务 preview")
     if focused:
-        hint = "meta+enter steer · e edit · d delete  "
+        hint = "m-enter steer · e edit · d delete  "
         assert selected.endswith(hint)
         assert selected[: selected.index(hint)].endswith("  ")
         assert selected[: selected.index(hint)].rstrip().endswith("…")
@@ -1793,7 +1793,7 @@ def test_chat_queue_panel_uses_a_full_width_window_and_distinct_background() -> 
     assert container.content.width == panel.width
     palette = widgets._chat_ui_palette()
     assert palette["queue"] == "bg:#121212"
-    assert palette["queue.info"] == "bg:#121212 dim"
+    assert "queue.info" not in palette
     assert palette["queue.selected"] == "bg:#1f1f1f"
     assert palette["queue.icon"] == palette["queue.selected.icon"] == "dim"
     assert palette["queue.selected.hint"] == "dim"
@@ -1823,7 +1823,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert lines[1].strip() == ""
     assert "queued input 3" in lines[2]
     assert "queued input 10" in lines[9]
-    assert lines[9].endswith("meta+enter steer · e edit · d delete  ")
+    assert lines[9].endswith("m-enter steer · e edit · d delete  ")
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
@@ -2340,7 +2340,7 @@ def test_chat_queue_focus_styles_respect_selection_padding(
             bottom = top + (4 if expanded else 0)
 
             summary = _cell_attrs(app, screen, top, lines[top].index("3 queued"))
-            assert summary.dim is not focused
+            assert not summary.dim
             assert summary.color == ""
             assert not summary.bold
             for row in range(top, bottom + 1):
@@ -2363,7 +2363,7 @@ def test_chat_queue_focus_styles_respect_selection_padding(
                     assert icon.color == body.color == ""
                 if selected:
                     assert lines[row].index("↳") == 2
-                    assert lines[row].endswith("meta+enter steer · e edit · d delete  ")
+                    assert lines[row].endswith("m-enter steer · e edit · d delete  ")
                     hints = _cell_attrs(app, screen, row, output.columns - 3)
                     assert hints.dim and hints.color == ""
             summary_hint = _cell_attrs(app, screen, top, lines[top].index("("))
@@ -2373,7 +2373,7 @@ def test_chat_queue_focus_styles_respect_selection_padding(
             assert _cell_attrs(app, screen, bottom + 1, 1).bgcolor == "1f1f1f"
             if not focused:
                 assert not any(
-                    "meta+enter steer" in line for line in lines[top : bottom + 1]
+                    "m-enter steer" in line for line in lines[top : bottom + 1]
                 )
 
     asyncio.run(exercise())
@@ -4451,8 +4451,9 @@ def test_chat_shortcuts_use_lowercase_inline_hints_without_changing_full_help() 
     assert shortcuts.SWITCH_AREA.hint("Input") == "tab input"
     assert shortcuts.QUEUE_TOGGLE.hint("Expand") == "sp expand"
     assert shortcuts.QUEUE_EDIT.hint("Edit") == "e edit"
-    assert shortcuts.QUEUE_STEER.hint("Steer") == "meta+enter steer"
+    assert shortcuts.QUEUE_STEER.hint("Steer") == "m-enter steer"
     assert shortcuts.QUEUE_DELETE.hint("Delete") == "d delete"
+    assert shortcuts.QUEUE_STEER.help_label == "Meta+Enter"
     assert shortcuts.QUEUE_DELETE.help_label == "d (Del)"
     assert shortcuts.SWITCH_AREA.help_label == "Tab (Shift+Tab)"
     assert shortcuts.CANCEL_RUN.help_label == "Esc Esc"

@@ -213,11 +213,11 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
             "1 queued",
             "sp collapse",
             "e edit",
-            "meta+enter steer",
+            "m-enter steer",
             "d delete",
         )
         assert "Traceback" not in focused
-        assert "meta+enter steer · e edit · d delete" in focused
+        assert "m-enter steer · e edit · d delete" in focused
         # Prompt Toolkit redraws only changed cells; force a full redraw to
         # read the summary and its inline hint as one contiguous row.
         redrawn = _wait_redrawn(session, "1 queued (sp collapse)")
@@ -245,7 +245,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"queued steer\r")
         session.wait_for("1 queued")
         session.send(b"\t")
-        session.wait_for("meta+enter steer")
+        session.wait_for("m-enter steer")
         session.send(b"\x1b\r")
         session.wait_for("will apply after the current step")
         session.send(b"second steer\x1b\rthird steer\x1b\r")
