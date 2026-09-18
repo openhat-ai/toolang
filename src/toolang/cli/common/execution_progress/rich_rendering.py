@@ -6,11 +6,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown
+from rich.markdown import (
+    CodeBlock,
+    Heading,
+    HorizontalRule,
+    ListItem,
+    Markdown,
+    TableElement,
+)
 from rich.rule import Rule
 from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax, SyntaxTheme, TokenType
+from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
@@ -96,6 +104,77 @@ class _ProgressCodeBlock(CodeBlock):
         )
 
 
+class _ProgressTableElement(TableElement):
+    """Fill the progress width and fold table cells.
+
+    Rich renders a Markdown table at its natural width and gives its columns the
+    default ``overflow="ellipsis"``: a cell token wider than its column is cut
+    and the remainder dropped, which silently hides streamed answer content. The
+    table is adjusted after Rich builds it, so this stays tied to Rich's table
+    options rather than duplicating its element assembly.
+    """
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        for renderable in super().__rich_console__(console, options):
+            if isinstance(renderable, Table):
+                renderable.expand = True
+                renderable.show_edge = False
+                for column in renderable.columns:
+                    column.overflow = "fold"
+            yield renderable
+
+
+class _ProgressListItem(ListItem):
+    """Start list markers at the progress row prefix.
+
+    Rich renders a marker as a three-cell field (``" • "`` for bullets, ``" 1 "``
+    for numbers) and shortens the item by the same amount, which leaves every
+    item one cell right of that prefix and wraps its content one cell early.
+    Two-cell fields give the cell back. Markers are emitted inline as segments,
+    so this mirrors ``ListItem.render_bullet`` and ``ListItem.render_number``
+    instead of adjusting a rendered object.
+    """
+
+    def render_bullet(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        render_options = options.update(width=options.max_width - 2)
+        lines = console.render_lines(self.elements, render_options, style=self.style)
+        bullet_style = console.get_style("markdown.item.bullet", default="none")
+        bullet = Segment("• ", bullet_style)
+        padding = Segment("  ", bullet_style)
+        new_line = Segment("\n")
+        for index, line in enumerate(lines):
+            yield bullet if index == 0 else padding
+            yield from line
+            yield new_line
+
+    def render_number(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+        number: int,
+        last_number: int,
+    ) -> RenderResult:
+        number_width = len(str(last_number)) + 1
+        render_options = options.update(width=options.max_width - number_width)
+        lines = console.render_lines(self.elements, render_options, style=self.style)
+        number_style = console.get_style("markdown.item.number", default="none")
+        new_line = Segment("\n")
+        padding = Segment(" " * number_width, number_style)
+        numeral = Segment(f"{number}".rjust(number_width - 1) + " ", number_style)
+        for index, line in enumerate(lines):
+            yield numeral if index == 0 else padding
+            yield from line
+            yield new_line
+
+
 class _ProgressMarkdown(Markdown):
     elements = {
         **Markdown.elements,
@@ -103,6 +182,8 @@ class _ProgressMarkdown(Markdown):
         "fence": _ProgressCodeBlock,
         "heading_open": _ProgressHeading,
         "hr": _ProgressHorizontalRule,
+        "list_item_open": _ProgressListItem,
+        "table_open": _ProgressTableElement,
     }
 
 
