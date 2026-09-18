@@ -5,16 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from string import Template
-from typing import cast
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
+    LOCAL_STATUS_OFFLINE,
     Model,
     ModelCatalogSnapshot,
     Provider,
     ResolvedEnv,
     ResolvedModel,
     ResolvedProvider,
+    local_runtime_status,
 )
 from toolang.plugin.models.config import ProviderConfig
 
@@ -316,10 +317,4 @@ def _env_value(environ: Mapping[str, str], name: str) -> bool:
 
 
 def _local_provider_offline(provider: Provider) -> bool:
-    if not provider.local:
-        return False
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )
+    return provider.local and local_runtime_status(provider) == LOCAL_STATUS_OFFLINE
