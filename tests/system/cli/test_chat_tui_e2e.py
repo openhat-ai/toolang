@@ -200,7 +200,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         session.send(b"queued follow-up\r")
         visible = session.wait_for(
             "1 item queued",
-            "[1] queued follow-up",
+            "↳ queued follow-up",
             "tab focus",
         )
         assert "Traceback" not in visible
@@ -209,7 +209,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
 
         session.send(b"\t")
         focused = session.wait_for(
-            "[1] queued follow-up",
+            "↳ queued follow-up",
             "1 item queued",
             "tab input",
             "sp collapse",
@@ -252,7 +252,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         assert "second steerthird steer" not in steers
         assert "  third steer" in steers
         session.send(b"queued follow-up\r")
-        _wait_redrawn(session, "[1] queued follow-up")
+        _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
         output = _wait_redrawn(session, "tab input")
         assert "queued follow-up" in output

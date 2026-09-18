@@ -103,22 +103,25 @@ groups Input, Queue, and global actions explicitly.
 
 A non-empty Queue appears expanded above Input without taking focus. It fills
 the terminal width and directly joins Input without a separator row. The areas
-retain distinct backgrounds. Expanded Queue has a centered summary at the
-top, up to eight one-line previews, and panel hints at the bottom right. There is
-no omitted-item count row. Short terminals show fewer entries to keep Input,
-status, summary, and panel hints visible. Entry numbers align with Input text
-and remain dim; body text stays normal. While focused, selection is shown only by Input's
-background, inset one cell on each side with another cell of padding inside
+retain distinct backgrounds. Queue accents its leading cell with Steer's
+magenta, so a left accent bar runs beside the title and entries much as Input's
+cyan accent frames the prompt. Expanded Queue has a left-aligned summary at
+the top, up to eight one-line previews, and panel hints at the bottom right.
+There is no omitted-item count row. Short terminals show fewer entries to keep
+Input, status, summary, and panel hints visible. Entry icons (`↳`) align with
+Input text and remain dim; body text stays normal. While focused, selection is
+shown only by Input's background, starting one cell after the accent and
+ending one cell before Queue's right edge, with another cell of padding inside
 each end. There is no selection marker. The selected entry reserves its right
-side for slightly brighter dim action hints, separated from the body by at least
-two cells. Entry and panel hints end two cells from Queue's right edge, both
-when expanded and when collapsed. The status bar insets its text by two cells on
-each side.
+side for slightly brighter dim action hints, separated from the body by at
+least two cells. Entry and panel hints end two cells from Queue's right edge,
+both when expanded and when collapsed. The status bar insets its text by two
+cells on each side.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
-Queue occupies one row with the centered summary and right-aligned panel hints.
+Queue occupies one row with the left-aligned summary and right-aligned panel hints.
 Entry actions are disabled while collapsed. Input keeps normal typing and
 draft steering when focused.
 Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
@@ -131,13 +134,13 @@ at the bottom right and `meta+enter steer · e edit · d delete` on the selected
 Frequent actions for the current state come first in each tier.
 On narrow terminals footer hints flow between complete actions, and selected
 previews truncate to reserve action hints. Collapsed hints omit actions that
-cannot fit beside the centered count, prioritizing expansion. Queue indicates
+cannot fit beside the left-aligned count, prioritizing expansion. Queue indicates
 focus through its summary: normal text when focused and dim text when unfocused,
-in both modes. Its outermost cells always use Queue's background without shifting
-content. Key hints stay dim, and truncation preserves their right padding.
+in both modes. Its leading cell carries the accent bar and content never shifts.
+Key hints stay dim, and truncation preserves their right padding.
 There is no separate header style.
-Input's accent stays cyan; its cursor hides while Queue has focus and returns
-to the preserved editing position afterward.
+Input's accent stays cyan and Queue's stays magenta; Input's cursor hides while
+Queue has focus and returns to the preserved editing position afterward.
 
 Editing does not overwrite an existing draft. Queue steering and
 blocked-state handling retain the item when the steer cannot be accepted.

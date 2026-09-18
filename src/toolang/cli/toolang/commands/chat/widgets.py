@@ -29,12 +29,16 @@ from . import shortcuts
 from .rendering import (
     ACCENT_CELL,
     RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
+    STEER_CONTROL_ACCENT_PROMPT_TOOLKIT,
 )
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ENTRIES = 8
+# Queue accents its leading cell like Input, reusing Steer's magenta.
+_QUEUE_ACCENT_WIDTH = 1
 _QUEUE_ENTRY_INSET = 1
 _QUEUE_ENTRY_PADDING = 1
+_QUEUE_ENTRY_ICON = "↳"
 _QUEUE_HINT_GAP = 2
 _QUEUE_HINT_INSET = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
@@ -50,9 +54,10 @@ def _chat_ui_palette(
     return {
         "": "",
         "queue": f"bg:{surfaces.queue_background}",
-        "queue.number": "dim",
+        "queue.accent": f"bg:{STEER_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "queue.icon": "dim",
         "queue.selected": f"bg:{surfaces.input_background}",
-        "queue.selected.number": "dim",
+        "queue.selected.icon": "dim",
         "queue.selected.hint": "dim",
         "queue.info": f"bg:{surfaces.queue_background} dim",
         "queue.hint": "dim",
@@ -144,7 +149,9 @@ class QueuePanel:
         width = self.width()
         if not self.get_items() or not width:
             return 0
-        return 2 + len(self._hint_lines(width)) if self.expanded else 1
+        if not self.expanded:
+            return 1
+        return 2 + len(self._hint_lines(width))
 
     def _entry_count(self, count: int, width: int) -> int:
         limit = MAX_QUEUE_ENTRIES
@@ -184,59 +191,58 @@ class QueuePanel:
         self._selected_index = min(max(self._selected_index, 0), count - 1)
         return True
 
+    @staticmethod
+    def _accent_cell() -> tuple[str, str]:
+        """Return the leading accent cell placed before queue content."""
+
+        return ("class:queue.accent", ACCENT_CELL)
+
     def _rows(
         self,
         items: Sequence[str],
         *,
         width: int,
     ) -> list[list[tuple[str, str]]]:
-        summary = self._summary_row(len(items), width=width)
+        content_width = max(0, width - _QUEUE_ACCENT_WIDTH)
+        rows = [
+            [self._accent_cell(), *self._summary_row(len(items), width=content_width)]
+        ]
         if not self.expanded:
-            return [summary]
+            return rows
         entry_count = self._entry_count(len(items), width)
         start = min(
             max(0, self._selected_index - entry_count + 1),
             max(0, len(items) - entry_count),
         )
         focused = self._has_focus()
-        rows = [
-            summary,
-            *(
-                self._entry_row(
-                    number=index + 1,
-                    source=items[index],
-                    width=width,
-                    selected=focused and index == self._selected_index,
-                )
-                for index in range(start, start + entry_count)
-            ),
-        ]
-        right_padding = " " * min(_QUEUE_HINT_INSET, width)
         rows.extend(
             [
-                (
-                    "class:queue.hint",
-                    " " * (width - get_cwidth(hint) - len(right_padding))
-                    + hint
-                    + right_padding,
-                )
+                self._accent_cell(),
+                *self._entry_row(
+                    source=items[index],
+                    width=content_width,
+                    selected=focused and index == self._selected_index,
+                ),
             ]
-            for hint in self._hint_lines(width)
+            for index in range(start, start + entry_count)
+        )
+        rows.extend(
+            self._hint_row(hint, width=width) for hint in self._hint_lines(width)
         )
         return rows
 
     def _entry_row(
-        self, *, number: int, source: str, width: int, selected: bool
+        self, *, source: str, width: int, selected: bool
     ) -> list[tuple[str, str]]:
-        """Lay out one inset highlight with numbered text and trailing actions."""
+        """Lay out one inset highlight with a dim icon and trailing actions."""
         style = "class:queue.selected" if selected else "class:queue"
-        # Use child styles so number/hint attributes retain the row background.
-        number_style = f"{style}.number"
+        # Use child styles so icon/hint attributes retain the row background.
+        icon_style = f"{style}.icon"
         hint_style = f"{style}.hint" if selected else style
-        inner_width = max(0, width - 2 * _QUEUE_ENTRY_INSET)
-        right_padding = " " * min(_QUEUE_ENTRY_PADDING, inner_width)
-        available = inner_width - len(right_padding)
-        prefix = " " * _QUEUE_ENTRY_PADDING + f"[{number}]"
+        right_inset = min(_QUEUE_ENTRY_INSET, width)
+        right_padding = " " * min(_QUEUE_ENTRY_PADDING, max(0, width - right_inset))
+        available = max(0, width - right_inset - len(right_padding))
+        prefix = " " * _QUEUE_ENTRY_PADDING + _QUEUE_ENTRY_ICON
         preview = " ".join(source.split())
         hint = ""
         if selected:
@@ -257,15 +263,26 @@ class QueuePanel:
         text = self._truncate(f"{prefix} {preview}", text_width)
         gap = " " * (available - get_cwidth(text) - get_cwidth(hint))
         return [
-            ("class:queue", " " * min(_QUEUE_ENTRY_INSET, width)),
-            (number_style, text[: len(prefix)]),
+            (icon_style, text[: len(prefix)]),
             (style, text[len(prefix) :] + gap),
             (hint_style, hint + right_padding),
-            (
-                "class:queue",
-                " " * min(_QUEUE_ENTRY_INSET, max(0, width - _QUEUE_ENTRY_INSET)),
-            ),
+            ("class:queue", " " * right_inset),
         ]
+
+    def _hint_row(self, hint: str, *, width: int) -> list[tuple[str, str]]:
+        """Right-align one panel hint, carving the accent from its left padding."""
+
+        right_padding = " " * min(_QUEUE_HINT_INSET, width)
+        leading = max(0, width - get_cwidth(hint) - len(right_padding))
+        if leading >= _QUEUE_ACCENT_WIDTH:
+            return [
+                self._accent_cell(),
+                (
+                    "class:queue.hint",
+                    " " * (leading - _QUEUE_ACCENT_WIDTH) + hint + right_padding,
+                ),
+            ]
+        return [("class:queue.hint", hint + right_padding)]
 
     def _hints(self) -> tuple[str, ...]:
         if not self._has_focus():
@@ -283,6 +300,7 @@ class QueuePanel:
 
     def _hint_lines(self, width: int) -> list[str]:
         """Fit panel actions into right-aligned rows below the entries."""
+
         available = max(0, width - _QUEUE_HINT_INSET)
         if not available:
             return [""]
@@ -299,11 +317,14 @@ class QueuePanel:
         return [*lines, current]
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
-        """Center on the full panel, reserving only the remaining right margin."""
-        summary = self._truncate(self._count_label(count), max(0, width - 2))
+        """Left-align the count at the entry icon inset, keeping hints right."""
+
+        summary = self._truncate(
+            self._count_label(count), max(0, width - _QUEUE_HINT_INSET)
+        )
         summary_width = get_cwidth(summary)
-        left = max(0, (width - summary_width) // 2)
-        right = width - left - summary_width
+        left = min(_QUEUE_ENTRY_PADDING, width)
+        right = max(0, width - left - summary_width)
         hint = ""
         if not self.expanded:
             for action in self._hints():
@@ -316,7 +337,7 @@ class QueuePanel:
         return [
             (
                 "class:queue" if self._has_focus() else "class:queue.info",
-                " " * left + summary + " " * (right - get_cwidth(hint)),
+                " " * left + summary + " " * max(0, right - get_cwidth(hint)),
             ),
             ("class:queue.hint", hint),
         ]
