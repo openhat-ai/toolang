@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown
+from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown, TableElement
 from rich.rule import Rule
 from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax, SyntaxTheme, TokenType
+from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
@@ -96,6 +98,40 @@ class _ProgressCodeBlock(CodeBlock):
         )
 
 
+class _ProgressTableElement(TableElement):
+    """Fill the progress width and fold cell overflow.
+
+    Rich builds Markdown tables without a width target: a table narrower than
+    the progress area stays narrow, and a column shorter than a cell token
+    truncates that token with an ellipsis and drops the remainder. Filling the
+    width and folding instead keeps streamed answer content intact.
+    """
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console, options
+        table = Table(
+            box=box.SIMPLE,
+            pad_edge=False,
+            style="markdown.table.border",
+            show_edge=False,
+            collapse_padding=True,
+            expand=True,
+        )
+        if self.header is not None and self.header.row is not None:
+            for column in self.header.row.cells:
+                heading = column.content.copy()
+                heading.stylize("markdown.table.header")
+                table.add_column(heading, overflow="fold")
+        if self.body is not None:
+            for row in self.body.rows:
+                table.add_row(*(element.content for element in row.cells))
+        yield table
+
+
 class _ProgressMarkdown(Markdown):
     elements = {
         **Markdown.elements,
@@ -103,6 +139,7 @@ class _ProgressMarkdown(Markdown):
         "fence": _ProgressCodeBlock,
         "heading_open": _ProgressHeading,
         "hr": _ProgressHorizontalRule,
+        "table_open": _ProgressTableElement,
     }
 
 
