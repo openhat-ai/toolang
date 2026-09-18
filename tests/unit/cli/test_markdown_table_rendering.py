@@ -20,6 +20,9 @@ WIDE_TABLE = (
     " selection | adapter name, api, env rules, ready |\n"
 )
 
+# One column keeps folded chunks adjacent in every rendered line, so the
+# whitespace-stripped text reconstructs the token. Neighbouring columns
+# interleave on shared lines, which would split it.
 FOLDING_TABLE = (
     "| producer |\n"
     "| --- |\n"
@@ -55,6 +58,8 @@ def test_wide_markdown_table_fills_the_progress_width():
 
 
 def test_markdown_table_has_no_padding_outside_its_columns():
+    # The box edges that Rich reserves per side would add a blank cell
+    # between the row prefix and the first column.
     text = _render(NARROW_TABLE, width=60)
     assert text.splitlines()[0].startswith(f"{PREFIX}layer")
 

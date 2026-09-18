@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown, TableElement
 from rich.rule import Rule
@@ -99,12 +98,13 @@ class _ProgressCodeBlock(CodeBlock):
 
 
 class _ProgressTableElement(TableElement):
-    """Fill the progress width and fold cell overflow.
+    """Fill the progress width and fold table cells.
 
-    Rich builds Markdown tables without a width target: a table narrower than
-    the progress area stays narrow, and a column shorter than a cell token
-    truncates that token with an ellipsis and drops the remainder. Filling the
-    width and folding instead keeps streamed answer content intact.
+    Rich renders a Markdown table at its natural width and gives its columns the
+    default ``overflow="ellipsis"``: a cell token wider than its column is cut
+    and the remainder dropped, which silently hides streamed answer content. The
+    table is adjusted after Rich builds it, so this stays tied to Rich's table
+    options rather than duplicating its element assembly.
     """
 
     def __rich_console__(
@@ -112,24 +112,13 @@ class _ProgressTableElement(TableElement):
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        del console, options
-        table = Table(
-            box=box.SIMPLE,
-            pad_edge=False,
-            style="markdown.table.border",
-            show_edge=False,
-            collapse_padding=True,
-            expand=True,
-        )
-        if self.header is not None and self.header.row is not None:
-            for column in self.header.row.cells:
-                heading = column.content.copy()
-                heading.stylize("markdown.table.header")
-                table.add_column(heading, overflow="fold")
-        if self.body is not None:
-            for row in self.body.rows:
-                table.add_row(*(element.content for element in row.cells))
-        yield table
+        for renderable in super().__rich_console__(console, options):
+            if isinstance(renderable, Table):
+                renderable.expand = True
+                renderable.show_edge = False
+                for column in renderable.columns:
+                    column.overflow = "fold"
+            yield renderable
 
 
 class _ProgressMarkdown(Markdown):
