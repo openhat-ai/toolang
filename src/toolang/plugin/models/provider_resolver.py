@@ -13,8 +13,7 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     Provider,
     ResolvedEnv,
-    ResolvedModel,
-    ResolvedProvider,
+    env_names,
     local_runtime_status,
 )
 from toolang.plugin.models.config import ProviderConfig
@@ -131,7 +130,7 @@ def resolve_provider(
         provider,
         names=(config.key_env,)
         if config is not None and config.key_env is not None
-        else provider.env,
+        else env_names(provider.env),
         provider_override=config is None or config.key_env is None,
     )
     ready = (
@@ -140,17 +139,19 @@ def resolve_provider(
         and env_is_ready(env, environ=environ)
         and not _local_provider_offline(provider)
     )
-    default = ResolvedProvider(
+    resolved_provider = replace(
+        provider,
+        env=env,
         adapter=adapter_name,
         api=api,
-        env=env,
         ready=ready,
+        resolved=None,
     )
     models = {
         model_id: _resolve_model(
             provider,
             model,
-            default=default,
+            default=resolved_provider,
             adapters=adapters,
             environ=environ,
             config=config,
@@ -160,7 +161,7 @@ def resolve_provider(
     return replace(
         provider,
         models=models,
-        resolved=default,
+        resolved=resolved_provider,
     )
 
 
@@ -168,7 +169,7 @@ def _resolve_model(
     provider: Provider,
     model: Model,
     *,
-    default: ResolvedProvider,
+    default: Provider,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
     config: ProviderConfig | None,
@@ -205,10 +206,12 @@ def _resolve_model(
         and not _local_provider_offline(provider)
     )
     return model.with_resolution(
-        ResolvedModel(
+        replace(
+            model,
             adapter=adapter_name,
             api=api,
             ready=ready,
+            resolved=None,
         )
     )
 

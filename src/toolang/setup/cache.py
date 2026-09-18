@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 from typing import cast
 
-from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo
+from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, env_names
 from toolang.common.cache import (
     CACHE_SCHEMA,
     canonical_value,
@@ -355,7 +355,11 @@ def environment_readiness(
 ) -> dict[str, bool]:
     """Return presence facts for catalog-declared environment inputs."""
 
-    names = {name for provider in snapshot.providers.values() for name in provider.env}
+    names = {
+        name
+        for provider in snapshot.providers.values()
+        for name in env_names(provider.env)
+    }
     return {name: bool(str(environ.get(name, "")).strip()) for name in sorted(names)}
 
 
