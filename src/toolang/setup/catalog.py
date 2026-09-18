@@ -17,12 +17,10 @@ from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import plugin_provenance
 from toolang.plugin.adapters.loading import load_model_adapters
 from toolang.plugin.catalogs.loading import load_model_catalogs
-from toolang.plugin.catalogs.models_dev.cache import (
-    CatalogSource,
-    ModelCatalogArtifactCache,
-    capture_catalog_source,
+from toolang.plugin.catalogs.models_dev.catalog import (
+    ModelCatalogSource,
+    ModelsDevModelCatalog,
 )
-from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.collections import (
     ModelCollection,
@@ -94,9 +92,8 @@ class _CatalogLoad:
     config_value: tuple[dict[str, object], ...]
     catalog_path: Path
     ordered: tuple[ModelCatalog, ...]
-    source: CatalogSource
+    source: ModelCatalogSource
     additional_snapshots: tuple[ModelCatalogSnapshot, ...]
-    artifact_cache: ModelCatalogArtifactCache
     context_cache: ModelProjectionCache
     plugin_provenance: tuple[dict[str, str | None], ...]
 
@@ -107,7 +104,7 @@ class _CatalogLoad:
     @property
     def catalog_revisions(self) -> tuple[tuple[str, str], ...]:
         return (
-            (self.ordered[0].name, self.source.digest),
+            (self.ordered[0].name, self.source.revision),
             *(
                 (catalog.name, snapshot.revision)
                 for catalog, snapshot in zip(
@@ -179,15 +176,9 @@ async def _prepare_catalog_load(
     )
     ordered = _load_ordered_catalogs(configs, envs, catalog_path=catalog_path)
     models_dev = ordered[0]
-    max_source_bytes = (
-        models_dev.max_bytes if isinstance(models_dev, ModelsDevModelCatalog) else None
-    )
-    _, source = await asyncio.to_thread(
-        capture_catalog_source,
-        catalog_path,
-        max_source_bytes=max_source_bytes,
-    )
-    artifact_cache = ModelCatalogArtifactCache(layout.root_model_cache)
+    if not isinstance(models_dev, ModelsDevModelCatalog):
+        raise RuntimeError("models_dev catalog plugin is not installed")
+    _, source = await asyncio.to_thread(models_dev.capture)
     context_cache = ModelProjectionCache(
         layout.home_model_cache if agent_context else layout.root_model_cache
     )
@@ -204,7 +195,6 @@ async def _prepare_catalog_load(
         ordered=ordered,
         source=source,
         additional_snapshots=additional_snapshots,
-        artifact_cache=artifact_cache,
         context_cache=context_cache,
         plugin_provenance=_model_plugin_provenance(),
     )
@@ -219,32 +209,12 @@ async def _materialize_catalog_inspection(
     configs = load.configs
     envs = load.envs
     config_value = load.config_value
-    catalog_path = load.catalog_path
     ordered = load.ordered
-    source = load.source
-    artifact_cache = load.artifact_cache
     context_cache = load.context_cache
     adapters = load_model_adapters(
         merge_plugin_configs(configs, family="model_adapter")
     )
-    models_dev = ordered[0]
-    static = await asyncio.to_thread(
-        artifact_cache.load_catalog,
-        source,
-        source_path=catalog_path,
-    )
-    if static is None:
-        static = await models_dev.snapshot()
-        if static.revision != source.digest:
-            raise ValueError("models_dev revision does not match its source")
-        try:
-            await asyncio.to_thread(
-                artifact_cache.store_catalog,
-                source=source,
-                snapshot=static,
-            )
-        except Exception:
-            logger.exception("catalog.static_cache_write_failed")
+    static = await asyncio.to_thread(load.source.snapshot)
     snapshots = (static, *load.additional_snapshots)
     merged = await MergedModelCatalog(
         tuple(
