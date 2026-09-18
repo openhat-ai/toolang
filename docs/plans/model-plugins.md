@@ -165,6 +165,14 @@ Facts the setup attaches once:
 only the catalog facts, so `too models --json` stays a raw catalog export and
 never leaks a resolved route, a secret, or a derived value.
 
+The row projection that `ModelInfo` used to carry dissolves into these fields:
+its `family`, `limit`, `cost`, `modalities`, `status`, `reasoning`,
+`reasoning_options`, `tool_call`, `temperature`, `structured_output`,
+`attachment`, `open_weights`, `release_date`, `last_updated`, `experimental`,
+`provider`, and `local` are already catalog fields, and its
+`resolved_api`/`resolved_ready` are the resolved route facts. Per-million
+prices are derived from `Model.cost` on read instead of stored again.
+
 ### Provider
 
 Catalog facts (`id`, `name`, `env`, `models`, `npm`, `adapter`, `api`, `doc`,
@@ -174,6 +182,22 @@ removed; those fields live directly on `Provider` and `Model`.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
+
+### Field collisions and how they resolve
+
+Folding the derived types into the records collides on three names. Each is
+resolved once, here, before the code moves.
+
+| Name | In the catalog record | In the derived type | Resolution |
+| --- | --- | --- | --- |
+| `api` | `Provider.api`: the raw catalog value, exported | `ResolvedProvider.api`: the effective base URL | keep both; the resolved facts stay in their own nested value |
+| `env` | `Provider.env`: the catalog's `tuple[str, ...]` of names | `ResolvedProvider.env`: the `ResolvedEnv` OR-of-AND rule | keep both; same nested value |
+| `scope` | `Model.local`: whether the record is local-only | `ModelInfo.scope` (`local`/`remote`) and `ModelTarget.scope` (provider scope) | `Model.scope` is the provider scope; local/remote derives from `Model.local` |
+
+Because `api` and `env` mean two different things on the provider, the resolved
+facts keep a nested value on `Provider` (today's `resolved`) rather than
+flattening into colliding field names. `Model` has no such collision, so its
+resolved route facts (`adapter`, `api`, `ready`) fold directly onto the record.
 
 ### Reasoning: capability, demand, effective control
 
@@ -352,6 +376,11 @@ The cache is internal to the setup. Its contract is only:
 7. Model capability keeps the catalog name `limit.output`; the run's demand and
    the call's effective allowance are different values and keep different names
    (`ModelRequest.max_output` and `ModelCall.max_output_tokens`).
+8. `api` and `env` keep both meanings: the catalog value stays on the record and
+   the resolved route rule stays in the nested provider value. `scope` names the
+   provider scope; local/remote derives from `Model.local`.
+9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
+   they derive from the catalog fields that already exist.
 
 ## Acceptance
 
