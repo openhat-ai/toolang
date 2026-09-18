@@ -199,28 +199,29 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
 
         session.send(b"queued follow-up\r")
         visible = session.wait_for(
-            "1 item queued",
-            "[1] queued follow-up",
-            "tab focus",
+            "1 queued",
+            "↳ queued follow-up",
+            "tab to focus",
         )
         assert "Traceback" not in visible
-        assert "sp collapse" not in visible
+        assert "expand/collapse" not in visible
         assert "e edit" not in visible
 
         session.send(b"\t")
         focused = session.wait_for(
-            "[1] queued follow-up",
-            "1 item queued",
-            "tab input",
-            "sp collapse",
-            "↑↓ select",
+            "↳ queued follow-up",
+            "1 queued",
+            "space to collapse",
             "e edit",
-            "meta+enter steer",
+            "m-enter steer",
             "d delete",
         )
         assert "Traceback" not in focused
-        assert "meta+enter steer · e edit · d delete" in focused
-        assert "↑↓ select · sp collapse · tab input" in focused
+        assert "m-enter steer · e edit · d delete" in focused
+        # Prompt Toolkit redraws only changed cells; force a full redraw to
+        # read the summary and its inline hint as one contiguous row.
+        redrawn = _wait_redrawn(session, "1 queued (space to collapse)")
+        assert "1 queued (space to collapse)" in redrawn
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
@@ -242,9 +243,9 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"start run\r")
         session.wait_for("Thinking...")
         session.send(b"queued steer\r")
-        session.wait_for("1 item queued")
+        session.wait_for("1 queued")
         session.send(b"\t")
-        session.wait_for("meta+enter steer")
+        session.wait_for("m-enter steer")
         session.send(b"\x1b\r")
         session.wait_for("will apply after the current step")
         session.send(b"second steer\x1b\rthird steer\x1b\r")
@@ -252,11 +253,11 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         assert "second steerthird steer" not in steers
         assert "  third steer" in steers
         session.send(b"queued follow-up\r")
-        _wait_redrawn(session, "[1] queued follow-up")
+        _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
-        output = _wait_redrawn(session, "tab input")
+        output = _wait_redrawn(session, "(space to collapse)")
         assert "queued follow-up" in output
-        assert "sp collapse" in output
+        assert "space to collapse" in output
         assert "Window too small" not in output
         (tmp_path / "release-model").touch()
         output = session.wait_for("succeeded")

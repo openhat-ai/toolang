@@ -999,7 +999,7 @@ class ChatTuiApp:
             self.status_bar.set_error(self.submission_blocked)
             return False
         if self.active_run_id is None:
-            self.status_bar.set_error("Start a run before steering")
+            self.status_bar.set_error("No active run to steer")
             return False
         self.status_bar.clear_transient_error()
         run_id = self.active_run_id
