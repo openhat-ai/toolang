@@ -195,6 +195,9 @@ The resolver applies:
 
 - explicit provider configuration before catalog `api` before the adapter's
   protocol default API;
+- a provider-declared `adapter` from catalogs that are not models.dev records,
+  such as local runtimes and core route configuration, which takes precedence
+  over the `npm` map;
 - a small maintained `npm`-to-protocol map, including the major native packages
   whose services expose one of the built-in wire protocols;
 - environment availability rules;

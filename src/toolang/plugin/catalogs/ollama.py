@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 
@@ -18,15 +18,19 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
 )
 
-from ._local import (
+from toolang.plugin.values import (
     compact_mapping,
+    mapping,
+    optional_int,
+    optional_text,
+    string_tuple,
+)
+
+from ._local import (
     config_environ,
     config_timeout,
     local_snapshot,
-    mapping,
     model_entries,
-    optional_string,
-    positive_int,
     resolve_local_endpoint,
 )
 
@@ -123,14 +127,14 @@ async def _ollama_model(
     tag_details = mapping(tag.get("details"))
     show_details = mapping(show.get("details"))
     details = {**tag_details, **show_details}
-    capabilities = _string_tuple(show.get("capabilities"))
+    capabilities = string_tuple(show.get("capabilities"))
     capability_set = {value.lower() for value in capabilities}
     model_info = mapping(show.get("model_info"))
-    family = optional_string(details.get("family"))
+    family = optional_text(details.get("family"))
     context = _ollama_context(model_info, family=family)
     input_modalities = _ollama_modalities(capability_set)
     completion = "completion" in capability_set
-    modified_at = optional_string(show.get("modified_at")) or optional_string(
+    modified_at = optional_text(show.get("modified_at")) or optional_text(
         tag.get("modified_at")
     )
     runtime = compact_mapping(
@@ -174,7 +178,7 @@ def create_ollama_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
 
     return OllamaModelCatalog(
         config_environ(config),
-        endpoint=optional_string(config.get("endpoint")),
+        endpoint=optional_text(config.get("endpoint")),
         timeout=config_timeout(config),
     )
 
@@ -183,14 +187,14 @@ def _ollama_context(
     model_info: Mapping[str, object], *, family: str | None
 ) -> int | None:
     if family is not None:
-        exact = positive_int(model_info.get(f"{family}.context_length"))
+        exact = optional_int(model_info.get(f"{family}.context_length"), minimum=1)
         if exact is not None:
             return exact
     values = [
         value
         for key, raw in model_info.items()
         if str(key).endswith(".context_length")
-        for value in (positive_int(raw),)
+        for value in (optional_int(raw, minimum=1),)
         if value is not None
     ]
     return max(values, default=None)
@@ -212,19 +216,11 @@ def _ollama_description(details: Mapping[str, object]) -> str:
     attributes = [
         value
         for key in ("parameter_size", "quantization_level", "format")
-        for value in (optional_string(details.get(key)),)
+        for value in (optional_text(details.get(key)),)
         if value is not None
     ]
     suffix = f" ({', '.join(attributes)})" if attributes else ""
     return f"Local Ollama model{suffix}."
-
-
-def _string_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return ()
-    return tuple(
-        item.strip() for item in value if isinstance(item, str) and item.strip()
-    )
 
 
 def _ollama_host(endpoint: str | None, environ: Mapping[str, str]) -> str:

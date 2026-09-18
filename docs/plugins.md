@@ -116,8 +116,9 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 Model catalog plugins return immutable provider/model snapshots. Static and
 local discovery use the same models.dev-compatible `Provider` and `Model`
-types. Catalog plugins do not execute model calls or install packages named by
-catalog metadata.
+types, but only models.dev records carry an `npm` package; every other source
+declares its protocol through `Provider.adapter`. Catalog plugins do not
+execute model calls or install packages named by catalog metadata.
 
 ### Model Adapter
 

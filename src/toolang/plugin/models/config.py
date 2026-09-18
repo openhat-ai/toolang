@@ -36,8 +36,8 @@ def configure_catalog_providers(
             id=provider_id,
             name=provider_id,
             env=(),
-            npm="@ai-sdk/openai-compatible",
             models={},
+            adapter="chat_completions",
         )
     configured.setdefault(
         "custom",
@@ -45,8 +45,8 @@ def configure_catalog_providers(
             id="custom",
             name="Custom",
             env=(),
-            npm="@ai-sdk/openai-compatible",
             models={},
+            adapter="chat_completions",
         ),
     )
     return configured

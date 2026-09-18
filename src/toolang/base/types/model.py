@@ -296,13 +296,18 @@ LOCAL_STATUS_OFFLINE = "offline"
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """One models.dev-compatible provider and its model catalog entries."""
+    """One models.dev-compatible provider and its model catalog entries.
+
+    `npm` is the models.dev protocol signal. A catalog that is not a models.dev
+    record declares its protocol in `adapter` instead.
+    """
 
     id: str
     name: str
     env: tuple[str, ...]
-    npm: str
     models: Mapping[str, Model]
+    npm: str | None = None
+    adapter: str | None = None
     api: str | None = None
     doc: str | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
@@ -312,8 +317,10 @@ class Provider:
     resolved: ResolvedProvider | None = None
 
     def __post_init__(self) -> None:
-        if not self.id or not self.name or not self.npm:
-            raise ValueError("provider id, name, and npm are required")
+        if not self.id or not self.name:
+            raise ValueError("provider id and name are required")
+        if not self.npm and not self.adapter:
+            raise ValueError("provider npm or adapter is required")
         normalized = dict(self.models)
         if any(key != model.id for key, model in normalized.items()):
             raise ValueError(f"provider {self.id!r} model keys must match model ids")
@@ -333,13 +340,14 @@ class Provider:
                 "id": self.id,
                 "name": self.name,
                 "env": list(self.env),
-                "npm": self.npm,
                 "models": {
                     key: model.to_data()
                     for key, model in sorted((models or self.models).items())
                 },
             }
         )
+        if self.npm is not None:
+            data["npm"] = self.npm
         if self.api is not None:
             data["api"] = self.api
         if self.doc is not None:

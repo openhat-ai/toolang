@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
+from toolang.plugin import values
+
 
 def field(value: object, name: str) -> object:
     """Read one field from either a decoded object or SDK response value."""
@@ -20,19 +22,13 @@ def field(value: object, name: str) -> object:
 def optional_int(value: object, name: str) -> int | None:
     """Read one non-negative integer field."""
 
-    raw = field(value, name)
-    return (
-        raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
-    )
+    return values.optional_int(field(value, name), minimum=0)
 
 
 def optional_text(value: object, name: str) -> str | None:
     """Read one non-empty text field."""
 
-    raw = field(value, name)
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    return raw.strip()
+    return values.optional_text(field(value, name))
 
 
 def optional_decimal(value: object, name: str) -> Decimal | None:

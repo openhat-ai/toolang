@@ -37,10 +37,29 @@ _MODEL_FIELDS = frozenset(
 )
 
 
-def parse_model_catalog_data(data: object) -> dict[str, Provider]:
+def parse_model_catalog_data(
+    data: object,
+    *,
+    catalog: str | None = None,
+    catalog_revision: str | None = None,
+) -> dict[str, Provider]:
     """Validate parsed JSON and return typed providers."""
 
-    return _parse_model_catalog_data(data)
+    data = _provider_map_from_catalog_data(data)
+    providers: dict[str, Provider] = {}
+    for raw_provider_id, raw_provider in data.items():
+        if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
+            raise TypeError("model catalog provider keys must be non-empty strings")
+        provider_id = raw_provider_id.strip()
+        if not isinstance(raw_provider, Mapping):
+            raise TypeError(f"provider {provider_id!r} must be an object")
+        providers[provider_id] = _parse_provider(
+            provider_id,
+            cast(Mapping[str, object], raw_provider),
+            catalog=catalog,
+            catalog_revision=catalog_revision,
+        )
+    return providers
 
 
 def model_catalog_snapshot_from_data(
@@ -52,7 +71,7 @@ def model_catalog_snapshot_from_data(
 ) -> ModelCatalogSnapshot:
     """Validate normalized catalog data and rebuild one immutable snapshot."""
 
-    providers = _parse_model_catalog_data(
+    providers = parse_model_catalog_data(
         data,
         catalog=catalog,
         catalog_revision=revision,
@@ -69,29 +88,6 @@ def model_catalog_snapshot_from_data(
         revision=revision,
         source=source,
     )
-
-
-def _parse_model_catalog_data(
-    data: object,
-    *,
-    catalog: str | None = None,
-    catalog_revision: str | None = None,
-) -> dict[str, Provider]:
-    data = _provider_map_from_catalog_data(data)
-    providers: dict[str, Provider] = {}
-    for raw_provider_id, raw_provider in data.items():
-        if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
-            raise TypeError("model catalog provider keys must be non-empty strings")
-        provider_id = raw_provider_id.strip()
-        if not isinstance(raw_provider, Mapping):
-            raise TypeError(f"provider {provider_id!r} must be an object")
-        providers[provider_id] = _parse_provider(
-            provider_id,
-            cast(Mapping[str, object], raw_provider),
-            catalog=catalog,
-            catalog_revision=catalog_revision,
-        )
-    return providers
 
 
 def _provider_map_from_catalog_data(data: object) -> Mapping[object, object]:
