@@ -159,14 +159,15 @@ Catalog facts, verbatim and exportable: `provider_id`, `id`, `name`,
 (`ModelCatalogSnapshot.local`), and the setup attaches that property to every
 record it publishes; a record never declares it for itself.
 
-The setup produces a resolved instance of the same record with these filled in:
+A resolved model is an *instance*, not a field: the setup produces another
+`Model` with the effective protocol route filled in (`adapter`, `api`, `ready`)
+after configuration and policy are applied. The type is the same, so a field
+keeps one name across the catalog instance and the resolved instance, and
+nothing in the record points at the resolved instance.
 
-- selection: `ref` (`provider/id`), `selectors`, `scope`, `tags`;
-- connection: `adapter`, `api`, `api_key`, `headers`, `options`, `ready`;
-- capability: `reasoning_controls`.
-
-`Model.resolved: Model | None` holds that instance, and a resolved instance
-never carries its own `resolved`.
+The request and the call do not need `adapter`, `api`, or `ready`: a request
+names the model by `ref` and carries parameters, and the call carries content
+plus effective controls.
 
 `available` is `ready`; there is no second availability flag. `to_data()` emits
 only the catalog facts, so `too models --json` stays a raw catalog export and
@@ -182,44 +183,64 @@ prices are derived from `Model.cost` on read instead of stored again.
 
 ### Provider
 
-One definition, two instances. The catalog instance carries `id`, `name`, `env`,
-`models`, `npm`, `adapter`, `api`, `doc`, `extra`, `local`, `catalog`, and
-`catalog_revision`. The resolved instance, held in `Provider.resolved: Provider
-| None`, carries the same field names with resolved values: the effective
-`adapter`, the effective `api`, the normalized `env` rule, and `ready`.
+One definition, two instances, and no `resolved` field.
+
+The catalog instance describes how to talk to the provider, because that is
+provider data: `id`, `name`, `env`, `api`, `headers`, `options`, `npm`,
+`adapter`, `models`, `doc`, `extra`, `local`, `catalog`, `catalog_revision`.
+
+The resolved instance is another `Provider` with the effective values under the
+same names: the `api` a call must use, the effective `adapter`, the normalized
+`env` rule, the merged `headers` and `options`, and `ready`. Configuration
+overrides are applied while producing that instance.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
 
+### Fields that are not model data
+
+These do not belong to `Model`, `ModelRequest`, or `ModelCall`, and are not
+reintroduced under another name:
+
+| Field | Where it comes from | Resolution |
+| --- | --- | --- |
+| `scope` | alias or provider configuration, or inferred from the endpoint | not model data; the alias and the provider configuration keep what they need |
+| `tags` | `ModelAlias.tags` only | not model data; it stays on the alias |
+| `selectors` | composed from `id`, `identity`, `name`, `family` | a query index, computed where the query row is built |
+| `streaming` | today a constant `True` | not model data; whether to stream is an execution and adapter decision |
+| `mode` | a selector for the request body and headers declared under `Model.experimental["modes"]` | no catalog, configuration, or documentation declares or sets one, and only a unit test exercises it, so it is removed |
+| `api_key` | selected from the environment | never stored on a record; the adapter reads the credential names a provider declares from the environment it is given, as it does today |
+
 ### Field collisions and how they resolve
 
-A name that means something in the catalog and something else after resolution
-is handled by the two-instance rule rather than by inventing a second name: the
-resolved instance carries the resolved value under the same field.
+Two questions stay separate: what the catalog says, and what a call must use.
+They are the same field on two instances of the same type, so no second name is
+invented and no record points at the other instance.
 
 | Name | Catalog instance | Resolved instance |
 | --- | --- | --- |
-| `api` | the catalog value, exported as-is | the effective base URL for a call |
-| `env` | the catalog's name rule | the normalized OR-of-AND rule used for readiness |
-| `adapter` | a declared protocol, for sources that are not models.dev records | the effective adapter |
+| `api` | the catalog value | the effective base URL for a call |
+| `env` | the catalog's names | the normalized OR-of-AND rule used for readiness |
+| `adapter` | a declared protocol | the effective adapter |
+| `headers`, `options` | the catalog's communication data | merged with configuration and alias overrides |
 | `ready` | unset | the computed readiness |
-| `scope` | provider scope when the source declares one | provider scope |
 | `local` | never; it is the catalog's own property | attached from the catalog |
 
-`scope` names the provider scope. Whether a model is local or remote derives
-from `Model.local`, which the setup attaches from the declaring catalog, so no
-second name is needed and no catalog has to invent the field.
+Whether a model is local or remote derives from `Model.local`, which the setup
+attaches from the declaring catalog.
 
-The catalog instance is what `to_data()` exports, so `--json` never emits a
-resolved value: `to_data()` does not read `resolved`.
+Export uses the catalog instances, so `--json` stays a raw catalog projection
+and never shows an effective route. Inspection keeps the merged catalog
+instances it loaded and renders selection and availability from the resolved
+ones.
 
 ### Which api a call uses
 
 Resolution picks one effective api, in this order: explicit provider
 configuration, then the catalog's `api`, then the adapter's own `default_api`.
-The winner is supplied with the resolved model, and that is the api the adapter
-must use when it sends a request. `ModelAdapter.default_api` is resolution
-input only; it is never consulted while building a request.
+The winner is written on the resolved provider instance, and that is the api the
+adapter must use when it sends a request. `ModelAdapter.default_api` is
+resolution input only; it is never consulted while building a request.
 
 ### Reasoning: capability, demand, effective control
 
@@ -381,10 +402,10 @@ The cache is internal to the setup. Its contract is only:
 
 ### Data decisions
 
-1. Keep one definition per record. `resolved` is a field of that same
-   definition (`Provider.resolved: Provider | None`,
-   `Model.resolved: Model | None`), so there are two instances of one type
-   instead of a raw type plus a `Resolved*` type.
+1. Keep one definition per record. Resolution produces a second *instance* of
+   the same type, never a `resolved` field and never a `Resolved*` type: the
+   catalog instance is what a plugin produced, and the resolved instance is what
+   the setup applied configuration and policy to.
 2. Keep `Provider` on the setup. Inspection reads it from the setup instead of
    re-running resolution.
 3. Keep `api_key` on the model state in setup memory only; `to_data()` and the
@@ -399,15 +420,19 @@ The cache is internal to the setup. Its contract is only:
 7. Model capability keeps the catalog name `limit.output`; the run's demand and
    the call's effective allowance are different values and keep different names
    (`ModelRequest.max_output` and `ModelCall.max_output_tokens`).
-8. A catalog value and its resolved counterpart share one field name across the
-   two instances. `scope` names the provider scope; local/remote derives from
-   `Model.local`. The adapter uses the api supplied with the resolved model;
-   its own `default_api` only feeds resolution.
+8. A catalog value and its effective counterpart share one field name across
+   the two instances. The adapter uses the api on the resolved provider; its own
+   `default_api` only feeds resolution.
 9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
    they derive from the catalog fields that already exist.
 10. `local` belongs to the catalog, not to a record. The catalog declares it on
     its snapshot and the setup attaches it to the published providers and
     models.
+11. `scope`, `tags`, `selectors`, `streaming`, and `mode` are not model,
+    request, or call data; each is dropped, moved to its owner, or computed
+    where it is used.
+12. `api_key` is never a record field. Credentials stay with the adapter, which
+    reads the environment names a provider declares.
 
 ## Acceptance
 
