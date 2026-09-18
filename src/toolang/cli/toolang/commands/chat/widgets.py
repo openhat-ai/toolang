@@ -39,6 +39,9 @@ _QUEUE_HINT_GAP = 2
 _QUEUE_HINT_INSET = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
 _INPUT_PLACEHOLDER = "Ask or describe a task"
+# The status bar insets its content on each side so its text lines up with the
+# other chat surfaces; the inset cells stay blank.
+_STATUS_INSET = "  "
 
 
 def _chat_ui_palette(
@@ -718,24 +721,47 @@ class StatusBar:
         self._elapsed_seconds = elapsed_seconds
         return True
 
+    def _status_insets(self, *, leading: bool = True) -> tuple[str, str, int]:
+        """Return the inset cells and the width left for status content.
+
+        An error message keeps its marker in the first column, so it drops the
+        leading inset. A terminal too narrow for the insets drops them rather
+        than overflowing.
+        """
+
+        left_cell = _STATUS_INSET if leading else ""
+        inset_width = get_cwidth(left_cell) + get_cwidth(_STATUS_INSET)
+        terminal_width = self._terminal_width()
+        if terminal_width > inset_width:
+            return left_cell, _STATUS_INSET, terminal_width - inset_width
+        return "", "", terminal_width
+
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
             marker = "!"
-            terminal_width = self._terminal_width()
-            remaining_width = max(0, terminal_width - get_cwidth(marker))
+            left_cell, right_cell, body_width = self._status_insets(leading=False)
+            remaining_width = max(0, body_width - get_cwidth(marker))
             detail = " ".join(self.error_message.split())
             message = (
                 f" {truncate(detail, remaining_width - 1)}" if remaining_width else ""
             )
             padding = " " * max(
                 0,
-                terminal_width - get_cwidth(f"{marker}{message}"),
+                body_width - get_cwidth(f"{marker}{message}"),
             )
-            return [
-                ("class:status.error.marker", marker),
-                ("class:status.error", message),
-                ("class:status", padding),
-            ]
+            cells: list[tuple[str, str]] = (
+                [("class:status", left_cell)] if left_cell else []
+            )
+            cells.extend(
+                [
+                    ("class:status.error.marker", marker),
+                    ("class:status.error", message),
+                    ("class:status", padding),
+                ]
+            )
+            if right_cell:
+                cells.append(("class:status", right_cell))
+            return cells
         displayed_runnable = _chat_runnable_label(
             self.active_runnable_label or self.runnable_label
             if self.running
@@ -752,7 +778,7 @@ class StatusBar:
             if self._elapsed_seconds >= 1
             else "running"
         )
-        terminal_width = self._terminal_width()
+        left_cell, right_cell, body_width = self._status_insets()
         runnable_width = get_cwidth(displayed_runnable)
         default_width = get_cwidth(default_runnable or "")
         model_width = get_cwidth(self.model_label)
@@ -761,7 +787,7 @@ class StatusBar:
         fixed_width = activity_width + 1 + (3 if default_runnable else 0)
         overflow = max(
             0,
-            fixed_width + runnable_width + default_width + model_width - terminal_width,
+            fixed_width + runnable_width + default_width + model_width - body_width,
         )
         fitted_default_width, overflow = _reduce_status_width(default_width, overflow)
         fitted_runnable_width, overflow = _reduce_status_width(runnable_width, overflow)
@@ -802,9 +828,10 @@ class StatusBar:
         )
         padding = max(
             gap_width,
-            terminal_width - used - right_width,
+            body_width - used - right_width,
         )
         result = [
+            ("class:status", left_cell),
             *segments,
             ("class:status", " " * padding),
         ]
@@ -816,6 +843,7 @@ class StatusBar:
                 ]
             )
         result.append(("class:status", model_label))
+        result.append(("class:status", right_cell))
         return result
 
     @staticmethod

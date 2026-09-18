@@ -72,8 +72,9 @@ records it in input history and clears the unchanged draft. Ctrl+J inserts a
 newline, as does Shift+Enter when the terminal exposes it distinctly.
 
 Each submitted control keeps one blank row above and below its complete message,
-with two-cell text insets. Root input bars fill the terminal width and show the
-submitted runnable, model, and reasoning value in their bottom-right
+with two-cell text insets. Each bar accents the first cell of its first message
+line. Root input bars fill the terminal width and show the submitted
+runnable, model, and reasoning value in their bottom-right
 padding, for example `agic:research · openai/gpt-5 · high`. This is the request
 snapshot, including queued overrides; later default changes do not alter it.
 Without a request model, the label reads `model unspecified`. Otherwise, the
@@ -81,7 +82,7 @@ corner shows the requested effort or token budget, or `auto` when the request
 has no reasoning override. It reads the submission snapshot without querying
 model metadata or persisted records.
 
-Steers retain independent purple bars. A single live `•` line below them shows
+Steers retain independent magenta-accented bars. A single live `•` line below them shows
 how many are sending or waiting to apply after the current step (or waiting for
 the next model call when no step is active). A blank row above and below separates
 this explanation from the bars and Queue; very short viewports prioritize the
@@ -90,7 +91,8 @@ references determine adoption. Adopted bars move into history
 without extra labels or success messages. If a run ends with a steer confirmed
 unapplied, only that bar's bottom-right padding says `not applied`. Uncertain
 delivery uses existing error feedback without asserting non-adoption. Steer
-accents remain unchanged across states. The status bar remains edge-aligned.
+rule colours remain unchanged across states. The status bar insets its text by two
+cells on each side so it lines up with the areas above it.
 
 Keyboard controls replace `/queue`, `/q`, `/steer`, and `/s`; those names are
 unregistered. Esc Esc, Ctrl+C, and Ctrl+D apply only while Input is focused.
@@ -110,7 +112,8 @@ background, inset one cell on each side with another cell of padding inside
 each end. There is no selection marker. The selected entry reserves its right
 side for slightly brighter dim action hints, separated from the body by at least
 two cells. Entry and panel hints end two cells from Queue's right edge, both
-when expanded and when collapsed. The status bar remains edge-aligned.
+when expanded and when collapsed. The status bar insets its text by two cells on
+each side.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
@@ -395,10 +398,10 @@ submission-safety diagnostics are persistent: they survive edits, command
 results, and setting refreshes until the corresponding recovery state or Chat
 restart. Persistent diagnostics take precedence over transient ones.
 
-Status diagnostics occupy one physical line, use a visible `!` marker, and are
-elided at the terminal edge. Once a runnable input is accepted, its terminal
-diagnostics and status summaries belong to the run and are finalized through
-native events.
+Status diagnostics occupy one physical line, put a visible `!` marker in the first
+column, and are elided at the terminal edge. Once a runnable input is accepted,
+its terminal diagnostics and status summaries belong to the run and are finalized
+through native events.
 
 A submitted slash command likewise owns an immutable scrollback interaction.
 Its summary states the concrete effect or result without a generic `Success:`
