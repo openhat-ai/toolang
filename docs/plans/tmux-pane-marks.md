@@ -1,6 +1,8 @@
 # Tmux Pane Marks
 
-Status: Approved for implementation on 2026-09-16.
+Status: Approved for implementation on 2026-09-16; amended 2026-09-19 so the thread
+title is published as soon as its founding run is accepted, not only when that run
+finishes.
 
 ## Goal
 
@@ -12,7 +14,7 @@ Outside tmux it is a silent no-op and standalone behaviour is unchanged.
 | --- | --- | --- |
 | `@toolang_agent` | agent name (`AgentLayout.name`) | chat start |
 | `@toolang_thread_id` | full thread id, e.g. `term_6xp42qxg` | chat start with `--thread`, otherwise when the thread is created |
-| `@toolang_thread_title` | thread title, single line, at most 60 display columns | chat start for a thread that already has runs, otherwise once the run that created the thread finishes |
+| `@toolang_thread_title` | thread title, single line, at most 60 display columns | chat start for a thread that already has runs, otherwise once the run that created the thread is accepted |
 
 ## Success Criteria
 
@@ -77,8 +79,9 @@ nothing. Naming rules for sessions that toolang itself creates belong to the fol
 6. **Lifecycle** — every write is idempotent and compared against the last written value:
    - start: `agent`; `thread_id` when `--thread` was given; `title` only when that thread
      already has runs;
-   - first submit: `thread_id` immediately after `create_thread()`; `title` once the run
-     that created the thread has finished;
+   - first submit: `thread_id` immediately after `create_thread()`; `title` as soon as the
+     run that created the thread is accepted (its input supplies the title), with the
+     end-of-run read as a fallback;
    - later runs: nothing, because a thread's title is stable;
    - a changed thread identity (for example chat opened on a forked thread): rewrite
      `thread_id` and `title`;
@@ -126,7 +129,8 @@ nothing. Naming rules for sessions that toolang itself creates belong to the fol
 2. Fake environment plus fake pane: chat with `--thread term_x` writes `agent` then
    `thread_id`, and `title` when a title is available; each name exactly once.
 3. New thread: no `thread_id` write before the first submit; `thread_id` written right after
-   `create_thread()`; `title` written only after that run ends; no title lookup on later runs.
+   `create_thread()`; `title` written once that run is accepted, before it ends; no title
+   lookup after it is published.
 4. Exit paths (return and a raised exception inside the loop) clear all three names.
 5. `clip_title` table test: newlines and tabs collapsed, CJK counted as two columns, clipped
    with a visible marker at 60 columns.
@@ -142,9 +146,11 @@ nothing. Naming rules for sessions that toolang itself creates belong to the fol
 - libtmux is pre-1.0: pin it, and keep every call behind `cli/common/tmux.py` so a swap or a
   hand-rolled client touches one file.
 - Write points are synchronous subprocess calls (roughly 5–15 ms each): acceptable at start,
-  first submit, and the post-run title read; they must never enter a per-frame path.
-- Thread titles are inherently late for new threads; the plan writes the title once, after
-  the founding run, instead of guessing from the submitted text.
+  first submit, and the title read at run acceptance and at run end; they must never enter a
+  per-frame path.
+- The founding run's input is the only title source and it is durable from acceptance on, so
+  the mark is written then; the end-of-run read is a fallback for a lookup that failed or
+  raced, not the primary write point.
 - Pane ids are stable while the pane lives; writes to a dead pane fail harmlessly.
 
 ## Decisions
@@ -155,6 +161,8 @@ nothing. Naming rules for sessions that toolang itself creates belong to the fol
 - Pane options only; no window or session mirror.
 - Marks are cleared on exit.
 - The scripted chat path marks as well.
+- Title timing: published when the founding run is accepted; the end-of-run read is a
+  fallback.
 
 ## Follow-up Plan
 

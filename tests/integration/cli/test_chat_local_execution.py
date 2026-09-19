@@ -670,3 +670,27 @@ agic chat(_: Part[]) -> Part[]:
         assert session.thread_title(thread_id) == "hello"
     finally:
         session.close()
+
+
+def test_local_chat_thread_title_is_ready_when_the_run_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """The first accepted run supplies the title before it becomes terminal."""
+
+    store = RunStore(tmp_path / "runs.db")
+    run = project_run_start(
+        store,
+        run_id="run_a",
+        thread_id="term_a",
+        origin="chat",
+        input=Message.user("hello"),
+    )
+    session = object.__new__(local.LocalChatSession)
+    session.store = store
+    session.history = RunHistory(store)
+    try:
+        assert run.status == "running"
+        assert asyncio.run(session._thread_title("term_a")) == "hello"
+        assert asyncio.run(session._thread_title("term_missing")) is None
+    finally:
+        store.close()

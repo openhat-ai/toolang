@@ -8,7 +8,7 @@ become available at different times:
 - the thread id exists up front only when chat resumes a thread, otherwise it is
   created on the first submission;
 - the thread title is derived from the run that created the thread, so it can
-  only be read back once that run is finished.
+  be read back once that run is accepted, long before it finishes.
 
 The agent mark is the launcher's, written on the session when it determines
 where chat runs; chat never writes it.
@@ -76,8 +76,8 @@ class ChatMarks:
         """Publish a thread id, which may arrive long after the start.
 
         A thread created by this session has no title until its first run
-        finishes, so this only records the id; ``refresh_title`` (called when a
-        run ends) publishes the title.
+        exists, so this only records the id; ``refresh_title`` (called when a
+        run is accepted and again when it ends) publishes the title.
         """
 
         if self.marks is None or thread_id == self._thread_id:
@@ -90,9 +90,9 @@ class ChatMarks:
     def refresh_title(self) -> None:
         """Publish the thread title once it exists.
 
-        Callers may call this after every run: a thread title becomes available
-        only after the run that created the thread, and it is published once per
-        thread.
+        Callers may call this whenever a run is accepted and again when it
+        ends: the title's value is durable from acceptance on, and it is
+        published once per thread.
         """
 
         if self.marks is None or self._thread_id is None or self._title_published:

@@ -1051,6 +1051,9 @@ class ChatTuiApp:
                 )
                 return
             self.active_run_id = state.run_id
+            # the run is durable now, so a thread's first title can be read back
+            # without waiting for the run to finish; the end-of-run read stays
+            self.marks.refresh_title()
             return
         if isinstance(state, RunDisconnected):
             self.active_run_id = state.run_id

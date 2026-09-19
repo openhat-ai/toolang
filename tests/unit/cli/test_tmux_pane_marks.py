@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, cast
 
 import pytest
@@ -491,3 +492,89 @@ def test_scripted_chat_publishes_and_clears_the_marks(monkeypatch: Any) -> None:
     assert pane.unset == [tmux.MARK_PAD]
     assert pane.window.unset == []
     assert pane.window.renames == ["term_x"]
+
+
+def test_scripted_chat_publishes_the_thread_title_before_the_run_ends(
+    monkeypatch: Any,
+) -> None:
+    """A long first run must not delay the tmux thread title."""
+
+    from toolang.base.types.policy import RunPolicy
+    from toolang.cli.toolang.commands.chat import main
+    from toolang.cli.toolang.commands.chat.base import RunAccepted
+    from toolang.execution.schemas import RunRequest, RunnableRequest
+    from toolang.execution.types import SessionSetting
+
+    pane = RecordingPane()
+    accepted = threading.Event()
+    released = threading.Event()
+
+    class Client:
+        def initial_setting(self) -> SessionSetting:
+            return SessionSetting(model=None, runnable=None)
+
+        def create_thread(self) -> str:
+            return "term_new"
+
+        def thread_title(self, thread_id: str) -> str | None:
+            return "hello world"
+
+        def build_request(
+            self,
+            thread_id: str,
+            override: Any,
+            input: Any,
+            setting: SessionSetting,
+        ) -> RunRequest:
+            return RunRequest(
+                thread_id=thread_id,
+                request_id="term_request",
+                runnable=RunnableRequest("agic:chat", input),
+                model=setting.model,
+                policy=RunPolicy(),
+            )
+
+        def run(
+            self,
+            request: RunRequest,
+            on_event: Any,
+            on_error: Any,
+            on_state: Any = None,
+        ) -> None:
+            del request, on_event, on_error
+            if on_state is not None:
+                on_state(RunAccepted("run_1"))
+            accepted.set()
+            released.wait(timeout=5)
+
+    client = Client()
+    marks = ChatMarks(marks=_marks(pane), title_lookup=client.thread_title)
+    inputs = iter(("hello",))
+
+    def read(_prompt: str) -> str:
+        try:
+            return next(inputs)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr("builtins.input", read)
+
+    worker = threading.Thread(
+        target=main._chat_interactive_scripted_local,
+        kwargs={
+            "client": client,
+            "thread_id": None,
+            "setting": SessionSetting(model=None, runnable=None),
+            "marks": marks,
+        },
+        daemon=True,
+    )
+    worker.start()
+    try:
+        assert accepted.wait(timeout=5)
+        # the first run is still active, so its thread title must already be set
+        assert (tmux.MARK_THREAD_TITLE, "hello world") in pane.window.writes
+    finally:
+        released.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
