@@ -60,18 +60,14 @@ def _reject_materialized_run_unknowns(value: object) -> None:
             if kind is None:
                 raise ValueError("runnable request requires a kind-qualified ref")
     model = data.get("model")
-    _reject_keys(model, {"ref", "parameters"}, "model request")
+    _reject_keys(model, {"ref", "reasoning", "max_output"}, "model request")
     if isinstance(model, Mapping):
         model_data = cast(Mapping[str, object], model)
-        parameters = model_data.get("parameters")
-        _reject_keys(parameters, {"reasoning", "max_output"}, "model parameters")
-        if isinstance(parameters, Mapping):
-            parameters_data = cast(Mapping[str, object], parameters)
-            _reject_keys(
-                parameters_data.get("reasoning"),
-                {"effort", "budget_tokens"},
-                "reasoning parameters",
-            )
+        _reject_keys(
+            model_data.get("reasoning"),
+            {"effort", "budget_tokens"},
+            "model reasoning",
+        )
     policy = data.get("policy")
     _reject_keys(policy, {"allow", "limits"}, "run policy")
     if isinstance(policy, Mapping):

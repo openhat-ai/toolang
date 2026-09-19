@@ -15,9 +15,8 @@ from pydantic import TypeAdapter
 from toolang.base.types.message import Message
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.execution.events import (
@@ -234,7 +233,8 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                 },
                 "model": {
                     "ref": "openai/gpt-5",
-                    "parameters": {"reasoning": None, "max_output": None},
+                    "reasoning": None,
+                    "max_output": None,
                 },
                 "policy": {
                     "allow": [
@@ -306,7 +306,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
                 request_id="rerun_request",
                 model=ModelRequest(
                     "openai/gpt-5",
-                    ModelParameters(ReasoningParameters("high")),
+                    reasoning=Reasoning("high"),
                 ),
             )
         )
@@ -336,7 +336,8 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         else:
             expected_payload["model"] = {
                 "ref": "openai/gpt-5",
-                "parameters": {"reasoning": {"effort": "high"}, "max_output": None},
+                "reasoning": {"effort": "high"},
+                "max_output": None,
             }
         assert handle.run_id == detail.id == accepted_id
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]

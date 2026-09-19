@@ -14,15 +14,15 @@ from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResu
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import ModelCall, ModelUsage, ModelUsageMeter, ToolCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.plugin.models.adapters import chat_completions, responses
-from toolang.plugin.models.adapters import generate_content as generate_content_adapter
-from toolang.plugin.models.adapters import messages as messages_adapter
-from toolang.plugin.models.adapters.generate_content import (
+from toolang.plugin.adapters import chat_completions, responses
+from toolang.plugin.adapters import generate_content as generate_content_adapter
+from toolang.plugin.adapters import messages as messages_adapter
+from toolang.plugin.adapters.generate_content import (
     generate_content_payload,
     generate_content_usage,
     parse_generate_content,
 )
-from toolang.plugin.models.adapters.messages import (
+from toolang.plugin.adapters.messages import (
     messages_usage,
     messages_payload,
     parse_message_response,

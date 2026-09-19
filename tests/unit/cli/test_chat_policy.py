@@ -5,9 +5,8 @@ from decimal import Decimal
 import pytest
 
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.cli.toolang.commands.chat.policy import (
@@ -39,7 +38,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     setting = SessionSetting(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="agic:chat",
         allow=AgentCeiling(models=("openai/*",)),
@@ -67,9 +66,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
         runnable=RunnableRequest(
             "flow:review", CallInput({"_": "hello", "tone": "brief"})
         ),
-        model=ModelRequest(
-            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
-        ),
+        model=ModelRequest("openai/gpt-5", reasoning=Reasoning(effort="high")),
         policy=RunPolicy(
             allow=(
                 AgentCeiling(models=("openai/*",)),
@@ -85,7 +82,7 @@ def test_model_identity_change_clears_unmentioned_parameters() -> None:
     setting = SessionSetting(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable=surface.runnable,
         limits=surface.limits,
@@ -121,7 +118,7 @@ def test_model_reconciliation_applies_parameter_update_to_fallback() -> None:
 
     assert reconciled.model == ModelRequest(
         "anthropic/claude-sonnet-4.5",
-        ModelParameters(ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
 
 
@@ -173,9 +170,7 @@ def test_input_local_effort_change_reuses_session_model_identity() -> None:
         input=CallInput({"_": "hello"}),
         override=RunOverride(model=ModelOverride(effort="low")),
         setting=SessionSetting(
-            model=ModelRequest(
-                "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
-            ),
+            model=ModelRequest("openai/gpt-5", reasoning=Reasoning(effort="high")),
             runnable="agic:chat",
             limits=RunLimits(),
         ),
@@ -186,7 +181,7 @@ def test_input_local_effort_change_reuses_session_model_identity() -> None:
 
     assert request.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
 
 

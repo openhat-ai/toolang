@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from toolang.base.types.model import Provider
+from toolang.base.types.model import Provider, env_names
 from toolang.plugin.models.provider_resolver import env_is_ready
 
 
@@ -13,7 +13,7 @@ def required_provider_env_vars(provider: Provider) -> tuple[str, ...]:
 
     resolved = provider.resolved
     if resolved is None:
-        return provider.env
+        return env_names(provider.env)
     return tuple(
         dict.fromkeys(
             name
@@ -86,4 +86,5 @@ def default_provider_base_url(
 def default_provider_api_key_env(provider: Provider) -> str | None:
     """Return the default API key environment variable for one provider."""
 
-    return provider.env[0] if provider.env else None
+    names = env_names(provider.env)
+    return names[0] if names else None

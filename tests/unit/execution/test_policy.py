@@ -6,9 +6,8 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
@@ -193,7 +192,7 @@ def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
     current = SessionSetting(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="agic:chat",
         limits=RunLimits(),
@@ -212,7 +211,7 @@ def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
 
     assert effort_only.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
     assert identity_only.model == ModelRequest("anthropic/claude-sonnet-4.5")
 
@@ -252,7 +251,7 @@ def test_effort_budget_auto_default_and_unset_materialize_canonically() -> None:
 
     assert budget.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+        reasoning=Reasoning(budget_tokens=4096),
     )
     assert automatic.model == ModelRequest("openai/gpt-5")
     assert defaulted.model == surface.model

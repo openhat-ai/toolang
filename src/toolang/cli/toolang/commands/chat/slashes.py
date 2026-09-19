@@ -1188,7 +1188,7 @@ def model_effort_applicability(
 def model_reasoning_value(model: ModelRequest) -> str | None:
     """Return one explicit effort level or token budget for display."""
 
-    reasoning = model.parameters.reasoning
+    reasoning = model.reasoning
     if reasoning is None:
         return None
     if reasoning.effort is not None:

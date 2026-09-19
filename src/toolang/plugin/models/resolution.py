@@ -12,10 +12,10 @@ from toolang.base.types.model import (
     Model,
     ModelAlias,
     ModelInfo,
-    ModelParameters,
     ModelRequest,
     ModelTarget,
     Provider,
+    Reasoning,
     ReasoningEffort,
 )
 from toolang.common.query import (
@@ -375,14 +375,15 @@ def model_reasoning_effort_applicable(
 def apply_model_parameters(
     context: SupportsModelSelection | ModelCollection,
     target: ModelTarget,
-    parameters: ModelParameters,
+    *,
+    reasoning: Reasoning | None = None,
+    max_output: int | None = None,
 ) -> ModelTarget:
-    """Validate and apply one request's typed parameters to a resolved target."""
+    """Validate and apply one request's controls to a resolved target."""
 
-    reasoning = parameters.reasoning
     effort = reasoning.effort if reasoning is not None else None
     budget = reasoning.budget_tokens if reasoning is not None else None
-    if effort is None and budget is None and parameters.max_output is None:
+    if effort is None and budget is None and max_output is None:
         return target
     result = target
     if effort is not None or budget is not None:
@@ -398,8 +399,8 @@ def apply_model_parameters(
             request["budget_tokens"] = budget
         _validate_reasoning_request(request, info=info)
         result = replace(result, reasoning=dict(request))
-    if parameters.max_output is not None:
-        result = replace(result, max_output=parameters.max_output)
+    if max_output is not None:
+        result = replace(result, max_output=max_output)
     return result
 
 

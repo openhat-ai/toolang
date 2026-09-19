@@ -25,11 +25,9 @@ from toolang.base.types.message import (
 from toolang.base.types.model import (
     ModelAlias,
     ModelInfo,
-    ModelParameters,
     ModelTarget,
     Provider,
-    ReasoningParameters,
-    ResolvedProvider,
+    Reasoning,
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
@@ -66,15 +64,13 @@ from toolang.plugin.models.resolution import (
 )
 from toolang.plugin.models.views import _format_decimal_unit, model_list_rows
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
-from toolang.plugin.models.catalog import (
-    PACKAGED_MODEL_CATALOG,
-    read_model_catalog_snapshot,
-)
-from toolang.plugin.models.loading import load_model_adapters
-from toolang.plugin.models.adapters import chat_completions as chat_completions_models
-from toolang.plugin.models.adapters import messages as messages_models
-from toolang.plugin.models.adapters import responses as responses_models
-from toolang.plugin.models.adapters.responses import encode_message, response_payload
+from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
+from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
+from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.adapters import chat_completions as chat_completions_models
+from toolang.plugin.adapters import messages as messages_models
+from toolang.plugin.adapters import responses as responses_models
+from toolang.plugin.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import CallInput, RunnableInput
 from toolang.plugin.models.config import parse_provider_configs
@@ -154,14 +150,18 @@ class _FakeModels(ModelAdapter):
             if self.name in {"deepseek", "google", "openrouter"}
             else "responses"
         )
-        return Provider(
+        provider = Provider(
             id=self.name,
             name=self.name,
             env=env,
             npm="@ai-sdk/openai-compatible",
             api=self._default_base_url,
             models={},
-            resolved=ResolvedProvider(
+        )
+        return replace(
+            provider,
+            resolved=replace(
+                provider,
                 adapter=adapter,
                 api=endpoint,
                 env=(tuple(env),) if len(env) > 1 else env,
@@ -437,23 +437,23 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         "high",
     )
     assert model_reasoning_effort_applicable(context, target)
-    assert apply_model_parameters(context, target, ModelParameters()) == target
+    assert apply_model_parameters(context, target) == target
     selected = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters("high")),
+        reasoning=Reasoning("high"),
     )
     assert selected.reasoning == {"effort": "high"}
     budgeted = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters(budget_tokens=2048)),
+        reasoning=Reasoning(budget_tokens=2048),
     )
     assert budgeted.reasoning == {"budget_tokens": 2048}
     capped = apply_model_parameters(
         context,
         target,
-        ModelParameters(max_output=4096),
+        max_output=4096,
     )
     assert capped.max_output == 4096
     # A catalog enumeration is evidence. Only an exhaustive list rejects an
@@ -461,14 +461,14 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
     passed = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters("max")),
+        reasoning=Reasoning("max"),
     )
     assert passed.reasoning == {"effort": "max"}
     with pytest.raises(ToolangError, match="budget must be at least 1024"):
         apply_model_parameters(
             context,
             target,
-            ModelParameters(ReasoningParameters(budget_tokens=512)),
+            reasoning=Reasoning(budget_tokens=512),
         )
 
 
@@ -558,7 +558,7 @@ def test_exhaustive_effort_enumeration_rejects_an_unlisted_level() -> None:
         apply_model_parameters(
             context,
             target,
-            ModelParameters(ReasoningParameters("max")),
+            reasoning=Reasoning("max"),
         )
 
 
@@ -586,7 +586,7 @@ def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
     selected = apply_model_parameters(
         context,
         target,
-        ModelParameters(ReasoningParameters(effort="none")),
+        reasoning=Reasoning(effort="none"),
     )
 
     assert selected.reasoning == {"effort": "none"}
@@ -594,7 +594,7 @@ def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
 
 def test_reasoning_parameters_reject_effort_and_budget_together() -> None:
     with pytest.raises(ValueError, match="either effort or budget_tokens"):
-        ReasoningParameters(effort="high", budget_tokens=2048)
+        Reasoning(effort="high", budget_tokens=2048)
 
 
 def test_model_resolution_rejects_ambiguous_query() -> None:
@@ -1411,9 +1411,9 @@ def test_package_registers_catalogs_without_legacy_model_provider_entry_points()
 
     assert "toolang.model_provider" not in entry_points
     assert entry_points["toolang.model_catalog"] == {
-        "models_dev": "toolang.plugin.models.catalog:create_models_dev_model_catalog",
-        "ollama": "toolang.plugin.models.local:create_ollama_model_catalog",
-        "llama_cpp": "toolang.plugin.models.local:create_llama_cpp_model_catalog",
+        "models_dev": "toolang.plugin.catalogs.models_dev.catalog:create_models_dev_model_catalog",
+        "ollama": "toolang.plugin.catalogs.ollama:create_ollama_model_catalog",
+        "llama_cpp": "toolang.plugin.catalogs.llama_cpp:create_llama_cpp_model_catalog",
     }
 
 
@@ -2499,7 +2499,7 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
 
     with caplog.at_level(
         logging.DEBUG,
-        logger="toolang.plugin.models.adapters.responses",
+        logger="toolang.plugin.adapters.responses",
     ):
         result = asyncio.run(
             responses_models.invoke_response(target, request, stateful=True)

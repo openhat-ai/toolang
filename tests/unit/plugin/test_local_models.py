@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import logging
 from typing import cast
 
 import httpx
 import pytest
 
-from toolang.plugin.models import local as local_models
-from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
+from toolang.plugin.catalogs import llama_cpp as llama_cpp_models
+from toolang.plugin.catalogs import ollama as ollama_models
+from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
+from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 
 
 def test_ollama_catalog_enriches_models_from_tags_and_show(
@@ -49,7 +52,7 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
             }
         },
     )
-    monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
 
     snapshot = asyncio.run(
         OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
@@ -122,7 +125,7 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
             },
         }
     )
-    monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
 
     snapshot = asyncio.run(
         LlamaCppModelCatalog({}, endpoint="http://llama.test/v1").snapshot()
@@ -168,7 +171,7 @@ def test_local_detail_failures_keep_list_metadata(
             )
         },
     )
-    monkeypatch.setattr(local_models.httpx, "AsyncClient", ollama.factory)
+    monkeypatch.setattr(httpx, "AsyncClient", ollama.factory)
 
     ollama_snapshot = asyncio.run(
         OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
@@ -189,7 +192,7 @@ def test_local_detail_failures_keep_list_metadata(
             "http://llama.test/props": httpx.ConnectError("props unavailable"),
         }
     )
-    monkeypatch.setattr(local_models.httpx, "AsyncClient", llama_cpp.factory)
+    monkeypatch.setattr(httpx, "AsyncClient", llama_cpp.factory)
 
     llama_snapshot = asyncio.run(
         LlamaCppModelCatalog({}, endpoint="http://llama.test").snapshot()
@@ -208,7 +211,7 @@ def test_local_list_failure_marks_provider_offline(
     client = _FakeClient(
         gets={"http://ollama.test/api/tags": httpx.ConnectError("endpoint unavailable")}
     )
-    monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
 
     snapshot = asyncio.run(
         OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
@@ -222,21 +225,21 @@ def test_local_list_failure_marks_provider_offline(
 def test_local_catalog_endpoints_use_the_docker_host_gateway() -> None:
     environ = {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
 
-    assert local_models._ollama_host(None, environ) == (
+    assert ollama_models._ollama_host(None, environ) == (
         "http://host.docker.internal:11434"
     )
-    assert local_models._llama_cpp_endpoint(None, environ) == (
+    assert llama_cpp_models._llama_cpp_endpoint(None, environ) == (
         "http://host.docker.internal:8080/v1"
     )
     assert (
-        local_models._ollama_host(
+        ollama_models._ollama_host(
             None,
             {**environ, "OLLAMA_HOST": "http://localhost:1234"},
         )
         == "http://host.docker.internal:1234"
     )
     assert (
-        local_models._llama_cpp_endpoint(
+        llama_cpp_models._llama_cpp_endpoint(
             None,
             {**environ, "LLAMA_CPP_HOST": "http://127.0.0.1:4321"},
         )
@@ -247,16 +250,58 @@ def test_local_catalog_endpoints_use_the_docker_host_gateway() -> None:
 def test_explicit_local_catalog_endpoints_are_not_rewritten() -> None:
     environ = {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
 
-    assert local_models._ollama_host("http://127.0.0.1:11434", environ) == (
+    assert ollama_models._ollama_host("http://127.0.0.1:11434", environ) == (
         "http://127.0.0.1:11434"
     )
     assert (
-        local_models._llama_cpp_endpoint(
+        llama_cpp_models._llama_cpp_endpoint(
             "http://localhost:8080",
             environ,
         )
         == "http://localhost:8080/v1"
     )
+
+
+def test_local_probes_distinguish_unreachable_from_invalid_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        ollama_models.httpx,
+        "AsyncClient",
+        _FakeClient(
+            gets={"http://ollama.test/api/tags": httpx.ConnectError("down")}
+        ).factory,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="toolang.plugin.catalogs.ollama"):
+        ollama = asyncio.run(
+            OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
+        )
+
+    runtime = cast(Mapping[str, object], ollama.providers["ollama"].extra["runtime"])
+    assert runtime["status"] == "offline"
+    assert "catalog.ollama.unreachable" in caplog.text
+
+    caplog.clear()
+    monkeypatch.setattr(
+        llama_cpp_models.httpx,
+        "AsyncClient",
+        _FakeClient(
+            gets={"http://llama.test/v1/models": ValueError("bad payload")}
+        ).factory,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="toolang.plugin.catalogs.llama_cpp"):
+        llama_cpp = asyncio.run(
+            LlamaCppModelCatalog({}, endpoint="http://llama.test/v1").snapshot()
+        )
+
+    runtime = cast(
+        Mapping[str, object], llama_cpp.providers["llama_cpp"].extra["runtime"]
+    )
+    assert runtime["status"] == "offline"
+    assert "catalog.llama_cpp.invalid_response" in caplog.text
 
 
 class _FakeResponse:

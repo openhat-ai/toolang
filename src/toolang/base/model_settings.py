@@ -13,8 +13,8 @@ from toolang.base.types.model import (
     ModelMaxOutput,
     ModelOverride,
     ModelRequest,
+    Reasoning,
     ReasoningEffort,
-    ReasoningParameters,
 )
 
 _BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
@@ -89,21 +89,18 @@ def apply_model_override(
         if override.effort is not None:
             raise ValueError("model effort requires an effective model")
         raise ValueError("model max_output requires an effective model")
-    parameters = model.parameters
+    reasoning = model.reasoning
+    max_output = model.max_output
     if override.effort is not None:
         if override.effort == "auto":
             reasoning = None
         elif isinstance(override.effort, int):
-            reasoning = ReasoningParameters(budget_tokens=override.effort)
+            reasoning = Reasoning(budget_tokens=override.effort)
         else:
-            reasoning = ReasoningParameters(effort=override.effort)
-        parameters = replace(parameters, reasoning=reasoning)
+            reasoning = Reasoning(effort=override.effort)
     if override.max_output is not None:
-        parameters = replace(
-            parameters,
-            max_output=(None if override.max_output == "auto" else override.max_output),
-        )
-    return replace(model, parameters=parameters)
+        max_output = None if override.max_output == "auto" else override.max_output
+    return replace(model, reasoning=reasoning, max_output=max_output)
 
 
 def compose_model_overrides(

@@ -1,24 +1,13 @@
-"""Model catalog and adapter plugin loading."""
+"""Model catalog plugin loading."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
 
-from toolang.base.protocols.model import ModelAdapter, ModelCatalog
+from toolang.base.protocols.model import ModelCatalog
 
-from toolang.plugin.loading import create_plugin, load_plugins
-
-
-def load_model_adapters(
-    config: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, ModelAdapter]:
-    """Load installed model adapters with their plugin-owned configuration."""
-
-    return cast(
-        dict[str, ModelAdapter],
-        load_plugins(group="toolang.model_adapter", config=config),
-    )
+from toolang.plugin.loading import create_plugin
 
 
 def load_model_catalogs(

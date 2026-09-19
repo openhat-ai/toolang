@@ -116,8 +116,9 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 Model catalog plugins return immutable provider/model snapshots. Static and
 local discovery use the same models.dev-compatible `Provider` and `Model`
-types. Catalog plugins do not execute model calls or install packages named by
-catalog metadata.
+types, but only models.dev records carry an `npm` package; every other source
+declares its protocol through `Provider.adapter`. Catalog plugins do not
+execute model calls or install packages named by catalog metadata.
 
 ### Model Adapter
 
@@ -144,8 +145,8 @@ as external packages. The implementation packages are:
 - `toolang.plugin.toolsets.*`;
 - `toolang.plugin.channels.*`;
 - `toolang.plugin.sandboxes.*`;
-- `toolang.plugin.models` catalog implementations;
-- `toolang.plugin.models.adapters.*`.
+- `toolang.plugin.catalogs.*`;
+- `toolang.plugin.adapters.*`.
 
 Each entry point names one factory such as `create_toolset`, `create_channel`,
 `create_sandbox`, `create_models_dev_model_catalog`,

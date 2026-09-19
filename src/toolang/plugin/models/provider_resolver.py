@@ -5,16 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from string import Template
-from typing import cast
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
+    LOCAL_STATUS_OFFLINE,
     Model,
     ModelCatalogSnapshot,
     Provider,
     ResolvedEnv,
-    ResolvedModel,
-    ResolvedProvider,
+    env_names,
+    local_runtime_status,
 )
 from toolang.plugin.models.config import ProviderConfig
 
@@ -106,9 +106,11 @@ def resolve_provider(
 ) -> Provider:
     """Attach one provider's adapter, API, env rule, and readiness."""
 
-    provider_route = _NPM_ROUTES.get(provider.npm)
-    adapter_name = _configured_adapter(config) or (
-        provider_route.adapter if provider_route is not None else None
+    provider_route = _NPM_ROUTES.get(provider.npm) if provider.npm is not None else None
+    adapter_name = (
+        _configured_adapter(config)
+        or provider.adapter
+        or (provider_route.adapter if provider_route is not None else None)
     )
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
     api = _resolve_api(
@@ -128,7 +130,7 @@ def resolve_provider(
         provider,
         names=(config.key_env,)
         if config is not None and config.key_env is not None
-        else provider.env,
+        else env_names(provider.env),
         provider_override=config is None or config.key_env is None,
     )
     ready = (
@@ -137,17 +139,19 @@ def resolve_provider(
         and env_is_ready(env, environ=environ)
         and not _local_provider_offline(provider)
     )
-    default = ResolvedProvider(
+    resolved_provider = replace(
+        provider,
+        env=env,
         adapter=adapter_name,
         api=api,
-        env=env,
         ready=ready,
+        resolved=None,
     )
     models = {
         model_id: _resolve_model(
             provider,
             model,
-            default=default,
+            default=resolved_provider,
             adapters=adapters,
             environ=environ,
             config=config,
@@ -157,7 +161,7 @@ def resolve_provider(
     return replace(
         provider,
         models=models,
-        resolved=default,
+        resolved=resolved_provider,
     )
 
 
@@ -165,7 +169,7 @@ def _resolve_model(
     provider: Provider,
     model: Model,
     *,
-    default: ResolvedProvider,
+    default: Provider,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
     config: ProviderConfig | None,
@@ -202,10 +206,12 @@ def _resolve_model(
         and not _local_provider_offline(provider)
     )
     return model.with_resolution(
-        ResolvedModel(
+        replace(
+            model,
             adapter=adapter_name,
             api=api,
             ready=ready,
+            resolved=None,
         )
     )
 
@@ -316,10 +322,4 @@ def _env_value(environ: Mapping[str, str], name: str) -> bool:
 
 
 def _local_provider_offline(provider: Provider) -> bool:
-    if not provider.local:
-        return False
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )
+    return provider.local and local_runtime_status(provider) == LOCAL_STATUS_OFFLINE

@@ -13,9 +13,8 @@ from pydantic import TypeAdapter
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.cli.toolang.commands.chat import remote
 from toolang.cli.toolang.commands.chat.base import (
@@ -51,7 +50,9 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 def _run_defaults() -> dict[str, object]:
     return {
-        "model": {"ref": "test/model", "parameters": {}},
+        "model": {
+            "ref": "test/model",
+        },
         "runnable": "agic:chat",
         "policy": {"allow": [], "limits": {}},
     }
@@ -141,7 +142,7 @@ def test_remote_run_defaults_preserve_typed_model_parameters() -> None:
         {
             "model": {
                 "ref": "test/model",
-                "parameters": {"reasoning": {"effort": "high"}},
+                "reasoning": {"effort": "high"},
             },
             "runnable": "agic:chat",
             "policy": {"allow": [], "limits": {}},
@@ -150,7 +151,7 @@ def test_remote_run_defaults_preserve_typed_model_parameters() -> None:
 
     assert setting.model == ModelRequest(
         "test/model",
-        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
 
 

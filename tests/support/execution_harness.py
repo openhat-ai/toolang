@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from types import TracebackType
@@ -18,7 +18,6 @@ from toolang.base.types.model import (
     ModelRequest,
     ModelTarget,
     Provider,
-    ResolvedProvider,
 )
 from toolang.base.types.policy import (
     AgentCeiling,
@@ -220,14 +219,18 @@ class FakeModels:
         )
 
     def catalog_provider(self) -> Provider:
-        return Provider(
+        provider = Provider(
             id=self.name,
             name="Test",
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="https://example.invalid/v1",
             models={},
-            resolved=ResolvedProvider(
+        )
+        return replace(
+            provider,
+            resolved=replace(
+                provider,
                 adapter=ScriptedModelAdapter.name,
                 api="https://example.invalid/v1",
                 env=(),

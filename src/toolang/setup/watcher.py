@@ -16,29 +16,20 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import plugin_provenance
-from toolang.plugin.models.catalog import (
-    MergedModelCatalog,
-    ModelsDevModelCatalog,
-    model_info_from_catalog,
-    resolve_model_catalog_path,
-)
-from toolang.plugin.models.cache import (
-    CachedModelProjection,
-    CatalogSource,
+from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.catalogs.loading import load_model_catalogs
+from toolang.plugin.catalogs.models_dev.catalog import (
     FileObservation,
-    ModelProjectionCache,
-    capture_catalog_source,
-    environment_readiness,
-    hydrate_model_infos,
-    model_projection_key,
+    ModelCatalogSource,
+    ModelsDevModelCatalog,
 )
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import (
     ProviderConfig,
     configure_catalog_providers,
     parse_provider_configs,
 )
 from toolang.plugin.models.collections import ModelQueryView
-from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
@@ -47,6 +38,14 @@ from toolang.plugin.models.resolution import (
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
+from .cache import (
+    CachedModelProjection,
+    ModelProjectionCache,
+    environment_readiness,
+    hydrate_model_infos,
+    model_projection_key,
+)
+from .catalog import MergedModelCatalog
 from .config import (
     load_agent_config,
     load_setup_config,
@@ -59,7 +58,7 @@ from .config import (
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import order_models, select_compact_model
+from .models import model_info_from_catalog, order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -101,7 +100,7 @@ class _Candidate:
     tools: dict[str, Tool]
     catalogs: dict[str, ModelCatalog]
     observation: FileObservation
-    source: CatalogSource
+    source: ModelCatalogSource
     static: ModelCatalogSnapshot
     additional: tuple[tuple[str, ModelCatalogSnapshot], ...]
 
@@ -148,16 +147,10 @@ class SetupWatcher:
             tuple[tuple[str, ModelCatalogSnapshot], ...] | None
         ) = None
         self._catalog_identity: FileObservation | None = None
-        self._catalog_source: CatalogSource | None = None
+        self._catalog_source: ModelCatalogSource | None = None
         self._cache_entry: CachedModelProjection | None = None
-        self._pending_catalog_cache: (
-            tuple[CatalogSource, ModelCatalogSnapshot] | None
-        ) = None
         self._pending_model_cache: _PendingModelCache | None = None
-        self._model_cache = ModelProjectionCache(
-            layout.root_model_cache,
-            layout.home_model_cache,
-        )
+        self._model_cache = ModelProjectionCache(layout.home_model_cache)
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
@@ -238,41 +231,20 @@ class SetupWatcher:
             else load_model_catalogs(catalog_configs)
         )
         models_dev = catalogs.get("models_dev")
-        if models_dev is None:
+        if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
-        max_source_bytes = (
-            models_dev.max_bytes
-            if isinstance(models_dev, ModelsDevModelCatalog)
-            else None
-        )
         observation = FileObservation.capture(catalog_path)
-        if max_source_bytes is not None and observation.size > max_source_bytes:
-            raise ValueError(
-                f"model catalog exceeds {max_source_bytes} bytes: {observation.path}"
-            )
         if (
             observation == self._catalog_identity
+            and observation.size <= models_dev.max_bytes
             and self._catalog_source is not None
             and self._static_catalog is not None
         ):
             source = self._catalog_source
             static = self._static_catalog
         else:
-            observation, source = await asyncio.to_thread(
-                capture_catalog_source,
-                catalog_path,
-                max_source_bytes=max_source_bytes,
-            )
-            static = await asyncio.to_thread(
-                self._model_cache.load_catalog,
-                source,
-                source_path=catalog_path,
-            )
-            if static is None:
-                static = await models_dev.snapshot()
-                if static.revision != source.digest:
-                    raise ValueError("models_dev revision does not match its source")
-                await self._store_catalog_cache(source, static)
+            observation, source = await asyncio.to_thread(models_dev.capture)
+            static = await asyncio.to_thread(source.snapshot)
         ordered_catalogs = _ordered_additional_catalogs(catalogs)
         additional_snapshots = tuple(
             await asyncio.gather(*(catalog.snapshot() for catalog in ordered_catalogs))
@@ -472,33 +444,7 @@ class SetupWatcher:
         self._static_catalog = candidate.static
         self._additional_catalogs = candidate.additional
 
-    async def _store_catalog_cache(
-        self,
-        source: CatalogSource,
-        static: ModelCatalogSnapshot,
-    ) -> None:
-        self._pending_catalog_cache = (source, static)
-        await self._persist_pending_model_cache()
-
     async def _persist_pending_model_cache(self) -> None:
-        pending_catalog = self._pending_catalog_cache
-        if pending_catalog is not None:
-            source, static = pending_catalog
-            self._pending_catalog_cache = None
-            try:
-                await asyncio.to_thread(
-                    self._model_cache.store_catalog,
-                    source=source,
-                    snapshot=static,
-                )
-            except asyncio.CancelledError:
-                self._pending_catalog_cache = pending_catalog
-                raise
-            except Exception:
-                self._pending_catalog_cache = pending_catalog
-                logger.exception(
-                    "setup.catalog_cache_write_failed agent=%s", self.layout.name
-                )
         pending = self._pending_model_cache
         if pending is None:
             return
@@ -632,7 +578,12 @@ def _build_setup(
         ).compact()
     if defaults.model is not None:
         entry = models.resolve(defaults.model.ref)
-        apply_model_parameters(models, entry.target, defaults.model.parameters)
+        apply_model_parameters(
+            models,
+            entry.target,
+            reasoning=defaults.model.reasoning,
+            max_output=defaults.model.max_output,
+        )
     all_providers = dict(resolved_catalog.providers)
     provider_models: dict[str, set[str]] = {}
     for entry in models.entries:

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from toolang.base.types.model import Model, Provider
-from toolang.plugin.models.adapters.chat_completions import (
+from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
-from toolang.plugin.models.adapters.generate_content import (
+from toolang.plugin.adapters.generate_content import (
     GenerateContentModelAdapter,
 )
-from toolang.plugin.models.adapters.messages import MessagesModelAdapter
-from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
+from toolang.plugin.adapters.messages import MessagesModelAdapter
+from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.config import ProviderConfig, configure_catalog_providers
 from toolang.plugin.models.provider_resolver import (
     env_is_ready,
@@ -302,6 +302,42 @@ def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -
     assert resolved.resolved.api == "https://api.openai.com/v1"
     assert resolved.resolved.env == ("OPENAI_API_KEY",)
     assert resolved.to_data()["_toolang"] == provider.extra["_toolang"]
+
+
+def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
+    adapters = {
+        "chat_completions": ChatCompletionsModelAdapter(),
+        "responses": ResponsesModelAdapter(),
+    }
+    declared = Provider(
+        id="local",
+        name="Local",
+        env=(),
+        models={},
+        adapter="chat_completions",
+        api="http://local.test/v1",
+        local=True,
+    )
+    both = Provider(
+        id="both",
+        name="Both",
+        env=(),
+        npm="@ai-sdk/openai",
+        adapter="chat_completions",
+        api="http://both.test/v1",
+        models={},
+    )
+
+    resolved = resolve_provider(declared, adapters=adapters, environ={})
+    preferred = resolve_provider(both, adapters=adapters, environ={})
+
+    assert resolved.resolved is not None
+    assert resolved.resolved.adapter == "chat_completions"
+    assert resolved.resolved.ready is True
+    assert "npm" not in resolved.to_data()
+    assert preferred.resolved is not None
+    assert preferred.resolved.adapter == "chat_completions"
+    assert preferred.to_data()["npm"] == "@ai-sdk/openai"
 
 
 def _provider(

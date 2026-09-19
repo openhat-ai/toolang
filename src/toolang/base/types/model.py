@@ -32,8 +32,8 @@ def _exclude_none(value: object) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class ReasoningParameters:
-    """Reasoning controls requested for one model selection."""
+class Reasoning:
+    """One reasoning control requested for a model selection or call."""
 
     effort: ReasoningEffort | None = field(
         default=None,
@@ -55,37 +55,16 @@ class ReasoningParameters:
             if self.budget_tokens < 0:
                 raise ValueError("reasoning budget_tokens must be non-negative")
         if self.effort is not None and self.budget_tokens is not None:
-            raise ValueError(
-                "reasoning parameters accept either effort or budget_tokens"
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class ModelParameters:
-    """Typed call parameters attached to one model request."""
-
-    reasoning: ReasoningParameters | None = None
-    max_output: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.reasoning is not None and not isinstance(
-            self.reasoning, ReasoningParameters
-        ):
-            raise TypeError("model reasoning parameters must be ReasoningParameters")
-        if self.max_output is not None and (
-            isinstance(self.max_output, bool)
-            or not isinstance(self.max_output, int)
-            or self.max_output <= 0
-        ):
-            raise ValueError("model max_output must be a positive integer or none")
+            raise ValueError("reasoning accepts either effort or budget_tokens")
 
 
 @dataclass(frozen=True, slots=True)
 class ModelRequest:
-    """One exact model ref and its typed call parameters."""
+    """One exact model ref and the controls this run asks for."""
 
     ref: str
-    parameters: ModelParameters = ModelParameters()
+    reasoning: Reasoning | None = None
+    max_output: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):
@@ -99,8 +78,16 @@ class ModelRequest:
             or any(character in self.ref for character in '*?[],;"')
         ):
             raise ValueError(f"model request ref must be exact: {self.ref!r}")
-        if not isinstance(self.parameters, ModelParameters):
-            raise TypeError("model request parameters must be ModelParameters")
+        if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
+            raise TypeError("model request reasoning must be Reasoning")
+        if self.max_output is not None and (
+            isinstance(self.max_output, bool)
+            or not isinstance(self.max_output, int)
+            or self.max_output <= 0
+        ):
+            raise ValueError(
+                "model request max_output must be a positive integer or none"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +162,10 @@ class Model:
     local: bool = False
     catalog: str | None = None
     catalog_revision: str | None = None
-    resolved: ResolvedModel | None = None
+    adapter: str | None = None
+    api: str | None = None
+    ready: bool = False
+    resolved: Model | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id or not self.id or not self.name:
@@ -210,8 +200,8 @@ class Model:
 
         return f"{self.provider_id}/{self.id}"
 
-    def with_resolution(self, resolved: ResolvedModel) -> Self:
-        """Attach runtime resolution without rebuilding frozen catalog fields."""
+    def with_resolution(self, resolved: Model) -> Self:
+        """Attach one resolved instance without rebuilding frozen catalog fields."""
 
         result = copy(self)
         object.__setattr__(result, "resolved", resolved)
@@ -254,60 +244,59 @@ class Model:
         return {key: value for key, value in data.items() if value is not None}
 
 
-@dataclass(frozen=True, slots=True)
-class ResolvedModel:
-    """One model's immutable load-time protocol route."""
+def _normalized_env(env: ResolvedEnv) -> ResolvedEnv:
+    """Normalize one provider environment rule for both instances."""
 
-    adapter: str | None
-    api: str | None
-    ready: bool
+    normalized: list[str | tuple[str, ...]] = []
+    for alternative in env:
+        if isinstance(alternative, str):
+            name = alternative.strip()
+            if not name:
+                raise ValueError("provider env names must be non-empty")
+            normalized.append(name)
+            continue
+        group = tuple(name.strip() for name in alternative if name.strip())
+        if not group:
+            raise ValueError("provider env groups must be non-empty")
+        normalized.append(group[0] if len(group) == 1 else group)
+    return tuple(normalized)
 
 
-@dataclass(frozen=True, slots=True)
-class ResolvedProvider:
-    """One provider's immutable load-time runtime resolution."""
-
-    adapter: str | None
-    api: str | None
-    env: ResolvedEnv
-    ready: bool
-
-    def __post_init__(self) -> None:
-        normalized: list[str | tuple[str, ...]] = []
-        for alternative in self.env:
-            if isinstance(alternative, str):
-                name = alternative.strip()
-                if not name:
-                    raise ValueError("resolved provider env names must be non-empty")
-                normalized.append(name)
-                continue
-            group = tuple(name.strip() for name in alternative if name.strip())
-            if not group:
-                raise ValueError("resolved provider env groups must be non-empty")
-            normalized.append(group[0] if len(group) == 1 else group)
-        object.__setattr__(self, "env", tuple(normalized))
+LOCAL_RUNTIME_EXTRA = "runtime"
+LOCAL_RUNTIME_STATUS = "status"
+LOCAL_STATUS_READY = "ready"
+LOCAL_STATUS_OFFLINE = "offline"
 
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """One models.dev-compatible provider and its model catalog entries."""
+    """One models.dev-compatible provider and its model catalog entries.
+
+    `npm` is the models.dev protocol signal. A catalog that is not a models.dev
+    record declares its protocol in `adapter` instead.
+    """
 
     id: str
     name: str
-    env: tuple[str, ...]
-    npm: str
+    env: ResolvedEnv
     models: Mapping[str, Model]
+    npm: str | None = None
+    adapter: str | None = None
     api: str | None = None
     doc: str | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
     local: bool = False
     catalog: str | None = None
     catalog_revision: str | None = None
-    resolved: ResolvedProvider | None = None
+    ready: bool = False
+    resolved: Provider | None = None
 
     def __post_init__(self) -> None:
-        if not self.id or not self.name or not self.npm:
-            raise ValueError("provider id, name, and npm are required")
+        if not self.id or not self.name:
+            raise ValueError("provider id and name are required")
+        if not self.npm and not self.adapter:
+            raise ValueError("provider npm or adapter is required")
+        object.__setattr__(self, "env", _normalized_env(self.env))
         normalized = dict(self.models)
         if any(key != model.id for key, model in normalized.items()):
             raise ValueError(f"provider {self.id!r} model keys must match model ids")
@@ -327,18 +316,39 @@ class Provider:
                 "id": self.id,
                 "name": self.name,
                 "env": list(self.env),
-                "npm": self.npm,
                 "models": {
                     key: model.to_data()
                     for key, model in sorted((models or self.models).items())
                 },
             }
         )
+        if self.npm is not None:
+            data["npm"] = self.npm
         if self.api is not None:
             data["api"] = self.api
         if self.doc is not None:
             data["doc"] = self.doc
         return data
+
+
+def env_names(env: ResolvedEnv) -> tuple[str, ...]:
+    """Return every environment name one rule mentions, in order."""
+
+    return tuple(
+        name
+        for alternative in env
+        for name in ((alternative,) if isinstance(alternative, str) else alternative)
+    )
+
+
+def local_runtime_status(provider: Provider) -> str | None:
+    """Return one provider's reported local runtime status, when present."""
+
+    runtime = provider.extra.get(LOCAL_RUNTIME_EXTRA)
+    if not isinstance(runtime, Mapping):
+        return None
+    status = cast(Mapping[str, object], runtime).get(LOCAL_RUNTIME_STATUS)
+    return status if isinstance(status, str) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +359,7 @@ class ModelCatalogSnapshot:
     models: tuple[Model, ...]
     revision: str
     source: Path | None = None
+    local: bool = False
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
