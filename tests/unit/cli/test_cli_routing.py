@@ -618,7 +618,8 @@ def test_cli_bare_resident_target_shows_its_command_help(
 
     assert result == 0
     assert stdout.startswith("Run and manage agent alice.\n")
-    assert "steer" in stdout
+    for control in ("steer", "cancel", "retry", "rerun", "fork", "rewind"):
+        assert control in stdout
     assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
         sorted(stdout.index(panel) for panel in panels)
