@@ -52,6 +52,10 @@ CAPS_COMMAND_PANEL = "Cap Commands"
 CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
+RUN_COMMAND_PANEL = "Run Commands"
+THREAD_COMMAND_PANEL = "Thread Commands"
+RUNTIME_COMMAND_PANEL = "Runtime Commands"
+LANGUAGE_COMMAND_PANEL = "Language Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
@@ -84,9 +88,10 @@ _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 _TARGET_HELP_COMMANDS = frozenset(_CONTROL_PANEL_COMMAND_ORDER)
 # `too more` collects the commands the root directory omits, grouped by panel.
 _MORE_PANEL_COMMAND_ORDER = (
-    (CONTROL_COMMAND_PANEL, (*_CONTROL_PANEL_COMMAND_ORDER, "compact")),
-    ("Plugin Commands", ("catalogs", "adapters", "toolsets", "sandboxes")),
-    ("Language Commands", ("fmt", "highlight", "parse", "query")),
+    (RUN_COMMAND_PANEL, ("steer", "cancel", "retry", "rerun")),
+    (THREAD_COMMAND_PANEL, ("fork", "rewind", "compact")),
+    (RUNTIME_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
+    (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse", "query")),
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
@@ -329,13 +334,13 @@ _registered_command(
 _registered_command(
     "list",
     "toolang.cli.toolang.commands.agent:list_agents",
-    help="Show agents and their status",
+    help="List agents and their status",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
     "info",
     "toolang.cli.toolang.commands.agent:info_agent",
-    help="Show agent info",
+    help="Show agent information",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -350,7 +355,7 @@ _registered_group(
 _registered_command(
     "serve",
     "toolang.cli.toolang.commands.runtime:run",
-    help="Serve an agent in the foreground",
+    help="Run an agent in the foreground",
     no_args_is_help=True,
     cls=_ServeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -389,7 +394,7 @@ _registered_group(
 _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
-    help="Start an interactive TUI",
+    help="Start an interactive chat",
     cls=_ChatCommand,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -474,7 +479,7 @@ _registered_command(
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
-    help="List available model providers",
+    help="List model providers",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(

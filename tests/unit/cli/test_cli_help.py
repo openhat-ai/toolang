@@ -220,16 +220,18 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert root.commands["more"].hidden
     assert root.commands["_serve"].hidden
     more_panels = {
-        "Control Commands": {
+        "Run Commands": {
             "steer": "Steer an active run",
             "cancel": "Cancel an active run",
             "retry": "Retry a run from a failed step",
             "rerun": "Rerun an earlier run as a new one",
+        },
+        "Thread Commands": {
             "fork": "Fork a thread from an earlier run",
             "rewind": "Rewind a thread to an earlier run",
             "compact": "Compact a thread",
         },
-        "Plugin Commands": {
+        "Runtime Commands": {
             "catalogs": "List installed model catalogs",
             "adapters": "List installed model adapters",
             "toolsets": "List installed toolsets",
@@ -239,7 +241,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
             "fmt": "Format .too source",
             "highlight": "Highlight .too source",
             "parse": "Parse .too source",
-            "query": "Show collection-query syntax and fields",
+            "query": "Show collection query syntax and fields",
         },
     }
     for names in more_panels.values():
@@ -256,7 +258,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     output = capsys.readouterr().out
     assert "\x1b[1;32m" in output
     plain = strip_ansi(output)
-    assert plain.splitlines()[0] == "Control Commands:"
+    assert plain.splitlines()[0] == "Run Commands:"
     assert "Usage:" not in plain
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
@@ -275,7 +277,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert too_main(["--help"]) == 0
     main_help = strip_ansi(capsys.readouterr().out)
     assert main_help.rstrip().endswith("Run 'too more' to see additional commands.")
-    assert "Control Commands:" not in main_help
+    assert "Run Commands:" not in main_help
     for names in more_panels.values():
         for description in names.values():
             assert description not in main_help
@@ -296,10 +298,10 @@ def test_additional_directory_uses_selected_help_output(theme, args, capsys):
     captured = capsys.readouterr()
     assert not captured.out and not captured.err
     output = Text.from_ansi(stdout.getvalue())
-    assert output.plain.splitlines()[0] == "Control Commands:"
+    assert output.plain.splitlines()[0] == "Run Commands:"
     assert "Usage:" not in output.plain
     assert all(len(line) <= 44 for line in output.plain.splitlines())
-    style = output.get_style_at_offset(console, output.plain.index("Control Commands:"))
+    style = output.get_style_at_offset(console, output.plain.index("Run Commands:"))
     assert style.bold
     assert (style.color is not None) is (theme is UV)
 
@@ -421,7 +423,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
     [
         (
             "serve",
-            "Serve an agent in the foreground",
+            "Run an agent in the foreground",
             "Agent name, .too file, reference, or URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
