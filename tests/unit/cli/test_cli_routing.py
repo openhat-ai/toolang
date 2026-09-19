@@ -312,27 +312,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "stop",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chore", "task", "workspace"),
-        "Control Commands": (
-            "chat",
-            "steer",
-            "cancel",
-            "retry",
-            "rerun",
-            "fork",
-            "rewind",
-        ),
-        "Inspection Commands": (
-            "caps",
-            "tools",
-            "models",
-            "providers",
-            "catalogs",
-            "adapters",
-            "toolsets",
-            "sandboxes",
-            "inspect",
-        ),
+        "Work Commands": ("chat", "chore", "task", "workspace"),
+        "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
     }
 
@@ -363,7 +344,7 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect agent run history",
+        "inspect": "Inspect agent runs",
         "caps": "List available caps",
         "models": "List available models",
         "providers": "List available model providers",
@@ -379,6 +360,12 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     assert removed.isdisjoint(group.commands)
     assert expected_help.keys() <= group.commands.keys()
     assert {name: group.commands[name].help for name in expected_help} == expected_help
+    assert not group.commands["tools"].hidden
+    assert {
+        name
+        for name in ("catalogs", "adapters", "toolsets", "sandboxes")
+        if group.commands[name].hidden
+    } == {"catalogs", "adapters", "toolsets", "sandboxes"}
     assert group.commands["channel"].hidden
 
 
@@ -625,8 +612,8 @@ def test_cli_bare_resident_target_shows_its_command_help(
         "Agent Commands",
         "Cap Commands",
         "Work Commands",
-        "Control Commands",
         "Inspection Commands",
+        "Control Commands",
     )
 
     assert result == 0

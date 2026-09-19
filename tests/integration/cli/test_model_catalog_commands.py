@@ -30,7 +30,9 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     assert result.exit_code == 0, result.stderr
     assert "models" in stdout
     assert "providers" in stdout
-    assert "adapters" in stdout
+    assert "adapters" not in stdout
+    more_stdout = strip_ansi(runner.invoke(cli.app, ["more"]).stdout)
+    assert "adapters" in more_stdout
     assert "--catalog" not in stdout
     assert "--models" not in stdout
     assert "List available models" in stdout
