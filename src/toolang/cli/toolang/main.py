@@ -49,7 +49,6 @@ _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
 AGENT_COMMAND_PANEL = "Agent Commands"
 WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
-CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
 RUN_COMMAND_PANEL = "Run Commands"
@@ -68,14 +67,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
 )
 _WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
-_CONTROL_PANEL_COMMAND_ORDER = (
-    "steer",
-    "cancel",
-    "retry",
-    "rerun",
-    "fork",
-    "rewind",
-)
+_RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
+_THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "caps",
     "tools",
@@ -84,12 +77,14 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-# Root-hidden control commands stay discoverable in target help.
-_TARGET_HELP_COMMANDS = frozenset(_CONTROL_PANEL_COMMAND_ORDER)
+# Root-hidden run and thread commands stay discoverable in target help.
+_TARGET_HELP_COMMANDS = frozenset(
+    (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
+)
 # `too more` collects the commands the root directory omits, grouped by panel.
 _MORE_PANEL_COMMAND_ORDER = (
-    (RUN_COMMAND_PANEL, ("steer", "cancel", "retry", "rerun")),
-    (THREAD_COMMAND_PANEL, ("fork", "rewind", "compact")),
+    (RUN_COMMAND_PANEL, _RUN_PANEL_COMMAND_ORDER),
+    (THREAD_COMMAND_PANEL, (*_THREAD_PANEL_COMMAND_ORDER, "compact")),
     (RUNTIME_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
     (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse", "query")),
 )
@@ -100,8 +95,12 @@ _VISIBLE_COMMAND_ORDER = (
     *_INSPECTION_PANEL_COMMAND_ORDER,
     *_SCRIPT_PANEL_COMMAND_ORDER,
 )
-# Root-hidden control commands still need a declared order for target help.
-_COMMAND_ORDER = (*_VISIBLE_COMMAND_ORDER, *_CONTROL_PANEL_COMMAND_ORDER)
+# Root-hidden run and thread commands still need an order for target help.
+_COMMAND_ORDER = (
+    *_VISIBLE_COMMAND_ORDER,
+    *_RUN_PANEL_COMMAND_ORDER,
+    *_THREAD_PANEL_COMMAND_ORDER,
+)
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
@@ -413,7 +412,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "cancel",
@@ -422,7 +421,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "retry",
@@ -431,7 +430,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_ThreadRunCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "compact",
@@ -448,7 +447,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_ThreadRunCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "rewind",
@@ -457,7 +456,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=THREAD_COMMAND_PANEL,
 )
 _registered_command(
     "fork",
@@ -466,7 +465,7 @@ _registered_command(
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     hidden=True,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=THREAD_COMMAND_PANEL,
 )
 
 _registered_command(

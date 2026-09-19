@@ -613,7 +613,8 @@ def test_cli_bare_resident_target_shows_its_command_help(
         "Cap Commands",
         "Work Commands",
         "Inspection Commands",
-        "Control Commands",
+        "Run Commands",
+        "Thread Commands",
     )
 
     assert result == 0

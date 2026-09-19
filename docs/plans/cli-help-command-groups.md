@@ -91,9 +91,9 @@ Language Commands:
 Run 'too COMMAND --help' for details.
 ```
 
-`too AGENT --help` keeps a single `Control Commands` panel with the six advanced
-controls (`steer cancel retry rerun fork rewind`); `chat` appears under `Work
-Commands`. `compact` stays excluded from target help.
+`too AGENT --help` uses the same vocabulary: a `Run Commands` panel with
+`steer cancel retry rerun` and a `Thread Commands` panel with `fork rewind`;
+`chat` appears under `Work Commands`. `compact` stays excluded from target help.
 
 ## Decisions
 
@@ -115,12 +115,12 @@ Commands`. `compact` stays excluded from target help.
    `list`, `info`, `serve`, `chat`, and `providers` as listed above, and `query`
    becomes `Show collection query syntax and fields`. `inspect` becomes
    `Inspect agent runs` (was `Inspect agent run history`).
-6. An explicit exception keeps the six advanced controls in target help. Target
-   help keeps them in one `Control Commands` panel, distinct from the `more`
-   split into `Run Commands` and `Thread Commands`; the source commands retain
-   `rich_help_panel=CONTROL_COMMAND_PANEL` and `too more` re-groups the copies.
-   Hidden status is a root-help concern only; routing and dispatch are
-   unaffected.
+6. An explicit exception keeps the six advanced controls in target help,
+   grouped by the same `Run Commands` and `Thread Commands` panels as `more`.
+   Their registrations carry those panels and `hidden=True`; `_run_target_help`
+   unhides copies through `_TARGET_HELP_COMMANDS`. The `Control Commands` panel
+   is retired everywhere. Hidden status is a root-help concern only; routing and
+   dispatch are unaffected.
 7. `channel` stays callable, hidden, and absent from root help and `too more`.
 8. The root epilog stays `Run 'too more' to see additional commands.`
 9. This plan supersedes the `Control Commands` membership in
@@ -135,8 +135,9 @@ command away from its registered panel.
 - Each command is registered with exactly the panel it appears under at the
   root. `chat` carries `rich_help_panel=WORK_COMMAND_PANEL`; no other code
   moves it.
-- The six advanced controls keep `rich_help_panel=CONTROL_COMMAND_PANEL` so
-  target help can group them; the root directory hides them.
+- The six advanced controls register with `rich_help_panel=RUN_COMMAND_PANEL`
+  or `THREAD_COMMAND_PANEL` and `hidden=True`, so target help and `too more`
+  share the same panels; the root directory hides them.
 - `compact` is registered hidden with no root panel; `too more` assigns its
   `Thread Commands` panel like any other listed command.
 - Root ordering and `too more` ordering come from explicit ordered constants:
@@ -154,10 +155,10 @@ Implementation is limited to:
 - `src/toolang/cli/toolang/main.py`
   - Set `_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task", "workspace")`
     and register `chat` with `rich_help_panel=WORK_COMMAND_PANEL`.
-  - Set `_CONTROL_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun",
-    "fork", "rewind")`; register those six with `hidden=True` and
-    `rich_help_panel=CONTROL_COMMAND_PANEL` for target help; register `compact`
-    hidden with no root panel.
+  - Set `_RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")` and
+    `_THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")`; register those six with
+    `hidden=True` under their panel; register `compact` hidden with no root
+    panel.
   - Set `_INSPECTION_PANEL_COMMAND_ORDER = ("caps", "tools", "models",
     "providers", "inspect")`; set `hidden=True` on `catalogs`, `adapters`,
     `toolsets`, and `sandboxes`.
@@ -209,8 +210,8 @@ implementation:
 ## Acceptance Tests
 
 1. Root help for bare `too`/`--help`/`-h` renders exactly the five panels above
-   with the stated rows and order, and contains no `Control Commands` panel and
-   no moved command row.
+   with the stated rows and order, and contains no `Control Commands`, `Run
+   Commands`, or `Thread Commands` panel and no moved command row.
 2. Root help shows the refined `list`, `info`, `serve`, `chat`, and `providers`
    descriptions and still ends with the executable-aware `Run 'too more' to see
    additional commands.` hint.
@@ -218,9 +219,9 @@ implementation:
    `Run Commands`, `Thread Commands`, `Runtime Commands`, and `Language
    Commands` sections, the stated rows and order, no usage line, and the
    `Run 'too COMMAND --help' for details.` footer.
-4. `too AGENT --help` keeps `Control Commands` with the six advanced controls,
-   shows `chat` under `Work Commands`, and omits `compact`, `channel`, and
-   `_serve`.
+4. `too AGENT --help` renders `Run Commands` with `steer cancel retry rerun`
+   and `Thread Commands` with `fork rewind`, shows `chat` under `Work Commands`,
+   and omits `compact`, `channel`, and `_serve`.
 5. `too inspect --help` and root help describe `inspect` as `Inspect agent
    runs`; `too query` describes itself as `Show collection query syntax and
    fields`.
@@ -233,10 +234,8 @@ implementation:
 
 ## Risks and Open Questions
 
-- Hiding control commands at the root also hides them from target help; the
-  target-help exception is required and is covered by acceptance test 4.
-- `more` categorizes the controls as `Run Commands` and `Thread Commands`, while
-  target help keeps one `Control Commands` panel. The same commands therefore
-  appear under different panel names on the two surfaces; this is intentional
-  and tested.
+- Hiding run and thread commands at the root also hides them from target help;
+  the target-help exception is required and is covered by acceptance test 4.
+- The `Control Commands` panel is retired; `Run Commands` and `Thread Commands`
+  replace it on both the `more` and target-help surfaces.
 - No unresolved product questions.
