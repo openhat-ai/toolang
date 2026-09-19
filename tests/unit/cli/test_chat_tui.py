@@ -48,6 +48,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall, ToolCall
+from toolang.cli.common import tmux
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
     ProgressRow,
@@ -84,6 +85,7 @@ from toolang.cli.toolang.commands.chat.base import (
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.input import QuickCommand
+from toolang.cli.toolang.commands.chat.marks import ChatMarks
 from toolang.cli.toolang.commands.chat.policy import update_session_setting
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.common.errors import ToolangError
@@ -6290,3 +6292,48 @@ def test_chat_status_and_run_context_use_unlined_entry_labels() -> None:
         _run_context("agent::agic:<entry:3>", "openai/gpt-5", "", 200)
         == "agic:<entry> · openai/gpt-5"
     )
+
+
+def test_chat_tui_publishes_the_thread_title_once_the_run_is_accepted() -> None:
+    """Acceptance makes the thread's first title readable; the run may still run."""
+
+    window_writes: list[tuple[str, str]] = []
+
+    def set_window(option: str, value: str) -> object:
+        window_writes.append((option, value))
+        return None
+
+    marks = ChatMarks(
+        marks=tmux.Marks(
+            pane_id="%3",
+            window_id="@1",
+            _set_pane=lambda _option, _value: None,
+            _set_window=set_window,
+        ),
+        title_lookup=lambda _thread_id: "hello world",
+    )
+    marks.set_thread("term_x")
+    app = tui.ChatTuiApp(
+        thread_id="term_x",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+        marks=marks,
+    )
+
+    app._handle_run_state(RunAccepted("run_1"))
+
+    # the run is still active, so its thread title must already be set
+    assert window_writes == [
+        (tmux.MARK_THREAD_ID, "term_x"),
+        (tmux.MARK_THREAD_TITLE, "hello world"),
+    ]
+
+    app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
+
+    # the end-of-run read is a fallback, not a second publish
+    assert window_writes == [
+        (tmux.MARK_THREAD_ID, "term_x"),
+        (tmux.MARK_THREAD_TITLE, "hello world"),
+    ]

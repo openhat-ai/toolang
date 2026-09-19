@@ -68,6 +68,7 @@ from .base import (
     AppContext,
     ChatClient,
     ChatRunState,
+    RunAccepted,
     RunBlocked,
     RunRecovered,
     friendly_error as chat_friendly_error,
@@ -432,6 +433,13 @@ def _chat_interactive_scripted_local(
         progress_max_width=progress_max_width,
     )
 
+    def handle_state(state: ChatRunState) -> None:
+        if isinstance(state, RunAccepted):
+            # the run is durable now, so a thread's first title can be read
+            # back without waiting for the run to finish
+            marks.refresh_title()
+        renderer.handle_state(state)
+
     def ensure_thread_id() -> str:
         existing = context.get_thread_id()
         resolved = context.ensure_thread_id()
@@ -511,7 +519,7 @@ def _chat_interactive_scripted_local(
             detail = exc.message if isinstance(exc, ClickException) else str(exc)
             typer.echo(chat_friendly_error(detail), err=True)
             continue
-        client.run(request, renderer.render, errors.append, renderer.handle_state)
+        client.run(request, renderer.render, errors.append, handle_state)
         failure = errors[-1] if errors else renderer.failure
         if failure:
             typer.echo(chat_friendly_error(failure), err=True)

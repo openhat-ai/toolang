@@ -443,7 +443,7 @@ belongs to, so a tmux-side view can read it without knowing anything about Toola
 | --- | --- | --- | --- |
 | `@toolang_agent` | session | agent name | when `too <agent> chat` determines the agent's session |
 | `@toolang_thread_id` | window | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
-| `@toolang_thread_title` | window | thread title, single line, at most 60 display columns | once the thread has runs |
+| `@toolang_thread_title` | window | thread title, single line, at most 60 display columns | as soon as the thread has its first run, whose input supplies the title |
 | `@toolang_pad` | pane | `chat` | when chat starts |
 
 Each value lives at exactly one scope, because tmux inherits user options: a window
