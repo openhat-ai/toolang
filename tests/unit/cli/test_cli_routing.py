@@ -222,7 +222,7 @@ def test_cli_no_args_still_shows_root_help(
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Start an interactive TUI",
+        "chat": "Start an interactive chat",
         "steer": "Steer an active run",
         "cancel": "Cancel an active run",
         "retry": "Retry a run from a failed step",
@@ -312,27 +312,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "stop",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chore", "task", "workspace"),
-        "Control Commands": (
-            "chat",
-            "steer",
-            "cancel",
-            "retry",
-            "rerun",
-            "fork",
-            "rewind",
-        ),
-        "Inspection Commands": (
-            "caps",
-            "tools",
-            "models",
-            "providers",
-            "catalogs",
-            "adapters",
-            "toolsets",
-            "sandboxes",
-            "inspect",
-        ),
+        "Work Commands": ("chat", "chore", "task", "workspace"),
+        "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
     }
 
@@ -363,10 +344,10 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect agent run history",
+        "inspect": "Inspect agent runs",
         "caps": "List available caps",
         "models": "List available models",
-        "providers": "List available model providers",
+        "providers": "List model providers",
         "tools": "List available tools",
         "catalogs": "List installed model catalogs",
         "adapters": "List installed model adapters",
@@ -379,6 +360,12 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     assert removed.isdisjoint(group.commands)
     assert expected_help.keys() <= group.commands.keys()
     assert {name: group.commands[name].help for name in expected_help} == expected_help
+    assert not group.commands["tools"].hidden
+    assert {
+        name
+        for name in ("catalogs", "adapters", "toolsets", "sandboxes")
+        if group.commands[name].hidden
+    } == {"catalogs", "adapters", "toolsets", "sandboxes"}
     assert group.commands["channel"].hidden
 
 
@@ -625,13 +612,15 @@ def test_cli_bare_resident_target_shows_its_command_help(
         "Agent Commands",
         "Cap Commands",
         "Work Commands",
-        "Control Commands",
         "Inspection Commands",
+        "Run Commands",
+        "Thread Commands",
     )
 
     assert result == 0
     assert stdout.startswith("Run and manage agent alice.\n")
-    assert "steer" in stdout
+    for control in ("steer", "cancel", "retry", "rerun", "fork", "rewind"):
+        assert control in stdout
     assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
         sorted(stdout.index(panel) for panel in panels)

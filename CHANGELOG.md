@@ -16,6 +16,11 @@ and this project uses semantic versioning.
 
 ### Changed
 
+- Group root and agent target help under the same panels, moving the advanced
+  run controls and installed-plugin inventories into `more`, which now renders
+  `Run Commands`, `Thread Commands`, `Runtime Commands`, and `Language
+  Commands`; refine several command descriptions.
+
 - Present root CLI help as “Toolang — a language and runtime for agents and
   humans,” make the shared source-version value prefix-free while display
   surfaces add `v` as needed, and have `init` create `aide.too` instead of

@@ -49,9 +49,12 @@ _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
 AGENT_COMMAND_PANEL = "Agent Commands"
 WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
-CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
+RUN_COMMAND_PANEL = "Run Commands"
+THREAD_COMMAND_PANEL = "Thread Commands"
+RUNTIME_COMMAND_PANEL = "Runtime Commands"
+LANGUAGE_COMMAND_PANEL = "Language Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
@@ -62,37 +65,41 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "start",
     "stop",
 )
-_WORK_PANEL_COMMAND_ORDER = ("chore", "task", "workspace")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
-_CONTROL_PANEL_COMMAND_ORDER = (
-    "chat",
-    "steer",
-    "cancel",
-    "retry",
-    "rerun",
-    "fork",
-    "rewind",
-)
+_RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
+_THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "caps",
     "tools",
     "models",
     "providers",
-    "catalogs",
-    "adapters",
-    "toolsets",
-    "sandboxes",
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_ADDITIONAL_COMMAND_ORDER = ("fmt", "highlight", "parse", "query", "compact")
+# Root-hidden run and thread commands stay discoverable in target help.
+_TARGET_HELP_COMMANDS = frozenset(
+    (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
+)
+# `too more` collects the commands the root directory omits, grouped by panel.
+_MORE_PANEL_COMMAND_ORDER = (
+    (RUN_COMMAND_PANEL, _RUN_PANEL_COMMAND_ORDER),
+    (THREAD_COMMAND_PANEL, (*_THREAD_PANEL_COMMAND_ORDER, "compact")),
+    (RUNTIME_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
+    (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse", "query")),
+)
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
     *_WORK_PANEL_COMMAND_ORDER,
-    *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
     *_SCRIPT_PANEL_COMMAND_ORDER,
+)
+# Root-hidden run and thread commands still need an order for target help.
+_COMMAND_ORDER = (
+    *_VISIBLE_COMMAND_ORDER,
+    *_RUN_PANEL_COMMAND_ORDER,
+    *_THREAD_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
@@ -191,8 +198,8 @@ class _ToolangGroup(CliGroup):
 
     def list_commands(self, ctx: Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
-        visible = [name for name in _VISIBLE_COMMAND_ORDER if name in names]
-        return [*visible, *(name for name in names if name not in visible)]
+        ordered = [name for name in _COMMAND_ORDER if name in names]
+        return [*ordered, *(name for name in names if name not in ordered)]
 
 
 def _version_callback(value: bool) -> None:
@@ -271,12 +278,14 @@ class _MoreCommandsCommand(CliCommand):
         root = typer.main.get_command(app)
         assert isinstance(root, TyperGroup)
         commands = {}
-        for name in _ADDITIONAL_COMMAND_ORDER:
-            if name in root.commands:
+        for panel, names in _MORE_PANEL_COMMAND_ORDER:
+            for name in names:
+                if name not in root.commands:
+                    continue
                 command = copy(root.commands[name])
                 assert isinstance(command, LazyCommand)
                 command.hidden = False
-                command.rich_help_panel = "Additional Commands"
+                command.rich_help_panel = panel
                 commands[name] = command
         group = CliGroup(name="more", commands=commands)
         assert isinstance(formatter, HelpFormatter)
@@ -324,13 +333,13 @@ _registered_command(
 _registered_command(
     "list",
     "toolang.cli.toolang.commands.agent:list_agents",
-    help="Show agents and their status",
+    help="List agents and their status",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
     "info",
     "toolang.cli.toolang.commands.agent:info_agent",
-    help="Show agent info",
+    help="Show agent information",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -345,7 +354,7 @@ _registered_group(
 _registered_command(
     "serve",
     "toolang.cli.toolang.commands.runtime:run",
-    help="Serve an agent in the foreground",
+    help="Run an agent in the foreground",
     no_args_is_help=True,
     cls=_ServeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -384,14 +393,14 @@ _registered_group(
 _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
-    help="Start an interactive TUI",
+    help="Start an interactive chat",
     cls=_ChatCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
-    help="Inspect agent run history",
+    help="Inspect agent runs",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -402,7 +411,8 @@ _registered_command(
     help="Steer an active run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "cancel",
@@ -410,7 +420,8 @@ _registered_command(
     help="Cancel an active run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "retry",
@@ -418,7 +429,8 @@ _registered_command(
     help="Retry a run from a failed step",
     no_args_is_help=True,
     cls=_ThreadRunCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "compact",
@@ -434,7 +446,8 @@ _registered_command(
     help="Rerun an earlier run as a new one",
     no_args_is_help=True,
     cls=_ThreadRunCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "rewind",
@@ -442,7 +455,8 @@ _registered_command(
     help="Rewind a thread to an earlier run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=THREAD_COMMAND_PANEL,
 )
 _registered_command(
     "fork",
@@ -450,7 +464,8 @@ _registered_command(
     help="Fork a thread from an earlier run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    rich_help_panel=CONTROL_COMMAND_PANEL,
+    hidden=True,
+    rich_help_panel=THREAD_COMMAND_PANEL,
 )
 
 _registered_command(
@@ -463,7 +478,7 @@ _registered_command(
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
-    help="List available model providers",
+    help="List model providers",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(
@@ -483,25 +498,25 @@ _registered_command(
     "catalogs",
     "toolang.cli.toolang.commands.plugin:list_catalogs",
     help="List installed model catalogs",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
+    hidden=True,
 )
 _registered_command(
     "adapters",
     "toolang.cli.toolang.commands.model_catalog:adapters_command",
     help="List installed model adapters",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
+    hidden=True,
 )
 _registered_command(
     "toolsets",
     "toolang.cli.toolang.commands.plugin:list_toolsets",
     help="List installed toolsets",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
+    hidden=True,
 )
 _registered_command(
     "sandboxes",
     "toolang.cli.toolang.commands.plugin:list_sandboxes",
     help="List installed sandboxes",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
+    hidden=True,
 )
 
 _registered_group(
@@ -648,10 +663,15 @@ def _run_target_help(
     commands = {}
     for name in root_command.list_commands(Context(root_command)):
         command = root_command.commands[name]
-        if not command.hidden and routing.command_spec(name).accepts(
-            "before", target.placement
-        ):
-            commands[name] = command
+        if command.hidden and name not in _TARGET_HELP_COMMANDS:
+            continue
+        if not routing.command_spec(name).accepts("before", target.placement):
+            continue
+        if command.hidden:
+            # Root-hidden control commands appear in target help on a copy.
+            command = copy(command)
+            command.hidden = False
+        commands[name] = command
     group = CliGroup(
         name=target.selector,
         commands=commands,

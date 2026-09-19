@@ -219,18 +219,37 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert "hidden" not in root.commands
     assert root.commands["more"].hidden
     assert root.commands["_serve"].hidden
-    assert root.commands["compact"].hidden
-    additional_commands = {
-        "fmt": "Format .too source",
-        "highlight": "Highlight .too source",
-        "parse": "Parse .too source",
-        "query": "Show collection-query syntax and fields",
-        "compact": "Compact a thread",
+    more_panels = {
+        "Run Commands": {
+            "steer": "Steer an active run",
+            "cancel": "Cancel an active run",
+            "retry": "Retry a run from a failed step",
+            "rerun": "Rerun an earlier run as a new one",
+        },
+        "Thread Commands": {
+            "fork": "Fork a thread from an earlier run",
+            "rewind": "Rewind a thread to an earlier run",
+            "compact": "Compact a thread",
+        },
+        "Runtime Commands": {
+            "catalogs": "List installed model catalogs",
+            "adapters": "List installed model adapters",
+            "toolsets": "List installed toolsets",
+            "sandboxes": "List installed sandboxes",
+        },
+        "Language Commands": {
+            "fmt": "Format .too source",
+            "highlight": "Highlight .too source",
+            "parse": "Parse .too source",
+            "query": "Show collection query syntax and fields",
+        },
     }
-    for name, description in additional_commands.items():
-        assert root.commands[name].hidden
-        assert (root.commands[name].help or "").startswith(description)
+    for names in more_panels.values():
+        for name, description in names.items():
+            assert root.commands[name].hidden
+            assert (root.commands[name].help or "").startswith(description)
     assert not root.commands["serve"].hidden
+    assert not root.commands["tools"].hidden
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setenv("FORCE_COLOR", "1")
@@ -239,25 +258,29 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     output = capsys.readouterr().out
     assert "\x1b[1;32m" in output
     plain = strip_ansi(output)
-    assert plain.splitlines()[0] == "Additional Commands:"
+    assert plain.splitlines()[0] == "Run Commands:"
     assert "Usage:" not in plain
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
     assert "_serve" not in plain
     assert "channel" not in plain
+    assert "List available tools" not in plain
     rows = " ".join(plain.split())
     positions = []
-    for name, description in additional_commands.items():
-        row = f"{name} {description}"
-        assert row in rows
-        positions.append(rows.index(row))
+    for panel, names in more_panels.items():
+        assert f"{panel}:" in plain
+        for name, description in names.items():
+            row = f"{name} {description}"
+            assert row in rows
+            positions.append(rows.index(row))
     assert positions == sorted(positions)
     assert too_main(["--help"]) == 0
     main_help = strip_ansi(capsys.readouterr().out)
     assert main_help.rstrip().endswith("Run 'too more' to see additional commands.")
-    assert "Additional Commands:" not in main_help
-    for description in additional_commands.values():
-        assert description not in main_help
+    assert "Run Commands:" not in main_help
+    for names in more_panels.values():
+        for description in names.values():
+            assert description not in main_help
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
@@ -275,12 +298,10 @@ def test_additional_directory_uses_selected_help_output(theme, args, capsys):
     captured = capsys.readouterr()
     assert not captured.out and not captured.err
     output = Text.from_ansi(stdout.getvalue())
-    assert output.plain.splitlines()[0] == "Additional Commands:"
+    assert output.plain.splitlines()[0] == "Run Commands:"
     assert "Usage:" not in output.plain
     assert all(len(line) <= 44 for line in output.plain.splitlines())
-    style = output.get_style_at_offset(
-        console, output.plain.index("Additional Commands:")
-    )
+    style = output.get_style_at_offset(console, output.plain.index("Run Commands:"))
     assert style.bold
     assert (style.color is not None) is (theme is UV)
 
@@ -402,7 +423,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
     [
         (
             "serve",
-            "Serve an agent in the foreground",
+            "Run an agent in the foreground",
             "Agent name, .too file, reference, or URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
