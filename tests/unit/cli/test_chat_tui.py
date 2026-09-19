@@ -4304,7 +4304,6 @@ def test_chat_tui_queue_steer_has_no_single_key_binding() -> None:
     [
         ((Keys.Escape, Keys.Escape), "cancel"),
         ((Keys.ControlC,), "interrupt"),
-        ((Keys.ControlD,), "eof"),
     ],
 )
 def test_chat_run_and_input_controls_require_input_focus(
@@ -4345,6 +4344,54 @@ def test_chat_run_and_input_controls_require_input_focus(
             assert app.prompt.buffer.text == "keep draft"
             assert [item.source for item in app.queue] == ["queued input"]
             await app.app.cancel_and_wait_for_background_tasks()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("queue_focused", [False, True])
+def test_chat_ctrl_d_deletes_forward_while_the_draft_has_text(
+    queue_focused: bool,
+) -> None:
+    """Ctrl+D keeps its terminal meaning and deletes forward, not the run."""
+
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, _output):
+            app.app.timeoutlen = None
+            app.prompt.buffer.text = "keep draft"
+            app.prompt.buffer.cursor_position = 5
+            if queue_focused:
+                app.app.layout.focus(app.queue_panel.view)
+            app.app.key_processor.feed(KeyPress(Keys.ControlD))
+            app.app.key_processor.process_keys()
+
+            assert app.ui_events.empty()
+            assert [item.source for item in app.queue] == ["first", "second", "third"]
+            assert app.active_run_id == "run_busy"
+            if queue_focused:
+                assert app.prompt.buffer.text == "keep draft"
+            else:
+                assert app.prompt.buffer.text == "keep raft"
+                assert app.prompt.buffer.cursor_position == 5
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("queue_focused", [False, True])
+def test_chat_ctrl_d_exits_only_while_the_draft_is_empty(queue_focused: bool) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, _output):
+            app.app.timeoutlen = None
+            app.prompt.buffer.text = ""
+            if queue_focused:
+                app.app.layout.focus(app.queue_panel.view)
+            app.app.key_processor.feed(KeyPress(Keys.ControlD))
+            app.app.key_processor.process_keys()
+
+            if queue_focused:
+                assert app.ui_events.empty()
+            else:
+                assert app.ui_events.get_nowait().type == "eof"
+                assert app.ui_events.empty()
 
     asyncio.run(exercise())
 

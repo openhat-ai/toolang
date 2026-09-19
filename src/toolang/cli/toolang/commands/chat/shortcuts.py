@@ -140,7 +140,7 @@ EOF = ChatShortcut(
     "eof",
     (("c-d",),),
     "Ctrl+D",
-    "Exit when input is empty and no run is active",
+    "Delete forward, or exit when input is empty and no run is active",
 )
 CLEAR = ChatShortcut(
     "clear",
