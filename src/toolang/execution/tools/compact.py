@@ -55,13 +55,13 @@ async def execute(
         reader = RunHistory(store)
         store.require_idle_compactor(thread)
         output = reader.get_compaction(target)
-        if output is None or output.result.end != str(end_ref):
-            reuse = (
-                output is not None
-                and RunRef(output.result.end) in history.roots
-                and history.roots.index(RunRef(output.result.end))
-                < history.roots.index(end_ref)
+        if output is not None and RunRef(output.result.end) not in history.roots:
+            raise ToolangError(
+                "published compact horizon is outside the calling Run's history"
             )
+        if output is None or history.roots.index(
+            RunRef(output.result.end)
+        ) < history.roots.index(end_ref):
             resolved: dict[str, str] = {
                 "thread": str(target),
                 "start": str(history.roots[0]),
@@ -69,8 +69,7 @@ async def execute(
                 "begin": str(history.roots[0]),
                 "end": end,
             }
-            if reuse:
-                assert output is not None
+            if output is not None:
                 resolved["begin"] = output.result.end
                 resolved["start"] = output.result.begin
                 resolved["summary"] = output.result.summary
@@ -103,6 +102,10 @@ async def execute(
                 )
             except (ValueError, TypeError) as exc:
                 raise ToolangError(f"invalid compact summary: {exc}") from exc
+        else:
+            # A newer CLI result may already cover more than preflight requested.
+            # Validate it against this Run's fixed history before adoption.
+            reader.read_compaction(output.ref, target, history.roots)
         controls = execution.compact(step, output.ref)
         return {
             "controls": [

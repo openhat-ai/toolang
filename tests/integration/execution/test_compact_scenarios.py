@@ -990,3 +990,113 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
             assert "Combined prefix." in text and "large output" not in text
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("algorithm", ["DEFAULT", "FORGET"])
+@pytest.mark.parametrize("outside_history", [False, True])
+def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
+    tmp_path, algorithm, outside_history
+):
+    from types import SimpleNamespace
+    from typing import cast
+
+    from tests.support.execution_fixtures import project_run_end, project_run_start
+    from toolang.cli.toolang.commands import compact
+    from toolang.execution.events import StepBegin
+    from toolang.lang.input import CallInput, RunnableInput
+    from toolang.setup import SetupWatcher
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE + "\nflow job(_: Part[]) -> Text:\n  run chat\n",
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+    published = None
+
+    async def scenario():
+        nonlocal published
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            roots = []
+            for text in ("old", "middle", "recent"):
+                root = await harness.executor.run(
+                    harness.run_spec(
+                        thread=thread, runnable="flow:job", primary=(TextPart(text),)
+                    )
+                )
+                assert root.status == "succeeded"
+                roots.append(root)
+            constrain(harness)
+
+            async def refresh():
+                return harness.setup
+
+            class Tracer(RecordingRunTracer):
+                async def on_event(self, event):
+                    nonlocal published
+                    await super().on_event(event)
+                    if (
+                        not isinstance(event, StepBegin)
+                        or event.kind != "tool"
+                        or published
+                    ):
+                        return
+                    step = harness.store.get_step(ref=event.step)
+                    assert step is not None and isinstance(step.given, ToolStepGiven)
+                    assert step.given.call.input["end"] == roots[1].id
+                    before = roots[-1].id
+                    if outside_history:
+                        # CLI may retain the active Run and a later terminal root.
+                        project_run_start(
+                            harness.store,
+                            run_id="run_later",
+                            thread_id=thread,
+                            origin="test",
+                            input=Message.user("later"),
+                        )
+                        project_run_end(harness.store, run_id="run_later")
+                        before = event.step.run_id
+                    published = await compact._run(
+                        harness.store,
+                        harness.ids,
+                        cast(SetupWatcher, SimpleNamespace(refresh=refresh)),
+                        RunnableInput({"thread": thread, "before": before}),
+                        CallInput(),
+                        max_width=100,
+                        algorithm=algorithm,
+                    )
+
+            harness.adapter._responses.extend(
+                ([reply("CLI summary.")] if algorithm == "DEFAULT" else [])
+                + [reply("done")]
+            )
+            tracer = Tracer()
+            current = await harness.executor.run(
+                spec(harness, thread, "current"), tracer=tracer
+            )
+            assert published is not None
+            history = RunHistory(harness.store)
+            latest = history.get_compaction(thread)
+            assert latest is not None and str(latest.ref) == published["horizon"]
+            assert len(history.thread_view(f"compact_{thread}").roots) == 1
+            controls = [
+                c
+                for c in harness.store.list_run_controls(run_id=current.id)
+                if isinstance(c.payload, CompactControlPayload)
+            ]
+            if outside_history:
+                assert current.status == "failed"
+                assert current.error is not None
+                assert "outside the calling Run's history" in str(
+                    harness.store.resolve_error(current.error)
+                )
+                assert not controls
+            else:
+                assert current.status == "succeeded", current.error
+                assert len(controls) == 1 and controls[0].payload.horizon == latest.ref
+                call = harness.adapter.invocations[-1].call
+                assert latest.result.summary in str(call.messages)
+                assert "old old" not in str(call.messages)
+                assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
