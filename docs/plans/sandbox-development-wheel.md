@@ -140,7 +140,7 @@ development wheel.
 ## Touchpoints
 
 - `src/toolang/up/sandbox.py`
-- `src/toolang/plugin/sandboxes/docker.py`
+- `src/toolang/plugin/sandboxes/docker/sandbox.py`
 - `src/toolang/common/version.py`
 - `src/toolang/cli/toolang/commands/runtime.py`
 - `tests/unit/up/test_sandbox.py`

@@ -268,8 +268,8 @@ the controller workload PID when a sandbox reference exists.
 - `src/toolang/up/sandbox.py`
 - `src/toolang/up/process.py`
 - `src/toolang/plugin/sandboxes/host.py`
-- `src/toolang/plugin/sandboxes/docker.py`
-- `src/toolang/plugin/sandboxes/_docker_guest.py`
+- `src/toolang/plugin/sandboxes/docker/sandbox.py`
+- `src/toolang/plugin/sandboxes/docker/_guest.py`
 - `src/toolang/cli/common/progress.py`
 - a focused runtime-startup presenter under `src/toolang/cli/common/`
 - `src/toolang/cli/toolang/commands/runtime.py`

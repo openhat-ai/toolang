@@ -82,8 +82,8 @@ append-only, and installer details remain private diagnostics.
 ## Touchpoints And Acceptance
 
 Touchpoints are the two shell scripts, the fixed Python helper,
-`_docker_guest.py`, the Docker sandbox staging call site, focused offline tests,
-and opt-in Docker checks. No public CLI,
+`sandboxes/docker/_guest.py`, the Docker sandbox staging call site, focused
+offline tests, and opt-in Docker checks. No public CLI,
 configuration, plugin contract, image build, other engine, or remote progress
 change is included.
 

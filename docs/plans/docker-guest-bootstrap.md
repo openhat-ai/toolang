@@ -196,10 +196,10 @@ progress, and diagnostics must never contain guest environment values.
 
 ## Design Touchpoints
 
-- `src/toolang/plugin/sandboxes/_docker_guest.py`
-- `src/toolang/plugin/sandboxes/docker_guest.py`
-- `src/toolang/plugin/sandboxes/docker.py`
-- `src/toolang/plugin/sandboxes/_docker_cli.py`
+- `src/toolang/plugin/sandboxes/docker/_guest.py`
+- `src/toolang/plugin/sandboxes/docker/docker_guest.py`
+- `src/toolang/plugin/sandboxes/docker/sandbox.py`
+- `src/toolang/plugin/sandboxes/docker/_cli.py`
 - `src/toolang/plugin/sandboxes/host.py`
 - `src/toolang/base/protocols/sandbox.py`
 - `src/toolang/up/sandbox.py`
