@@ -12,8 +12,8 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.tool import ToolContext, ToolService, ServiceToolContext
-from toolang.plugin.toolsets.filesystem import create_toolset as create_filesystem_tool
-from toolang.plugin.toolsets.service_use import (
+from toolang.plugin.toolsets.fs import create_toolset as create_filesystem_tool
+from toolang.plugin.toolsets.service import (
     create_toolset as create_service_use_tool,
 )
 from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool

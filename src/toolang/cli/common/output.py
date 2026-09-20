@@ -142,6 +142,32 @@ def echo_table(
     _TABLE_CONSOLE.print(_make_table(headers, rows, justify=justify))
 
 
+def echo_collection_summary(
+    count: int, noun: str, *, group: tuple[int, str] | None = None
+) -> None:
+    """Summarize displayed rows, including empty and singleton collections."""
+
+    plural = noun + ("es" if noun.endswith(("s", "x", "ch", "sh")) else "s")
+    summary = f"{count} {noun if count == 1 else plural}"
+    if count > 1 and group is not None:
+        groups, group_noun = group
+        summary += f", {groups} {group_noun if groups == 1 else group_noun + 's'}"
+    if count:
+        typer.echo()
+    typer.echo(summary)
+
+
+def inspection_status(*, allowed: bool, ready: bool = True) -> str:
+    """Keep policy exclusion and unmet prerequisites independently visible."""
+
+    reasons = [
+        label
+        for failed, label in ((not allowed, "blocked"), (not ready, "unready"))
+        if failed
+    ]
+    return ", ".join(reasons) or "ok"
+
+
 def echo_pairs_table(
     rows: Sequence[tuple[str, str]],
     *,

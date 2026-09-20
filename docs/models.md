@@ -149,7 +149,10 @@ a published Setup version. Every source's records are cached, and a dynamic
 catalog persists one probe file whose mtime stamps its current result.
 
 Each root or agent model context keeps one cache file per catalog below the
-owning `.setup`. The models.dev file is read once per change; its revision is the
+owning `.setup`: root inspection uses `${TOOLANG_ROOT}/.setup/models`, and an
+agent uses its home `.setup/models`. Root and agent setup revisions have distinct
+scope identities, even when their inputs match. The models.dev file is read once
+per change; its revision is the
 payload digest plus the file mtime. A local catalog's file is rewritten only when
 its probe result differs, so its mtime marks when the current run of identical
 results was first saved. Cache revisions cover model-affecting configuration,
@@ -374,27 +377,51 @@ too catalogs
 too adapters [--json]
 ```
 
-`too models` shows ready, allowed models plus an `AVAILABLE` yes/no column.
+`too models` shows ready, allowed models without a redundant status column.
 `too providers` lists only providers with at least one such model, and its nested
 model lists use the same scope. Add `--all` to either command to inspect the
 complete directory, including unready and allow-excluded entries; `providers
 --all` also includes empty providers. The `available` query field describes
 readiness independently of allow membership.
 
-`too models --all` and `too providers --all` show coarse unavailability reasons
-from the route's missing fields. They do not identify individual missing
-credentials or distinguish unknown adapters from uninstalled ones.
+`too models --all` (or `-a`) adds `STATUS` as the last column: `ok`,
+`blocked`, `unready (reason)`, or `blocked, unready (reason)`. `ok` means ready
+AND allowed. Unready reasons are included in parentheses, with no separate
+REASON column. Default tables omit STATUS. The query field `available`
+continues to describe readiness alone.
 
-Providers show `ADAPTERS`, `DEFAULT API`, `ENV`, and `REASON`. Adapter names are
+Provider tables always use the `MODELS` header and never show REASON. With
+`--all`, values are `OK/ALL`: ready, allowed models over all provider models in
+scope. Without `--all`, values are effective counts and providers with none
+are hidden. `--all` preserves scope, configuration, and catalog precedence and
+grants no runtime access.
+
+Model summaries use `N models, M providers`; omit the provider count for zero
+or one model. Provider summaries use `N providers`. Empty results print only
+the zero count, without table headers. Summaries count displayed rows; JSON
+exports have no summary or presentation status. Prices independently right-align
+the input and output amounts across displayed rows so their `/` separators align.
+Amounts omit currency symbols; the `PRICE ($/1M)` header supplies the unit.
+
+Model STATUS shows coarse unready reasons from missing route fields:
+`No adapter`, `No API URL`, and `Missing env`, joined with `; ` in that order.
+These labels do not identify individual missing credentials or distinguish
+unknown adapters from uninstalled ones.
+
+Providers show `ADAPTERS`, `DEFAULT API`, and `ENV`. Adapter names are
 aggregated from the selected models; empty providers show their default adapter.
 The API column marks model endpoint overrides. ENV shows the satisfied rule, or
 catalog declarations when unavailable; its red styling indicates the overall
 environment requirement is unmet, not that every displayed variable is missing.
 A provider is available when at least one of its selected models is ready.
 
-`too catalogs` lists installed model-catalog plugin entry points and their
-`built-in` or `external` source. It does not load the plugins or describe the
-merged catalog snapshot; use `too models` for that view.
+`too catalogs` and `too adapters [--json]` list locally installed catalog and
+adapter entry points and their `built-in` or `external` source. They do not
+accept an agent name, construct setup, read catalog/configuration files, or
+invoke plugin factories. Installed entries remain visible even if they cannot
+be loaded. Runtime setup still owns the adapter instances used for execution.
+Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
+these commands read one published setup version.
 
 `too models --query ... --json` emits another complete, deterministic,
 models.dev-compatible catalog containing only selected models, including models

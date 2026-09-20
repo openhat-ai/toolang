@@ -209,6 +209,30 @@ def test_model_cache_separates_root_and_agent_contexts(
     )
 
 
+def test_root_inspection_owns_its_cache_and_version_without_a_default_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    envs = {"TEST_API_KEY": "secret"}
+    _watcher(monkeypatch, tmp_path, envs=envs)
+    monkeypatch.setattr(watcher_module, "load_root_setup_envs", lambda _layout: envs)
+    layout = AgentLayout.resident(tmp_path, "default")
+
+    root_setup = asyncio.run(SetupWatcher(layout, agent_context=False).refresh())
+
+    assert root_setup.models.refs() == ("test/one",)
+    assert layout.root_model_cache.is_dir()
+    assert not layout.home.exists()
+    agent_setup = asyncio.run(SetupWatcher(layout).refresh())
+    assert agent_setup.models.refs() == root_setup.models.refs()
+    assert layout.home_model_cache.is_dir()
+    assert root_setup.revision != agent_setup.revision
+    assert (
+        asyncio.run(SetupWatcher(layout, agent_context=False).refresh()).revision
+        == root_setup.revision
+    )
+
+
 def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -984,6 +1008,14 @@ def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
     )
     setup = asyncio.run(watcher.refresh())
     assert not setup.tools.user
+    assert setup.tool_collection() is setup.tools
+    complete = setup.tool_collection(all=True)
+    assert set(complete) == set(registered)
+    assert any(name.startswith("me__") for name in complete)
+    registered.clear()
+    assert setup.tool_collection(all=True) is complete
+    assert complete.user
+    assert not setup.tools.user
     assert set(setup.tools) == {
         "_toolang__run",
         "_toolang__execute",
@@ -1335,26 +1367,3 @@ def test_setup_publishes_around_invalid_modes_and_recovers(
     assert fixed is not None and fixed._toolang.ready
     assert repaired.models.contains("test/two") is not excluded
     assert setup.model_catalog(all=True) == full
-
-
-def test_setup_publishes_installed_adapter_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from toolang.plugin.loading import PluginInfo
-
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    infos = [
-        PluginInfo("responses", "built-in"),
-        PluginInfo("chat_completions", "external"),
-        PluginInfo("not_loaded", "external"),
-    ]
-    monkeypatch.setattr(watcher_module, "list_plugin_infos", lambda **_kwargs: infos)
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    setup = asyncio.run(watcher.refresh())
-    infos.clear()
-
-    assert setup.adapter_sources == {
-        "responses": "built-in",
-        "chat_completions": "external",
-    }
-    assert asyncio.run(watcher.refresh()) is setup

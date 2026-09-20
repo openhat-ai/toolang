@@ -130,7 +130,9 @@ too highlight work.too                # Highlight original source
 toolang models                       # List model catalog entries and availability
 toolang <agent> models                # Inspect models using a resident agent's config
 toolang providers                    # List catalog providers
-toolang tools                        # List tools
+toolang tools                        # List root-configured available tools
+toolang <agent> tools                # Apply the agent configuration and allow policy
+toolang <agent> tools --all          # Include internal and allow-excluded tools
 toolang catalogs                     # List installed model catalogs
 toolang adapters                     # List installed model adapters
 toolang toolsets                     # List installed toolsets
@@ -142,7 +144,8 @@ caps [agent] skill add <ref>         # Add a skill
 caps [agent] service add <ref>       # Add an MCP server
 caps [agent] prompt add <ref>        # Add a slash command
 caps [agent] skill list              # List skills
-caps [agent] list                    # List all caps
+caps [agent] list                    # List allowed caps in root or agent scope
+caps [agent] list --all              # Include allow-excluded caps and their status
 ```
 
 The preferred model catalog is models.dev `catalog.json`; Toolang consumes its

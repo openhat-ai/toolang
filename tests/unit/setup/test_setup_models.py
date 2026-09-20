@@ -47,6 +47,16 @@ def test_allow_query_string_and_list_preserve_authored_order(query):
     assert order_models(models, allow.models).refs() == ("other/b", "openai/a")
 
 
+def test_empty_model_allow_publishes_no_models():
+    models = ModelCollection((model("openai/a"), model("other/b")))
+    allow = resolve_setup_allow(({"allow": {"models": []}},))
+
+    ordered = order_models(models, allow.models)
+
+    assert ordered.refs() == ()
+    assert ordered.query_views() == ()
+
+
 def test_compact_config_layers_are_independent_complete_model_requests():
     root = {
         "default": {"model": "normal/a effort=high"},

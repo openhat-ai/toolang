@@ -1,10 +1,9 @@
-"""Plural model catalog, provider, and adapter commands."""
+"""Effective model catalog and provider inspection commands."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-import json
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -12,14 +11,18 @@ from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute, Provider
+from toolang.base.types.model import Model, ModelRoute, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
     context_root,
     resolve_model_catalog_option,
 )
-from toolang.cli.common.output import echo_table
+from toolang.cli.common.output import (
+    echo_collection_summary,
+    echo_table,
+    inspection_status,
+)
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -40,7 +43,7 @@ def models_command(
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[
         bool,
-        typer.Option("--all", help="Include unready and allow-excluded models"),
+        typer.Option("--all", "-a", help="Include unready and allow-excluded models"),
     ] = False,
     query: Annotated[
         list[str] | None,
@@ -75,32 +78,28 @@ def models_command(
         content = dumps(snapshot.to_data(models=selected))
         typer.echo(content, nl=False)
         return
-    headers, rows = dataset.table(selected_views)
+    headers, raw_rows = dataset.table(selected_views)
+    # Readiness remains queryable; the table groups it with policy in STATUS.
+    headers = (headers[0], *headers[2:])
+    rows = [(row[0], *row[2:]) for row in raw_rows]
+    justify = (None, "right", "right", None, None, "right")
     if all_:
-        headers = (*headers, "REASON")
+        headers = (*headers, "STATUS")
         rows = [
-            (*row, _route_reason(model._toolang.route))
+            (
+                *row,
+                _model_status(model, allowed=setup.model_allowed(model.ref)),
+            )
             for row, model in zip(rows, selected, strict=True)
         ]
-    if not rows:
-        typer.echo("No models matched query." if query else "No models found.")
-        return
-    echo_table(
-        headers,
-        rows,
-        justify=(
-            None,
-            None,
-            "right",
-            "right",
-            None,
-            None,
-            "right",
-            *((None,) if all_ else ()),
-        ),
+        justify = (*justify, None)
+    if rows:
+        echo_table(headers, rows, justify=justify)
+    echo_collection_summary(
+        len(selected),
+        "model",
+        group=(len({model._toolang.provider for model in selected}), "provider"),
     )
-    typer.echo()
-    typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
 
 
 def providers_command(
@@ -109,7 +108,7 @@ def providers_command(
     all_: Annotated[
         bool,
         typer.Option(
-            "--all", help="Include unready, allow-excluded, and empty providers"
+            "--all", "-a", help="Include unready, allow-excluded, and empty providers"
         ),
     ] = False,
     json_: Annotated[
@@ -129,7 +128,7 @@ def providers_command(
     }
     for model in snapshot.models:
         by_provider[model._toolang.provider].append(model)
-    available = {model.ref for model in snapshot.models if model._toolang.ready}
+    available = set(setup.models.refs())
     selected_views = catalog_provider_views(
         base_providers,
         models=by_provider,
@@ -160,65 +159,29 @@ def providers_command(
         return
     headers = (
         "PROVIDER",
-        "AVAILABLE MODELS",
+        "MODELS",
         "ADAPTERS",
         "DEFAULT API",
         "ENV",
-        "REASON",
     )
     rows = [
         (
             item.id,
             Text(
-                f"{item.available_models}/{item.model_count}",
+                f"{item.available_models}/{item.model_count}"
+                if all_
+                else str(item.available_models),
                 style="red" if item.available_models == 0 else "",
             ),
             _provider_adapters_cell(item),
             _provider_api_cell(item, by_provider[item.id]),
             _provider_env_cell(item),
-            _provider_reason(item.record, by_provider[item.id]),
         )
         for item in selected_views
     ]
-    if not rows:
-        typer.echo("No providers found.")
-        return
-    echo_table(
-        headers,
-        rows,
-    )
-    typer.echo()
-    typer.echo(f" {_provider_catalog_summary(snapshot, providers=providers)}")
-
-
-def adapters_command(
-    ctx: typer.Context,
-    json_: Annotated[
-        bool,
-        typer.Option("--json", help="Write adapter metadata as JSON"),
-    ] = False,
-) -> None:
-    """List the protocol adapters this setup publishes."""
-
-    setup = _setup(ctx)
-    rows = tuple(
-        (name, setup.adapter_sources.get(name) or "-")
-        for name in sorted(setup.adapters)
-    )
-    if json_:
-        typer.echo(
-            json.dumps(
-                [{"id": name, "source": source} for name, source in rows],
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        )
-        return
-    if not rows:
-        typer.echo("No adapters found.")
-        return
-    echo_table(("ADAPTER", "SOURCE"), rows)
+    if rows:
+        echo_table(headers, rows)
+    echo_collection_summary(len(providers), "provider")
 
 
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
@@ -243,16 +206,6 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
     )
 
 
-def _catalog_summary(
-    snapshot: ModelCatalogSnapshot,
-    *,
-    models: Sequence[Model],
-) -> str:
-    del snapshot
-    model_noun = "model" if len(models) == 1 else "models"
-    return f"{len(models)} {model_noun}"
-
-
 def _provider_adapters(provider: Provider, models: Sequence[Model]) -> tuple[str, ...]:
     adapters = {
         model._toolang.route.adapter
@@ -271,31 +224,24 @@ def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
     return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
 
 
+def _model_status(model: Model, *, allowed: bool) -> str:
+    status = inspection_status(allowed=allowed, ready=model._toolang.ready)
+    if not model._toolang.ready and (reason := _route_reason(model._toolang.route)):
+        status += f" ({reason})"
+    return status
+
+
 def _route_reason(route: ModelRoute) -> str:
+    """Summarize missing prerequisites in a stable display order."""
+
     return "; ".join(
         reason
         for missing, reason in (
-            (route.adapter is None, "Adapter unresolved or not installed"),
-            (route.api is None, "API missing or unresolved"),
-            (route.env is None, "Environment requirements unmet"),
+            (route.adapter is None, "No adapter"),
+            (route.api is None, "No API URL"),
+            (route.env is None, "Missing env"),
         )
         if missing
-    )
-
-
-def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
-    if any(model._toolang.ready for model in models):
-        return ""
-    if not models:
-        return _route_reason(provider._toolang.route) or "No models"
-    return "; ".join(
-        sorted(
-            {
-                reason
-                for model in models
-                if (reason := _route_reason(model._toolang.route))
-            }
-        )
     )
 
 
@@ -327,13 +273,3 @@ def _provider_env_cell(provider: CatalogProviderView) -> Text:
             style="red" if provider.record._toolang.route.env is None else "",
         )
     return cell
-
-
-def _provider_catalog_summary(
-    snapshot: ModelCatalogSnapshot,
-    *,
-    providers: Sequence[Provider],
-) -> str:
-    del snapshot
-    provider_noun = "provider" if len(providers) == 1 else "providers"
-    return f"{len(providers)} {provider_noun}"

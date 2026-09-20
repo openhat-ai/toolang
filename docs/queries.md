@@ -132,7 +132,7 @@ and never use this grammar.
 ```bash
 toolang serve alice \
   --allow 'models=*[streaming;tool_call]' \
-  --allow 'tools=filesystem/*' \
+  --allow 'tools=fs/*' \
   --allow 'skills=reviewer'
 ```
 

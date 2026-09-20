@@ -6,7 +6,7 @@ import pytest
 
 from toolang.base.types.tool import ToolResult
 from toolang.execution.tools._toolang import ToolangToolset
-from toolang.plugin.toolsets.filesystem import FilesystemToolset
+from toolang.plugin.toolsets.fs import FilesystemToolset
 from toolang.plugin.toolsets.history import HistoryToolset
 from toolang.plugin.toolsets.shell import ShellToolset
 from toolang.plugin.toolsets.web import WebToolset

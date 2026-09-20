@@ -704,37 +704,51 @@ class AgentState:
 def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]:
     """Apply configured allows and frozen startup replacements once per State."""
 
-    from .collections import cap_dataset
-    from .config import CAP_ALLOW_FIELDS, resolve_cap_allows
+    from .config import resolve_cap_allows
 
     allows = resolve_cap_allows(
         (state.root_config, state.home_config), overrides=state.allow_overrides
     )
     base = tuple(state.caps.values()) if state.base_caps is None else state.base_caps
-    by_module: dict[str, tuple[StateCap, ...]] = {}
-    for module, here in state.module_caps.items():
-        entries = effective_caps(base, here)
-        selected_ids: set[tuple[str, str, str]] = set()
-        for field_name in CAP_ALLOW_FIELDS:
-            kind = cast(EntryKind, field_name.removesuffix("s"))
-            candidates = tuple(cap for cap in entries if cap.kind == kind)
-            queries = allows.get(field_name)
-            if queries is None:
-                selected = candidates
-            elif not queries:
-                selected = ()
-            else:
-                selected = tuple(
-                    cast(StateCap, item.record)
-                    for item in cap_dataset(
-                        candidates, agent_name=state.name, kind=kind
-                    ).query(queries)
-                )
-            selected_ids.update((cap.kind, cap.name, cap.ref) for cap in selected)
-        by_module[module] = tuple(
-            cap for cap in entries if (cap.kind, cap.name, cap.ref) in selected_ids
+    return {
+        module: _allowed_caps(
+            effective_caps(base, here), agent_name=state.name, allows=allows
         )
-    return by_module
+        for module, here in state.module_caps.items()
+    }
+
+
+def _allowed_caps(
+    entries: tuple[StateCap, ...],
+    *,
+    agent_name: str,
+    allows: Mapping[str, tuple[str, ...] | None],
+) -> tuple[StateCap, ...]:
+    """Apply the same cap-kind policy to runtime and root inspection."""
+
+    from .collections import cap_dataset
+    from .config import CAP_ALLOW_FIELDS
+
+    selected_ids: set[tuple[str, str, str]] = set()
+    for field_name in CAP_ALLOW_FIELDS:
+        kind = cast(EntryKind, field_name.removesuffix("s"))
+        candidates = tuple(cap for cap in entries if cap.kind == kind)
+        queries = allows.get(field_name)
+        if queries is None:
+            selected = candidates
+        elif not queries:
+            selected = ()
+        else:
+            selected = tuple(
+                cast(StateCap, item.record)
+                for item in cap_dataset(
+                    candidates, agent_name=agent_name, kind=kind
+                ).query(queries)
+            )
+        selected_ids.update((cap.kind, cap.name, cap.ref) for cap in selected)
+    return tuple(
+        cap for cap in entries if (cap.kind, cap.name, cap.ref) in selected_ids
+    )
 
 
 def compose_agent_state(

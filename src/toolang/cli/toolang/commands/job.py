@@ -152,7 +152,8 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
             bool, typer.Option("--archived", help="List archived items")
         ] = False,
         all_items: Annotated[
-            bool, typer.Option("--all", help="List ready, draft, and archived items")
+            bool,
+            typer.Option("--all", "-a", help="List ready, draft, and archived items"),
         ] = False,
     ) -> None:
         require_prefix_agent(ctx)

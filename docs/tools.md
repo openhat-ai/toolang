@@ -8,6 +8,32 @@ async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
 
 
+## Inspection
+
+`too [AGENT] tools [--all] [--query QUERY]` lists the effective tools published
+by setup. With no agent it uses root configuration only, never the implicit
+`default` agent. With an agent it overlays that agent's plugin configuration
+and allow settings on root inputs. The agent need not be running, and its
+program is not parsed for this command. This describes setup-level availability;
+individual run resource declarations may narrow it further.
+
+The default list hides internal tools such as `_toolang/*`. `--all` reveals
+those tools and all allow-excluded tools from the same setup version, matching
+the diagnostic meaning of model/provider `--all`. `setup.tools` remains the
+allow-filtered runtime collection; inspection does not expand runtime grants.
+`me/*` follows normal allow policy in the default view and appears with `--all`.
+Queries and footer counts use the displayed dataset. Tools have no separate
+readiness protocol: the full view includes leaves supplied by loaded toolsets,
+not guessed tools from an unloadable plugin. Full tables add one `STATUS` column
+at the end: `ok` or `blocked`. Internal tools are identifiable
+by their `_toolang` names without an extra label. Default tables show only name
+and description; SOURCE is omitted from both tool views but remains queryable.
+Summaries use `N tools, M toolsets`, with no toolset count for zero or one tool.
+Empty results print only `0 tools`. `-a` is an alias for `--all`.
+`too toolsets [--all]` instead lists locally installed toolset plugins, without
+agent configuration, policy, or factory loading.
+
+
 ## Built-In Tool Families
 
 Current built-in tools are:

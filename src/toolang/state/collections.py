@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from itertools import groupby
 
@@ -124,17 +124,27 @@ def cap_table(
     views: Sequence[CapQueryView],
     *,
     kind: EntryKind | None = None,
+    allowed: Collection[tuple[EntryKind, str]] | None = None,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
     """Render cap identities and metadata in the supplied order."""
 
     if kind is not None:
         dataset = cap_kind_definition(kind).dataset(tuple(views))
-        return dataset.table()
-    rows: list[tuple[str, ...]] = []
-    for cap_kind, group in groupby(views, key=lambda view: view.kind):
-        dataset = cap_kind_definition(cap_kind).dataset(tuple(group))
-        rows.extend(dataset.table()[1])
-    return tuple(column.label for column in _CAP_COLUMNS), tuple(rows)
+        headers, rows = dataset.table()
+    else:
+        headers = tuple(column.label for column in _CAP_COLUMNS)
+        values: list[tuple[str, ...]] = []
+        for cap_kind, group in groupby(views, key=lambda view: view.kind):
+            dataset = cap_kind_definition(cap_kind).dataset(tuple(group))
+            values.extend(dataset.table()[1])
+        rows = tuple(values)
+    if allowed is not None:
+        headers = (headers[0], "STATUS", *headers[1:])
+        rows = tuple(
+            (row[0], "ok" if (view.kind, view.name) in allowed else "blocked", *row[1:])
+            for row, view in zip(rows, views, strict=True)
+        )
+    return headers, rows
 
 
 def _cap_view(entry: StateCap, *, agent_name: str) -> CapQueryView:

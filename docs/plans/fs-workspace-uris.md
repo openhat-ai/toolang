@@ -44,7 +44,7 @@ needed.
 ## Touchpoints and acceptance
 
 - `base/utils/workspace_paths.py`: URI codec and explicit workspace-root resolution.
-- `plugin/toolsets/filesystem.py`: preparation, namespace listing, bounded
+- `plugin/toolsets/fs.py`: preparation, namespace listing, bounded
   enumeration, and URI results; retain the existing tool factory.
 - Executor rules/honor and protocol preparation: external workspace rules and
   model-facing path contract.

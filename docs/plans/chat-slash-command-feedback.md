@@ -67,7 +67,7 @@ syntax. No argument lists the full effective base collection. Examples:
 
 ```text
 /models openrouter/*[reasoning]
-/tools filesystem/*
+/tools fs/*
 /caps skill/*[scope=home]
 /caps *[origin=local;form=authored]
 ```

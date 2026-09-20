@@ -14,9 +14,11 @@ from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
-from toolang.plugin.loading import list_plugin_infos, plugin_provenance
-from toolang.plugin.adapters.loading import load_model_adapters
-from toolang.plugin.catalogs.loading import load_model_catalogs
+from toolang.plugin.loading import (
+    load_model_adapters,
+    load_model_catalogs,
+    plugin_provenance,
+)
 from toolang.plugin.catalogs.models_dev.catalog import (
     FileObservation,
     ModelCatalogSource,
@@ -146,16 +148,14 @@ class SetupWatcher:
         self._catalog_identity: FileObservation | None = None
         self._catalog_source: ModelCatalogSource | None = None
         self._source_revisions: tuple[tuple[str, str], ...] | None = None
-        self._model_cache = ModelCatalogCache(layout.home_model_cache)
+        self._model_cache = ModelCatalogCache(
+            layout.home_model_cache if agent_context else layout.root_model_cache
+        )
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
             for item in plugin_provenance(group=group)
         )
-        self._adapter_sources = {
-            info.name: info.source
-            for info in list_plugin_infos(group="toolang.model_adapter")
-        }
         self._setup: AgentSetup | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
@@ -296,7 +296,7 @@ class SetupWatcher:
             },
             allow_models=allow.models,
             plugin_provenance=self._model_plugin_provenance,
-            scope=f"agent:{self.layout.name}",
+            scope=f"agent:{self.layout.name}" if self._agent_context else "root",
         )
         if self._setup is not None and self._setup.revision == projection_key:
             self._commit_candidate(candidate)
@@ -317,7 +317,6 @@ class SetupWatcher:
                 for provider_id in snapshot.providers
             },
             adapters=adapters,
-            adapter_sources=self._adapter_sources,
             tools=tools,
             envs=inputs.envs,
             allow=allow,
@@ -565,7 +564,6 @@ def _build_setup(
     snapshot: ModelCatalogSnapshot,
     catalog_sources: Mapping[str, tuple[str, str]],
     adapters: dict[str, ModelAdapter],
-    adapter_sources: Mapping[str, str],
     tools: dict[str, Tool],
     envs: dict[str, str],
     allow: AgentCeiling,
@@ -575,19 +573,19 @@ def _build_setup(
     validate_defaults: bool = True,
 ) -> AgentSetup:
     dataset = catalog_model_dataset(snapshot)
-    models = order_models(
-        ModelCollection(snapshot.models, query_views=dataset.items).match(
-            "*[available]"
-        ),
+    allowed_models = order_models(
+        ModelCollection(snapshot.models, query_views=dataset.items),
         allow.models,
     )
+    models = allowed_models.match("*[available]").compact()
     if (
         validate_defaults
         and compact_model is not None
         and compact_model.identity != "unset"
     ):
         select_compact_model(models, compact_model)
-    tool_collection = ToolCollection.from_tools(tools)
+    all_tools = ToolCollection.from_tools(tools)
+    tool_collection = all_tools
     if allow.tools is not None:
         selected = (
             tool_collection.user.match(allow.tools) if allow.tools else ToolCollection()
@@ -616,10 +614,9 @@ def _build_setup(
         limits=limits,
         compact_model=compact_model,
         catalog_sources=catalog_sources,
-        adapter_sources={
-            name: adapter_sources[name] for name in adapters if name in adapter_sources
-        },
         _catalog_loader=catalog_loader(snapshot, revision=revision),
+        _all_tools=all_tools,
+        _allowed_model_refs=frozenset(allowed_models.refs()),
     )
 
 

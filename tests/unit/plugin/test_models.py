@@ -65,7 +65,7 @@ from toolang.plugin.models.views import _format_decimal_unit
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
-from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.loading import load_model_adapters
 from toolang.plugin.adapters import chat_completions as chat_completions_models
 from toolang.plugin.adapters import messages as messages_models
 from toolang.plugin.adapters import responses as responses_models
@@ -250,9 +250,9 @@ def test_package_registers_catalogs_without_legacy_model_provider_entry_points()
 
     assert "toolang.model_provider" not in entry_points
     assert entry_points["toolang.model_catalog"] == {
-        "models_dev": "toolang.plugin.catalogs.models_dev.catalog:create_models_dev_model_catalog",
-        "ollama": "toolang.plugin.catalogs.ollama:create_ollama_model_catalog",
-        "llama_cpp": "toolang.plugin.catalogs.llama_cpp:create_llama_cpp_model_catalog",
+        "models_dev": "toolang.plugin.catalogs.models_dev:create_model_catalog",
+        "ollama": "toolang.plugin.catalogs.ollama:create_model_catalog",
+        "llama_cpp": "toolang.plugin.catalogs.llama_cpp:create_model_catalog",
     }
 
 

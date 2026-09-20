@@ -154,13 +154,72 @@ as external packages. The implementation packages are:
 - `toolang.plugin.adapters.*`.
 
 Each entry point names one factory such as `create_toolset`, `create_channel`,
-`create_sandbox`, `create_models_dev_model_catalog`,
-`create_ollama_model_catalog`, or `create_model_adapter`. A distribution may
-register multiple entries in one or more families.
+`create_sandbox`, `create_model_catalog`, or `create_model_adapter`. A
+distribution may register multiple entries in one or more families.
 
-`toolang.plugin.loading` owns generic entry-point discovery. Family-specific
-loaders pass explicit configuration into factories and validate the returned
-protocol.
+The distribution registers 17 built-in plugins. Each plugin has a module or
+package named after its entry-point identity:
+
+| Family | Registered plugins | Implementation parent |
+| --- | --- | --- |
+| Toolset | `fs`, `history`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
+| Toolset | `_toolang`, `me` | `toolang.execution.tools` |
+| Model catalog | `models_dev`, `ollama`, `llama_cpp` | `toolang.plugin.catalogs` |
+| Model adapter | `chat_completions`, `generate_content`, `messages`, `responses` | `toolang.plugin.adapters` |
+| Channel | `telegram` | `toolang.plugin.channels` |
+| Sandbox | `host`, `docker` | `toolang.plugin.sandboxes` |
+
+Runtime-owned toolsets stay under `execution.tools` because they depend on
+execution services. Shared loaders, collections, catalog parsing, and private
+helpers are support code, not additional plugins. Docker owns its CLI helpers
+and packaged guest bootstrap files inside `sandboxes/docker/`.
+
+Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
+`too channel list`, and `too sandboxes`) list entry-point identities and their
+built-in or external source. They do not accept an agent name or read setup,
+configuration, or catalog files. No factory is invoked, so an installed plugin
+can be listed even if its runtime dependencies are unavailable.
+
+Resource commands have scope-specific semantics:
+
+| Command | No agent | Selected agent |
+| --- | --- | --- |
+| `too [AGENT] caps` | Root-shared, allowed caps | Root-shared plus agent-owned caps under effective allow and scope precedence |
+| `too [AGENT] tools` | Root-configured, allow-filtered tools | Tools after root/agent configuration and allow resolution |
+| `too [AGENT] models` / `providers` | Root-configured ready, allowed model resources | Ready, allowed resources under agent configuration and catalog precedence |
+
+No-agent inspection never reads an implicit default agent. Tools and model
+resources consume their published setup views; caps use capability state.
+See [tools](tools.md), [models](models.md), and [caps](caps.md) for their policies.
+
+`too tools` and `too toolsets` hide internal toolsets such as `_toolang` by
+default. Use `--all` to include them. `me` is not internally hidden, but tool
+allow policy can exclude it from the default view. Resource `--all` shows the
+complete diagnostic view: caps include allow-excluded resources, tools include
+internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
+providers. It preserves the selected scope and configuration and never grants
+execution permissions. Queries and counts use the selected view. An
+internal-only tool query needs `--all`. Tool-call inspection shows the
+recorded plugin identity, independently of its Python module location.
+
+Full cap tables show `STATUS` immediately after identity (`ok` or `blocked`).
+Full tool tables put STATUS last (`ok` or `blocked`). Full model tables put
+STATUS last: `ok`, `blocked`, `unready (reason)`, or `blocked, unready (reason)`.
+`ok` means ready and allowed.
+Internal names need no extra label. Provider tables always use `MODELS`, with
+`OK/ALL` values in full views and effective counts by default, and omit REASON.
+Tools omit SOURCE; plugin inventories retain it. All lists have summaries,
+including zero counts for empty results. Resource
+summaries include group counts only when more than one row is displayed.
+Every `--all` option accepts `-a`. Plugin inventories have no agent allow policy.
+
+`toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
+and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.
+`toolang.plugin.types` owns shared plugin identity and provenance records.
+`toolang.plugin.toolsets.loading` adds toolset-specific identity validation,
+duplicate detection, leaf-tool wrapping, and selection. Loaders depend on base
+contracts, never concrete plugin implementations. Factory entry points remain
+the only mechanism for selecting built-in and external implementations.
 
 Naming reflects cardinality: `create_<singular>` returns one selected plugin,
 `load_<plural>` returns a collection, and `list_<plural>` discovers installed

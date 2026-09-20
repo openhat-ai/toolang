@@ -149,7 +149,7 @@ async def _ollama_model(
     )
 
 
-def create_ollama_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in Ollama catalog plugin."""
 
     return OllamaModelCatalog(

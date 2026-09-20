@@ -13,12 +13,12 @@ from toolang.base.types.model import Model, ModelCatalogSnapshot
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelStreamHandler
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.plugin.adapters.loading import load_model_adapters
-from toolang.plugin.catalogs.loading import load_model_catalogs
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.plugin.toolsets.registry import ToolRef
+from toolang.plugin.types import PluginInfo
 from toolang.plugin.loading import (
-    PluginInfo,
+    load_model_adapters,
+    load_model_catalogs,
     list_plugin_infos,
     list_plugin_names,
     load_plugin_factory,
@@ -95,10 +95,10 @@ def _test_toolset_factory(toolset_name: str, key: str, leaf_name: str):
 def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_toolset
     from toolang.base.examples.tools import create_math_add_toolset
-    from toolang.plugin.toolsets.filesystem import (
+    from toolang.plugin.toolsets.fs import (
         create_toolset as create_filesystem_tool,
     )
-    from toolang.plugin.toolsets.service_use import (
+    from toolang.plugin.toolsets.service import (
         create_toolset as create_service_use_tool,
     )
     from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
@@ -142,7 +142,7 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
 
 def test_plugin_infos_include_source(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_toolset
-    from toolang.plugin.toolsets.filesystem import (
+    from toolang.plugin.toolsets.fs import (
         create_toolset as create_filesystem_tool,
     )
 
@@ -153,7 +153,7 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
         _FakeEntryPoint(
             "fs",
             create_filesystem_tool,
-            value="toolang.plugin.toolsets.filesystem:create_toolset",
+            value="toolang.plugin.toolsets.fs:create_toolset",
             distribution="toolang",
         ),
         _FakeEntryPoint(

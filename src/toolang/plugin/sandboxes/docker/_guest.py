@@ -17,7 +17,7 @@ _GUEST_FILES = {"docker_guest.sh": 0o755, "docker_guest.py": 0o644}
 def stage_guest_files(directory: Path) -> None:
     """Copy the fixed guest bootstrap files into one immutable launch stage."""
 
-    package = files("toolang.plugin.sandboxes")
+    package = files("toolang.plugin.sandboxes.docker")
     for name, mode in _GUEST_FILES.items():
         path = directory / name
         with package.joinpath(name).open("rb") as reader, path.open("wb") as writer:

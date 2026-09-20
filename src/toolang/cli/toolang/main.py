@@ -30,7 +30,7 @@ from ..common.output import echo_error
 from ..common.routing import (
     LocalRuntimeAgentCommand,
     OptionalPrefixAgentListCommand,
-    OptionalPrefixAgentCatalogCommand,
+    OptionalPrefixAgentSetupCommand,
     RequiredPrefixAgentCommand,
     RunAgentCommand,
     RuntimeAgentCommand,
@@ -472,20 +472,20 @@ _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
-    cls=OptionalPrefixAgentCatalogCommand,
+    cls=OptionalPrefixAgentSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
     help="List available model providers",
-    cls=OptionalPrefixAgentCatalogCommand,
+    cls=OptionalPrefixAgentSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(
     "toolang.cli.toolang.commands.plugin:channel_app",
     name="channel",
-    help="List available channels",
+    help="List installed channels",
     no_args_is_help=True,
     hidden=True,
 )
@@ -493,6 +493,7 @@ _registered_command(
     "tools",
     "toolang.cli.toolang.commands.plugin:list_tools",
     help="List available tools",
+    cls=OptionalPrefixAgentSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
@@ -503,7 +504,7 @@ _registered_command(
 )
 _registered_command(
     "adapters",
-    "toolang.cli.toolang.commands.model_catalog:adapters_command",
+    "toolang.cli.toolang.commands.plugin:adapters_command",
     help="List installed model adapters",
     hidden=True,
 )

@@ -222,7 +222,7 @@ class FilesystemToolset:
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the filesystem toolset plugin."""
+    """Create the fs toolset plugin."""
 
     return FilesystemToolset(config=dict(config))
 

@@ -78,7 +78,7 @@ class ModelCatalogSource:
         )
 
 
-def create_models_dev_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in models.dev file catalog plugin."""
 
     value = config.get("path")

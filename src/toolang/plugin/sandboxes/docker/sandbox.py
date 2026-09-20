@@ -30,7 +30,7 @@ from toolang.base.types.sandbox import (
 from toolang.common.progress import emit_progress
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 
-from ._docker_cli import (
+from ._cli import (
     DEFAULT_HOST_GATEWAY,
     docker_append_container_logs,
     docker_container_running,
@@ -41,7 +41,7 @@ from ._docker_cli import (
     docker_wait_container,
     finish_process,
 )
-from ._docker_guest import (
+from ._guest import (
     prepare_background_log,
     prepare_diagnostic,
     prepare_stage_directory,

@@ -68,10 +68,27 @@ class AgentSetup:
     limits: RunLimits = RunLimits()
     compact_model: ModelOverride | None = None
     catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
-    adapter_sources: Mapping[str, str] = field(default_factory=dict)
     _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
         default=None, repr=False, compare=False
     )
+    _all_tools: ToolCollection | None = field(default=None, repr=False, compare=False)
+    _allowed_model_refs: frozenset[str] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def model_allowed(self, ref: str) -> bool:
+        """Read allow membership independently of this version's model readiness."""
+
+        if self._allowed_model_refs is not None:
+            return ref in self._allowed_model_refs
+        return self.models.contains(ref)
+
+    def tool_collection(self, *, all: bool = False) -> ToolCollection:
+        """Read effective tools or this version's complete pre-allow collection."""
+
+        if all and self._all_tools is not None:
+            return self._all_tools
+        return self.tools
 
     def model_catalog(self, *, all: bool = False) -> ModelCatalogSnapshot:
         """Read the default view, or materialize this version's complete catalog."""
@@ -91,6 +108,10 @@ class AgentSetup:
             raise TypeError("setup models must be ModelCollection")
         if not isinstance(self.tools, ToolCollection):
             raise TypeError("setup tools must be ToolCollection")
+        if self._all_tools is not None and not isinstance(
+            self._all_tools, ToolCollection
+        ):
+            raise TypeError("setup full tools must be ToolCollection")
         if not isinstance(self.defaults, RunDefaults):
             raise TypeError("setup defaults must be RunDefaults")
         if not isinstance(self.limits, RunLimits):
@@ -116,7 +137,4 @@ class AgentSetup:
         )
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "adapters", MappingProxyType(adapters))
-        object.__setattr__(
-            self, "adapter_sources", MappingProxyType(dict(self.adapter_sources))
-        )
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))

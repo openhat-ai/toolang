@@ -21,9 +21,16 @@ from .state import (
     flow_export,
     flow_module_name,
     public_runnable_index,
+    _allowed_caps,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
-from .config import canonical_state_config, normalize_cap_overrides, parse_config
+from .config import (
+    canonical_state_config,
+    normalize_cap_overrides,
+    parse_config,
+    resolve_cap_allows,
+)
+from .types import EntryKind
 from .state import (
     materialize_program_caps,
     materialize_scope,
@@ -250,6 +257,22 @@ def prepare_root(
         return load_root_layer(layout)
 
 
+def inspect_root_caps(
+    layout: AgentLayout,
+    *,
+    kinds: set[EntryKind],
+    progress: ProgressSink | None = None,
+) -> tuple[tuple[StateCap, ...], tuple[StateCap, ...]]:
+    """Read complete and allowed caps from the shared root layer, without a home."""
+
+    root = prepare_root(layout, progress=progress)
+    entries = tuple(cap for cap in root.caps if cap.kind in kinds)
+    allowed = _allowed_caps(
+        entries, agent_name="", allows=resolve_cap_allows((root.config,))
+    )
+    return entries, allowed
+
+
 def prepare_home(
     layout: AgentLayout,
     *,
@@ -337,12 +360,13 @@ def _prepare_layer(
     progress: ProgressSink | None,
 ) -> str:
     progress_id = f"agent:{layout.name}:{cap_scope}"
+    subject = "root caps" if scope == "root" else f"home caps for {layout.name}"
     emit_progress(
         progress,
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Preparing caps...",
+        label=f"Preparing {subject}...",
         status="running",
         detail=layout.name,
     )
@@ -360,7 +384,7 @@ def _prepare_layer(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label="Failed to prepare caps",
+            label=f"Failed to prepare {subject}",
             status="failed",
             detail=str(exc),
         )
@@ -370,7 +394,7 @@ def _prepare_layer(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Prepared caps",
+        label=f"Prepared {subject}",
         status="ok",
         detail=f"{entry_count} entries",
     )

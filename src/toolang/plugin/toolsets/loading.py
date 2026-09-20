@@ -14,7 +14,8 @@ from toolang.base.types.tool import (
     ToolResult,
 )
 
-from toolang.plugin.loading import LoadedPlugin, PluginSource, load_plugins_with_sources
+from toolang.plugin.loading import load_plugins_with_sources
+from toolang.plugin.types import LoadedPlugin, PluginSource
 from .registry import (
     ToolRef,
     parse_tool_registration_key,

@@ -22,11 +22,11 @@ from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
-from toolang.plugin.sandboxes import _docker_cli as docker_cli
-from toolang.plugin.sandboxes import _docker_guest as docker_guest
-from toolang.plugin.sandboxes import docker as docker_sandbox
+from toolang.plugin.sandboxes.docker import _cli as docker_cli
+from toolang.plugin.sandboxes.docker import _guest as docker_guest
+from toolang.plugin.sandboxes.docker import sandbox as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
-from toolang.plugin.sandboxes.loading import create_sandbox
+from toolang.plugin.loading import create_sandbox
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
@@ -269,11 +269,11 @@ def test_docker_sandbox_prepares_and_launches(
         return "container-123"
 
     monkeypatch.setattr(
-        "toolang.plugin.sandboxes.docker.docker_run_detached",
+        "toolang.plugin.sandboxes.docker.sandbox.docker_run_detached",
         fake_run_detached,
     )
     monkeypatch.setattr(
-        "toolang.plugin.sandboxes.docker.docker_container_running",
+        "toolang.plugin.sandboxes.docker.sandbox.docker_container_running",
         lambda name: name == "container-123",
     )
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
@@ -1225,7 +1225,7 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
             return 0
 
     monkeypatch.setattr(
-        "toolang.plugin.sandboxes.docker.docker_run_detached",
+        "toolang.plugin.sandboxes.docker.sandbox.docker_run_detached",
         _async_value("container-123"),
     )
 
@@ -1234,11 +1234,11 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
         return Follower()
 
     monkeypatch.setattr(
-        "toolang.plugin.sandboxes.docker.docker_follow_container_logs",
+        "toolang.plugin.sandboxes.docker.sandbox.docker_follow_container_logs",
         follow,
     )
     monkeypatch.setattr(
-        "toolang.plugin.sandboxes.docker.docker_wait_container",
+        "toolang.plugin.sandboxes.docker.sandbox.docker_wait_container",
         lambda name: calls.append(("wait", name)) or 0,
     )
     sandbox = create_sandbox("docker", config={})

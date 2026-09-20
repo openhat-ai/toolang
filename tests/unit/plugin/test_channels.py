@@ -9,7 +9,7 @@ from toolang.base.types.channel import (
     OutboundMessage,
     ReplyTarget,
 )
-from toolang.plugin.channels.loading import create_channel
+from toolang.plugin.loading import create_channel
 
 
 def _channel_context(home: Path, binding_name: str) -> ChannelContext:
