@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import (
@@ -56,7 +56,6 @@ class ModelRouteView:
 
     provider: str
     adapter: str | None
-    scope: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +83,6 @@ class ModelQueryView:
     name: str
     description: str | None
     family: str | None
-    scope: str | None
     available: bool
     adapter: str | None
     catalog: str | None
@@ -150,18 +148,12 @@ class ModelCollection:
         models: Sequence[Model] = (),
         *,
         query_views: Sequence[ModelQueryView] | None = None,
-        local: frozenset[str] = frozenset(),
     ) -> None:
         values = tuple(models)
         _validate_models(values)
         if query_views is None:
             views = tuple(
-                _catalog_model_view(
-                    model,
-                    available=True,
-                    adapter=None,
-                    local=model._toolang.provider in local,
-                )
+                _catalog_model_view(model, available=True, adapter=None)
                 for model in values
             )
         else:
@@ -329,8 +321,6 @@ class CatalogProviderView:
     record: Provider
     name: str
     catalog: str | None
-    local: bool
-    offline: bool
     ready: bool
     available_models: int
     model_count: int
@@ -344,7 +334,6 @@ class CatalogProviderView:
 def catalog_model_dataset(
     snapshot: ModelCatalogSnapshot,
     *,
-    include_local: bool = True,
     available: set[str] | None = None,
     adapters: Mapping[str, str] | None = None,
     query_views: Sequence[ModelQueryView] | None = None,
@@ -354,22 +343,13 @@ def catalog_model_dataset(
     available_identities = available or set()
     adapter_by_identity = adapters or {}
 
-    def _local(provider_id: str) -> bool:
-        owner = snapshot.providers.get(provider_id)
-        return owner._toolang.local if owner is not None else False
-
-    models = tuple(
-        model
-        for model in snapshot.models
-        if include_local or not _local(model._toolang.provider)
-    )
+    models = snapshot.models
     if query_views is None:
         items = tuple(
             _catalog_model_view(
                 model,
                 available=model.identity in available_identities,
                 adapter=adapter_by_identity.get(model.identity),
-                local=_local(model._toolang.provider),
             )
             for model in models
         )
@@ -407,8 +387,6 @@ def catalog_provider_views(
             record=provider,
             name=provider.name,
             catalog=None,
-            local=provider._toolang.local,
-            offline=_provider_offline(provider),
             ready=any(model._toolang.ready for model in provider.models.values()),
             available_models=sum(
                 f"{provider.id}/{model_id}" in available for model_id in provider.models
@@ -424,22 +402,12 @@ def catalog_provider_views(
     )
 
 
-def _provider_offline(provider: Provider) -> bool:
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )
-
-
 def _catalog_model_view(
     model: Model,
     *,
     available: bool,
     adapter: str | None,
-    local: bool,
 ) -> ModelQueryView:
-    scope: Literal["local", "remote"] = "local" if local else "remote"
     return ModelQueryView(
         key=model.identity,
         record=model,
@@ -448,14 +416,12 @@ def _catalog_model_view(
         name=model.name,
         description=model.description,
         family=model.family,
-        scope=scope,
         available=available,
         adapter=adapter,
         catalog=None,
         route=ModelRouteView(
             provider=model._toolang.provider,
             adapter=adapter,
-            scope=scope,
         ),
         tags=(),
         streaming=None,

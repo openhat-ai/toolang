@@ -12,9 +12,9 @@ the setup resolver joins those facts once for the current process.
 | `Model` | One models.dev-compatible model record nested under a provider |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
-| `ModelInfo` | The runtime selection projection of one catalog model |
-| `ModelTarget` | One fully resolved call target with concrete execution values |
-| `ModelEntry` | One stable concrete ref, execution target, and metadata record |
+| `ModelRequest` | One run's concrete model demand |
+| `ModelRoute` | The effective connection one call must use, computed from setup data |
+| `ModelCall` | One model call: content plus effective controls |
 | `ModelCollection` | The immutable effective model set published by Setup |
 
 There is no model-provider plugin layer. A provider does not execute calls, and
@@ -130,15 +130,15 @@ Built-in catalog plugins live in `toolang.plugin.catalogs`:
 - `LlamaCppModelCatalog`, for the configured llama.cpp endpoint.
 
 `toolang.setup` combines ordered snapshots with `MergedModelCatalog`, which
-rejects identity conflicts, and projects them to runtime `ModelInfo`.
+rejects identity conflicts, and resolves them into effective `Provider` and
+`Model` instances.
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
 only their configured/default endpoint and use short timeouts. The setup watcher
-re-probes dynamic catalogs every five seconds and publishes their current result;
-callers only read the published Setup. Persistent caching applies to the static
-catalog and derived model query facts, not to dynamic probe results or a fallback
-runtime snapshot.
+re-probes dynamic catalogs and publishes their current result; callers only read
+a published Setup version. Every source's resolved records are cached, and a
+dynamic catalog persists one probe file whose mtime stamps its current result.
 
 The static file is cached as a normalized `catalog.json` artifact by a portable
 content revision below root `.setup`. Each root or agent model context has its
@@ -173,23 +173,20 @@ After catalog snapshots are merged, the setup resolver enriches every
 `Provider` with its default route and every `Model` with its effective route:
 
 ```text
-resolved: {
-  adapter: string?,
-  api: string?,
-  env: (string | string[])[],
-  ready: bool
-}
+ProviderToolang: { env: (string | string[])[], adapter: string? }
+ModelToolang:    { ready: bool, provider: string }
 ```
 
-The model route has `adapter`, `api`, and `ready`. Model-level
+The effective connection a call uses is computed per call as a `ModelRoute`
+(`provider`, `adapter`, `api`, `env`, `headers`, `options`) and is not stored on a
+record. Model-level
 `provider.npm`, `provider.shape`, and `provider.api` override the provider's
 default protocol facts. This supports mixed-protocol routers without a provider
 plugin.
 
-`Provider.api` is the raw catalog value. `Provider.resolved.api` is the
-effective API base after configuration, catalog, and adapter-default
-precedence. It becomes `ModelTarget.base_url` only at the call boundary, where
-`base_url` is the client SDK term.
+`Provider.api` is the raw catalog value. The effective API base after
+configuration, catalog, and adapter-default precedence is computed per call and
+carried on the `ModelRoute`, where it is used as the client SDK base URL.
 
 The resolver applies:
 
@@ -218,15 +215,15 @@ cover schemes that cannot be inferred, such as Amazon Bedrock:
 
 `ready` is true only when an adapter is installed, an API base is concrete, one
 environment alternative is satisfied, and any local probe succeeded. Secrets
-are selected only while constructing `ModelTarget`; they are never stored in
-`Provider.resolved`, catalog JSON, hashes, or inspection output.
+are selected only at the call boundary; they are never stored in a record,
+catalog JSON, hashes, or inspection output.
 
 Local provider configuration is passed separately to the resolver. It is never
-inserted into raw catalog `extra` fields, so unknown catalog extensions cannot
-be interpreted as trusted API routes or credentials. Selection, inspection, and
+written into a catalog record, so unknown catalog extensions cannot be
+interpreted as trusted API routes or credentials. Selection, inspection, and
 execution consume resolved facts directly; they do not repeat npm matching,
-API fallback, or env interpretation. `--json` therefore remains a raw
-catalog projection.
+API fallback, or env interpretation. `--json` therefore remains a catalog
+projection of the persisted facts.
 
 ## Adapter Plugins
 
@@ -259,7 +256,8 @@ Only this merged table is passed to the `responses` factory. The built-in
 adapters currently define no authored plugin options; external adapters may
 define their own non-sensitive values and secret-reference fields.
 
-Adapters receive a concrete API base URL in `ModelTarget`. They translate
+Adapters receive the effective connection, the resolved `Model`, and the
+`ModelCall`. They translate
 canonical messages and tools, normalize streaming, usage, cache, reasoning,
 and audio meters, and preserve protocol state needed by later calls. For
 example, the Generate Content adapter retains Gemini thought signatures in
@@ -308,11 +306,11 @@ users can also select the adapter explicitly in provider configuration.
 ## Local Providers
 
 Ollama and llama.cpp are catalog plugins using the same `Provider` and `Model`
-types as the static source. Their endpoint is both the discovery endpoint and
-an important availability fact. An offline local provider remains visible in
-`too providers` with availability `0`, while its models are omitted from the
-normal model table. Online local models have explicit zero API token prices;
-host compute cost is outside model token accounting.
+types as the static source. They publish what their endpoint reports and
+publish nothing when it cannot be reached, so every local model that appears is
+usable. An unreachable local runtime therefore has no provider row. Local models
+have explicit zero API token prices; host compute cost is outside model token
+accounting.
 
 Configure discovery independently from the resolved provider call route:
 
@@ -345,7 +343,8 @@ too adapters [--json]
 
 `too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
 `too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
-and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
+and `ENV` from the resolved environment rule (`ProviderToolang.env`). Comma
+separates OR environment alternatives;
 ` + ` separates simultaneous requirements.
 
 `too catalogs` lists installed model-catalog plugin entry points and their
@@ -354,7 +353,8 @@ merged catalog snapshot; use `too models` for that view.
 
 `too models --query ... --json` emits another complete, deterministic,
 models.dev-compatible catalog containing only selected models. Local-only
-models cannot be exported. Provider and model JSON never includes `resolved`.
+models cannot be exported. Provider and model JSON never includes a Toolang-side
+fact or an unmodelled catalog field.
 
 Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models

@@ -217,7 +217,6 @@ def test_resolver_reuses_frozen_model_catalog_fields() -> None:
         _toolang=ModelToolang(provider="openai"),
         modalities={"input": ("text",)},
         cost={"input": 1},
-        extra={"nested": {"value": True}},
     )
     provider = Provider(
         id="openai",
@@ -236,24 +235,26 @@ def test_resolver_reuses_frozen_model_catalog_fields() -> None:
     assert resolved is not model
     assert resolved.modalities is model.modalities
     assert resolved.cost is model.cost
-    assert resolved.extra is model.extra
 
 
-def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -> None:
-    model = Model(id="model", name="Model", _toolang=ModelToolang(provider="openai"))
+def test_raw_toolang_extension_is_ignored_as_runtime_config() -> None:
+    model = Model(
+        id="model",
+        name="Model",
+        _toolang=ModelToolang(provider="openai"),
+        provider={
+            "_toolang": {
+                "adapter": "messages",
+                "endpoint": "https://attacker.example/v1",
+            }
+        },
+    )
     provider = Provider(
         id="openai",
         name="OpenAI",
         env=("OPENAI_API_KEY",),
         npm="@ai-sdk/openai",
         models={model.id: model},
-        extra={
-            "_toolang": {
-                "adapter": "messages",
-                "endpoint": "https://attacker.example/v1",
-                "key_env": "ATTACKER_API_KEY",
-            }
-        },
     )
     adapters = {
         "messages": MessagesModelAdapter(),
@@ -270,7 +271,6 @@ def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -
         == "https://api.openai.com/v1"
     )
     assert resolved._toolang.env == ("OPENAI_API_KEY",)
-    assert resolved.to_data()["_toolang"] == provider.extra["_toolang"]
 
 
 def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
@@ -283,7 +283,7 @@ def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
         name="Local",
         env=(),
         models={},
-        _toolang=ProviderToolang(adapter="chat_completions", local=True),
+        _toolang=ProviderToolang(adapter="chat_completions"),
         api="http://local.test/v1",
     )
     both = Provider(

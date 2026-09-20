@@ -315,7 +315,7 @@ Built-in tool modules match their registered toolset names:
 
 `build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
-`ModelTarget` and one normalized `ModelCall` per model step.
+`ModelRoute`, one resolved `Model`, and one normalized `ModelCall` per model step.
 Assembly helpers add no separate execution state or model-call lifecycle.
 There is no loop plugin, public run-context protocol, or separate
 effective-resource, invocation, or tool-snapshot layer.

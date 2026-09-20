@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 import logging
-from typing import cast
 
 import httpx
 import pytest
 
 from toolang.plugin.catalogs import llama_cpp as llama_cpp_models
 from toolang.plugin.catalogs import ollama as ollama_models
+from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 
@@ -60,10 +60,6 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     model = snapshot.find("ollama", "gemma3:4b")
 
     assert model is not None
-    provider_runtime = cast(
-        Mapping[str, object], snapshot.providers["ollama"].extra["runtime"]
-    )
-    assert provider_runtime["status"] == "ready"
     assert model.family == "gemma3"
     assert model.last_updated == "2026-08-24"
     assert model.limit == {"context": 131_072}
@@ -76,11 +72,7 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     assert model.tool_call is True
     assert model.temperature is True
     assert model.structured_output is True
-    assert model.cost == {"input": 0, "output": 0}
-    runtime = cast(Mapping[str, object], model.extra["runtime"])
-    assert runtime["size"] == 3_338_801_804
-    details = cast(Mapping[str, object], runtime["details"])
-    assert details["quantization_level"] == "Q4_K_M"
+    assert model.cost == LOCAL_ZERO_COST
     assert client.posts == [
         (
             "http://ollama.test/api/show",
@@ -133,10 +125,6 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
     model = snapshot.find("llama_cpp", "llama-3.1-8b")
 
     assert model is not None
-    provider_runtime = cast(
-        Mapping[str, object], snapshot.providers["llama_cpp"].extra["runtime"]
-    )
-    assert provider_runtime["status"] == "ready"
     assert model.limit == {"context": 65_536, "output": 4_096}
     assert model.modalities == {"input": ("text", "image"), "output": ("text",)}
     assert model.attachment is True
@@ -144,11 +132,7 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
     assert model.tool_call is True
     assert model.temperature is True
     assert model.structured_output is True
-    assert model.cost == {"input": 0, "output": 0}
-    runtime = cast(Mapping[str, object], model.extra["runtime"])
-    meta = cast(Mapping[str, object], runtime["meta"])
-    assert meta["n_params"] == 8_030_261_312
-    assert runtime["build_info"] == "b123-test"
+    assert model.cost == LOCAL_ZERO_COST
 
 
 def test_local_detail_failures_keep_list_metadata(
@@ -182,7 +166,7 @@ def test_local_detail_failures_keep_list_metadata(
     assert ollama_model.family == "qwen3"
     assert ollama_model.limit == {}
     assert ollama_model.tool_call is None
-    assert ollama_model.cost == {"input": 0, "output": 0}
+    assert ollama_model.cost == LOCAL_ZERO_COST
 
     llama_cpp = _FakeClient(
         gets={
@@ -202,10 +186,10 @@ def test_local_detail_failures_keep_list_metadata(
     assert llama_model is not None
     assert llama_model.limit == {"context": 32_768}
     assert llama_model.tool_call is None
-    assert llama_model.cost == {"input": 0, "output": 0}
+    assert llama_model.cost == LOCAL_ZERO_COST
 
 
-def test_local_list_failure_marks_provider_offline(
+def test_local_list_failure_publishes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _FakeClient(
@@ -217,9 +201,7 @@ def test_local_list_failure_marks_provider_offline(
         OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
     )
 
-    runtime = cast(Mapping[str, object], snapshot.providers["ollama"].extra["runtime"])
     assert snapshot.models == ()
-    assert runtime["status"] == "offline"
 
 
 def test_local_catalog_endpoints_use_the_docker_host_gateway() -> None:
@@ -279,8 +261,7 @@ def test_local_probes_distinguish_unreachable_from_invalid_responses(
             OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
         )
 
-    runtime = cast(Mapping[str, object], ollama.providers["ollama"].extra["runtime"])
-    assert runtime["status"] == "offline"
+    assert ollama.models == ()
     assert "catalog.ollama.unreachable" in caplog.text
 
     caplog.clear()
@@ -297,10 +278,7 @@ def test_local_probes_distinguish_unreachable_from_invalid_responses(
             LlamaCppModelCatalog({}, endpoint="http://llama.test/v1").snapshot()
         )
 
-    runtime = cast(
-        Mapping[str, object], llama_cpp.providers["llama_cpp"].extra["runtime"]
-    )
-    assert runtime["status"] == "offline"
+    assert llama_cpp.models == ()
     assert "catalog.llama_cpp.invalid_response" in caplog.text
 
 

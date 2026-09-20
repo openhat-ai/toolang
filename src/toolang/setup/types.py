@@ -62,6 +62,7 @@ class AgentSetup:
     models: ModelCollection
     tools: ToolCollection
     envs: Mapping[str, str]
+    revision: str = ""
     environment: AgentEnvironment | None = None
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()

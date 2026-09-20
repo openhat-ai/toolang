@@ -9,12 +9,24 @@ from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from toolang.base.types.model import (
-    LOCAL_RUNTIME_EXTRA,
     Model,
     ModelCatalogSnapshot,
     Provider,
     ProviderToolang,
 )
+
+
+# A local runtime bills no API tokens. The zero rates are declared on the model's
+# `cost` for every meter a probe can report, so accounting stays complete.
+LOCAL_ZERO_COST: Mapping[str, int] = {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0,
+    "reasoning": 0,
+    "input_audio": 0,
+    "output_audio": 0,
+}
 
 
 def model_entries(items: list[object]) -> tuple[tuple[str, dict[str, object]], ...]:
@@ -59,7 +71,6 @@ def local_snapshot(
     provider_name: str,
     endpoint: str,
     models: tuple[Model, ...],
-    provider_runtime: Mapping[str, object],
 ) -> ModelCatalogSnapshot:
     """Build one ephemeral snapshot for a local runtime provider."""
 
@@ -68,13 +79,8 @@ def local_snapshot(
         id=provider_id,
         name=provider_name,
         models=by_id,
-        _toolang=ProviderToolang(
-            env=(),
-            adapter="chat_completions",
-            local=True,
-        ),
+        _toolang=ProviderToolang(env=(), adapter="chat_completions"),
         api=endpoint,
-        extra={LOCAL_RUNTIME_EXTRA: dict(provider_runtime)},
     )
     identity = json.dumps(
         provider.to_data(),

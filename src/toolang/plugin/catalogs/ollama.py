@@ -11,16 +11,12 @@ import httpx
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
-    LOCAL_RUNTIME_STATUS,
-    LOCAL_STATUS_OFFLINE,
-    LOCAL_STATUS_READY,
     Model,
     ModelCatalogSnapshot,
     ModelToolang,
 )
 
 from toolang.plugin.values import (
-    compact_mapping,
     mapping,
     optional_int,
     optional_text,
@@ -28,6 +24,7 @@ from toolang.plugin.values import (
 )
 
 from ._local import (
+    LOCAL_ZERO_COST,
     config_environ,
     config_timeout,
     local_snapshot,
@@ -51,12 +48,10 @@ class OllamaModelCatalog(ModelCatalog):
         host = _ollama_host(self.endpoint, self.environ)
         entries: tuple[tuple[str, dict[str, object]], ...] = ()
         models: tuple[Model, ...] = ()
-        online = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{host}/api/tags")
                 response.raise_for_status()
-                online = True
                 payload = response.json()
                 raw_models = (
                     payload.get("models") if isinstance(payload, dict) else None
@@ -88,13 +83,6 @@ class OllamaModelCatalog(ModelCatalog):
             provider_name="Ollama",
             endpoint=f"{host}/v1",
             models=models,
-            provider_runtime={
-                "kind": "ollama",
-                "endpoint": host,
-                LOCAL_RUNTIME_STATUS: (
-                    LOCAL_STATUS_READY if online else LOCAL_STATUS_OFFLINE
-                ),
-            },
         )
 
 
@@ -138,17 +126,6 @@ async def _ollama_model(
     modified_at = optional_text(show.get("modified_at")) or optional_text(
         tag.get("modified_at")
     )
-    runtime = compact_mapping(
-        {
-            "digest": tag.get("digest"),
-            "size": tag.get("size"),
-            "modified_at": modified_at,
-            "details": details or None,
-            "capabilities": capabilities or None,
-            "model_info": model_info or None,
-            "parameters": show.get("parameters"),
-        }
-    )
     return Model(
         id=model_id,
         _toolang=ModelToolang(provider="ollama"),
@@ -168,8 +145,7 @@ async def _ollama_model(
             "output": ("text",),
         },
         limit={"context": context} if context is not None else {},
-        cost={"input": 0, "output": 0},
-        extra={"runtime": runtime},
+        cost=dict(LOCAL_ZERO_COST),
     )
 
 

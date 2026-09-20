@@ -22,6 +22,7 @@ from toolang.base.types.model import (
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
 from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 
@@ -375,7 +376,7 @@ def test_models_ignores_implicit_models_file(
     assert "test" not in json.loads(result.stdout)
 
 
-def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
+def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -388,7 +389,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             name="local",
             _toolang=ModelToolang(provider="ollama", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
-            cost={"input": 0, "output": 0},
+            cost=dict(LOCAL_ZERO_COST),
         )
         provider = Provider(
             id="ollama",
@@ -397,7 +398,6 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             npm="@ai-sdk/openai-compatible",
             api="http://ollama.test/v1",
             models={model.id: model},
-            extra={"runtime": {"status": "ready"}},
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -408,11 +408,11 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
-            id="offline",
-            name="offline",
+            id="second",
+            name="second",
             _toolang=ModelToolang(provider="llama_cpp", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
-            cost={"input": 0, "output": 0},
+            cost=dict(LOCAL_ZERO_COST),
         )
         provider = Provider(
             id="llama_cpp",
@@ -421,7 +421,6 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             npm="@ai-sdk/openai-compatible",
             api="http://llama.test/v1",
             models={model.id: model},
-            extra={"runtime": {"status": "offline"}},
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -447,7 +446,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
-    assert "llama_cpp/offline" in stdout
+    assert "llama_cpp/second" in stdout
     assert "4 models" in stdout
 
     captured_headers: tuple[str, ...] = ()
@@ -487,14 +486,14 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         "ENV",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
-    available = by_provider["ollama"][1]
-    unavailable = by_provider["llama_cpp"][1]
-    assert isinstance(available, Text)
-    assert available.plain == "1/1"
-    assert not _is_red(available, 0)
-    assert isinstance(unavailable, Text)
-    assert unavailable.plain == "0/1"
-    assert _is_red(unavailable, 0)
+    ollama_available = by_provider["ollama"][1]
+    llama_available = by_provider["llama_cpp"][1]
+    assert isinstance(ollama_available, Text)
+    assert ollama_available.plain == "1/1"
+    assert not _is_red(ollama_available, 0)
+    assert isinstance(llama_available, Text)
+    assert llama_available.plain == "1/1"
+    assert not _is_red(llama_available, 0)
     llama_adapters = by_provider["llama_cpp"][2]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
@@ -502,7 +501,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     llama_api = by_provider["llama_cpp"][3]
     assert isinstance(llama_api, Text)
     assert llama_api.plain == "http://llama.test/v1"
-    assert _is_red(llama_api, 0)
+    assert not _is_red(llama_api, 0)
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -680,11 +679,9 @@ def test_models_help_describes_optional_agent_without_loading(
     def unexpected_load(*args, **kwargs):
         pytest.fail("help must not load model catalogs")
 
+    monkeypatch.setattr(model_catalog_commands, "load_setup", unexpected_load)
     monkeypatch.setattr(
-        model_catalog_commands, "load_catalog_inspection", unexpected_load
-    )
-    monkeypatch.setattr(
-        model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
+        model_catalog_commands, "load_models_dev_snapshot", unexpected_load
     )
     monkeypatch.setenv("TERM", "xterm-256color")
     if colored:

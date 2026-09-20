@@ -24,6 +24,7 @@ from toolang.cli.common.context import (
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
+from toolang.common.query import QueryDataset
 from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
 from toolang.common.json import dumps
@@ -31,18 +32,18 @@ from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
     CatalogProviderView,
     ModelQueryView,
+    catalog_model_dataset,
     catalog_provider_views,
 )
+from toolang.plugin.models.provider_resolver import model_adapter
 from toolang.plugin.models.discovery import (
     absent_provider_env_vars,
     provider_env_requirements,
     required_provider_env_vars,
 )
-from toolang.setup.catalog import (
-    CatalogInspection,
-    load_catalog_inspection,
-    load_matching_catalog_inspection,
-)
+from toolang.setup import AgentSetup
+from toolang.setup.catalog import load_models_dev_snapshot
+from toolang.setup.watcher import load_setup
 
 
 def models_command(
@@ -65,33 +66,28 @@ def models_command(
     """List or export model catalog entries."""
 
     try:
-        inspection = (
-            _matching_inspection(ctx, model_catalog=model_catalog, query=query)
-            if query and not json_
-            else _inspection(ctx, model_catalog=model_catalog)
-        )
+        setup = _setup(ctx, model_catalog=model_catalog)
     except TypeError as error:
         raise ClickException(str(error)) from error
-    if inspection is None:
-        typer.echo("No models matched query.")
-        return
-    snapshot = inspection.snapshot
-    dataset = inspection.catalog_models
-    selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+    snapshot = _effective_snapshot(setup)
+    dataset = _model_dataset(snapshot)
+    try:
+        if query:
+            MODEL_SCHEMA.parse(query)
+        selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+    except ToolangError as error:
+        raise ClickException(str(error)) from error
     selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
-        exportable = tuple(
-            model for model in selected if not _model_is_local(model, snapshot)
+        source = _source_snapshot(ctx, model_catalog=model_catalog)
+        selected_refs = {view.key for view in selected_views}
+        content = dumps(
+            source.to_data(
+                models=tuple(
+                    model for model in source.models if model.identity in selected_refs
+                )
+            )
         )
-        if len(exportable) != len(selected):
-            local = ", ".join(
-                model.identity for model in selected if _model_is_local(model, snapshot)
-            )
-            raise typer.BadParameter(
-                f"local-only models cannot be exported: {local}",
-                param_hint="--query",
-            )
-        content = dumps(snapshot.to_data(models=exportable))
         typer.echo(content, nl=False)
         return
     headers, rows = dataset.table(selected_views)
@@ -117,12 +113,10 @@ def providers_command(
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    inspection = _inspection(ctx, model_catalog=model_catalog)
-    snapshot = inspection.snapshot
+    setup = _setup(ctx, model_catalog=model_catalog)
+    snapshot = _effective_snapshot(setup)
     base_providers = tuple(
-        provider
-        for provider_id, provider in sorted(snapshot.providers.items())
-        if provider_id != "custom"
+        snapshot.providers[provider_id] for provider_id in sorted(snapshot.providers)
     )
     available = {model.ref for model in snapshot.models if model._toolang.ready}
     selected_views = catalog_provider_views(
@@ -134,8 +128,8 @@ def providers_command(
         apis={
             provider.id: _provider_api(
                 provider,
-                adapters=inspection.adapters,
-                environ=inspection.envs,
+                adapters=setup.adapters,
+                environ=setup.envs,
             )
             for provider in base_providers
         },
@@ -148,7 +142,7 @@ def providers_command(
             for provider in base_providers
         },
         missing_env={
-            provider.id: absent_provider_env_vars(provider, environ=inspection.envs)
+            provider.id: absent_provider_env_vars(provider, environ=setup.envs)
             for provider in base_providers
         },
     )
@@ -167,7 +161,7 @@ def providers_command(
                 f"{item.available_models}/{item.model_count}",
                 style="red" if item.available_models == 0 else "",
             ),
-            _provider_adapters_cell(inspection, item),
+            _provider_adapters_cell(setup.adapters, item),
             _provider_api_cell(item),
             _provider_env_cell(item),
         )
@@ -212,45 +206,70 @@ def adapters_command(
     )
 
 
-def _inspection(
+def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
+    agent = context_agent(ctx)
+    return (
+        AgentLayout.resident(context_root(ctx), agent or "default"),
+        agent is not None,
+    )
+
+
+def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
+    """Build one setup version for the catalog commands."""
+
+    layout, agent_context = _layout(ctx)
+    return asyncio.run(
+        load_setup(
+            layout,
+            model_catalog=resolve_model_catalog_option(model_catalog),
+            agent_context=agent_context,
+        )
+    )
+
+
+def _source_snapshot(
     ctx: typer.Context,
     *,
     model_catalog: Path | None = None,
-) -> CatalogInspection:
-    agent = context_agent(ctx)
-    return asyncio.run(
-        load_catalog_inspection(
-            AgentLayout.resident(context_root(ctx), agent or "default"),
-            model_catalog=resolve_model_catalog_option(model_catalog),
-            agent_context=agent is not None,
-        )
+) -> ModelCatalogSnapshot:
+    """Read the models.dev source that an export must reproduce."""
+
+    layout, agent_context = _layout(ctx)
+    return load_models_dev_snapshot(
+        layout,
+        model_catalog=resolve_model_catalog_option(model_catalog),
+        agent_context=agent_context,
     )
 
 
-def _matching_inspection(
-    ctx: typer.Context,
-    *,
-    model_catalog: Path | None,
-    query: Sequence[str],
-) -> CatalogInspection | None:
-    agent = context_agent(ctx)
-    try:
-        queries = MODEL_SCHEMA.parse(query)
-    except ToolangError as error:
-        raise ClickException(str(error)) from error
-    return asyncio.run(
-        load_matching_catalog_inspection(
-            AgentLayout.resident(context_root(ctx), agent or "default"),
-            model_catalog=resolve_model_catalog_option(model_catalog),
-            agent_context=agent is not None,
-            queries=queries,
-        )
+def _effective_snapshot(setup: AgentSetup) -> ModelCatalogSnapshot:
+    """Project one published setup version back into one catalog snapshot."""
+
+    return ModelCatalogSnapshot(
+        providers=dict(setup.providers),
+        models=setup.models.entries,
+        revision=setup.revision,
     )
 
 
-def _model_is_local(model: Model, snapshot: ModelCatalogSnapshot) -> bool:
-    provider = snapshot.providers.get(model._toolang.provider)
-    return provider is not None and provider._toolang.local
+def _model_dataset(snapshot: ModelCatalogSnapshot) -> QueryDataset[ModelQueryView]:
+    """Build the queryable model rows of one published setup version."""
+
+    available = {model.ref for model in snapshot.models if model._toolang.ready}
+    adapter_by_identity = {
+        model.identity: adapter
+        for model in snapshot.models
+        if model._toolang.provider in snapshot.providers
+        for adapter in (
+            model_adapter(snapshot.providers[model._toolang.provider], model),
+        )
+        if adapter is not None
+    }
+    return catalog_model_dataset(
+        snapshot,
+        available=available,
+        adapters=adapter_by_identity,
+    )
 
 
 def _catalog_summary(
@@ -300,26 +319,25 @@ def _provider_adapters(provider: Provider) -> tuple[str, ...]:
 
 
 def _provider_adapters_cell(
-    inspection: CatalogInspection,
+    published: Mapping[str, ModelAdapter],
     provider: CatalogProviderView,
 ) -> Text:
-    adapters = provider.adapters
-    if not adapters:
+    if not provider.adapters:
         return Text("-", style="dim")
     cell = Text()
-    for index, adapter in enumerate(adapters):
+    for index, adapter in enumerate(provider.adapters):
         if index:
             cell.append(",")
         cell.append(
             adapter,
-            style="dim" if adapter not in inspection.adapters else None,
+            style="dim" if adapter not in published else None,
         )
     return cell
 
 
 def _provider_api_cell(provider: CatalogProviderView) -> Text:
     api = provider.api
-    unavailable = api is None or (provider.local and provider.offline)
+    unavailable = api is None
     return Text(api or "-", style="red" if unavailable else "")
 
 

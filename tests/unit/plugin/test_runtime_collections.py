@@ -79,7 +79,7 @@ def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> No
     assert models.effective_default("missing/model") == "alpha/one"
     assert ModelCollection().effective_default("missing/model") is None
     with pytest.raises(TypeError):
-        cast(dict[str, object], alpha.extra)["mutable"] = True
+        cast(dict[str, int], alpha.limit)["mutable"] = 1
     with pytest.raises(ToolangError, match="model ref is unavailable"):
         models.resolve("missing/model")
 

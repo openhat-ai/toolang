@@ -237,7 +237,6 @@ class FakeModels:
             _toolang=ProviderToolang(
                 env=(),
                 adapter=ScriptedModelAdapter.name,
-                local=False,
             ),
             npm="@ai-sdk/openai-compatible",
             api="https://example.invalid/v1",

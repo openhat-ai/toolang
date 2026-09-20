@@ -40,6 +40,7 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
         "models",
         "tools",
         "envs",
+        "revision",
         "environment",
         "defaults",
         "limits",

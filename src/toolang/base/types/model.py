@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, TypeAlias, cast
+from typing import Literal, TypeAlias
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
 # Effect levels are provider-defined; the catalog's reasoning_options is the only
@@ -139,7 +139,6 @@ class ProviderToolang:
 
     env: ResolvedEnv = ()
     adapter: str | None = None
-    local: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +146,8 @@ class ModelToolang:
     """Toolang-side facts attached to one catalog model record."""
 
     ready: bool = False
+    # Owning provider id: the model -> provider association. This is not
+    # `Model.provider`, which holds the corrected provider block.
     provider: str = ""
 
 
@@ -186,9 +187,10 @@ class Model:
     limit: Mapping[str, int] = field(default_factory=dict)
     status: str | None = None
     experimental: Mapping[str, object] | None = None
+    # The corrected provider this model must use, not the owning provider;
+    # `_toolang.provider` carries the association.
     provider: Mapping[str, object] | None = None
     cost: Mapping[str, object] | None = None
-    extra: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
@@ -207,8 +209,6 @@ class Model:
             )
         if not isinstance(self.limit, MappingProxyType):
             object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
-        if not isinstance(self.extra, MappingProxyType):
-            object.__setattr__(self, "extra", _immutable_mapping(self.extra))
         if self.reasoning_options is not None and not isinstance(
             self.reasoning_options, tuple
         ):
@@ -243,7 +243,7 @@ class Model:
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
 
-        data = {key: _mutable_json(value) for key, value in self.extra.items()}
+        data: dict[str, object] = {}
         data.update(
             {
                 "id": self.id,
@@ -305,25 +305,18 @@ def normalized_env(env: ResolvedEnv) -> ResolvedEnv:
     return tuple(normalized)
 
 
-LOCAL_RUNTIME_EXTRA = "runtime"
-LOCAL_RUNTIME_STATUS = "status"
-LOCAL_STATUS_READY = "ready"
-LOCAL_STATUS_OFFLINE = "offline"
-
-
 @dataclass(frozen=True, slots=True)
 class Provider:
     """One models.dev-compatible provider and its model catalog entries."""
 
     id: str
     name: str
-    models: Mapping[str, Model]
+    models: Mapping[str, Model]  # keyed by local model id
     _toolang: ProviderToolang = ProviderToolang()
     npm: str | None = None
     api: str | None = None
     doc: str | None = None
     env: tuple[str, ...] = ()
-    extra: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
@@ -334,14 +327,13 @@ class Provider:
         if any(model._toolang.provider != self.id for model in normalized.values()):
             raise ValueError(f"provider {self.id!r} contains foreign models")
         object.__setattr__(self, "models", MappingProxyType(normalized))
-        object.__setattr__(self, "extra", _immutable_mapping(self.extra))
 
     def to_data(
         self, *, models: Mapping[str, Model] | None = None
     ) -> dict[str, object]:
         """Return this provider in models.dev-compatible JSON form."""
 
-        data = {key: _mutable_json(value) for key, value in self.extra.items()}
+        data: dict[str, object] = {}
         data.update(
             {
                 "id": self.id,
@@ -370,16 +362,6 @@ def env_names(env: ResolvedEnv) -> tuple[str, ...]:
         for alternative in env
         for name in ((alternative,) if isinstance(alternative, str) else alternative)
     )
-
-
-def local_runtime_status(provider: Provider) -> str | None:
-    """Return one provider's reported local runtime status, when present."""
-
-    runtime = provider.extra.get(LOCAL_RUNTIME_EXTRA)
-    if not isinstance(runtime, Mapping):
-        return None
-    status = cast(Mapping[str, object], runtime).get(LOCAL_RUNTIME_STATUS)
-    return status if isinstance(status, str) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,12 +400,9 @@ class ModelCatalogSnapshot:
 
         selected = self.models if models is None else models
         by_provider: dict[str, dict[str, Model]] = {}
+        if self.local:
+            raise ValueError("a local-only catalog cannot be exported")
         for model in selected:
-            provider = self.providers.get(model._toolang.provider)
-            if provider is not None and provider._toolang.local:
-                raise ValueError(
-                    f"local-only model cannot be exported: {model.identity}"
-                )
             by_provider.setdefault(model._toolang.provider, {})[model.id] = model
         return {
             provider_id: self.providers[provider_id].to_data(

@@ -1,8 +1,13 @@
-"""Resolved model snapshot cache.
+"""Per-catalog model catalog cache.
 
-The cache stores the *resolved* catalog snapshot: every provider and model with
-its `_toolang` facts. A hit therefore reproduces the effective routes without
-re-resolving configuration or environment readiness.
+The setup owns every cache file. Each catalog source persists exactly one
+document, in one shared shape: the providers and models that source produced.
+
+Only the reload rule differs. Models.dev re-reads its source file when the
+payload digest or the file mtime changed. A local probe rewrites its file only
+when the probe result differs, so the file keeps the mtime of the moment the
+current run of identical results was first saved — that source's `detected:`
+revision.
 """
 
 from __future__ import annotations
@@ -31,12 +36,11 @@ from toolang.common.cache import (
     store_document,
 )
 
-_CATALOG_FILE = "effective.json"
-_IDENTITY_FILE = "identity.json"
-_REVISION_NAME_RE = re.compile(r"^[0-9a-f]{64}$")
+_CATALOG_KIND = "catalog"
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 _PROVIDER_FIELDS = frozenset(
-    {"id", "name", "npm", "api", "doc", "env", "extra", "_toolang", "models"}
+    {"id", "name", "npm", "api", "doc", "env", "_toolang", "models"}
 )
 _MODEL_FIELDS = frozenset(
     {
@@ -68,99 +72,104 @@ _MODEL_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class CachedModelProjection:
-    """One cached resolved catalog snapshot."""
+class CachedCatalog:
+    """One catalog source as its plugin produced it, with its own revision."""
 
+    name: str
+    revision: str
     snapshot: ModelCatalogSnapshot
-    environment_names: tuple[str, ...] = ()
-    key: str = ""
 
 
-class ModelProjectionCache:
-    """File-backed cache for the resolved model snapshot of one context."""
+class ModelCatalogCache:
+    """One cache file per catalog source under one setup cache directory."""
 
-    def __init__(self, context_directory: Path) -> None:
-        self._directory = context_directory
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
 
-    def load_context(self, key: str) -> CachedModelProjection | None:
-        """Read one cached resolved snapshot, treating any damage as a miss."""
+    def load_source(
+        self,
+        name: str,
+        *,
+        revision: str,
+    ) -> ModelCatalogSnapshot | None:
+        """Read one source's records, treating drift or damage as a miss."""
 
-        path = self._context_path(key)
+        document = self._read(name)
+        if document is None or document.get("revision") != revision:
+            return None
+        try:
+            return _snapshot_from_document(document, revision=revision)
+        except Exception:
+            return None
+
+    def store_source(
+        self,
+        name: str,
+        *,
+        revision: str,
+        snapshot: ModelCatalogSnapshot,
+    ) -> None:
+        """Persist one source's records; unsafe or oversized payloads are skipped."""
+
+        self._write(name, {**_snapshot_document(snapshot), "revision": revision})
+
+    def store_probe(self, name: str, *, snapshot: ModelCatalogSnapshot) -> str:
+        """Persist one probe result only when it changed; return its stamp."""
+
+        document = _snapshot_document(snapshot)
+        content = digest(document)
+        path = self._path(name)
+        previous = self._read(name)
+        if previous is not None and previous.get("content") == content:
+            return _detected_revision(path)
+        self._write(name, {**document, "content": content})
+        return _detected_revision(path)
+
+    def probe_revision(self, name: str) -> str | None:
+        """Return the stamp one probe file carries, without probing."""
+
+        path = self._path(name)
+        return _detected_revision(path) if path.is_file() else None
+
+    def _path(self, name: str) -> Path:
+        return self._directory / f"{_file_name(name)}.json"
+
+    def _read(self, name: str) -> dict[str, object] | None:
+        path = self._path(name)
         if not path.is_file():
             return None
         try:
-            document = load_document(
+            return load_document(
                 path,
-                kind="context",
-                key=key,
+                kind=_CATALOG_KIND,
+                key=_file_name(name),
                 fast_json=True,
-            )
-            snapshot = _snapshot_from_document(document)
-            names = document.get("environment_names", ())
-            environment_names = (
-                tuple(str(name) for name in names)
-                if isinstance(names, list | tuple)
-                else ()
             )
         except Exception:
             return None
-        return CachedModelProjection(
-            snapshot=snapshot,
-            environment_names=environment_names,
-            key=key,
-        )
 
-    def store_context(
-        self,
-        key: str,
-        *,
-        snapshot: ModelCatalogSnapshot,
-        environment_names: Sequence[str] = (),
-    ) -> None:
-        """Write one resolved snapshot; unsafe or oversized payloads are skipped."""
-
-        document = _snapshot_document(
-            snapshot,
-            environment_names=tuple(environment_names),
-        )
+    def _write(self, name: str, document: Mapping[str, object]) -> None:
         self._directory.mkdir(parents=True, exist_ok=True)
         store_document(
-            self._context_path(key),
-            kind="context",
-            key=key,
+            self._path(name),
+            kind=_CATALOG_KIND,
+            key=_file_name(name),
             document=document,
         )
 
-    def catalog_identity_misses(
-        self,
-        *,
-        kind: str,
-        scope: str,
-        catalog_revisions: Sequence[tuple[str, str]],
-        setup_config: object,
-        environ: object,
-        plugin_provenance: object,
-        allow_models: Sequence[str] | None,
-        queries: object = None,
-    ) -> bool | None:
-        """Return whether a cached identity proves no match; unknown by default."""
 
-        del kind, scope, catalog_revisions, setup_config, environ
-        del plugin_provenance, allow_models, queries
-        return None
+def _file_name(name: str) -> str:
+    """Return the cache file stem for one catalog name."""
 
-    def _context_path(self, key: str) -> Path:
-        return self._directory / _revision_name(key) / _CATALOG_FILE
-
-    def _context_identity_path(self, key: str) -> Path:
-        return self._directory / _revision_name(key) / _IDENTITY_FILE
+    if _SAFE_NAME_RE.fullmatch(name):
+        return name
+    return digest(name).removeprefix("sha256:")
 
 
-def _revision_name(key: str) -> str:
-    name = key.partition(":")[2] or key
-    if not _REVISION_NAME_RE.match(name):
-        raise ValueError(f"model cache key is not a content revision: {key!r}")
-    return name
+def _detected_revision(path: Path) -> str:
+    """Return the `detected:` revision one probe file currently carries."""
+
+    return f"detected:{path.stat().st_mtime_ns}"
 
 
 def model_projection_key(
@@ -169,7 +178,7 @@ def model_projection_key(
     scope: str,
     catalog_revisions: Sequence[tuple[str, str]],
     setup_config: object,
-    environment_readiness: Mapping[str, bool],
+    environment: Mapping[str, str],
     plugin_provenance: object,
     allow_models: Sequence[str] | None,
 ) -> str:
@@ -181,26 +190,28 @@ def model_projection_key(
         "scope": scope,
         "catalogs": [list(item) for item in catalog_revisions],
         "config": canonical_value(setup_config),
-        "readiness": {
-            name: bool(value) for name, value in sorted(environment_readiness.items())
-        },
+        "environment": {name: value for name, value in sorted(environment.items())},
         "provenance": canonical_value(plugin_provenance),
         "allow": None if allow_models is None else list(allow_models),
     }
     return digest(payload)
 
 
-def environment_readiness(
+def environment_identity(
     snapshot: ModelCatalogSnapshot,
     environ: Mapping[str, str],
-) -> dict[str, bool]:
-    """Return whether each declared environment name is present."""
+) -> dict[str, str]:
+    """Return one digest per declared environment name.
 
-    readiness: dict[str, bool] = {}
+    An api template is substituted with environment values, so the digest — not
+    presence alone — belongs in the revision.
+    """
+
+    identity: dict[str, str] = {}
     for provider in snapshot.providers.values():
         for name in env_names(provider._toolang.env):
-            readiness[name] = bool(str(environ.get(name, "")).strip())
-    return readiness
+            identity[name] = digest(str(environ.get(name, "")).strip())
+    return identity
 
 
 # --------------------------------------------------------------------------- #
@@ -208,11 +219,9 @@ def environment_readiness(
 # --------------------------------------------------------------------------- #
 
 
-def _snapshot_document(
-    snapshot: ModelCatalogSnapshot,
-    *,
-    environment_names: tuple[str, ...],
-) -> dict[str, object]:
+def _snapshot_document(snapshot: ModelCatalogSnapshot) -> dict[str, object]:
+    """Return one catalog's records in the shared cache document shape."""
+
     return {
         "providers": {
             provider_id: _provider_to_data(provider)
@@ -220,11 +229,14 @@ def _snapshot_document(
         },
         "models": [_model_to_data(model) for model in snapshot.models],
         "local": snapshot.local,
-        "environment_names": list(environment_names),
     }
 
 
-def _snapshot_from_document(document: Mapping[str, object]) -> ModelCatalogSnapshot:
+def _snapshot_from_document(
+    document: Mapping[str, object],
+    *,
+    revision: str,
+) -> ModelCatalogSnapshot:
     require_fields(
         document,
         frozenset({"providers", "models"}),
@@ -250,7 +262,7 @@ def _snapshot_from_document(document: Mapping[str, object]) -> ModelCatalogSnaps
     return ModelCatalogSnapshot(
         providers=providers,
         models=models,
-        revision="cache",
+        revision=revision,
         local=bool(document.get("local", False)),
     )
 
@@ -263,16 +275,11 @@ def _provider_to_data(provider: Provider) -> dict[str, object]:
         "api": provider.api,
         "doc": provider.doc,
         "env": list(provider.env),
-        "extra": dict(provider.extra),
         "models": {
             model_id: _model_to_data(model)
             for model_id, model in sorted(provider.models.items())
         },
-        "_toolang": {
-            "env": _env_to_data(provider._toolang.env),
-            "adapter": provider._toolang.adapter,
-            "local": provider._toolang.local,
-        },
+        "_toolang": _provider_toolang_to_data(provider._toolang),
     }
 
 
@@ -294,27 +301,58 @@ def _provider_from_data(
         id=provider_id,
         name=_text(data, "name"),
         models=models,
-        _toolang=ProviderToolang(
-            env=_env_from_data(toolang.get("env")),
-            adapter=_optional_text(toolang, "adapter"),
-            local=bool(toolang.get("local", False)),
-        ),
+        _toolang=_provider_toolang_from_data(toolang),
         npm=_optional_text(data, "npm"),
         api=_optional_text(data, "api"),
         doc=_optional_text(data, "doc"),
         env=_string_list(data.get("env")),
-        extra={
-            str(key): value
-            for key, value in data.items()
-            if key not in _PROVIDER_FIELDS
-        },
     )
+
+
+def _provider_toolang_to_data(value: ProviderToolang) -> dict[str, object]:
+    return {
+        "env": _env_to_data(value.env),
+        "adapter": value.adapter,
+    }
+
+
+def _provider_toolang_from_data(value: object) -> ProviderToolang:
+    raw: Mapping[str, object] = (
+        cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
+    )
+    return ProviderToolang(
+        env=_env_from_data(raw.get("env")),
+        adapter=_optional_text(raw, "adapter"),
+    )
+
+
+def _model_provider_from_data(value: object) -> Mapping[str, object] | None:
+    """Rebuild one model-level corrected provider block."""
+
+    block = _optional_mapping(value)
+    if block is None:
+        return None
+    return {
+        str(key): (
+            _provider_toolang_from_data(item)
+            if key == "_toolang" and isinstance(item, Mapping)
+            else item
+        )
+        for key, item in block.items()
+    }
 
 
 def _model_to_data(model: Model) -> dict[str, object]:
     data = model.to_data()
     if model.provider is not None:
-        data["provider"] = dict(model.provider)
+        data["provider"] = {
+            str(key): (
+                _provider_toolang_to_data(item)
+                if isinstance(item, ProviderToolang)
+                else item
+            )
+            for key, item in model.provider.items()
+        }
     data["_toolang"] = {
         "ready": model._toolang.ready,
         "provider": model._toolang.provider,
@@ -324,7 +362,7 @@ def _model_to_data(model: Model) -> dict[str, object]:
 
 def _model_from_data(data: Mapping[str, object]) -> Model:
     toolang = _mapping(data, "_toolang")
-    provider = _optional_mapping(data.get("provider"))
+    provider = _model_provider_from_data(data.get("provider"))
     return Model(
         id=_text(data, "id"),
         name=_text(data, "name"),
@@ -351,9 +389,6 @@ def _model_from_data(data: Mapping[str, object]) -> Model:
         experimental=_optional_mapping(data.get("experimental")),
         provider=provider,
         cost=_optional_mapping(data.get("cost")),
-        extra={
-            str(key): value for key, value in data.items() if key not in _MODEL_FIELDS
-        },
     )
 
 
@@ -449,8 +484,8 @@ def _optional_bool(data: Mapping[str, object], name: str) -> bool | None:
 
 
 __all__ = [
-    "CachedModelProjection",
-    "ModelProjectionCache",
-    "environment_readiness",
+    "CachedCatalog",
+    "ModelCatalogCache",
+    "environment_identity",
     "model_projection_key",
 ]

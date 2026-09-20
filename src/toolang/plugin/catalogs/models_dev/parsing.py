@@ -16,33 +16,6 @@ from toolang.base.types.model import (
     normalized_env,
 )
 
-_PROVIDER_FIELDS = frozenset({"id", "env", "npm", "api", "name", "doc", "models"})
-_MODEL_FIELDS = frozenset(
-    {
-        "id",
-        "name",
-        "description",
-        "family",
-        "attachment",
-        "reasoning",
-        "reasoning_options",
-        "tool_call",
-        "interleaved",
-        "structured_output",
-        "temperature",
-        "knowledge",
-        "release_date",
-        "last_updated",
-        "modalities",
-        "open_weights",
-        "limit",
-        "status",
-        "experimental",
-        "provider",
-        "cost",
-    }
-)
-
 
 def parse_model_catalog_data(data: object) -> dict[str, Provider]:
     """Validate parsed JSON and return typed providers."""
@@ -152,9 +125,6 @@ def _parse_provider(
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
         models=models,
         _toolang=ProviderToolang(env=normalized_env(env)),
-        extra={
-            key: value for key, value in data.items() if key not in _PROVIDER_FIELDS
-        },
     )
 
 
@@ -221,7 +191,6 @@ def _parse_model(
         ),
         provider=_optional_mapping(data.get("provider"), label=f"{label} provider"),
         cost=cost,
-        extra={key: value for key, value in data.items() if key not in _MODEL_FIELDS},
     )
 
 

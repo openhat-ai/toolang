@@ -117,11 +117,7 @@ def resolve_provider(
     env = _resolve_env(provider)
     resolved = replace(
         provider,
-        _toolang=ProviderToolang(
-            env=env,
-            adapter=adapter_name,
-            local=provider._toolang.local,
-        ),
+        _toolang=ProviderToolang(env=env, adapter=adapter_name),
     )
     models = {
         model_id: _resolve_model(
@@ -180,7 +176,6 @@ def _resolve_model(
         adapter is not None
         and api is not None
         and env_is_ready(provider._toolang.env, environ=environ)
-        and not _local_provider_offline(provider)
     )
     return replace(
         resolved_model,
@@ -193,7 +188,7 @@ def _with_model_adapter(
     adapter: str,
 ) -> Mapping[str, object]:
     block = dict(value or {})
-    block["_toolang"] = {"adapter": adapter}
+    block["_toolang"] = ProviderToolang(adapter=adapter)
     return block
 
 
@@ -202,10 +197,10 @@ def model_adapter(provider: Provider, model: Model) -> str | None:
 
     override = model.provider or {}
     block = override.get("_toolang")
-    if isinstance(block, Mapping):
-        declared = cast(Mapping[str, object], block).get("adapter")
-        if isinstance(declared, str) and declared:
-            return declared
+    # Only our typed value counts: a raw `_toolang` mapping from a source is not
+    # runtime configuration.
+    if isinstance(block, ProviderToolang) and block.adapter:
+        return block.adapter
     return provider._toolang.adapter
 
 
@@ -446,13 +441,3 @@ def _normalized_shape(value: object) -> str | None:
 
 def _env_value(environ: Mapping[str, str], name: str) -> bool:
     return bool(str(environ.get(name, "")).strip())
-
-
-def _local_provider_offline(provider: Provider) -> bool:
-    if not provider._toolang.local:
-        return False
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )

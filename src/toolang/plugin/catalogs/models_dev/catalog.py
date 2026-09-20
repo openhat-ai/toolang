@@ -119,7 +119,11 @@ def capture_model_catalog_source(
             return before, ModelCatalogSource(
                 path=before.path,
                 payload=payload,
-                revision=f"sha256:{sha256(payload).hexdigest()}",
+                # The payload digest and the mtime are both part of the revision:
+                # touching the file reloads it even when its content is unchanged.
+                revision=(
+                    f"sha256:{sha256(payload).hexdigest()}+mtime:{after.mtime_ns}"
+                ),
             )
     raise RuntimeError(f"model catalog changed while reading: {path}")
 

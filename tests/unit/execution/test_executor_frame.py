@@ -83,7 +83,6 @@ def _provider() -> Provider:
         _toolang=ProviderToolang(
             env=(),
             adapter="test",
-            local=False,
         ),
         api="https://models.example/v1",
     )

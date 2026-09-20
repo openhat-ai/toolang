@@ -34,15 +34,15 @@ from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
 from .cache import (
-    CachedModelProjection,
-    ModelProjectionCache,
-    environment_readiness,
+    ModelCatalogCache,
+    environment_identity,
     model_projection_key,
 )
 from .catalog import MergedModelCatalog
 from .config import (
     load_agent_config,
     load_setup_config,
+    load_root_setup_envs,
     load_setup_envs,
     project_model_setup_config,
     project_setup_config,
@@ -56,6 +56,7 @@ from .models import order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
+_SETUP_RETENTION = 2
 logger = logging.getLogger(__name__)
 _LOCAL_CATALOG_ENV = frozenset(
     {
@@ -97,13 +98,17 @@ class _Candidate:
     source: ModelCatalogSource
     static: ModelCatalogSnapshot
     additional: tuple[tuple[str, ModelCatalogSnapshot], ...]
+    source_revisions: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingModelCache:
-    projection_key: str
-    snapshot: ModelCatalogSnapshot
-    environment_names: tuple[str, ...]
+class _CatalogLoad:
+    """Every catalog source of one refresh, with each source's own revision."""
+
+    observation: FileObservation
+    source: ModelCatalogSource
+    static: ModelCatalogSnapshot
+    additional: tuple[tuple[str, str, ModelCatalogSnapshot], ...]
 
 
 class SetupWatcher:
@@ -119,9 +124,11 @@ class SetupWatcher:
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
         compact_override: ModelOverride | None = None,
+        agent_context: bool = True,
     ) -> None:
         self.layout = layout
         self._sandbox = sandbox
+        self._agent_context = agent_context
         self._model_catalog_override = model_catalog
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
@@ -135,21 +142,17 @@ class SetupWatcher:
         self._adapters: dict[str, ModelAdapter] = {}
         self._tools: dict[str, Tool] = {}
         self._catalogs: dict[str, ModelCatalog] = {}
-        self._static_catalog: ModelCatalogSnapshot | None = None
-        self._additional_catalogs: (
-            tuple[tuple[str, ModelCatalogSnapshot], ...] | None
-        ) = None
         self._catalog_identity: FileObservation | None = None
         self._catalog_source: ModelCatalogSource | None = None
-        self._cache_entry: CachedModelProjection | None = None
-        self._pending_model_cache: _PendingModelCache | None = None
-        self._model_cache = ModelProjectionCache(layout.home_model_cache)
+        self._source_revisions: tuple[tuple[str, str], ...] | None = None
+        self._model_cache = ModelCatalogCache(layout.home_model_cache)
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
             for item in plugin_provenance(group=group)
         )
         self._setup: AgentSetup | None = None
+        self._versions: dict[str, AgentSetup] = {}
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
 
@@ -159,6 +162,27 @@ class SetupWatcher:
         if self._setup is None:
             raise RuntimeError("setup watcher has not been refreshed")
         return self._setup
+
+    def by_revision(self, revision: str) -> AgentSetup | None:
+        """Return one published setup revision, newest first."""
+
+        if self._setup is not None and self._setup.revision == revision:
+            return self._setup
+        return self._versions.get(revision)
+
+    def _publish(self, setup: AgentSetup) -> None:
+        """Publish one setup and keep the latest versions addressable."""
+
+        previous = self._setup
+        self._setup = setup
+        if previous is not None and previous.revision:
+            self._versions[previous.revision] = previous
+        self._versions[setup.revision] = setup
+        while len(self._versions) > _SETUP_RETENTION:
+            oldest = next(iter(self._versions))
+            if oldest == setup.revision:
+                break
+            del self._versions[oldest]
 
     def diagnostics(self) -> tuple[SetupDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
@@ -202,6 +226,7 @@ class SetupWatcher:
             self.layout,
             explicit=self._model_catalog_override,
             environ=inputs.envs,
+            include_agent=self._agent_context,
         )
         catalog_configs = self._runtime_catalog_configs(
             configs,
@@ -226,29 +251,15 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
-        observation = FileObservation.capture(catalog_path)
-        if (
-            observation == self._catalog_identity
-            and observation.size <= models_dev.max_bytes
-            and self._catalog_source is not None
-            and self._static_catalog is not None
-        ):
-            source = self._catalog_source
-            static = self._static_catalog
-        else:
-            observation, source = await asyncio.to_thread(models_dev.capture)
-            static = await asyncio.to_thread(source.snapshot)
-        ordered_catalogs = _ordered_additional_catalogs(catalogs)
-        additional_snapshots = tuple(
-            await asyncio.gather(*(catalog.snapshot() for catalog in ordered_catalogs))
+        load = await self._load_sources(
+            models_dev,
+            catalogs,
+            catalog_path=catalog_path,
         )
-        additional = tuple(
-            (catalog.name, snapshot)
-            for catalog, snapshot in zip(
-                ordered_catalogs,
-                additional_snapshots,
-                strict=True,
-            )
+        additional = tuple((name, snapshot) for name, _, snapshot in load.additional)
+        source_revisions = (
+            ("models_dev", load.source.revision),
+            *((name, revision) for name, revision, _ in load.additional),
         )
         candidate = _Candidate(
             inputs=inputs,
@@ -259,47 +270,50 @@ class SetupWatcher:
             adapters=adapters,
             tools=tools,
             catalogs=catalogs,
-            observation=observation,
-            source=source,
-            static=static,
+            observation=load.observation,
+            source=load.source,
+            static=load.static,
             additional=additional,
+            source_revisions=source_revisions,
         )
         if self._candidate_is_unchanged(candidate):
-            await self._persist_pending_model_cache()
             self._commit_candidate(candidate)
             self._diagnostics = ()
             return self.current()
-        merged = await _merge_catalogs(static, additional)
+        merged = await _merge_catalogs(load.static, additional)
         resolved_catalog = _resolve_catalog(
             merged,
             adapters=adapters,
             envs=inputs.envs,
         )
         projection_key = _projection_key(
-            additional=additional,
-            config_value=tuple(
-                project_model_setup_config(config) for config in configs
-            ),
-            merged=merged,
-            envs=inputs.envs,
+            source_revisions=source_revisions,
+            environment=environment_identity(resolved_catalog, inputs.envs),
+            setup_inputs={
+                "catalogs": catalog_configs,
+                "config": tuple(
+                    project_model_setup_config(config) for config in configs
+                ),
+                "adapters": adapter_configs,
+                "tools": toolset_configs,
+                "allow": allow,
+                "defaults": defaults,
+                "limits": limits,
+                "compact_model": compact_model,
+            },
             allow_models=allow.models,
             plugin_provenance=self._model_plugin_provenance,
             scope=f"agent:{self.layout.name}",
         )
-        cache_entry = (
-            self._cache_entry
-            if self._cache_entry is not None and self._cache_entry.key == projection_key
-            else await asyncio.to_thread(
-                self._model_cache.load_context,
-                projection_key,
-            )
-        )
+        if self._setup is not None and self._setup.revision == projection_key:
+            self._commit_candidate(candidate)
+            self._diagnostics = ()
+            return self._setup
         setup = _build_setup(
             layout=self.layout,
             sandbox=self._sandbox,
-            snapshot=(
-                cache_entry.snapshot if cache_entry is not None else resolved_catalog
-            ),
+            revision=projection_key,
+            snapshot=resolved_catalog,
             adapters=adapters,
             tools=tools,
             envs=inputs.envs,
@@ -308,44 +322,23 @@ class SetupWatcher:
             compact_model=compact_model,
             limits=limits,
         )
-        if self._setup is not None and _setups_equal(setup, self._setup):
-            setup = self._setup
-        else:
-            self._setup = setup
+        self._publish(setup)
         self._commit_candidate(candidate)
         self._diagnostics = ()
-        if cache_entry is None:
-            self._cache_entry = CachedModelProjection(
-                snapshot=resolved_catalog,
-                key=projection_key,
-            )
-            self._pending_model_cache = _PendingModelCache(
-                projection_key=projection_key,
-                snapshot=resolved_catalog,
-                environment_names=tuple(
-                    sorted(
-                        _projection_environment_readiness(
-                            merged,
-                            inputs.envs,
-                        )
-                    )
-                ),
-            )
-            await self._persist_pending_model_cache()
-        else:
-            self._cache_entry = cache_entry
         return setup
 
     def _load_inputs(self) -> _LoadedInputs:
-        fingerprints = tuple(
-            _input_file_fingerprint(path)
-            for path in (
+        paths = (
+            (
                 self.layout.root_config,
                 self.layout.config,
                 self.layout.root_env,
                 self.layout.env,
             )
+            if self._agent_context
+            else (self.layout.root_config, self.layout.root_env)
         )
+        fingerprints = tuple(_input_file_fingerprint(path) for path in paths)
         if self._inputs is not None and self._inputs.fingerprints == fingerprints:
             return self._inputs
         previous = self._inputs
@@ -357,15 +350,24 @@ class SetupWatcher:
                 else load_setup_config(self.layout)
             ),
             agent_config=(
-                previous.agent_config
-                if previous is not None and previous.fingerprints[1] == fingerprints[1]
-                else load_agent_config(self.layout)
+                (
+                    previous.agent_config
+                    if previous is not None
+                    and previous.fingerprints[1] == fingerprints[1]
+                    else load_agent_config(self.layout)
+                )
+                if self._agent_context
+                else {}
             ),
             envs=(
                 previous.envs
                 if previous is not None
                 and previous.fingerprints[2:] == fingerprints[2:]
-                else load_setup_envs(self.layout)
+                else (
+                    load_setup_envs(self.layout)
+                    if self._agent_context
+                    else load_root_setup_envs(self.layout)
+                )
             ),
         )
 
@@ -391,6 +393,79 @@ class SetupWatcher:
             }
         return catalog_configs
 
+    async def _load_sources(
+        self,
+        models_dev: ModelsDevModelCatalog,
+        catalogs: Mapping[str, ModelCatalog],
+        *,
+        catalog_path: Path,
+    ) -> _CatalogLoad:
+        """Load every catalog source, reusing its cache and its own revision."""
+
+        observation = FileObservation.capture(catalog_path)
+        if (
+            observation == self._catalog_identity
+            and observation.size <= models_dev.max_bytes
+            and self._catalog_source is not None
+        ):
+            source = self._catalog_source
+        else:
+            observation, source = await asyncio.to_thread(models_dev.capture)
+        static = await asyncio.to_thread(
+            self._model_cache.load_source,
+            "models_dev",
+            revision=source.revision,
+        )
+        if static is None:
+            static = await asyncio.to_thread(source.snapshot)
+            try:
+                await asyncio.to_thread(
+                    self._model_cache.store_source,
+                    "models_dev",
+                    revision=source.revision,
+                    snapshot=static,
+                )
+            except Exception:
+                logger.warning(
+                    "setup.model_cache_write_failed agent=%s", self.layout.name
+                )
+        ordered = _ordered_additional_catalogs(catalogs)
+        probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
+        additional = tuple(
+            await asyncio.gather(
+                *(
+                    self._probe_revision(catalog.name, probe)
+                    for catalog, probe in zip(ordered, probes, strict=True)
+                )
+            )
+        )
+        return _CatalogLoad(
+            observation=observation,
+            source=source,
+            static=static,
+            additional=additional,
+        )
+
+    async def _probe_revision(
+        self,
+        name: str,
+        probe: ModelCatalogSnapshot,
+    ) -> tuple[str, str, ModelCatalogSnapshot]:
+        """Persist one probe result and return it with that source's revision."""
+
+        try:
+            revision = await asyncio.to_thread(
+                self._model_cache.store_probe,
+                name,
+                snapshot=probe,
+            )
+        except Exception:
+            logger.warning("setup.model_cache_write_failed agent=%s", self.layout.name)
+            revision = (
+                await asyncio.to_thread(self._model_cache.probe_revision, name) or ""
+            )
+        return (name, revision, probe)
+
     def _candidate_is_unchanged(self, candidate: _Candidate) -> bool:
         return (
             self._setup is not None
@@ -400,7 +475,7 @@ class SetupWatcher:
             and candidate.adapter_configs == self._adapter_configs
             and candidate.toolset_configs == self._toolset_configs
             and candidate.catalog_configs == self._catalog_configs
-            and candidate.additional == self._additional_catalogs
+            and candidate.source_revisions == self._source_revisions
         )
 
     def _commit_candidate(self, candidate: _Candidate) -> None:
@@ -414,29 +489,7 @@ class SetupWatcher:
         self._catalogs = candidate.catalogs
         self._catalog_identity = candidate.observation
         self._catalog_source = candidate.source
-        self._static_catalog = candidate.static
-        self._additional_catalogs = candidate.additional
-
-    async def _persist_pending_model_cache(self) -> None:
-        pending = self._pending_model_cache
-        if pending is None:
-            return
-        self._pending_model_cache = None
-        try:
-            await asyncio.to_thread(
-                self._model_cache.store_context,
-                key=pending.projection_key,
-                snapshot=pending.snapshot,
-                environment_names=pending.environment_names,
-            )
-        except asyncio.CancelledError:
-            self._pending_model_cache = pending
-            raise
-        except Exception:
-            self._pending_model_cache = pending
-            logger.exception(
-                "setup.model_cache_write_failed agent=%s", self.layout.name
-            )
+        self._source_revisions = candidate.source_revisions
 
     async def updates(
         self,
@@ -504,6 +557,7 @@ def _build_setup(
     *,
     layout: AgentLayout,
     sandbox: str,
+    revision: str,
     snapshot: ModelCatalogSnapshot,
     adapters: dict[str, ModelAdapter],
     tools: dict[str, Tool],
@@ -544,6 +598,7 @@ def _build_setup(
     }
     return AgentSetup(
         layout=layout,
+        revision=revision,
         providers=providers,
         adapters=adapters,
         models=models,
@@ -558,34 +613,22 @@ def _build_setup(
 
 def _projection_key(
     *,
-    additional: tuple[tuple[str, ModelCatalogSnapshot], ...],
-    config_value: object,
-    merged: ModelCatalogSnapshot,
-    envs: Mapping[str, str],
+    source_revisions: tuple[tuple[str, str], ...],
+    environment: Mapping[str, str],
+    setup_inputs: Mapping[str, object],
     allow_models: tuple[str, ...] | None,
     plugin_provenance: tuple[object, ...],
     scope: str,
 ) -> str:
-    readiness = _projection_environment_readiness(merged, envs)
     return model_projection_key(
         kind="runtime",
         scope=scope,
-        catalog_revisions=(
-            ("models_dev", merged.revision),
-            *((name, snapshot.revision) for name, snapshot in additional),
-        ),
-        setup_config=config_value,
-        environment_readiness=readiness,
+        catalog_revisions=source_revisions,
+        setup_config=setup_inputs,
+        environment=environment,
         plugin_provenance=plugin_provenance,
         allow_models=allow_models,
     )
-
-
-def _projection_environment_readiness(
-    merged: ModelCatalogSnapshot,
-    envs: Mapping[str, str],
-) -> dict[str, bool]:
-    return environment_readiness(merged, envs)
 
 
 def _ordered_additional_catalogs(
@@ -614,21 +657,6 @@ def _input_file_fingerprint(path: Path) -> object:
     )
 
 
-def _setups_equal(left: AgentSetup, right: AgentSetup) -> bool:
-    return (
-        left.layout == right.layout
-        and left.providers == right.providers
-        and left.adapters == right.adapters
-        and left.models.entries == right.models.entries
-        and left.tools.entries == right.tools.entries
-        and left.envs == right.envs
-        and left.environment == right.environment
-        and left.defaults == right.defaults
-        and left.compact_model == right.compact_model
-        and left.limits == right.limits
-    )
-
-
 def _candidate_diagnostic(exc: Exception) -> SetupDiagnostic:
     name = type(exc).__name__
     code = "".join(
@@ -636,3 +664,21 @@ def _candidate_diagnostic(exc: Exception) -> SetupDiagnostic:
         for character in name
     ).lstrip("-")
     return SetupDiagnostic(code=code, message=str(exc) or name)
+
+
+async def load_setup(
+    layout: AgentLayout,
+    *,
+    model_catalog: Path | None = None,
+    sandbox: str = "host",
+    agent_context: bool = True,
+) -> AgentSetup:
+    """Build one setup version once, without a running watcher."""
+
+    watcher = SetupWatcher(
+        layout,
+        sandbox=sandbox,
+        model_catalog=model_catalog,
+        agent_context=agent_context,
+    )
+    return await watcher.refresh()

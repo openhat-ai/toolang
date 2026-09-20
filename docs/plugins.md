@@ -117,13 +117,13 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 Model catalog plugins return immutable provider/model snapshots. Static and
 local discovery use the same models.dev-compatible `Provider` and `Model`
 types, but only models.dev records carry an `npm` package; every other source
-declares its protocol through `Provider.adapter`. Catalog plugins do not
+declares its protocol through `ProviderToolang.adapter`. Catalog plugins do not
 execute model calls or install packages named by catalog metadata.
 
 ### Model Adapter
 
-Model adapter plugins execute one model turn for a concrete `ModelTarget` and
-return `ModelCallResult`. Both non-streaming and streaming calls are
+Model adapter plugins execute one model turn for a `ModelRoute`, a resolved
+`Model`, and a `ModelCall`, and return `ModelCallResult`. Both non-streaming and streaming calls are
 asynchronous, and streaming adapters await their model-part handler.
 
 Adapters own one protocol shape and its optional default endpoint. They do not

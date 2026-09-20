@@ -10,9 +10,6 @@ import httpx
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
-    LOCAL_RUNTIME_STATUS,
-    LOCAL_STATUS_OFFLINE,
-    LOCAL_STATUS_READY,
     Model,
     ModelCatalogSnapshot,
     ModelToolang,
@@ -26,6 +23,7 @@ from toolang.plugin.values import (
 )
 
 from ._local import (
+    LOCAL_ZERO_COST,
     config_environ,
     config_timeout,
     local_snapshot,
@@ -49,12 +47,10 @@ class LlamaCppModelCatalog(ModelCatalog):
         endpoint = _llama_cpp_endpoint(self.endpoint, self.environ)
         entries: tuple[tuple[str, dict[str, object]], ...] = ()
         props: dict[str, object] = {}
-        online = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{endpoint}/models")
                 response.raise_for_status()
-                online = True
                 payload = response.json()
                 raw_models = payload.get("data") if isinstance(payload, dict) else None
                 if isinstance(raw_models, list):
@@ -82,22 +78,11 @@ class LlamaCppModelCatalog(ModelCatalog):
             )
             for model_id, entry in entries
         )
-        provider_runtime = compact_mapping(
-            {
-                "kind": "llama_cpp",
-                "endpoint": endpoint,
-                LOCAL_RUNTIME_STATUS: (
-                    LOCAL_STATUS_READY if online else LOCAL_STATUS_OFFLINE
-                ),
-                "build_info": props.get("build_info"),
-            }
-        )
         return local_snapshot(
             provider_id="llama_cpp",
             provider_name="llama.cpp",
             endpoint=endpoint,
             models=models,
-            provider_runtime=provider_runtime,
         )
 
 
@@ -125,20 +110,6 @@ def _llama_cpp_model(
         "supports_reasoning_content",
     )
     limit = compact_mapping({"context": context, "output": output})
-    runtime = compact_mapping(
-        {
-            "created": entry.get("created"),
-            "owned_by": entry.get("owned_by"),
-            "meta": meta or None,
-            "model_path": props.get("model_path"),
-            "build_info": props.get("build_info"),
-            "total_slots": props.get("total_slots"),
-            "chat_template_caps": caps or None,
-            "modalities": props.get("modalities"),
-            "context": context,
-            "max_output_tokens": output,
-        }
-    )
     return Model(
         id=model_id,
         _toolang=ModelToolang(provider="llama_cpp"),
@@ -155,8 +126,7 @@ def _llama_cpp_model(
         temperature=True,
         modalities={"input": modalities, "output": ("text",)},
         limit={key: value for key, value in limit.items() if isinstance(value, int)},
-        cost={"input": 0, "output": 0},
-        extra={"runtime": runtime},
+        cost=dict(LOCAL_ZERO_COST),
     )
 
 

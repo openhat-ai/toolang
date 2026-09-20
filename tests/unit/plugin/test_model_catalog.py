@@ -17,7 +17,6 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     ModelToolang,
     Provider,
-    ProviderToolang,
 )
 from toolang.common.json import dumps
 from toolang.common.layout import AgentLayout
@@ -105,10 +104,10 @@ def test_catalog_reader_attaches_origin_without_rematerializing_records(
 
     assert model is not None
     assert model is snapshot.find("test", "one")
-    assert snapshot.providers["test"]._toolang.local is False
+    assert snapshot.local is False
 
 
-def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
+def test_catalog_import_drops_unknown_fields_and_keeps_decimal_prices(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "models.json"
@@ -122,10 +121,9 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
 
     assert model is not None
     assert model.cost == {"input": Decimal("1.25"), "output": 2}
-    assert model.extra["future_model_field"] == ("value",)
     exported = cast(dict[str, Any], snapshot.to_data())
-    assert exported["test"]["future_provider_field"] == {"enabled": True}
-    assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
+    assert "future_provider_field" not in exported["test"]
+    assert "future_model_field" not in exported["test"]["models"]["one"]
 
 
 def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
@@ -287,13 +285,9 @@ def test_filtered_export_round_trips_deterministically() -> None:
 
 def test_strict_export_rejects_local_only_models() -> None:
     provider = _provider({"local": _model("local")})
-    provider = dataclasses.replace(
-        provider,
-        _toolang=ProviderToolang(env=(), adapter="chat_completions", local=True),
-    )
-    snapshot = _snapshot(provider)
+    snapshot = dataclasses.replace(_snapshot(provider), local=True)
 
-    with pytest.raises(ValueError, match="local-only model cannot be exported"):
+    with pytest.raises(ValueError, match="local-only catalog cannot be exported"):
         snapshot.to_data()
 
 

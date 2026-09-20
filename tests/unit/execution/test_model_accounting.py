@@ -19,6 +19,7 @@ from toolang.execution.accounting import (
 )
 from toolang.execution.records import step_noted_from_data, step_noted_to_data
 from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
+from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
@@ -184,7 +185,7 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
 
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
-    model = _model({"input": 0, "output": 0})
+    model = _model(dict(LOCAL_ZERO_COST))
     accounting = build_model_accounting(
         model,
         ModelUsage(
@@ -193,7 +194,6 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
             input_uncached_tokens=123,
             input_cache_read_tokens=3977,
         ),
-        local=True,
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -426,8 +426,7 @@ def _accounting(
     usage: ModelUsage | None,
     cost: dict[str, object] | None = None,
     *,
-    local: bool = False,
     requested: Reasoning | None = None,
 ) -> ModelAccounting | None:
     resolved = replace(model, cost=cost) if cost is not None else model
-    return build_model_accounting(resolved, usage, local=local, requested=requested)
+    return build_model_accounting(resolved, usage, requested=requested)
