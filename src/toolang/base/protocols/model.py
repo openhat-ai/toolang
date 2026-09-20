@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from collections.abc import Mapping
 
-from ..types.model import Model, ModelCatalogSnapshot, ModelRoute
+from ..types.model import Model, ModelCatalogSnapshot
 from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
@@ -30,7 +30,6 @@ class ModelAdapter(Protocol):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -40,7 +39,6 @@ class ModelAdapter(Protocol):
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,

@@ -19,8 +19,8 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import (
     Model,
-    ModelRoute,
     ModelToolang,
+    ModelRoute,
     Provider,
     ProviderToolang,
 )
@@ -94,7 +94,13 @@ def _models() -> ModelCollection:
             Model(
                 id="model",
                 name="model",
-                _toolang=ModelToolang(provider="test", ready=True),
+                _toolang=ModelToolang(
+                    provider="test",
+                    ready=True,
+                    route=ModelRoute(
+                        adapter="test", api="https://example.invalid/v1", env=()
+                    ),
+                ),
                 tool_call=True,
                 structured_output=True,
             ),
@@ -113,19 +119,17 @@ class _Adapter:
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
         environ,
     ) -> ModelCallResult:
-        del route, model, environ
+        del model, environ
         self.requests.append(request)
         return ModelCallResult(message=self.response)
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -133,7 +137,7 @@ class _Adapter:
         on_event,
     ):
         del on_event
-        return await self.invoke(route, model, request, environ=environ)
+        return await self.invoke(model, request, environ=environ)
 
 
 class _Tool(Tool):

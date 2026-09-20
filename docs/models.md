@@ -13,7 +13,7 @@ the setup resolver joins those facts once for the current process.
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
 | `ModelRequest` | One run's concrete model demand |
-| `ModelRoute` | The effective connection one call must use, computed from setup data |
+| `ModelRoute` | The effective connection published at `Model._toolang.route` |
 | `ModelCall` | One model call: content plus effective controls |
 | `ModelCollection` | The immutable effective model set published by Setup |
 
@@ -181,20 +181,32 @@ After catalog snapshots are merged, the setup resolver enriches every
 `Provider` with its default route and every `Model` with its effective route:
 
 ```text
-ProviderToolang: { env: (string | string[])[], adapter: string? }
-ModelToolang:    { ready: bool, provider: string }
+ProviderToolang: { env: declared rule, adapter: declared adapter, route: ModelRoute }
+ModelToolang:    { provider: string, ready: bool, route: ModelRoute }
+ModelRoute:      { adapter: string?, api: string?, env: rule?, headers, options }
 ```
 
-The effective connection a call uses is computed per call as a `ModelRoute`
-(`provider`, `adapter`, `api`, `env`, `headers`, `options`) and is not stored on a
-record. Model-level
-`provider.npm`, `provider.shape`, and `provider.api` override the provider's
-default protocol facts. This supports mixed-protocol routers without a provider
-plugin.
+Setup resolves routes before publication. Provider metadata retains trusted
+catalog declarations plus its effective default route; each model carries its
+own effective route. Model-level protocol and API overrides remain catalog
+facts, without injected resolution fields. CLI and executor consume these
+published routes, and adapters receive `(model, request, *, environ)`.
 
-`Provider.api` is the raw catalog value. The effective API base, using model
-and provider catalog values and then the adapter default, is computed per call
-and carried on the `ModelRoute` as the client SDK base URL.
+`Provider.api` stays the raw catalog value. Setup resolves model/provider API
+values, adapter defaults, and templates into `route.api`. Route environment
+rules contain names only; actual values remain in `setup.envs`.
+
+A missing or uninstalled adapter yields `route.adapter=None`; an unresolved API
+yields `route.api=None`; unmet environment requirements yield `route.env=None`.
+An empty env rule means no credential is required. Setup resolves each field
+independently and sets `ready` only when all three are non-None. No issues list
+is stored. Headers and options are recursively immutable; adapters copy them
+into mutable provider request payloads.
+
+Source cache files preserve complete catalog declarations, never effective
+routes or readiness. The version-pinned full view includes resolved facts in
+its private in-memory serialization. Changing credentials rebuilds setup facts
+without rewriting an otherwise unchanged catalog cache.
 
 The resolver applies:
 
@@ -208,7 +220,7 @@ The resolver applies:
 - environment availability rules;
 - installed-adapter and local-probe state.
 
-The resolved `_toolang.env` list is OR; a nested group is AND. An empty rule
+The resolved `_toolang.route.env` list is OR; a nested group is AND. An empty rule
 requires no environment value. A models.dev source retains its raw flat `env`
 list until setup infers the rule. During that inference, names ending in
 `_API_KEY`, `_PAT`, or `_TOKEN` are credential alternatives; other names are
@@ -355,10 +367,16 @@ complete directory, including unready and allow-excluded entries; `providers
 --all` also includes empty providers. The `available` query field describes
 readiness independently of allow membership.
 
-`too providers --all` owns readiness diagnostics and shows `ADAPTERS`, `API`,
-and `ENV` from the resolved environment rule (`ProviderToolang.env`). Comma
-separates OR environment alternatives;
-` + ` separates simultaneous requirements.
+`too models --all` and `too providers --all` show coarse unavailability reasons
+from the route's missing fields. They do not identify individual missing
+credentials or distinguish unknown adapters from uninstalled ones.
+
+Providers show `ADAPTERS`, `DEFAULT API`, `ENV`, and `REASON`. Adapter names are
+aggregated from the selected models; empty providers show their default adapter.
+The API column marks model endpoint overrides. ENV shows the satisfied rule, or
+catalog declarations when unavailable; its red styling indicates the overall
+environment requirement is unmet, not that every displayed variable is missing.
+A provider is available when at least one of its selected models is ready.
 
 `too catalogs` lists installed model-catalog plugin entry points and their
 `built-in` or `external` source. It does not load the plugins or describe the
@@ -377,7 +395,7 @@ Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models
 share query fields, including `family`, `reasoning`, `tool_call`, `temperature`,
 `structured_output`, `modalities.input`, `status`, `route.provider`,
-`route.adapter`, `route.scope`, and `available`. Run `too query models` for the
+`route.adapter`, and `available`. Run `too query models` for the
 complete contract.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.

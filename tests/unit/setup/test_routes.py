@@ -12,13 +12,11 @@ from toolang.plugin.adapters.generate_content import (
 )
 from toolang.plugin.adapters.messages import MessagesModelAdapter
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.models.provider_resolver import (
-    credential_value,
+from toolang.plugin.adapters._credentials import credential_value
+from toolang.setup.routes import (
     env_is_ready,
     model_adapter,
-    model_api,
     resolve_provider,
-    selected_credential_value,
 )
 
 
@@ -69,9 +67,9 @@ def test_resolver_maps_mainstream_npm_packages_to_adapter_defaults() -> None:
         )
         model = resolved.models["model"]
 
-        assert resolved._toolang.adapter == adapter
-        assert resolved._toolang.env == (env_name,)
-        assert model_api(resolved, model, adapters=adapters, environ=environ) == api
+        assert resolved._toolang.route.adapter == adapter
+        assert resolved._toolang.route.env == (env_name,)
+        assert model._toolang.route.api == api
         assert model._toolang.ready is True
 
 
@@ -88,10 +86,7 @@ def test_resolver_prefers_the_catalog_api_over_the_adapter_default() -> None:
     resolved = resolve_provider(provider, adapters=adapters, environ=environ)
     model = resolved.models["model"]
 
-    assert (
-        model_api(resolved, model, adapters=adapters, environ=environ)
-        == "https://catalog.example/v1"
-    )
+    assert model._toolang.route.api == "https://catalog.example/v1"
     assert model._toolang.ready is True
 
 
@@ -111,18 +106,18 @@ def test_resolver_models_env_as_or_of_and_without_storing_secrets() -> None:
         environ=environ,
     )
     model = resolved_provider.models["model"]
-    resolved = resolved_provider._toolang.env
+    resolved = resolved_provider._toolang.route.env
 
-    assert (
-        model_api(resolved_provider, model, adapters=adapters, environ=environ)
-        == "https://team.example/v1"
-    )
+    assert model._toolang.route.api == "https://team.example/v1"
     assert resolved == (
         ("CLOUD_ACCOUNT", "CLOUD_API_KEY"),
         ("CLOUD_ACCOUNT", "CLOUD_TOKEN"),
     )
     assert env_is_ready(resolved, environ=environ)
-    assert selected_credential_value(resolved_provider, environ=environ) == "secret"
+    assert (
+        credential_value(resolved_provider._toolang.route.env, environ=environ)
+        == "secret"
+    )
     assert credential_value(resolved, environ=environ) == "secret"
     assert "secret" not in repr(resolved_provider)
 
@@ -131,7 +126,9 @@ def test_resolver_models_env_as_or_of_and_without_storing_secrets() -> None:
     )
     assert missing_key.models["model"]._toolang.ready is False
     assert (
-        credential_value(missing_key._toolang.env, environ={"CLOUD_ACCOUNT": "team"})
+        credential_value(
+            missing_key._toolang.route.env, environ={"CLOUD_ACCOUNT": "team"}
+        )
         is None
     )
 
@@ -145,7 +142,7 @@ def test_resolver_preserves_explicit_plugin_env_alternatives() -> None:
         provider, adapters=_adapters(), environ={"FALLBACK": "credential"}
     )
 
-    assert resolved._toolang.env == (("ACCOUNT", "TOKEN"), "FALLBACK")
+    assert resolved._toolang.route.env == (("ACCOUNT", "TOKEN"), "FALLBACK")
     assert resolved.models["model"]._toolang.ready is True
 
 
@@ -162,10 +159,10 @@ def test_resolver_applies_explicit_bedrock_env_alternatives() -> None:
             ),
         ),
         adapters={},
-        environ={},
+        environ={"AWS_BEARER_TOKEN_BEDROCK": "secret", "AWS_REGION": "region"},
     )
 
-    assert resolved._toolang.env == (
+    assert resolved._toolang.route.env == (
         ("AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION"),
         ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"),
     )
@@ -181,9 +178,9 @@ def test_resolver_requires_installed_adapter_and_concrete_api() -> None:
 
     api_model = missing_api.models["model"]
     assert api_model._toolang.ready is False
-    assert model_api(missing_api, api_model, adapters=adapters, environ={}) is None
+    assert api_model._toolang.route.api is None
 
-    assert missing_adapter._toolang.adapter == "chat_completions"
+    assert missing_adapter._toolang.route.adapter is None
     assert missing_adapter.models["model"]._toolang.ready is False
 
 
@@ -232,10 +229,7 @@ def test_model_provider_override_resolves_its_own_protocol_route() -> None:
 
     assert model_adapter(resolved, gpt) == "chat_completions"
     assert model_adapter(resolved, claude_resolved) == "messages"
-    assert (
-        model_api(resolved, claude_resolved, adapters=adapters, environ=environ)
-        == "https://router.example/anthropic/v1"
-    )
+    assert claude_resolved._toolang.route.api == "https://router.example/anthropic/v1"
     assert claude_resolved._toolang.ready is True
 
 
@@ -295,11 +289,8 @@ def test_raw_toolang_extension_is_ignored_as_runtime_config() -> None:
     resolved_model = resolved.models["model"]
 
     assert model_adapter(resolved, resolved_model) == "responses"
-    assert (
-        model_api(resolved, resolved_model, adapters=adapters, environ=environ)
-        == "https://api.openai.com/v1"
-    )
-    assert resolved._toolang.env == ("OPENAI_API_KEY",)
+    assert resolved_model._toolang.route.api == "https://api.openai.com/v1"
+    assert resolved._toolang.route.env == ("OPENAI_API_KEY",)
 
 
 def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
@@ -328,9 +319,9 @@ def test_resolver_uses_a_declared_adapter_instead_of_an_npm_package() -> None:
     resolved = resolve_provider(declared, adapters=adapters, environ={})
     preferred = resolve_provider(both, adapters=adapters, environ={})
 
-    assert resolved._toolang.adapter == "chat_completions"
+    assert resolved._toolang.route.adapter == "chat_completions"
     assert "npm" not in resolved.to_data()
-    assert preferred._toolang.adapter == "chat_completions"
+    assert preferred._toolang.route.adapter == "chat_completions"
     assert preferred.to_data()["npm"] == "@ai-sdk/openai"
 
 
@@ -382,6 +373,49 @@ def test_imported_catalog_env_requires_account_and_credential():
     ):
         resolved = resolve_provider(provider, adapters=_adapters(), environ=environ)
         assert resolved.models["one"]._toolang.ready is ready
-        assert credential_value(resolved._toolang.env, environ=environ) == (
+        assert credential_value(resolved._toolang.route.env, environ=environ) == (
             "key" if ready else None
         )
+
+
+def test_routes_publish_independent_failures_and_preserve_declarations():
+    provider = _provider(
+        "test",
+        npm="@ai-sdk/openai",
+        env=("ACCOUNT", "TEST_API_KEY"),
+        api="https://${ACCOUNT}.example/v1",
+    )
+    model = replace(provider.models["model"], provider={"shape": "messages"})
+    provider = replace(provider, models={"model": model})
+    original = provider.to_data()
+    for environ, adapters, expected in (
+        ({}, {}, (None, None, None)),
+        ({"ACCOUNT": "team"}, {}, (None, "https://team.example/v1", None)),
+        (
+            {"ACCOUNT": "team", "TEST_API_KEY": "secret"},
+            {},
+            (None, "https://team.example/v1", (("ACCOUNT", "TEST_API_KEY"),)),
+        ),
+        ({}, _adapters(), ("messages", None, None)),
+    ):
+        resolved = resolve_provider(provider, adapters=adapters, environ=environ)
+        model = resolved.models["model"]
+        route = model._toolang.route
+        assert (route.adapter, route.api, route.env) == expected
+        assert model._toolang.ready is False
+        assert resolved.to_data() == original
+        assert resolved._toolang.adapter == provider._toolang.adapter
+        assert resolved._toolang.env == provider._toolang.env
+        assert model.provider is not None and "_toolang" not in model.provider
+
+    ready = resolve_provider(
+        provider,
+        adapters=_adapters(),
+        environ={
+            "ACCOUNT": "team",
+            "TEST_API_KEY": "secret",
+        },
+    )
+    assert ready.models["model"]._toolang.ready is True
+    assert ready._toolang.route.adapter == "responses"
+    assert ready.models["model"]._toolang.route.adapter == "messages"

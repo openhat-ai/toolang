@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import json
 from pathlib import Path
-from string import Template
 from typing import Annotated, cast
 
 from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.protocols.model import ModelAdapter
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
@@ -24,7 +22,6 @@ from toolang.cli.common.context import (
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
-from toolang.common.query import QueryDataset
 from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
 from toolang.common.json import dumps
@@ -34,12 +31,6 @@ from toolang.plugin.models.collections import (
     ModelQueryView,
     catalog_model_dataset,
     catalog_provider_views,
-)
-from toolang.plugin.models.provider_resolver import model_adapter
-from toolang.plugin.models.discovery import (
-    absent_provider_env_vars,
-    provider_env_requirements,
-    required_provider_env_vars,
 )
 from toolang.setup import AgentSetup
 from toolang.setup.watcher import load_setup
@@ -73,7 +64,7 @@ def models_command(
     except TypeError as error:
         raise ClickException(str(error)) from error
     snapshot = setup.model_catalog(all=all_)
-    dataset = _model_dataset(snapshot)
+    dataset = catalog_model_dataset(snapshot)
     try:
         if query:
             MODEL_SCHEMA.parse(query)
@@ -86,13 +77,28 @@ def models_command(
         typer.echo(content, nl=False)
         return
     headers, rows = dataset.table(selected_views)
+    if all_:
+        headers = (*headers, "REASON")
+        rows = [
+            (*row, _route_reason(model._toolang.route))
+            for row, model in zip(rows, selected, strict=True)
+        ]
     if not rows:
         typer.echo("No models matched query." if query else "No models found.")
         return
     echo_table(
         headers,
         rows,
-        justify=(None, None, "right", "right", None, None, "right"),
+        justify=(
+            None,
+            None,
+            "right",
+            "right",
+            None,
+            None,
+            "right",
+            *((None,) if all_ else ()),
+        ),
     )
     typer.echo()
     typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
@@ -126,24 +132,9 @@ def providers_command(
         adapters={
             provider.id: _provider_adapters(provider) for provider in base_providers
         },
-        apis={
-            provider.id: _provider_api(
-                provider,
-                adapters=setup.adapters,
-                environ=setup.envs,
-            )
-            for provider in base_providers
-        },
+        apis={provider.id: provider._toolang.route.api for provider in base_providers},
         env_requirements={
-            provider.id: provider_env_requirements(provider)
-            for provider in base_providers
-        },
-        required_env={
-            provider.id: required_provider_env_vars(provider)
-            for provider in base_providers
-        },
-        missing_env={
-            provider.id: absent_provider_env_vars(provider, environ=setup.envs)
+            provider.id: _provider_env_declarations(provider)
             for provider in base_providers
         },
     )
@@ -154,7 +145,14 @@ def providers_command(
             nl=False,
         )
         return
-    headers = ("PROVIDER", "AVAILABLE MODELS", "ADAPTERS", "API", "ENV")
+    headers = (
+        "PROVIDER",
+        "AVAILABLE MODELS",
+        "ADAPTERS",
+        "DEFAULT API",
+        "ENV",
+        "REASON",
+    )
     rows = [
         (
             item.id,
@@ -162,9 +160,10 @@ def providers_command(
                 f"{item.available_models}/{item.model_count}",
                 style="red" if item.available_models == 0 else "",
             ),
-            _provider_adapters_cell(setup.adapters, item),
+            _provider_adapters_cell(item),
             _provider_api_cell(item),
             _provider_env_cell(item),
+            _provider_reason(item.record),
         )
         for item in selected_views
     ]
@@ -232,26 +231,6 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
     )
 
 
-def _model_dataset(snapshot: ModelCatalogSnapshot) -> QueryDataset[ModelQueryView]:
-    """Build the queryable model rows of one published setup version."""
-
-    available = {model.ref for model in snapshot.models if model._toolang.ready}
-    adapter_by_identity = {
-        model.identity: adapter
-        for model in snapshot.models
-        if model._toolang.provider in snapshot.providers
-        for adapter in (
-            model_adapter(snapshot.providers[model._toolang.provider], model),
-        )
-        if adapter is not None
-    }
-    return catalog_model_dataset(
-        snapshot,
-        available=available,
-        adapters=adapter_by_identity,
-    )
-
-
 def _catalog_summary(
     snapshot: ModelCatalogSnapshot,
     *,
@@ -262,78 +241,81 @@ def _catalog_summary(
     return f"{len(models)} {model_noun}"
 
 
-def _provider_api(
-    provider: Provider,
-    *,
-    adapters: Mapping[str, ModelAdapter],
-    environ: Mapping[str, str],
-) -> str | None:
-    """Return the effective provider base URL without model-level overrides."""
-
-    adapter_name = provider._toolang.adapter
-    adapter = adapters.get(adapter_name) if adapter_name is not None else None
-    template = provider.api.strip() if provider.api and provider.api.strip() else None
-    if template is None and adapter is not None:
-        template = adapter.default_api
-    if template is None:
-        return None
-    try:
-        api = Template(template).substitute(environ).strip()
-    except (KeyError, ValueError):
-        return None
-    return api or None
-
-
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
-    from toolang.plugin.models.provider_resolver import model_adapter
-
     adapters = {
-        adapter
+        model._toolang.route.adapter
         for model in provider.models.values()
-        for adapter in (model_adapter(provider, model),)
-        if adapter
+        if model._toolang.route.adapter is not None
     }
-    if not adapters and provider._toolang.adapter:
-        adapters.add(provider._toolang.adapter)
+    if not provider.models and provider._toolang.route.adapter is not None:
+        adapters.add(provider._toolang.route.adapter)
     return tuple(sorted(adapters))
 
 
-def _provider_adapters_cell(
-    published: Mapping[str, ModelAdapter],
-    provider: CatalogProviderView,
-) -> Text:
-    if not provider.adapters:
-        return Text("-", style="dim")
-    cell = Text()
-    for index, adapter in enumerate(provider.adapters):
-        if index:
-            cell.append(",")
-        cell.append(
-            adapter,
-            style="dim" if adapter not in published else None,
+def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
+    rule = provider._toolang.route.env
+    if rule is None:
+        rule = provider._toolang.env or provider.env
+    return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
+
+
+def _route_reason(route: ModelRoute) -> str:
+    return "; ".join(
+        reason
+        for missing, reason in (
+            (route.adapter is None, "Adapter unresolved or not installed"),
+            (route.api is None, "API missing or unresolved"),
+            (route.env is None, "Environment requirements unmet"),
         )
-    return cell
+        if missing
+    )
+
+
+def _provider_reason(provider: Provider) -> str:
+    if any(model._toolang.ready for model in provider.models.values()):
+        return ""
+    if not provider.models:
+        return _route_reason(provider._toolang.route) or "No models"
+    return "; ".join(
+        sorted(
+            {
+                reason
+                for model in provider.models.values()
+                if (reason := _route_reason(model._toolang.route))
+            }
+        )
+    )
+
+
+def _provider_adapters_cell(provider: CatalogProviderView) -> Text:
+    return (
+        Text(",".join(provider.adapters))
+        if provider.adapters
+        else Text("-", style="dim")
+    )
 
 
 def _provider_api_cell(provider: CatalogProviderView) -> Text:
     api = provider.api
     unavailable = api is None
-    return Text(api or "-", style="red" if unavailable else "")
+    overridden = any(
+        model._toolang.route.api != api for model in provider.record.models.values()
+    )
+    label = (api or "-") + (" (model overrides)" if overridden else "")
+    return Text(label, style="red" if unavailable else "")
 
 
 def _provider_env_cell(provider: CatalogProviderView) -> Text:
     if not provider.env_requirements:
         return Text("-")
-    missing = set(provider.missing_env)
     cell = Text()
     for index, requirement in enumerate(provider.env_requirements):
         if index:
             cell.append(", ")
-        names = requirement.split(" + ")
-        for group_index, name in enumerate(names):
-            if group_index:
-                cell.append(" + ")
-            cell.append(name, style="red" if name in missing else None)
+        cell.append(
+            requirement,
+            style="red" if provider.record._toolang.route.env is None else "",
+        )
     return cell
 
 

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -15,7 +16,7 @@ from toolang.base.types.model import (
     ProviderToolang,
 )
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.models.provider_resolver import model_adapter, resolve_provider
+from toolang.setup.routes import model_adapter, resolve_provider
 from toolang.setup.cache import ModelCatalogCache
 
 
@@ -142,3 +143,77 @@ def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
     assert model.cost == {"input": 1}
     assert model.limit == {"output": 100}
     assert model.reasoning_options == ({"values": ("low",)},)
+
+
+def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
+    from toolang.base.types.model import ModelRoute
+    from toolang.setup.cache import catalog_loader
+
+    model = Model(
+        id="one",
+        name="One",
+        _toolang=ModelToolang(provider="test"),
+        provider={"api": "https://${ACCOUNT}.example/v1"},
+    )
+    provider = Provider(
+        id="test",
+        name="Test",
+        models={"one": model},
+        _toolang=ProviderToolang(adapter="responses", env=("ACCOUNT",)),
+    )
+    resolved = resolve_provider(
+        provider,
+        adapters={"responses": ResponsesModelAdapter()},
+        environ={"ACCOUNT": "private-account"},
+    )
+    published_model = resolved.models["one"].with_route(
+        replace(
+            resolved.models["one"]._toolang.route,
+            options={"nested": {"values": [Decimal("0.1234567890123456789")]}},
+        )
+    )
+    resolved = replace(resolved, models={"one": published_model})
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": resolved},
+        models=(published_model,),
+        revision="setup-v1",
+    )
+    cache = ModelCatalogCache(tmp_path)
+    cache.store_source("custom", revision="source-v1", snapshot=snapshot)
+    content = (tmp_path / "custom.json").read_text()
+    assert '"ready"' not in content and '"route"' not in content
+    assert "private-account" not in content
+    loaded = cache.load_source("custom", revision="source-v1")
+    assert loaded is not None
+    assert loaded.providers["test"] == provider
+    assert loaded.models[0]._toolang.route == ModelRoute()
+    assert loaded.models[0]._toolang.ready is False
+
+    load_full = catalog_loader(snapshot, revision="setup-v1")
+    (tmp_path / "custom.json").unlink()
+    full = load_full()
+    assert full == snapshot
+    assert full.models[0]._toolang.route.api == "https://private-account.example/v1"
+    assert full.to_data() == snapshot.to_data()
+    assert "_toolang" not in str(full.to_data())
+
+
+def test_route_detaches_nested_plugin_data():
+    from types import MappingProxyType
+    from toolang.base.types.model import ModelRoute
+
+    headers = {"X-Test": "original"}
+    values = ["text"]
+    route = ModelRoute(
+        adapter="responses",
+        api="https://example.test/v1",
+        env=(),
+        headers=MappingProxyType(headers),
+        options={"nested": {"values": values}},
+    )
+    headers["X-Test"] = "changed"
+    values.append("audio")
+    assert route.headers == {"X-Test": "original"}
+    assert route.options == {"nested": {"values": ("text",)}}
+    with pytest.raises(TypeError):
+        cast(Any, route.options["nested"])["values"] = ()

@@ -21,8 +21,9 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import Model, ModelRoute, Reasoning
-from toolang.plugin.models.provider_resolver import credential_value
+from toolang.base.types.model import Model, Reasoning
+from toolang.common.immutable import mutable_data
+from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -49,7 +50,6 @@ class MessagesModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -57,9 +57,9 @@ class MessagesModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                _messages_url(route),
-                headers=_headers(route, environ=environ),
-                json=messages_payload(route, model, request, stream=False),
+                _messages_url(model),
+                headers=_headers(model, environ=environ),
+                json=messages_payload(model, request, stream=False),
             )
             response.raise_for_status()
             result = parse_message_response(_json_object(response.json()))
@@ -73,14 +73,13 @@ class MessagesModelAdapter(ModelAdapter):
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
         environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
-        payload = messages_payload(route, model, request, stream=True)
+        payload = messages_payload(model, request, stream=True)
         text: list[str] = []
         tool_blocks: dict[int, dict[str, object]] = {}
         thinking_blocks: dict[int, dict[str, object]] = {}
@@ -88,8 +87,8 @@ class MessagesModelAdapter(ModelAdapter):
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
-                _messages_url(route),
-                headers=_headers(route, environ=environ),
+                _messages_url(model),
+                headers=_headers(model, environ=environ),
                 json=payload,
             ) as response:
                 response.raise_for_status()
@@ -188,7 +187,6 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 
 
 def messages_payload(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -205,7 +203,7 @@ def messages_payload(
         if request.output_schema is not None and native_schema is None
         else request.instructions
     )
-    options = dict(route.options)
+    options = mutable_data(model._toolang.route.options)
     configured_max_tokens = options.pop("max_tokens", None)
     max_tokens = (
         request.max_output_tokens
@@ -495,25 +493,25 @@ def _encode_message(
     return {"role": role, "content": content}
 
 
-def _messages_url(route: ModelRoute) -> str:
-    if route.api is None:
+def _messages_url(model: Model) -> str:
+    if model._toolang.route.api is None:
         raise ToolangError("Messages adapter requires a resolved API")
-    return f"{route.api.rstrip('/')}/messages"
+    return f"{model._toolang.route.api.rstrip('/')}/messages"
 
 
 def _headers(
-    route: ModelRoute,
+    model: Model,
     *,
     environ: Mapping[str, str],
 ) -> dict[str, str]:
-    api_key = credential_value(route.env, environ=environ)
+    api_key = credential_value(model._toolang.route.env, environ=environ)
     if not api_key:
         raise ToolangError("Messages adapter requires a resolved API key")
     return {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
         "x-api-key": api_key,
-        **route.headers,
+        **model._toolang.route.headers,
     }
 
 

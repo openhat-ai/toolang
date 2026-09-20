@@ -23,6 +23,7 @@ from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
     ModelToolang,
+    ModelRoute,
     Provider,
     ProviderToolang,
     ResolvedEnv,
@@ -164,11 +165,11 @@ def catalog_loader(
     this private copy preserves the setup version without another source read.
     """
 
-    payload = dumps(_snapshot_document(snapshot), indent=None)
+    payload = dumps(_snapshot_document(snapshot, resolved=True), indent=None)
 
     def load() -> ModelCatalogSnapshot:
         return _snapshot_from_data(
-            json.loads(payload, parse_float=Decimal), revision=revision
+            json.loads(payload, parse_float=Decimal), revision=revision, resolved=True
         )
 
     return load
@@ -230,15 +231,19 @@ def environment_identity(
 # --------------------------------------------------------------------------- #
 
 
-def _snapshot_document(snapshot: ModelCatalogSnapshot) -> dict[str, object]:
-    """Return one catalog's records in the shared cache document shape."""
+def _snapshot_document(
+    snapshot: ModelCatalogSnapshot, *, resolved: bool = False
+) -> dict[str, object]:
+    """Encode source declarations, or explicitly include memory-only setup facts."""
 
     return {
         "providers": {
-            provider_id: _provider_to_data(provider)
+            provider_id: _provider_to_data(provider, resolved=resolved)
             for provider_id, provider in sorted(snapshot.providers.items())
         },
-        "models": [_model_to_data(model) for model in snapshot.models],
+        "models": [
+            _model_to_data(model, resolved=resolved) for model in snapshot.models
+        ],
         "local": snapshot.local,
     }
 
@@ -259,7 +264,7 @@ def _snapshot_from_document(
 
 
 def _snapshot_from_data(
-    document: Mapping[str, object], *, revision: str
+    document: Mapping[str, object], *, revision: str, resolved: bool = False
 ) -> ModelCatalogSnapshot:
     raw_providers = document["providers"]
     raw_models = document["models"]
@@ -269,13 +274,14 @@ def _snapshot_from_data(
         str(provider_id): _provider_from_data(
             str(provider_id),
             cast(Mapping[str, object], raw_provider),
+            resolved=resolved,
         )
         for provider_id, raw_provider in cast(
             Mapping[object, object], raw_providers
         ).items()
     }
     models = tuple(
-        _model_from_data(cast(Mapping[str, object], raw_model))
+        _model_from_data(cast(Mapping[str, object], raw_model), resolved=resolved)
         for raw_model in raw_models
     )
     return ModelCatalogSnapshot(
@@ -286,7 +292,7 @@ def _snapshot_from_data(
     )
 
 
-def _provider_to_data(provider: Provider) -> dict[str, object]:
+def _provider_to_data(provider: Provider, *, resolved: bool) -> dict[str, object]:
     return {
         "id": provider.id,
         "name": provider.name,
@@ -295,16 +301,18 @@ def _provider_to_data(provider: Provider) -> dict[str, object]:
         "doc": provider.doc,
         "env": list(provider.env),
         "models": {
-            model_id: _model_to_data(model)
+            model_id: _model_to_data(model, resolved=resolved)
             for model_id, model in sorted(provider.models.items())
         },
-        "_toolang": _provider_toolang_to_data(provider._toolang),
+        "_toolang": _provider_toolang_to_data(provider._toolang, resolved=resolved),
     }
 
 
 def _provider_from_data(
     provider_id: str,
     data: Mapping[str, object],
+    *,
+    resolved: bool,
 ) -> Provider:
     toolang = _mapping(data, "_toolang")
     raw_models = data.get("models")
@@ -313,6 +321,7 @@ def _provider_from_data(
     models = {
         str(model_id): _model_from_data(
             cast(Mapping[str, object], raw_model),
+            resolved=resolved,
         )
         for model_id, raw_model in cast(Mapping[object, object], raw_models).items()
     }
@@ -320,7 +329,7 @@ def _provider_from_data(
         id=provider_id,
         name=_text(data, "name"),
         models=models,
-        _toolang=_provider_toolang_from_data(toolang),
+        _toolang=_provider_toolang_from_data(toolang, resolved=resolved),
         npm=_optional_text(data, "npm"),
         api=_optional_text(data, "api"),
         doc=_optional_text(data, "doc"),
@@ -328,20 +337,26 @@ def _provider_from_data(
     )
 
 
-def _provider_toolang_to_data(value: ProviderToolang) -> dict[str, object]:
+def _provider_toolang_to_data(
+    value: ProviderToolang, *, resolved: bool = False
+) -> dict[str, object]:
     return {
         "env": _env_to_data(value.env),
         "adapter": value.adapter,
+        **({"route": _route_to_data(value.route)} if resolved else {}),
     }
 
 
-def _provider_toolang_from_data(value: object) -> ProviderToolang:
+def _provider_toolang_from_data(
+    value: object, *, resolved: bool = False
+) -> ProviderToolang:
     raw: Mapping[str, object] = (
         cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
     )
     return ProviderToolang(
         env=_env_from_data(raw.get("env")),
         adapter=_optional_text(raw, "adapter"),
+        route=_route_from_data(raw.get("route")) if resolved else ModelRoute(),
     )
 
 
@@ -361,7 +376,7 @@ def _model_provider_from_data(value: object) -> Mapping[str, object] | None:
     }
 
 
-def _model_to_data(model: Model) -> dict[str, object]:
+def _model_to_data(model: Model, *, resolved: bool) -> dict[str, object]:
     data = model.to_data()
     if model.provider is not None:
         data["provider"] = {
@@ -374,13 +389,20 @@ def _model_to_data(model: Model) -> dict[str, object]:
             if key != "_toolang" or isinstance(item, ProviderToolang)
         }
     data["_toolang"] = {
-        "ready": model._toolang.ready,
         "provider": model._toolang.provider,
+        **(
+            {
+                "ready": model._toolang.ready,
+                "route": _route_to_data(model._toolang.route),
+            }
+            if resolved
+            else {}
+        ),
     }
     return data
 
 
-def _model_from_data(data: Mapping[str, object]) -> Model:
+def _model_from_data(data: Mapping[str, object], *, resolved: bool) -> Model:
     toolang = _mapping(data, "_toolang")
     provider = _model_provider_from_data(data.get("provider"))
     interleaved = data.get("interleaved")
@@ -388,8 +410,9 @@ def _model_from_data(data: Mapping[str, object]) -> Model:
         id=_text(data, "id"),
         name=_text(data, "name"),
         _toolang=ModelToolang(
-            ready=bool(toolang.get("ready", False)),
+            ready=bool(toolang.get("ready", False)) if resolved else False,
             provider=_text(toolang, "provider"),
+            route=_route_from_data(toolang.get("route")) if resolved else ModelRoute(),
         ),
         description=_optional_text(data, "description"),
         family=_optional_text(data, "family"),
@@ -414,6 +437,30 @@ def _model_from_data(data: Mapping[str, object]) -> Model:
         experimental=_optional_mapping(data.get("experimental")),
         provider=provider,
         cost=_optional_mapping(data.get("cost")),
+    )
+
+
+def _route_to_data(route: ModelRoute) -> dict[str, object]:
+    return {
+        "adapter": route.adapter,
+        "api": route.api,
+        "env": None if route.env is None else _env_to_data(route.env),
+        "headers": dict(route.headers),
+        "options": dict(route.options),
+    }
+
+
+def _route_from_data(value: object) -> ModelRoute:
+    if not isinstance(value, Mapping):
+        return ModelRoute()
+    raw = cast(Mapping[str, object], value)
+    headers = _optional_mapping(raw.get("headers")) or {}
+    return ModelRoute(
+        adapter=_optional_text(raw, "adapter"),
+        api=_optional_text(raw, "api"),
+        env=None if raw.get("env") is None else _env_from_data(raw["env"]),
+        headers={key: str(item) for key, item in headers.items()},
+        options=_optional_mapping(raw.get("options")) or {},
     )
 
 

@@ -399,7 +399,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
         raise interruption
     step_started = time.perf_counter()
     log_model_target(
-        prepared.route,
         prepared.model,
         thread_id=run.thread,
         run_id=run.run_id,
@@ -415,7 +414,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
         state.before_call()
         if _MODEL_STREAMING:
             current = await prepared.adapter.stream(
-                prepared.route,
                 prepared.model,
                 request,
                 environ=prepared.environ,
@@ -423,7 +421,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
             )
         else:
             current = await prepared.adapter.invoke(
-                prepared.route,
                 prepared.model,
                 request,
                 environ=prepared.environ,

@@ -153,7 +153,11 @@ class ModelCollection:
         _validate_models(values)
         if query_views is None:
             views = tuple(
-                _catalog_model_view(model, available=True, adapter=None)
+                _catalog_model_view(
+                    model,
+                    available=model._toolang.ready,
+                    adapter=model._toolang.route.adapter,
+                )
                 for model in values
             )
         else:
@@ -327,29 +331,22 @@ class CatalogProviderView:
     adapters: tuple[str, ...]
     api: str | None
     env_requirements: tuple[str, ...]
-    required_env: tuple[str, ...]
-    missing_env: tuple[str, ...]
 
 
 def catalog_model_dataset(
     snapshot: ModelCatalogSnapshot,
     *,
-    available: set[str] | None = None,
-    adapters: Mapping[str, str] | None = None,
     query_views: Sequence[ModelQueryView] | None = None,
 ) -> QueryDataset[ModelQueryView]:
     """Materialize one model catalog snapshot for generic querying."""
-
-    available_identities = available or set()
-    adapter_by_identity = adapters or {}
 
     models = snapshot.models
     if query_views is None:
         items = tuple(
             _catalog_model_view(
                 model,
-                available=model.identity in available_identities,
-                adapter=adapter_by_identity.get(model.identity),
+                available=model._toolang.ready,
+                adapter=model._toolang.route.adapter,
             )
             for model in models
         )
@@ -376,8 +373,6 @@ def catalog_provider_views(
     adapters: Mapping[str, Sequence[str]],
     apis: Mapping[str, str | None],
     env_requirements: Mapping[str, Sequence[str]],
-    required_env: Mapping[str, Sequence[str]],
-    missing_env: Mapping[str, Sequence[str]],
 ) -> tuple[CatalogProviderView, ...]:
     """Materialize providers and runtime-derived presentation values."""
 
@@ -395,8 +390,6 @@ def catalog_provider_views(
             adapters=tuple(adapters.get(provider.id, ())),
             api=apis.get(provider.id),
             env_requirements=tuple(env_requirements.get(provider.id, ())),
-            required_env=tuple(required_env.get(provider.id, ())),
-            missing_env=tuple(missing_env.get(provider.id, ())),
         )
         for provider in providers
     )

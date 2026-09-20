@@ -38,7 +38,6 @@ def _route(
     env: tuple[str, ...] = (),
 ) -> ModelRoute:
     return ModelRoute(
-        provider=provider,
         adapter=adapter,
         api=api,
         env=env,
@@ -95,7 +94,9 @@ def test_tool_error_text_reaches_each_provider_without_an_empty_output(adapter, 
         max_output_tokens=1024,
     )
     if adapter == "responses":
-        payload = responses.response_payload(route, model, request, stateful=False)
+        payload = responses.response_payload(
+            model.with_route(route), request, stateful=False
+        )
         item = next(
             item for item in payload["input"] if item["type"] == "function_call_output"
         )
@@ -103,14 +104,15 @@ def test_tool_error_text_reaches_each_provider_without_an_empty_output(adapter, 
         result = json.loads(item["output"])
     elif adapter == "chat_completions":
         payload = chat_completions.chat_completion_payload(
-            route, model, request, stream=False
+            model.with_route(route), request, stream=False
         )
         item = next(item for item in payload["messages"] if item["role"] == "tool")
         assert item["tool_call_id"] == "call-1"
         result = json.loads(item["content"])
     elif adapter == "messages":
         payload = cast(
-            dict[str, Any], messages_payload(route, model, request, stream=False)
+            dict[str, Any],
+            messages_payload(model.with_route(route), request, stream=False),
         )
         item = next(
             part
@@ -121,7 +123,9 @@ def test_tool_error_text_reaches_each_provider_without_an_empty_output(adapter, 
         assert item["tool_use_id"] == "call-1" and item["is_error"] is True
         result = json.loads(item["content"])
     else:
-        payload = cast(dict[str, Any], generate_content_payload(route, model, request))
+        payload = cast(
+            dict[str, Any], generate_content_payload(model.with_route(route), request)
+        )
         item = next(
             part["functionResponse"]
             for message in payload["contents"]
@@ -186,7 +190,9 @@ def test_responses_continuation_requires_unchanged_context(change: str) -> None:
     elif change == "instructions":
         request = replace(request, instructions="updated instructions")
 
-    payload = responses.response_payload(route, model, request, stateful=True)
+    payload = responses.response_payload(
+        model.with_route(route), request, stateful=True
+    )
 
     if change == "none":
         assert payload["previous_response_id"] == "resp_1"
@@ -246,8 +252,9 @@ def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
         request, messages=[Message.user("summary"), *request.messages[2:]]
     )
     payload = responses.response_payload(
-        _route(provider="openai", adapter="responses", api=None, options={}),
-        _model("model", provider="openai", name="model"),
+        _model("model", provider="openai", name="model").with_route(
+            _route(provider="openai", adapter="responses", api=None, options={})
+        ),
         compacted,
         stateful=True,
     )
@@ -290,17 +297,21 @@ def test_adapter_sends_the_recorded_output_reservation(
     model = _model("model", provider=provider, name="model")
     request = ModelCall("instructions", [Message.user("input")], max_output_tokens=1234)
     if adapter == "responses":
-        payload = responses.response_payload(route, model, request, stateful=False)
+        payload = responses.response_payload(
+            model.with_route(route), request, stateful=False
+        )
     elif adapter == "chat_completions":
         payload = chat_completions.chat_completion_payload(
-            route, model, request, stream=False
+            model.with_route(route), request, stream=False
         )
     elif adapter == "messages":
-        payload = messages_payload(route, model, request, stream=False)
+        payload = messages_payload(model.with_route(route), request, stream=False)
     else:
         payload = cast(
             dict[str, Any],
-            generate_content_payload(route, model, request)["generationConfig"],
+            generate_content_payload(model.with_route(route), request)[
+                "generationConfig"
+            ],
         )
     assert payload[field] == 1234
 
@@ -315,7 +326,9 @@ def test_adapter_sends_the_recorded_output_reservation(
 def test_messages_adapter_appends_resource_to_resolved_api(api: str) -> None:
     route = _route(provider="provider", adapter="messages", api=api, options={})
 
-    assert messages_adapter._messages_url(route) == f"{api}/messages"
+    assert (
+        messages_adapter._messages_url(_model().with_route(route)) == f"{api}/messages"
+    )
 
 
 def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> None:
@@ -334,7 +347,7 @@ def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> N
         reasoning=Reasoning("high"),
     )
 
-    payload = messages_payload(route, model, request, stream=False)
+    payload = messages_payload(model.with_route(route), request, stream=False)
     result = parse_message_response(
         {
             "content": [
@@ -445,7 +458,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
         continuation={"thought_signatures": {"call-1": "opaque-signature"}},
     )
 
-    payload = generate_content_payload(route, model, request)
+    payload = generate_content_payload(model.with_route(route), request)
     result = parse_generate_content(
         {
             "candidates": [
@@ -662,14 +675,15 @@ def test_messages_stream_returns_normalized_final_usage(monkeypatch) -> None:
 
     result = asyncio.run(
         adapter.stream(
-            _route(
-                provider="anthropic",
-                adapter="messages",
-                api="https://api.anthropic.com/v1",
-                options={},
-                env=("ANTHROPIC_API_KEY",),
+            _model("test", provider="anthropic", name="test").with_route(
+                _route(
+                    provider="anthropic",
+                    adapter="messages",
+                    api="https://api.anthropic.com/v1",
+                    options={},
+                    env=("ANTHROPIC_API_KEY",),
+                )
             ),
-            _model("test", provider="anthropic", name="test"),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -713,14 +727,15 @@ def test_generate_content_stream_returns_normalized_final_usage(monkeypatch) -> 
 
     result = asyncio.run(
         adapter.stream(
-            _route(
-                provider="google",
-                adapter="generate_content",
-                api="https://generativelanguage.googleapis.com/v1beta",
-                options={},
-                env=("GOOGLE_API_KEY",),
+            _model("test", provider="google", name="test").with_route(
+                _route(
+                    provider="google",
+                    adapter="generate_content",
+                    api="https://generativelanguage.googleapis.com/v1beta",
+                    options={},
+                    env=("GOOGLE_API_KEY",),
+                )
             ),
-            _model("test", provider="google", name="test"),
             ModelCall(instructions="", messages=[Message.user("hello")]),
             environ={"GOOGLE_API_KEY": "secret"},
             on_event=_ignore_event,
@@ -744,8 +759,7 @@ def test_messages_payload_supports_a_token_budget() -> None:
     model = _model("claude", provider="anthropic", name="claude")
 
     payload = messages_payload(
-        route,
-        model,
+        model.with_route(route),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -760,16 +774,17 @@ def test_messages_payload_supports_a_token_budget() -> None:
 
 def test_messages_canonical_reasoning_replaces_raw_reasoning_options() -> None:
     payload = messages_payload(
-        _route(
-            provider="anthropic",
-            adapter="messages",
-            api=None,
-            options={
-                "thinking": {"type": "disabled"},
-                "output_config": {"effort": "low", "verbosity": "low"},
-            },
+        _model("claude", provider="anthropic", name="claude").with_route(
+            _route(
+                provider="anthropic",
+                adapter="messages",
+                api=None,
+                options={
+                    "thinking": {"type": "disabled"},
+                    "output_config": {"effort": "low", "verbosity": "low"},
+                },
+            )
         ),
-        _model("claude", provider="anthropic", name="claude"),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -793,9 +808,9 @@ def test_generate_content_auth_uses_header_instead_of_url_query() -> None:
     )
     model = _model("gemini/preview", provider="google", name="gemini")
 
-    url = generate_content_adapter._generate_url(route, model=model, stream=True)
+    url = generate_content_adapter._generate_url(model.with_route(route), stream=True)
     headers = generate_content_adapter._generate_headers(
-        route, environ={"GOOGLE_API_KEY": "secret-key"}
+        _model().with_route(route), environ={"GOOGLE_API_KEY": "secret-key"}
     )
 
     assert url.endswith("/models/gemini%2Fpreview:streamGenerateContent?alt=sse")
@@ -811,20 +826,21 @@ def test_reasoning_rejects_overlapping_effort_and_budget() -> None:
 
 def test_generate_content_canonical_reasoning_replaces_raw_reasoning_control() -> None:
     payload = generate_content_payload(
-        _route(
-            provider="google",
-            adapter="generate_content",
-            api=None,
-            options={
-                "generationConfig": {
-                    "thinkingConfig": {
-                        "includeThoughts": True,
-                        "thinkingBudget": 2048,
+        _model("gemini", provider="google", name="gemini").with_route(
+            _route(
+                provider="google",
+                adapter="generate_content",
+                api=None,
+                options={
+                    "generationConfig": {
+                        "thinkingConfig": {
+                            "includeThoughts": True,
+                            "thinkingBudget": 2048,
+                        }
                     }
-                }
-            },
+                },
+            )
         ),
-        _model("gemini", provider="google", name="gemini"),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -870,8 +886,7 @@ def test_chat_completions_maps_known_reasoning_dialects(
     model = _model("model", provider=provider, name="model")
 
     payload = chat_completions.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -887,16 +902,17 @@ def test_chat_completions_maps_known_reasoning_dialects(
 
 def test_deepseek_canonical_reasoning_replaces_raw_reasoning_controls() -> None:
     payload = chat_completions.chat_completion_payload(
-        _route(
-            provider="deepseek",
-            adapter="chat_completions",
-            api=None,
-            options={
-                "thinking": {"type": "disabled"},
-                "reasoning_effort": "low",
-            },
+        _model("model", provider="deepseek", name="model").with_route(
+            _route(
+                provider="deepseek",
+                adapter="chat_completions",
+                api=None,
+                options={
+                    "thinking": {"type": "disabled"},
+                    "reasoning_effort": "low",
+                },
+            )
         ),
-        _model("model", provider="deepseek", name="model"),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -917,8 +933,9 @@ def test_chat_completions_rejects_unsupported_reasoning() -> None:
     )
     with pytest.raises(ToolangError, match="xai.*does not support token budgets"):
         chat_completions.chat_completion_payload(
-            _route(provider="xai", adapter="chat_completions", api=None, options={}),
-            _model("model", provider="xai", name="model"),
+            _model("model", provider="xai", name="model").with_route(
+                _route(provider="xai", adapter="chat_completions", api=None, options={})
+            ),
             request,
             stream=False,
         )
@@ -929,8 +946,7 @@ def test_responses_maps_supported_reasoning_and_rejects_token_budgets() -> None:
     model = _model("model", provider="openai", name="model")
 
     assert responses.response_payload(
-        route,
-        model,
+        model.with_route(route),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -940,8 +956,7 @@ def test_responses_maps_supported_reasoning_and_rejects_token_budgets() -> None:
     )["reasoning"] == {"effort": "none"}
     with pytest.raises(ToolangError, match="does not support reasoning token budgets"):
         responses.response_payload(
-            route,
-            model,
+            model.with_route(route),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -965,30 +980,39 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
     )
 
     chat_payload = chat_completions.chat_completion_payload(
-        _route(provider="openai", adapter="chat_completions", api=None, options={}),
-        _model("model", provider="openai", name="model", structured_output=True),
+        _model(
+            "model", provider="openai", name="model", structured_output=True
+        ).with_route(
+            _route(provider="openai", adapter="chat_completions", api=None, options={})
+        ),
         request,
         stream=False,
     )
     response_payload = responses.response_payload(
-        _route(
-            provider="openai",
-            adapter="responses",
-            api=None,
-            options={"text": {"verbosity": "low"}},
+        _model(
+            "model", provider="openai", name="model", structured_output=True
+        ).with_route(
+            _route(
+                provider="openai",
+                adapter="responses",
+                api=None,
+                options={"text": {"verbosity": "low"}},
+            )
         ),
-        _model("model", provider="openai", name="model", structured_output=True),
         request,
         stateful=False,
     )
     message_payload = messages_payload(
-        _route(
-            provider="anthropic",
-            adapter="messages",
-            api=None,
-            options={"max_tokens": 1024},
+        _model(
+            "model", provider="anthropic", name="model", structured_output=True
+        ).with_route(
+            _route(
+                provider="anthropic",
+                adapter="messages",
+                api=None,
+                options={"max_tokens": 1024},
+            )
         ),
-        _model("model", provider="anthropic", name="model", structured_output=True),
         ModelCall(
             instructions="Keep this logical instruction unchanged.",
             messages=[Message.user("Decide.")],
@@ -998,13 +1022,16 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
         stream=False,
     )
     generate_payload = generate_content_payload(
-        _route(
-            provider="google",
-            adapter="generate_content",
-            api=None,
-            options={"generationConfig": {"temperature": 0}},
+        _model(
+            "model", provider="google", name="model", structured_output=True
+        ).with_route(
+            _route(
+                provider="google",
+                adapter="generate_content",
+                api=None,
+                options={"generationConfig": {"temperature": 0}},
+            )
         ),
-        _model("model", provider="google", name="model", structured_output=True),
         request,
     )
 
@@ -1063,14 +1090,12 @@ def test_openai_adapters_fall_back_for_non_strict_object_schemas(
     model = _model("model", provider="openai", name="model", structured_output=True)
 
     chat_payload = chat_completions.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         request,
         stream=False,
     )
     response_payload = responses.response_payload(
-        replace(route, adapter="responses"),
-        model,
+        model.with_route(replace(route, adapter="responses")),
         request,
         stateful=False,
     )
@@ -1110,14 +1135,12 @@ def test_openai_adapters_inline_strict_root_struct_schema() -> None:
     model = _model("model", provider="openai", name="model", structured_output=True)
 
     chat_payload = chat_completions.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         request,
         stream=False,
     )
     response_payload = responses.response_payload(
-        replace(route, adapter="responses"),
-        model,
+        model.with_route(replace(route, adapter="responses")),
         request,
         stateful=False,
     )
@@ -1149,7 +1172,7 @@ def test_generate_content_falls_back_for_tools_before_gemini_3() -> None:
         structured_output=True,
     )
 
-    payload = generate_content_payload(route, model, request)
+    payload = generate_content_payload(model.with_route(route), request)
 
     assert "tools" in payload
     assert "generationConfig" not in payload
@@ -1175,7 +1198,7 @@ def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
         structured_output=True,
     )
 
-    payload = generate_content_payload(route, model, request)
+    payload = generate_content_payload(model.with_route(route), request)
 
     assert "tools" in payload
     assert payload["generationConfig"] == {
@@ -1219,8 +1242,7 @@ def test_deepseek_uses_json_mode_only_for_object_outputs(
     )
 
     payload = chat_completions.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         request,
         stream=False,
     )
@@ -1254,7 +1276,7 @@ def test_messages_falls_back_without_native_structured_output_capability(
         "model", provider="anthropic", name="model", structured_output=capability
     )
 
-    payload = messages_payload(route, model, request, stream=False)
+    payload = messages_payload(model.with_route(route), request, stream=False)
 
     assert payload["output_config"] == {"effort": "high"}
     schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
@@ -1280,26 +1302,24 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
     model = _model("model", provider="provider", name="model", structured_output=False)
 
     chat_payload = chat_completions.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         request,
         stream=False,
     )
     response_payload = responses.response_payload(
-        replace(route, adapter="responses"),
-        model,
+        model.with_route(replace(route, adapter="responses")),
         request,
         stateful=False,
     )
     message_payload = messages_payload(
-        replace(route, adapter="messages", options={"max_tokens": 1024}),
-        model,
+        model.with_route(
+            replace(route, adapter="messages", options={"max_tokens": 1024})
+        ),
         request,
         stream=False,
     )
     generate_payload = generate_content_payload(
-        replace(route, adapter="generate_content"),
-        model,
+        model.with_route(replace(route, adapter="generate_content")),
         request,
     )
 
@@ -1330,7 +1350,7 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
                 _model("model", provider="openai", name="model"),
             ),
             lambda route, model, request: chat_completions.chat_completion_payload(
-                route, model, request, stream=False
+                model.with_route(route), request, stream=False
             ),
         ),
         (
@@ -1344,7 +1364,7 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
                 _model("model", provider="openai", name="model"),
             ),
             lambda route, model, request: responses.response_payload(
-                route, model, request, stateful=False
+                model.with_route(route), request, stateful=False
             ),
         ),
         (
@@ -1361,7 +1381,7 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
                 _model("model", provider="anthropic", name="model"),
             ),
             lambda route, model, request: messages_payload(
-                route, model, request, stream=False
+                model.with_route(route), request, stream=False
             ),
         ),
         (
@@ -1376,7 +1396,9 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
                 ),
                 _model("model", provider="google", name="model"),
             ),
-            generate_content_payload,
+            lambda route, model, request: generate_content_payload(
+                model.with_route(route), request
+            ),
         ),
     ),
 )
@@ -1445,18 +1467,20 @@ def _tool() -> ToolDefinition:
         (
             "chat_completions",
             lambda route, model, request: chat_completions.chat_completion_payload(
-                route, model, request, stream=False
+                model.with_route(route), request, stream=False
             ),
         ),
         (
             "responses",
             lambda route, model, request: responses.response_payload(
-                route, model, request, stateful=False
+                model.with_route(route), request, stateful=False
             ),
         ),
         (
             "generate_content",
-            generate_content_payload,
+            lambda route, model, request: generate_content_payload(
+                model.with_route(route), request
+            ),
         ),
     ),
 )
@@ -1471,3 +1495,27 @@ def test_adapters_omit_an_absent_output_allowance(adapter, build) -> None:
     assert "max_completion_tokens" not in payload
     assert "max_output_tokens" not in payload
     assert "generationConfig" not in payload
+
+
+@pytest.mark.parametrize(
+    "adapter", ["responses", "chat_completions", "messages", "generate_content"]
+)
+def test_adapter_payload_detaches_nested_route_options(adapter):
+    model = _model().with_route(
+        _route(
+            adapter=adapter,
+            options={"custom": {"items": ["original"]}},
+        )
+    )
+    request = ModelCall("", [Message.user("hello")], max_output_tokens=128)
+    if adapter == "responses":
+        payload = responses.response_payload(model, request, stateful=False)
+    elif adapter == "chat_completions":
+        payload = chat_completions.chat_completion_payload(model, request, stream=False)
+    elif adapter == "messages":
+        payload = messages_payload(model, request, stream=False)
+    else:
+        payload = generate_content_payload(model, request)
+    assert json.loads(json.dumps(payload))["custom"] == {"items": ["original"]}
+    cast(dict[str, Any], payload["custom"])["items"].append("changed")
+    assert model._toolang.route.options["custom"] == {"items": ("original",)}

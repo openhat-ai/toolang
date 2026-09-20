@@ -19,6 +19,23 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 
+
+def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType(
+        {str(key): _immutable_json(item) for key, item in value.items()}
+    )
+
+
+def _immutable_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _immutable_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, tuple | list):
+        return tuple(_immutable_json(item) for item in value)
+    return value
+
+
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
 # Effect levels are provider-defined; the catalog's reasoning_options is the only
 # source of truth, so Toolang keeps no closed vocabulary here.
@@ -202,33 +219,44 @@ class ModelOverride:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelRoute:
+    """Immutable effective connection published by setup, never a source record."""
+
+    adapter: str | None = None
+    api: str | None = None
+    env: ResolvedEnv | None = None
+    headers: Mapping[str, str] = field(default_factory=dict)
+    options: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+        object.__setattr__(self, "options", _immutable_mapping(self.options))
+        if self.env is not None:
+            object.__setattr__(self, "env", normalized_env(self.env))
+
+    @property
+    def ready(self) -> bool:
+        return (
+            self.adapter is not None and self.api is not None and self.env is not None
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderToolang:
-    """Toolang-side facts attached to one catalog provider record."""
+    """Trusted catalog declarations and setup's effective default route."""
 
     env: ResolvedEnv = ()
     adapter: str | None = None
+    route: ModelRoute = field(default_factory=ModelRoute)
 
 
 @dataclass(frozen=True, slots=True)
 class ModelToolang:
-    """Toolang-side facts attached to one catalog model record."""
+    """Ownership and effective connection facts published by setup."""
 
     ready: bool = False
-    # Owning provider id: the model -> provider association. This is not
-    # `Model.provider`, which holds the corrected provider block.
     provider: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class ModelRoute:
-    """The effective connection one call must use, computed from data."""
-
-    provider: str
-    adapter: str
-    api: str | None
-    env: ResolvedEnv
-    headers: Mapping[str, str] = field(default_factory=dict)
-    options: Mapping[str, object] = field(default_factory=dict)
+    route: ModelRoute = field(default_factory=ModelRoute)
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,14 +318,16 @@ class Model:
                 self, "interleaved", _immutable_mapping(self.interleaved)
             )
 
-    def with_readiness(self, ready: bool) -> Self:
-        """Resolve readiness while sharing this record's already detached facts."""
+    def with_route(self, route: ModelRoute) -> Self:
+        """Publish a route while sharing this record's already detached catalog facts."""
 
         result = copy(self)
         object.__setattr__(
             result,
             "_toolang",
-            ModelToolang(ready=ready, provider=self._toolang.provider),
+            ModelToolang(
+                ready=route.ready, provider=self._toolang.provider, route=route
+            ),
         )
         return result
 
@@ -492,20 +522,4 @@ def _mutable_json(value: object) -> object:
         return [_mutable_json(item) for item in value]
     if isinstance(value, Decimal):
         return value
-    return value
-
-
-def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
-    return MappingProxyType(
-        {str(key): _immutable_json(item) for key, item in value.items()}
-    )
-
-
-def _immutable_json(value: object) -> object:
-    if isinstance(value, Mapping):
-        return MappingProxyType(
-            {str(key): _immutable_json(item) for key, item in value.items()}
-        )
-    if isinstance(value, tuple | list):
-        return tuple(_immutable_json(item) for item in value)
     return value

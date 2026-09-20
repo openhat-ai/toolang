@@ -31,7 +31,7 @@ from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_path,
 )
 from toolang.setup.catalog import MergedModelCatalog
-from toolang.plugin.models.provider_resolver import (
+from toolang.setup.routes import (
     model_adapter,
     provider_adapter,
     resolve_provider,
@@ -215,7 +215,7 @@ def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
         option["exhaustive"] = False
     with pytest.raises(TypeError):
         option["values"][0] = "injected"
-    resolved = model.with_readiness(True)
+    resolved = model.with_route(model._toolang.route)
     assert resolved.reasoning_options is model.reasoning_options
     assert model.to_data()["reasoning_options"] == [
         {"type": "effort", "values": ["low", "high"], "exhaustive": True}
@@ -313,7 +313,7 @@ def test_strict_export_rejects_local_only_models() -> None:
         snapshot.to_data()
 
 
-def test_resolved_provider_adapter_ignores_model_protocol_hints() -> None:
+def test_model_protocol_hints_override_the_provider_default() -> None:
     provider = _resolve(_provider({}), ChatCompletionsModelAdapter())
     model = Model(
         id="one",
@@ -322,7 +322,7 @@ def test_resolved_provider_adapter_ignores_model_protocol_hints() -> None:
         provider={"npm": "@ai-sdk/anthropic"},
     )
 
-    assert model_adapter(provider, model) == "chat_completions"
+    assert model_adapter(provider, model) == "messages"
 
 
 def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:

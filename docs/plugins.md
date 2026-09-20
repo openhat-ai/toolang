@@ -122,9 +122,14 @@ execute model calls or install packages named by catalog metadata.
 
 ### Model Adapter
 
-Model adapter plugins execute one model turn for a `ModelRoute`, a resolved
-`Model`, and a `ModelCall`, and return `ModelCallResult`. Both non-streaming and streaming calls are
-asynchronous, and streaming adapters await their model-part handler.
+Model adapter plugins execute one turn for a setup-resolved `Model` and a
+`ModelCall`, returning `ModelCallResult`. Connection facts come from
+`model._toolang.route`; ownership comes from `model._toolang.provider`.
+`invoke(model, request, *, environ)` and
+`stream(model, request, *, environ, on_event)` receive only declared environment
+values from the run-pinned setup. Both calls are asynchronous, and streaming
+adapters await their model-part handler. External adapters must adopt these
+signatures; there is no separate route argument.
 
 Adapters own one protocol shape and its optional default endpoint. They do not
 discover models, match providers, calculate availability, or own pricing.

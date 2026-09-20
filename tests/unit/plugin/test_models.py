@@ -170,19 +170,17 @@ class _FakeModels(ModelAdapter):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
         environ: Mapping[str, str],
     ) -> ModelCallResult:
-        del route, model, environ
+        del model, environ
         self.requests.append(request)
         return self._responses.pop(0)
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -190,7 +188,7 @@ class _FakeModels(ModelAdapter):
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         del on_event
-        return await self.invoke(route, model, request, environ=environ)
+        return await self.invoke(model, request, environ=environ)
 
 
 def _route(
@@ -202,7 +200,6 @@ def _route(
     env: tuple[str, ...] = (),
 ) -> ModelRoute:
     return ModelRoute(
-        provider=provider,
         adapter=adapter,
         api=api,
         env=env,
@@ -297,8 +294,9 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
     assert result.message is not None
 
     payload = messages_models.messages_payload(
-        _route(provider="anthropic", adapter="messages", api=None, options={}),
-        _model("claude", provider="anthropic", name="Claude"),
+        _model("claude", provider="anthropic", name="Claude").with_route(
+            _route(provider="anthropic", adapter="messages", api=None, options={})
+        ),
         ModelCall(
             instructions="",
             messages=[
@@ -339,8 +337,7 @@ def test_messages_adapter_requires_an_allowance_above_the_thinking_budget() -> N
 
     with pytest.raises(ToolangError, match="output allowance"):
         messages_models.messages_payload(
-            route,
-            model,
+            model.with_route(route),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -350,8 +347,7 @@ def test_messages_adapter_requires_an_allowance_above_the_thinking_budget() -> N
         )
 
     bounded = messages_models.messages_payload(
-        route,
-        model,
+        model.with_route(route),
         ModelCall(
             instructions="",
             messages=[Message.user("hello")],
@@ -363,8 +359,7 @@ def test_messages_adapter_requires_an_allowance_above_the_thinking_budget() -> N
 
     with pytest.raises(ToolangError, match="lower than max_tokens"):
         messages_models.messages_payload(
-            route,
-            model,
+            model.with_route(route),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -427,7 +422,7 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
         ),
     )
 
-    result = asyncio.run(adapter.invoke(route, model, request, environ={}))
+    result = asyncio.run(adapter.invoke(model.with_route(route), request, environ={}))
 
     assert captured["payload"] == {
         "model": "deepseek-v4-pro",
@@ -549,8 +544,7 @@ def test_chat_completions_sends_provider_reasoning_as_sdk_extra_body(
 
     asyncio.run(
         chat_completions_models.invoke_chat_completion(
-            route,
-            model,
+            model.with_route(route),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -606,13 +600,14 @@ def test_chat_completions_stream_sends_openrouter_reasoning_as_sdk_extra_body(
 
     asyncio.run(
         chat_completions_models.stream_chat_completion(
-            _route(
-                provider="openrouter",
-                adapter="chat_completions",
-                api="https://openrouter.ai/api/v1",
-                options={},
+            _model("model", provider="openrouter", name="model").with_route(
+                _route(
+                    provider="openrouter",
+                    adapter="chat_completions",
+                    api="https://openrouter.ai/api/v1",
+                    options={},
+                )
             ),
-            _model("model", provider="openrouter", name="model"),
             ModelCall(
                 instructions="",
                 messages=[Message.user("hello")],
@@ -660,8 +655,13 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
     )
 
     payload = chat_completions_models.chat_completion_payload(
-        _route(provider="deepseek", adapter="chat_completions", api=None, options={}),
-        _model("deepseek-v4-flash", provider="deepseek", name="deepseek-v4-flash"),
+        _model(
+            "deepseek-v4-flash", provider="deepseek", name="deepseek-v4-flash"
+        ).with_route(
+            _route(
+                provider="deepseek", adapter="chat_completions", api=None, options={}
+            )
+        ),
         ModelCall(
             instructions="",
             messages=[
@@ -741,14 +741,15 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
     with pytest.raises(ToolangError, match="tool call without a function name"):
         asyncio.run(
             adapter.stream(
-                _route(
-                    provider="deepseek",
-                    adapter="chat_completions",
-                    api=None,
-                    options={},
-                ),
                 _model(
                     "deepseek-reasoner", provider="deepseek", name="deepseek-reasoner"
+                ).with_route(
+                    _route(
+                        provider="deepseek",
+                        adapter="chat_completions",
+                        api=None,
+                        options={},
+                    )
                 ),
                 ModelCall(instructions="", messages=[Message.user("hello")]),
                 environ={},
@@ -815,8 +816,11 @@ def test_chat_completions_stream_collects_usage(monkeypatch, provider: str) -> N
 
     result = asyncio.run(
         adapter.stream(
-            _route(provider=provider, adapter="chat_completions", api=None, options={}),
-            _model("test-model", provider=provider, name="test-model"),
+            _model("test-model", provider=provider, name="test-model").with_route(
+                _route(
+                    provider=provider, adapter="chat_completions", api=None, options={}
+                )
+            ),
             ModelCall(instructions="", messages=[Message.user("hello")]),
             environ={},
             on_event=record_event,
@@ -857,7 +861,7 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(
     with pytest.raises(
         ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
     ):
-        asyncio.run(adapter.invoke(route, model, request, environ={}))
+        asyncio.run(adapter.invoke(model.with_route(route), request, environ={}))
 
 
 def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_streaming(
@@ -887,14 +891,17 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_s
         ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
     ):
         asyncio.run(
-            adapter.stream(route, model, request, environ={}, on_event=_ignore_event)
+            adapter.stream(
+                model.with_route(route), request, environ={}, on_event=_ignore_event
+            )
         )
 
 
 def test_responses_payload_uses_typed_input_items() -> None:
     payload = response_payload(
-        _route(provider="openrouter", adapter="responses", api=None, options={}),
-        _model("openai/gpt-5", provider="openrouter", name="gpt-5"),
+        _model("openai/gpt-5", provider="openrouter", name="gpt-5").with_route(
+            _route(provider="openrouter", adapter="responses", api=None, options={})
+        ),
         ModelCall(
             instructions="dev",
             messages=[
@@ -971,10 +978,11 @@ def test_protocol_payloads_apply_normalized_reasoning_controls() -> None:
     route = _route(provider="openai", adapter="responses", api=None, options={})
     model = _model("gpt-5", provider="openai", name="gpt-5")
 
-    responses_payload = response_payload(route, model, request, stateful=False)
+    responses_payload = response_payload(
+        model.with_route(route), request, stateful=False
+    )
     chat_payload = chat_completions_models.chat_completion_payload(
-        route,
-        model,
+        model.with_route(route),
         request,
         stream=False,
     )
@@ -1303,8 +1311,7 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
     ):
         result = asyncio.run(
             responses_models.invoke_response(
-                route,
-                model,
+                model.with_route(route),
                 request,
                 stateful=True,
                 environ={},
@@ -1313,7 +1320,9 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
 
     assert result.message == Message.assistant("done")
     assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
-    assert captured["payload"] == response_payload(route, model, request, stateful=True)
+    assert captured["payload"] == response_payload(
+        model.with_route(route), request, stateful=True
+    )
     assert "adapter.request provider=openai ref=openai/gpt-5" in caplog.text
     assert '"model": "gpt-5"' in caplog.text
     assert '"text": "Rewrite the input."' in caplog.text
@@ -1385,7 +1394,9 @@ def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
 
 def test_chat_completions_encode_multimodal_user_parts() -> None:
     encoded = chat_completions_models.encode_message(
-        _route(provider="openai", adapter="chat_completions", api=None, options={}),
+        _model().with_route(
+            _route(provider="openai", adapter="chat_completions", api=None, options={})
+        ),
         Message(
             role="user",
             parts=(
@@ -1437,7 +1448,7 @@ def test_chat_completions_reject_document_url() -> None:
         match="does not accept a URL",
     ):
         chat_completions_models.encode_message(
-            route,
+            _model().with_route(route),
             Message(
                 role="user",
                 parts=(DocumentPart(url="https://example.com/report.pdf"),),
@@ -1479,7 +1490,9 @@ def test_chat_completions_audio_response_keeps_transcript_on_audio_part() -> Non
 
 def test_chat_completions_replays_assistant_multimodal_output_as_text() -> None:
     encoded = chat_completions_models.encode_message(
-        _route(provider="openai", adapter="chat_completions", api=None, options={}),
+        _model().with_route(
+            _route(provider="openai", adapter="chat_completions", api=None, options={})
+        ),
         Message(
             role="assistant",
             parts=(
@@ -1547,16 +1560,17 @@ def test_chat_completions_audio_stream_does_not_open_duplicate_text_part(
 
     result = asyncio.run(
         chat_completions_models.stream_chat_completion(
-            _route(
-                provider="openai",
-                adapter="chat_completions",
-                api=None,
-                options={
-                    "modalities": ["text", "audio"],
-                    "audio": {"format": "mp3", "voice": "alloy"},
-                },
+            _model("gpt-audio", provider="openai", name="gpt-audio").with_route(
+                _route(
+                    provider="openai",
+                    adapter="chat_completions",
+                    api=None,
+                    options={
+                        "modalities": ["text", "audio"],
+                        "audio": {"format": "mp3", "voice": "alloy"},
+                    },
+                )
             ),
-            _model("gpt-audio", provider="openai", name="gpt-audio"),
             ModelCall(instructions="", messages=[Message.user("hello")]),
             environ={},
             on_event=record_event,
@@ -1890,8 +1904,8 @@ def test_responses_replays_assistant_multimodal_output_as_text() -> None:
 def test_responses_non_audio_model_accepts_assistant_audio_history(
     monkeypatch,
 ) -> None:
-    async def fake_invoke_response(route, model, request, *, stateful, environ):
-        del route, model, request, stateful, environ
+    async def fake_invoke_response(model, request, *, stateful, environ):
+        del model, request, stateful, environ
         return ModelCallResult(message=Message.assistant("done"))
 
     monkeypatch.setattr(
@@ -1902,8 +1916,9 @@ def test_responses_non_audio_model_accepts_assistant_audio_history(
     adapter = responses_models.create_model_adapter({})
     result = asyncio.run(
         adapter.invoke(
-            _route(provider="openai", adapter="responses", api=None, options={}),
-            _model("gpt-5", provider="openai", name="gpt-5"),
+            _model("gpt-5", provider="openai", name="gpt-5").with_route(
+                _route(provider="openai", adapter="responses", api=None, options={})
+            ),
             ModelCall(
                 instructions="",
                 messages=[
@@ -1984,8 +1999,9 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
 
     result = asyncio.run(
         responses_models.stream_response(
-            _route(provider="openai", adapter="responses", api=None, options={}),
-            _model("gpt-audio", provider="openai", name="gpt-audio"),
+            _model("gpt-audio", provider="openai", name="gpt-audio").with_route(
+                _route(provider="openai", adapter="responses", api=None, options={})
+            ),
             ModelCall(instructions="", messages=[Message.user("hello")]),
             stateful=True,
             environ={},
@@ -2013,8 +2029,9 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
 
 def test_responses_skip_historical_tool_items_without_previous_response_id() -> None:
     payload = response_payload(
-        _route(provider="openai", adapter="responses", api=None, options={}),
-        _model("gpt-5", provider="openai", name="gpt-5"),
+        _model("gpt-5", provider="openai", name="gpt-5").with_route(
+            _route(provider="openai", adapter="responses", api=None, options={})
+        ),
         ModelCall(
             instructions="dev",
             messages=[
@@ -2112,8 +2129,9 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
         ),
     )
     payload = response_payload(
-        _route(provider="openai", adapter="responses", api=None, options={}),
-        _model("gpt-5", provider="openai", name="gpt-5"),
+        _model("gpt-5", provider="openai", name="gpt-5").with_route(
+            _route(provider="openai", adapter="responses", api=None, options={})
+        ),
         request,
         stateful=True,
     )
@@ -2174,8 +2192,7 @@ def _prepared_agic(
             ),
             span=Span(1),
         ),
-        model=model,
-        route=route,
+        model=model.with_route(route),
         adapter=provider,
         environ={},
         instructions="",

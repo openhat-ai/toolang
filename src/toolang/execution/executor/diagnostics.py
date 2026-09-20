@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from toolang.base.types.model import Model, ModelRoute
+from toolang.base.types.model import Model
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall, ToolCallResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -13,7 +13,6 @@ _PREVIEW_LIMIT = 2_000
 
 
 def log_model_target(
-    route: ModelRoute,
     model: Model,
     *,
     thread_id: str,
@@ -28,10 +27,10 @@ def log_model_target(
         run_id,
         step_index,
         model.ref,
-        route.provider,
+        model._toolang.provider,
         model.id,
-        route.adapter,
-        f" base_url={route.api}" if route.api else "",
+        model._toolang.route.adapter,
+        f" base_url={model._toolang.route.api}" if model._toolang.route.api else "",
     )
 
 

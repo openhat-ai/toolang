@@ -25,7 +25,6 @@ from toolang.base.types.model import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.models.provider_resolver import model_route
 from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
@@ -75,14 +74,7 @@ def test_setup_watcher_persists_secret_free_model_projection(
     assert tuple(setup.providers) == ("test",)
     assert setup.models.refs() == ("test/one", "test/two")
     assert all(
-        model_route(
-            setup.providers[model._toolang.provider],
-            model,
-            adapters={"responses": ResponsesModelAdapter()},
-            environ={},
-        ).adapter
-        == "responses"
-        for model in setup.models.entries
+        model._toolang.route.adapter == "responses" for model in setup.models.entries
     )
     cache_files = _context_cache_files(tmp_path, "alice")
     assert _model_cache_names(tmp_path, "alice") == (
@@ -408,26 +400,14 @@ def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
     assert all(
         "secret" not in cache.read_text(encoding="utf-8") for cache in context_files
     )
-    adapters = {"responses": ResponsesModelAdapter()}
-    environ = {"TEST_API_KEY": "secret"}
-    route = model_route(
-        setup.providers["test"],
-        setup.models.resolve("test/one"),
-        adapters=adapters,
-        environ=environ,
-    )
+    route = setup.models.resolve("test/one")._toolang.route
     assert route.headers == {"Authorization": "secret"}
     assert route.api == "https://gateway.test/v1?api_key=secret"
 
     warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     warm_setup = asyncio.run(warm.refresh())
-    warm_route = model_route(
-        warm_setup.providers["test"],
-        warm_setup.models.resolve("test/one"),
-        adapters=adapters,
-        environ=environ,
-    )
+    warm_route = warm_setup.models.resolve("test/one")._toolang.route
     assert warm_route.headers == {"Authorization": "secret"}
     assert warm_route.api == "https://gateway.test/v1?api_key=secret"
 
@@ -1273,3 +1253,36 @@ def test_automatic_compaction_ignores_unready_models(tmp_path, monkeypatch):
 
     assert setup.models.effective_default(None) == "test/one"
     assert select_compact_model(setup.models, None).ref == "test/one"
+
+
+def test_route_environment_refresh_leaves_source_cache_and_old_views_unchanged(
+    tmp_path,
+    monkeypatch,
+):
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    envs = {}
+    watcher = _watcher(monkeypatch, tmp_path, envs=envs)
+    first = asyncio.run(watcher.refresh())
+    source_files = _context_cache_files(tmp_path, "alice")
+    original_files = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_files
+    }
+    first_full = first.model_catalog(all=True)
+    assert first.models.refs() == ()
+    assert first_full.models[0]._toolang.route.env is None
+
+    envs["TEST_API_KEY"] = "secret"
+    (tmp_path / ".env").write_text("# reload environment\n")
+    second = asyncio.run(watcher.refresh())
+    assert second.revision != first.revision
+    assert second.catalog_sources == first.catalog_sources
+    assert second.models.refs() == ("test/one",)
+    assert second.models.entries[0]._toolang.route.env == ("TEST_API_KEY",)
+    assert original_files == {
+        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_files
+    }
+    for path in source_files:
+        path.unlink()
+    assert first.model_catalog(all=True) == first_full
+    assert first.models.refs() == ()
+    assert second.model_catalog(all=True).models == second.models.entries

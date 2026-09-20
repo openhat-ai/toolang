@@ -24,7 +24,8 @@ from toolang.base.types.message import (
     ToolResultPart,
     message_summary,
 )
-from toolang.base.types.model import Model, ModelRoute, Reasoning
+from toolang.base.types.model import Model, Reasoning
+from toolang.common.immutable import mutable_data
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -36,7 +37,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
-from toolang.plugin.models.provider_resolver import credential_value
+from ._credentials import credential_value
 
 from ._structured_output import (
     append_structured_output_directive,
@@ -64,7 +65,6 @@ class ResponsesModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -72,18 +72,16 @@ class ResponsesModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         """Execute one non-streaming Responses API call."""
 
-        _require_supported_inputs(route, model, request)
+        _require_supported_inputs(model, request)
         return await invoke_response(
-            route,
             model,
             request,
-            stateful=_stateful_route(route),
+            stateful=_stateful_route(model),
             environ=environ,
         )
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -92,12 +90,11 @@ class ResponsesModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         """Execute one streaming Responses API call."""
 
-        _require_supported_inputs(route, model, request)
+        _require_supported_inputs(model, request)
         return await stream_response(
-            route,
             model,
             request,
-            stateful=_stateful_route(route),
+            stateful=_stateful_route(model),
             environ=environ,
             on_event=on_event,
         )
@@ -110,16 +107,15 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
     return ResponsesModelAdapter()
 
 
-def _stateful_route(route: ModelRoute) -> bool:
-    return route.provider in _STATEFUL_PROVIDERS
+def _stateful_route(model: Model) -> bool:
+    return model._toolang.provider in _STATEFUL_PROVIDERS
 
 
 def _require_supported_inputs(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
 ) -> None:
-    if route.provider != "openai":
+    if model._toolang.provider != "openai":
         return
     if _supports_openai_audio_input(model):
         return
@@ -153,10 +149,10 @@ def _request_has_audio_input(request: ModelCall) -> bool:
     )
 
 
-def create_client(route: ModelRoute, *, environ: Mapping[str, str]) -> Any:
+def create_client(model: Model, *, environ: Mapping[str, str]) -> Any:
     """Create one OpenAI-compatible client for one resolved route."""
 
-    if route.api is None:
+    if model._toolang.route.api is None:
         raise ToolangError("Responses adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
@@ -165,16 +161,16 @@ def create_client(route: ModelRoute, *, environ: Mapping[str, str]) -> Any:
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
         ) from exc
     kwargs: dict[str, Any] = {
-        "base_url": route.api,
-        "api_key": credential_value(route.env, environ=environ) or "toolang",
+        "base_url": model._toolang.route.api,
+        "api_key": credential_value(model._toolang.route.env, environ=environ)
+        or "toolang",
     }
-    if route.headers:
-        kwargs["default_headers"] = dict(route.headers)
+    if model._toolang.route.headers:
+        kwargs["default_headers"] = dict(model._toolang.route.headers)
     return AsyncOpenAI(**kwargs)
 
 
 async def invoke_response(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -183,15 +179,13 @@ async def invoke_response(
 ) -> ModelCallResult:
     """Execute one non-streaming Responses API call."""
 
-    client = create_client(route, environ=environ)
+    client = create_client(model, environ=environ)
     payload = response_payload(
-        route,
         model,
         request,
         stateful=stateful,
     )
     _log_api_request(
-        route,
         model,
         payload,
         stateful=stateful,
@@ -199,7 +193,6 @@ async def invoke_response(
     )
     response = await client.responses.create(**payload)
     _log_api_response(
-        route,
         model,
         response,
         stateful=stateful,
@@ -213,7 +206,6 @@ async def invoke_response(
 
 
 async def stream_response(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -223,15 +215,13 @@ async def stream_response(
 ) -> ModelCallResult:
     """Execute one streaming Responses API call."""
 
-    client = create_client(route, environ=environ)
+    client = create_client(model, environ=environ)
     payload = response_payload(
-        route,
         model,
         request,
         stateful=stateful,
     )
     _log_api_request(
-        route,
         model,
         payload,
         stateful=stateful,
@@ -280,7 +270,6 @@ async def stream_response(
                 )
         response = await stream.get_final_response()
     _log_api_response(
-        route,
         model,
         response,
         stateful=stateful,
@@ -306,7 +295,6 @@ async def stream_response(
 
 
 def response_payload(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -364,7 +352,7 @@ def response_payload(
         payload["tools"] = [tool_payload(item) for item in request.tools]
     if isinstance(previous_response_id, str) and previous_response_id.strip():
         payload["previous_response_id"] = previous_response_id
-    options = dict(route.options)
+    options = mutable_data(model._toolang.route.options)
     if options:
         payload.update(options)
     _apply_structured_output(
@@ -970,7 +958,6 @@ def _encode_tool_result_part(
 
 
 def _log_api_request(
-    route: ModelRoute,
     model: Model,
     payload: dict[str, Any],
     *,
@@ -981,10 +968,10 @@ def _log_api_request(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.request provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
-        route.provider,
+        model._toolang.provider,
         model.ref,
         model.id,
-        route.adapter,
+        model._toolang.route.adapter,
         stateful,
         stream,
         _preview_data(payload),
@@ -992,7 +979,6 @@ def _log_api_request(
 
 
 def _log_api_response(
-    route: ModelRoute,
     model: Model,
     response: Any,
     *,
@@ -1003,10 +989,10 @@ def _log_api_response(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.result provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
-        route.provider,
+        model._toolang.provider,
         model.ref,
         model.id,
-        route.adapter,
+        model._toolang.route.adapter,
         stateful,
         stream,
         _preview_data(_response_data(response)),

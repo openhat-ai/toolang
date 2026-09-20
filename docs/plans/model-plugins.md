@@ -19,8 +19,9 @@ that data reaches the CLI and the executor.
 - the setup publishes one model state that both CLI inspection and the executor
   read.
 
-This document is the single record for the model work: layout, data model, and
-flow. It supersedes the catalog placement sketched in `plugins.md` and
+This document records the model layout, data model, and flow.
+[Model route publication](model-route-publication.md) specifies the approved
+source-cache and effective-route boundary in detail. It supersedes the catalog placement sketched in `plugins.md` and
 `models.md`, and the earlier `model-catalog-plugin-layout.md`.
 
 ## Layout
@@ -85,8 +86,10 @@ Setup persists one complete file per catalog. The models.dev source is captured
 once per changed file observation, then decoded from a matching source cache or
 parsed from the captured bytes. There is no separate persisted filtered view.
 
-`CACHE_SCHEMA` is 7. Older source caches are rebuilt so imported flat `env` lists
-are resolved by setup, rather than treated as explicit plugin OR alternatives.
+`CACHE_SCHEMA` is 8. Older source caches are rebuilt; source documents retain
+catalog declarations and ownership, never effective routes or readiness.
+Imported flat `env` lists are resolved by setup rather than treated as explicit
+plugin OR alternatives.
 The schema also preserves the boundary between raw `_toolang` mappings and
 trusted adapter declarations.
 Cache reads preserve Decimal prices and both boolean and object `interleaved`
@@ -143,7 +146,7 @@ Entry-point names are unchanged, so configured plugin tables and
 | `ModelCatalogSnapshot` | one immutable `{providers, models, revision, source, local}` | catalog plugin, merge | setup |
 | `ModelCollection` | effective selection index over `Model` | setup | inspection, executor |
 | `ModelAdapter` | protocol implementation | adapter plugin | setup, executor |
-| `ModelRoute` | the effective connection one call must use | computed from setup data at call time | executor, adapter |
+| `ModelRoute` | effective adapter, API, environment rule, headers, options | setup publication | CLI, executor, adapter via Model |
 | `ModelOverride` | sparse authored model operation | config/env/CLI/chat parsing | setup, execution policy |
 | `ModelRequest` | one run's concrete model demand | policy composition | executor |
 | `Reasoning` | one reasoning control, `{effort | budget_tokens}` | request parsing, call assembly | setup validation, adapter |
@@ -170,17 +173,17 @@ The provider id is not a field: `Model._toolang.provider` holds it, and
 and 14.
 
 A resolved model is an *instance*, not a field: the setup produces another
-`Model` whose single `_toolang` sub-record (`ModelToolang`) carries `ready` and
-the owning `provider`. The type is the same, so a field keeps one name across
+`Model` whose single `_toolang` sub-record (`ModelToolang`) carries `ready`,
+the owning `provider`, and its effective `route`. The type is the same, so a field keeps one name across
 the catalog instance and the resolved instance, and nothing in the record points
 at the resolved instance.
 
 The request and the call do not need `adapter`, `api`, or `ready`: a request
 names the model by `ref` and carries parameters, and the call carries content
 plus effective controls. The effective connection an adapter must use is
-computed at call time as a `ModelRoute` and is not stored on the model.
+published once as `Model._toolang.route` and consumed without re-resolution.
 
-`ready` is the persisted readiness (`ModelToolang.ready`). `available` is not a
+`ready` is setup readiness (`ModelToolang.ready`), omitted from source caches. `available` is not a
 persisted field: it is the display projection of readiness on a query row
 (`ModelQueryView.available`) and in CLI output. `to_data()` emits only the
 catalog facts, so `too models --json` stays a raw catalog export and never leaks
@@ -205,11 +208,11 @@ A models.dev provider record has exactly `id`, `name`, `env`, `npm`, `api`,
 importer accepts. Anything else our records carry is a Toolang-side fact, not
 catalog data.
 
-The resolved instance carries `ProviderToolang{env, adapter}`: the normalized
-OR-of-AND `env` rule and the effective `adapter`. Catalog plugins supply provider
-routes; core provider overrides are rejected.
-`api` is not overwritten: `Provider.api` keeps the catalog value and the
-effective api is computed per call.
+The resolved instance carries `ProviderToolang{env, adapter, route}`. The first
+two fields preserve trusted catalog declarations; `route` carries effective
+connection facts. Catalog plugins supply provider routes; core provider
+overrides are rejected. `Provider.api` keeps the catalog value; effective API
+resolution happens at setup publication.
 
 ### Request headers and options
 
@@ -224,8 +227,8 @@ adapter sends. Their raw source blocks remain catalog data.
 They come from model-level catalog provider blocks, the built-in OpenRouter
 header defaults (`PROVIDER_CONVENTIONS`), and an
 advertised `experimental.modes.<mode>` body and headers. Resolution merges them
-per model into the call-time `ModelRoute`. The merged values are not stored on
-model records or exported; exports preserve the raw catalog blocks.
+per model into the published `ModelRoute`. The merged values stay in setup
+memory; source caches and exports preserve only the raw catalog blocks.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
@@ -248,16 +251,16 @@ reintroduced under another name:
 
 Two questions stay separate: what the catalog says, and what a call must use.
 A catalog value stays on the record; the effective value is either a Toolang-side
-fact on `_toolang` or a call-time computation. No second name is invented and no
+fact on `_toolang.route` or a per-call control. No second name is invented and no
 record points at the other instance.
 
 | Name | Catalog instance | Effective value |
 | --- | --- | --- |
-| `api` | `Provider.api` | computed per call (`model_api`); never written back |
-| `env` | `Provider.env`, the declared names | `ProviderToolang.env`, the normalized OR-of-AND rule |
-| `adapter` | not catalog data: `ProviderToolang.adapter`, or a model-level deviation on `Model.provider._toolang.adapter` | `model_adapter(provider, model)` |
-| `headers`, `options` | model catalog provider blocks and built-in conventions | merged into the call-time `ModelRoute` |
-| `ready` | unset | `ModelToolang.ready`, the persisted availability |
+| `api` | provider/model catalog API | setup expands templates into `route.api`; source fields stay unchanged |
+| `env` | `Provider.env` or a trusted plugin rule | `route.env`, the satisfied rule; None means unmet, () means not required |
+| `adapter` | npm/shape metadata or a trusted plugin declaration | `route.adapter`, the installed adapter or None |
+| `headers`, `options` | model catalog provider blocks and built-in conventions | merged into the published `ModelRoute` |
+| `ready` | unset | `ModelToolang.ready`, derived from the three non-None route fields |
 | `available` | derived | display-only projection of `ready`; never persisted |
 | `local` | `ModelCatalogSnapshot.local` | the catalog's own property; a derived provider index, never a record field |
 
@@ -271,10 +274,9 @@ ones.
 
 ### Which api a call uses
 
-Resolution picks one effective api, in this order: explicit provider
-configuration, then the catalog's `api`, then the adapter's own `default_api`.
-The winner is returned by `model_api` and travels on the call-time `ModelRoute`;
-it is not written back onto the provider record. `ModelAdapter.default_api` is
+Setup picks one effective API from the model override, provider catalog API,
+and adapter default, in that order. It expands templates into `route.api`
+without writing back onto the source record. `ModelAdapter.default_api` is
 resolution input only; it is never consulted while building a request.
 
 ### Reasoning: capability, demand, effective control
@@ -386,7 +388,7 @@ class ModelCall:
 ```
 
 The call carries content plus the effective controls. It never carries model
-identity or selection. An adapter receives `(ModelRoute, Model, ModelCall)`.
+identity or selection. An adapter receives `(Model, ModelCall)` and explicit environment values.
 Durable call reasoning is deferred to the separate records follow-up.
 
 `ModelCall.reasoning` is the validated, effective control for this call and uses
@@ -462,7 +464,7 @@ The cache is internal to the setup. Its contract is only:
    the call's effective allowance are different values and keep different names
    (`ModelRequest.max_output` and `ModelCall.max_output_tokens`).
 8. A catalog value and its effective counterpart keep one field name. The
-   effective api is computed per call and never written back, so `Provider.api`
+   effective api is resolved by setup and never written back, so `Provider.api`
    keeps the catalog value; the adapter's own `default_api` only feeds
    resolution.
 9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
@@ -475,7 +477,7 @@ The cache is internal to the setup. Its contract is only:
     used. `mode` is provider-declared catalog data (58 published models use it),
     so it stays.
 12. Effective `headers` and `options` are merged per model into the call-time
-    `ModelRoute`, without separate model or durable record fields. Raw catalog
+    `Model._toolang.route`, without new durable record fields. Raw catalog
     provider blocks remain on the model and in catalog exports.
 13. `api_key` is never a record field. The setup trims the process environment
     to the names a provider declares and passes that mapping through the call
@@ -522,29 +524,29 @@ Catalog provenance remains setup-owned rather than duplicated on every model.
 
 ## Adapter invocation
 
-The chain is `ModelRequest -> Model -> ModelCall -> adapter`. An adapter is
-invoked with the call-time `ModelRoute`, the resolved `Model`, and the assembled
-`ModelCall`; it must not read model selection or the credential from the call.
+The chain is `ModelRequest -> Model -> ModelCall -> adapter`. An adapter receives
+the resolved Model and the assembled ModelCall, plus explicit environment values.
+It reads connection facts from `model._toolang.route` and ownership from
+`model._toolang.provider`; there is no separate route argument.
 
-`ModelRoute` (computed in `executor/frame.py` via `model_route`) carries the
-connection facts an adapter needs: `provider`, `adapter`, `api`, `env`,
-`headers`, and `options`. `Model` carries the catalog facts an adapter reads as
-capability, such as `structured_output`, `reasoning_options`, and `limit`.
+Setup owns resolution in `setup/routes.py`. The published ModelRoute contains
+adapter, API, satisfied environment rule, headers, and options, with no issues
+list. Its nullable fields also drive CLI unavailability labels. Model retains
+catalog capability fields such as structured_output, reasoning_options, and limit.
 
 ### Credential flow
 
 An adapter never reads the process environment. The credential reaches it as a
 plain mapping supplied per call:
 
-- the setup computes the environment names a provider declares (the resolved env
-  rule) and trims the process environment to exactly those names;
+- setup resolves the environment rule; the executor passes only declared names
+  from that run's pinned setup environment;
 - the call site passes that trimmed mapping to the adapter;
 - the adapter selects the credential from the mapping itself, using the
   model/provider facts it is invoked with (the declared names and the
   credential-suffix rule).
 
-The trimming/supplying rule is implemented once in the setup and shared with
-availability inspection: `too models`/`too providers` answer `ready` from the
+Availability is decided once at setup publication: `too models`/`too providers` answer `ready` from the
 same declared names and the same trimmed environment, so inspection and execution
 agree on what "available" means. Nothing about the credential is stored on a
 record: no `api_key` field on `Model`, `Provider`, `ModelTarget` (deleted), or
@@ -582,19 +584,15 @@ projection-cache design. Remaining structural work is separate from this fix:
 
 - Move the residual `plugin/models/` runtime/query package to its owning concept
   package and move model-setting source parsing out of `base`.
-- Revisit whether adapters need a separate `ModelRoute` call-time value after
-  their catalog-facing contract is settled.
 - Adapt durable call records to effective reasoning in a separate records change.
 
 ### Known gaps
 
 Recorded so the remaining wiring is visible rather than silent:
 
-- Query views do not populate `route.scope` or catalog provenance columns.
-  Accounting consumes
-  setup-owned provenance through its existing pricing fields.
-- `cli._provider_api` computes and displays the effective api (display only, no
-  write-back), ahead of the rest of the provider surface.
+- Query views do not expose catalog provenance columns. Accounting consumes
+  setup-owned provenance through its existing pricing fields. Locality is not
+  published as a query column.
 
 ## Setup-owned catalog pipeline
 
@@ -655,27 +653,21 @@ refresh, not plugin-owned cache.
   from the selected setup view, including local models, without Toolang slots.
   The query row's `scope` (`local`/`remote`) goes with it: it is not a query column,
   nothing displays it, and the collection never populated it.
-- `Model.provider` is the corrected provider this model must use, not general
-  catalog data, so resolution writes its own Toolang slot into that block
-  (`_resolve_model` / `_with_model_adapter`). This is intentional.
+- `Model.provider` retains catalog overrides. Setup reads these declarations
+  into `Model._toolang.route` without injecting adapter results into that block.
 
 ### Toolang facts
 
-Three slots carry Toolang-side facts. Catalog data is never rewritten except to
-add the third slot, which resolution adds to the corrected provider block.
-
-| Slot | Type | Meaning |
+| Slot | Source facts | Published facts |
 | --- | --- | --- |
-| `Provider._toolang` | `ProviderToolang{env, adapter}` | the normalized env rule and the effective adapter, so a call needs no re-resolution |
-| `Model._toolang` | `ModelToolang{ready, provider}` | availability and the owning provider id |
-| `Model.provider._toolang` | `ProviderToolang` | what this model corrects about its provider; only `adapter` is set there |
+| `Provider._toolang` | trusted plugin `env` and `adapter` declarations | adds default `route` |
+| `Model._toolang` | owning `provider` | adds effective `route` and `ready` |
+| `Model.provider._toolang` | optional trusted plugin override | unchanged by setup |
 
-`Model.provider` is the corrected provider this model must use, so it legitimately
-holds its own Toolang slot, as the same `ProviderToolang` type. A raw `_toolang`
-mapping coming from a source is ignored — only our typed value is read.
-
-Export emits catalog facts only: `to_data()` strips every Toolang slot, while the
-persisted document keeps them.
+Only typed plugin declarations are trusted; raw `_toolang` mappings in catalog
+JSON do not become configuration. Source cache codecs retain declarations and
+ownership while omitting readiness and routes. Full-view codecs retain the
+published facts in memory, pinned to setup revision. Exports strip Toolang slots.
 
 ### Source revisions
 
@@ -762,8 +754,8 @@ while setup retains a version-pinned complete catalog for explicit inspection.
 - `setup.model_catalog()` projects the default view. `all=True` materializes the
   complete resolved catalog on demand, including unready models, allow-excluded
   models, and providers with no models. This never broadens runtime selection.
-- Pin the complete view as compact serialized catalog data using the existing
-  cache codec. Keep only default typed indexes resident; decode full records on
+- Pin the complete view as compact serialized resolved data using a dedicated
+  in-memory codec entry point, separate from source-cache encoding. Keep only default typed indexes resident; decode full records on
   demand. No source re-read, re-probe, or mutable cache access may change an old
   setup's full view. The full view carries the setup revision.
 - `too models` and `too providers` default to the same usable view. Both accept

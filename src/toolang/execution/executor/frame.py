@@ -14,12 +14,11 @@ from toolang.base.types.message import (
     Message,
     message_text,
 )
-from toolang.base.types.model import Model, ModelRoute, Reasoning
+from toolang.base.types.model import Model, Reasoning, env_names
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import is_generated_ref
-from toolang.plugin.models.provider_resolver import model_route, trimmed_environ
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     resolve_model_reasoning,
@@ -63,7 +62,6 @@ class _AgicFrame:
     run: BoundRun
     agic: AgicDecl
     model: Model
-    route: ModelRoute
     adapter: ModelAdapter
     environ: Mapping[str, str]
     instructions: str
@@ -158,21 +156,18 @@ def build_agic_frame(
         runnables = runnable_descriptions(run.state, callable_routes)
     else:
         runnables = ()
-    provider = run.setup.providers.get(resolved_model._toolang.provider)
-    if provider is None:
-        raise ToolangError(
-            f"unknown model provider: {resolved_model._toolang.provider}"
-        )
-    route = model_route(
-        provider,
-        resolved_model,
-        adapters=run.setup.adapters,
-        environ=run.setup.envs,
-    )
+    route = resolved_model._toolang.route
+    if not route.ready:
+        raise ToolangError(f"model {resolved_model.ref!r} has no ready setup route")
+    assert route.adapter is not None and route.env is not None
     adapter = run.setup.adapters.get(route.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {route.adapter}")
-    environ = trimmed_environ(provider, environ=run.setup.envs)
+    environ = {
+        name: run.setup.envs[name]
+        for name in env_names(route.env)
+        if name in run.setup.envs
+    }
     output = output_budget(resolved_model, demand=max_output, reasoning=reasoning)
 
     inputs = prompting.PromptInputs(
@@ -182,7 +177,6 @@ def build_agic_frame(
         module=run.module,
         runnable_name=name,
         model=resolved_model,
-        route=route,
         caps=caps,
         facts={
             "date": context.date,
@@ -202,7 +196,6 @@ def build_agic_frame(
         run=run,
         agic=agic,
         model=resolved_model,
-        route=route,
         adapter=adapter,
         environ=environ,
         instructions=instructions,

@@ -503,8 +503,9 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         "PROVIDER",
         "AVAILABLE MODELS",
         "ADAPTERS",
-        "API",
+        "DEFAULT API",
         "ENV",
+        "REASON",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
     ollama_available = by_provider["ollama"][1]
@@ -633,7 +634,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert env.plain == "TEST_API_KEY, TEST_ALT_API_KEY"
     assert _is_red(env, 0) is not configured
     assert not _is_red(env, env.plain.index(","))
-    assert _is_red(env, env.plain.index("TEST_ALT_API_KEY"))
+    assert _is_red(env, env.plain.index("TEST_ALT_API_KEY")) is not configured
 
     json_result = runner.invoke(
         cli.app,
@@ -696,7 +697,7 @@ def test_provider_api_and_counts_use_independent_availability(
     assert available.plain == f"{available_models}/2"
     assert _is_red(available, 0) is (available_models == 0)
     assert isinstance(api, Text)
-    assert api.plain == "-"
+    assert api.plain == ("- (model overrides)" if available_models else "-")
     assert _is_red(api, 0)
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY"
@@ -1059,3 +1060,47 @@ def test_full_catalog_can_inspect_unready_configured_models(
     )
     assert result.exit_code == 0, result.exception
     assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_cli_reports_published_route_failures_without_resolving_again(
+    tmp_path,
+    monkeypatch,
+    command,
+):
+    import asyncio
+    from toolang.common.layout import AgentLayout
+    from toolang.setup.watcher import load_setup
+    from toolang.setup import routes
+
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    source = tmp_path / "catalog.json"
+    source.write_text(json.dumps(_catalog_data()))
+    setup = asyncio.run(
+        load_setup(
+            AgentLayout.resident(tmp_path, "default"),
+            agent_context=False,
+            validate_defaults=False,
+        )
+    )
+    monkeypatch.setattr(model_catalog_commands, "_setup", lambda *args, **kwargs: setup)
+    monkeypatch.setenv("TEST_API_KEY", "added-after-publication")
+    source.unlink()
+
+    def unexpected_resolution(*args, **kwargs):
+        raise AssertionError("CLI must consume published routes")
+
+    monkeypatch.setattr(routes, "resolve_provider", unexpected_resolution)
+    rows = []
+    monkeypatch.setattr(
+        model_catalog_commands,
+        "echo_table",
+        lambda headers, values, **kwargs: rows.extend(values),
+    )
+    result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
+    assert result.exit_code == 0, result.exception
+    assert rows
+    assert all("Environment requirements unmet" in str(row[-1]) for row in rows)
+    assert all("Adapter unresolved" not in str(row[-1]) for row in rows)
+    assert all("added-after-publication" not in str(row) for row in rows)

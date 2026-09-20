@@ -136,14 +136,13 @@ class ScriptedModelAdapter:
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
         environ: Mapping[str, str],
     ) -> ModelCallResult:
         del environ
-        turn = self._take_turn(route, model, request)
+        turn = self._take_turn(model, request)
         if turn.gate is not None:
             await turn.gate.wait()
         if turn.updates:
@@ -154,7 +153,6 @@ class ScriptedModelAdapter:
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -162,7 +160,7 @@ class ScriptedModelAdapter:
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         del environ
-        turn = self._take_turn(route, model, request)
+        turn = self._take_turn(model, request)
         if turn.gate is not None:
             await turn.gate.wait()
         for update in turn.updates:
@@ -175,11 +173,12 @@ class ScriptedModelAdapter:
 
     def _take_turn(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
     ) -> ScriptedModelTurn:
-        self.invocations.append(ModelInvocation(route=route, model=model, call=request))
+        self.invocations.append(
+            ModelInvocation(route=model._toolang.route, model=model, call=request)
+        )
         if not self._responses:
             raise AssertionError("scripted model responses are exhausted")
         response = self._responses.popleft()
@@ -219,7 +218,13 @@ class FakeModels:
         return Model(
             id="scripted",
             name="scripted",
-            _toolang=ModelToolang(ready=True, provider=self.name),
+            _toolang=ModelToolang(
+                ready=True,
+                provider=self.name,
+                route=ModelRoute(
+                    adapter="scripted", api="https://example.invalid/v1", env=()
+                ),
+            ),
             tool_call=True,
             structured_output=True,
         )

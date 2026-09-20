@@ -23,7 +23,8 @@ from toolang.base.types.message import (
     ToolResultPart,
     message_summary,
 )
-from toolang.base.types.model import Model, ModelRoute, Reasoning
+from toolang.base.types.model import Model, Reasoning
+from toolang.common.immutable import mutable_data
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -35,7 +36,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
-from toolang.plugin.models.provider_resolver import credential_value
+from ._credentials import credential_value
 
 from ._structured_output import (
     append_structured_output_directive,
@@ -58,7 +59,6 @@ class ChatCompletionsModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -66,11 +66,10 @@ class ChatCompletionsModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         """Execute one non-streaming Chat Completions API call."""
 
-        return await invoke_chat_completion(route, model, request, environ=environ)
+        return await invoke_chat_completion(model, request, environ=environ)
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -80,7 +79,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
         """Execute one streaming Chat Completions API call."""
 
         return await stream_chat_completion(
-            route, model, request, environ=environ, on_event=on_event
+            model, request, environ=environ, on_event=on_event
         )
 
 
@@ -91,10 +90,10 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
     return ChatCompletionsModelAdapter()
 
 
-def create_client(route: ModelRoute, *, environ: Mapping[str, str]) -> Any:
+def create_client(model: Model, *, environ: Mapping[str, str]) -> Any:
     """Create one OpenAI-compatible client for one resolved route."""
 
-    if route.api is None:
+    if model._toolang.route.api is None:
         raise ToolangError("Chat Completions adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
@@ -103,16 +102,16 @@ def create_client(route: ModelRoute, *, environ: Mapping[str, str]) -> Any:
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
         ) from exc
     kwargs: dict[str, Any] = {
-        "base_url": route.api,
-        "api_key": credential_value(route.env, environ=environ) or "toolang",
+        "base_url": model._toolang.route.api,
+        "api_key": credential_value(model._toolang.route.env, environ=environ)
+        or "toolang",
     }
-    if route.headers:
-        kwargs["default_headers"] = dict(route.headers)
+    if model._toolang.route.headers:
+        kwargs["default_headers"] = dict(model._toolang.route.headers)
     return AsyncOpenAI(**kwargs)
 
 
 async def invoke_chat_completion(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -120,21 +119,20 @@ async def invoke_chat_completion(
 ) -> ModelCallResult:
     """Execute one non-streaming Chat Completions API call."""
 
-    client = create_client(route, environ=environ)
-    payload = chat_completion_payload(route, model, request, stream=False)
-    _log_api_request(route, model, payload, stream=False)
+    client = create_client(model, environ=environ)
+    payload = chat_completion_payload(model, request, stream=False)
+    _log_api_request(model, payload, stream=False)
     response = await client.chat.completions.create(
-        **_openai_sdk_payload(route, payload)
+        **_openai_sdk_payload(model, payload)
     )
-    _log_api_response(route, model, response, stream=False)
+    _log_api_response(model, response, stream=False)
     return parse_chat_completion(
         response,
-        audio_format=_output_audio_format(route),
+        audio_format=_output_audio_format(model),
     )
 
 
 async def stream_chat_completion(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -143,9 +141,9 @@ async def stream_chat_completion(
 ) -> ModelCallResult:
     """Execute one streaming Chat Completions API call."""
 
-    client = create_client(route, environ=environ)
-    payload = chat_completion_payload(route, model, request, stream=True)
-    _log_api_request(route, model, payload, stream=True)
+    client = create_client(model, environ=environ)
+    payload = chat_completion_payload(model, request, stream=True)
+    _log_api_request(model, payload, stream=True)
     reasoning_parts: list[str] = []
     text_parts: list[str] = []
     audio_data_parts: list[str] = []
@@ -153,8 +151,8 @@ async def stream_chat_completion(
     tool_buffers: dict[int, _ToolCallBuffer] = {}
     final_usage: ModelUsage | None = None
     text_started = False
-    defer_text = _audio_output_requested(route)
-    stream = await client.chat.completions.create(**_openai_sdk_payload(route, payload))
+    defer_text = _audio_output_requested(model)
+    stream = await client.chat.completions.create(**_openai_sdk_payload(model, payload))
     try:
         async for chunk in stream:
             chunk_usage = chat_usage(chunk)
@@ -215,7 +213,7 @@ async def stream_chat_completion(
     audio = _audio_part(
         data="".join(audio_data_parts),
         transcript="".join(audio_transcript_parts),
-        format=_output_audio_format(route),
+        format=_output_audio_format(model),
     )
     message = _assistant_message(
         text=text,
@@ -250,12 +248,11 @@ async def stream_chat_completion(
         result = ModelCallResult(
             message=message, tool_calls=tool_calls, usage=final_usage
         )
-    _log_api_response(route, model, result, stream=True)
+    _log_api_response(model, result, stream=True)
     return result
 
 
 def chat_completion_payload(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
     *,
@@ -267,7 +264,7 @@ def chat_completion_payload(
         openai_strict_object_schema(request.output_schema)
         if request.output_schema is not None
         and model.structured_output is True
-        and route.provider.lower() != "deepseek"
+        and model._toolang.provider.lower() != "deepseek"
         else None
     )
     instructions = (
@@ -281,7 +278,6 @@ def chat_completion_payload(
     payload: dict[str, Any] = {
         "model": model.id,
         "messages": chat_messages(
-            route=route,
             model=model,
             instructions=instructions,
             messages=request.messages,
@@ -289,7 +285,7 @@ def chat_completion_payload(
     }
     if request.tools:
         payload["tools"] = [tool_payload(item) for item in request.tools]
-    options = dict(route.options)
+    options = mutable_data(model._toolang.route.options)
     if options:
         payload.update(options)
     _apply_structured_output(
@@ -297,17 +293,18 @@ def chat_completion_payload(
         request.output_schema,
         native_schema=native_schema,
         json_object=(
-            route.provider.lower() == "deepseek"
+            model._toolang.provider.lower() == "deepseek"
             and model.structured_output is True
             and request.output_schema is not None
             and is_object_schema(request.output_schema)
         ),
     )
-    _apply_reasoning(payload, request.reasoning, route.provider)
+    _apply_reasoning(payload, request.reasoning, model._toolang.provider)
     if request.max_output_tokens is not None:
         field = (
             "max_completion_tokens"
-            if route.provider == "openai" or "max_completion_tokens" in route.options
+            if model._toolang.provider == "openai"
+            or "max_completion_tokens" in model._toolang.route.options
             else "max_tokens"
         )
         payload.pop("max_completion_tokens", None)
@@ -408,7 +405,7 @@ def _apply_reasoning(
 
 
 def _openai_sdk_payload(
-    route: ModelRoute,
+    model: Model,
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Move known compatible-provider extensions through the SDK escape hatch."""
@@ -417,7 +414,7 @@ def _openai_sdk_payload(
     extension_fields = {
         "openrouter": ("reasoning",),
         "deepseek": ("thinking",),
-    }.get(route.provider.lower(), ())
+    }.get(model._toolang.provider.lower(), ())
     extensions = {
         field: result.pop(field) for field in extension_fields if field in result
     }
@@ -434,7 +431,6 @@ def _openai_sdk_payload(
 
 def chat_messages(
     *,
-    route: ModelRoute,
     model: Model,
     instructions: str,
     messages: list[Message],
@@ -445,7 +441,7 @@ def chat_messages(
     if instructions.strip():
         payload.append({"role": "system", "content": instructions.strip()})
     for message in messages:
-        encoded = encode_message(route, message)
+        encoded = encode_message(model, message)
         if isinstance(encoded, list):
             payload.extend(encoded)
         elif encoded is not None:
@@ -454,7 +450,7 @@ def chat_messages(
 
 
 def encode_message(
-    route: ModelRoute, message: Message
+    model: Model, message: Message
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     """Encode one run-loop message into Chat Completions message objects."""
 
@@ -470,7 +466,7 @@ def encode_message(
         ]
         payload: dict[str, Any] = {"role": "assistant", "content": text}
         reasoning_content = _reasoning_content_for_payload(
-            route, message, tool_calls=tool_calls
+            model, message, tool_calls=tool_calls
         )
         if reasoning_content is not None:
             payload["reasoning_content"] = reasoning_content
@@ -759,12 +755,12 @@ def _assistant_message(
 
 
 def _reasoning_content_for_payload(
-    route: ModelRoute,
+    model: Model,
     message: Message,
     *,
     tool_calls: list[dict[str, Any]],
 ) -> str | None:
-    if route.provider != "deepseek" or not tool_calls:
+    if model._toolang.provider != "deepseek" or not tool_calls:
         return None
     return next(
         (
@@ -812,8 +808,8 @@ def _value_text(value: object, name: str) -> str:
     return raw if isinstance(raw, str) else ""
 
 
-def _output_audio_format(route: ModelRoute) -> AudioFormat:
-    audio = route.options.get("audio")
+def _output_audio_format(model: Model) -> AudioFormat:
+    audio = model._toolang.route.options.get("audio")
     raw = (
         cast(Mapping[str, object], audio).get("format")
         if isinstance(audio, Mapping)
@@ -829,10 +825,10 @@ def _output_audio_format(route: ModelRoute) -> AudioFormat:
     return cast(AudioFormat, value)
 
 
-def _audio_output_requested(route: ModelRoute) -> bool:
-    if isinstance(route.options.get("audio"), Mapping):
+def _audio_output_requested(model: Model) -> bool:
+    if isinstance(model._toolang.route.options.get("audio"), Mapping):
         return True
-    modalities = route.options.get("modalities")
+    modalities = model._toolang.route.options.get("modalities")
     return (
         isinstance(modalities, Sequence)
         and not isinstance(modalities, (str, bytes, bytearray))
@@ -897,7 +893,6 @@ class _ToolCallBuffer:
 
 
 def _log_api_request(
-    route: ModelRoute,
     model: Model,
     payload: dict[str, Any],
     *,
@@ -907,17 +902,16 @@ def _log_api_request(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.request provider=%s ref=%s model=%s adapter=%s stream=%s payload=%s",
-        route.provider,
+        model._toolang.provider,
         model.ref,
         model.id,
-        route.adapter,
+        model._toolang.route.adapter,
         stream,
         _preview_data(payload),
     )
 
 
 def _log_api_response(
-    route: ModelRoute,
     model: Model,
     response: Any,
     *,
@@ -927,10 +921,10 @@ def _log_api_response(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.result provider=%s ref=%s model=%s adapter=%s stream=%s payload=%s",
-        route.provider,
+        model._toolang.provider,
         model.ref,
         model.id,
-        route.adapter,
+        model._toolang.route.adapter,
         stream,
         _preview_data(_response_data(response)),
     )

@@ -23,8 +23,9 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import Model, ModelRoute, Reasoning
-from toolang.plugin.models.provider_resolver import credential_value
+from toolang.base.types.model import Model, Reasoning
+from toolang.common.immutable import mutable_data
+from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -51,7 +52,6 @@ class GenerateContentModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -59,9 +59,9 @@ class GenerateContentModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                _generate_url(route, model=model, stream=False),
-                headers=_generate_headers(route, environ=environ),
-                json=generate_content_payload(route, model, request),
+                _generate_url(model, stream=False),
+                headers=_generate_headers(model, environ=environ),
+                json=generate_content_payload(model, request),
             )
             response.raise_for_status()
             result = parse_generate_content(_json_object(response.json()))
@@ -75,7 +75,6 @@ class GenerateContentModelAdapter(ModelAdapter):
 
     async def stream(
         self,
-        route: ModelRoute,
         model: Model,
         request: ModelCall,
         *,
@@ -89,9 +88,9 @@ class GenerateContentModelAdapter(ModelAdapter):
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
-                _generate_url(route, model=model, stream=True),
-                headers=_generate_headers(route, environ=environ),
-                json=generate_content_payload(route, model, request),
+                _generate_url(model, stream=True),
+                headers=_generate_headers(model, environ=environ),
+                json=generate_content_payload(model, request),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -144,7 +143,6 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 
 
 def generate_content_payload(
-    route: ModelRoute,
     model: Model,
     request: ModelCall,
 ) -> dict[str, object]:
@@ -165,7 +163,7 @@ def generate_content_payload(
         if request.output_schema is not None and native_schema is None
         else request.instructions
     )
-    options = dict(route.options)
+    options = mutable_data(model._toolang.route.options)
     payload: dict[str, object] = {
         "contents": [
             _encode_message(
@@ -439,30 +437,29 @@ def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], 
 
 
 def _generate_url(
-    route: ModelRoute,
-    *,
     model: Model,
+    *,
     stream: bool,
 ) -> str:
-    if route.api is None:
+    if model._toolang.route.api is None:
         raise ToolangError("Generate Content adapter requires a resolved API")
     action = "streamGenerateContent" if stream else "generateContent"
     suffix = "?alt=sse" if stream else ""
-    return f"{route.api.rstrip('/')}/models/{quote(model.id, safe='')}:{action}{suffix}"
+    return f"{model._toolang.route.api.rstrip('/')}/models/{quote(model.id, safe='')}:{action}{suffix}"
 
 
 def _generate_headers(
-    route: ModelRoute,
+    model: Model,
     *,
     environ: Mapping[str, str],
 ) -> dict[str, str]:
-    api_key = credential_value(route.env, environ=environ)
+    api_key = credential_value(model._toolang.route.env, environ=environ)
     if not api_key:
         raise ToolangError("Generate Content adapter requires a resolved API key")
     return {
         "content-type": "application/json",
         "x-goog-api-key": api_key,
-        **route.headers,
+        **model._toolang.route.headers,
     }
 
 

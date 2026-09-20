@@ -12,7 +12,7 @@ from typing import cast
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, Part, TextPart
-from toolang.base.types.model import Model, ModelRoute
+from toolang.base.types.model import Model
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
@@ -183,7 +183,6 @@ class PromptInputs:
     runnable_name: str
     module: str
     model: Model
-    route: ModelRoute
     caps: Sequence[StateCap]
     facts: Mapping[str, object]
     values: Mapping[str, object]
@@ -218,8 +217,8 @@ class PromptInputs:
                     "provider": self.model._toolang.provider,
                     "name": self.model.name,
                     "model": self.model.id,
-                    "adapter": self.route.adapter,
-                    "base_url": self.route.api,
+                    "adapter": self.model._toolang.route.adapter,
+                    "base_url": self.model._toolang.route.api,
                     "tools": self.model.tool_call is True,
                     "streaming": True,
                 },

@@ -26,8 +26,7 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.collections import ModelCollection, catalog_model_dataset
-from toolang.plugin.models.provider_resolver import (
-    model_adapter,
+from toolang.setup.routes import (
     resolve_catalog_providers,
 )
 from toolang.plugin.models.resolution import resolve_model_reasoning
@@ -570,18 +569,7 @@ def _build_setup(
     compact_model: ModelOverride | None = None,
     validate_defaults: bool = True,
 ) -> AgentSetup:
-    dataset = catalog_model_dataset(
-        snapshot,
-        available={model.ref for model in snapshot.models if model._toolang.ready},
-        adapters={
-            model.ref: adapter
-            for model in snapshot.models
-            for adapter in (
-                model_adapter(snapshot.providers[model._toolang.provider], model),
-            )
-            if adapter is not None
-        },
-    )
+    dataset = catalog_model_dataset(snapshot)
     models = order_models(
         ModelCollection(snapshot.models, query_views=dataset.items).match(
             "*[available]"
