@@ -68,9 +68,9 @@ caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.toolset"]
 _toolang = "toolang.execution.tools._toolang:create_toolset"
-fs = "toolang.plugin.toolsets.filesystem:create_toolset"
+fs = "toolang.plugin.toolsets.fs:create_toolset"
 history = "toolang.plugin.toolsets.history:create_toolset"
-service = "toolang.plugin.toolsets.service_use:create_toolset"
+service = "toolang.plugin.toolsets.service:create_toolset"
 shell = "toolang.plugin.toolsets.shell:create_toolset"
 web = "toolang.plugin.toolsets.web:create_toolset"
 me = "toolang.execution.tools.me:create_toolset"
@@ -82,9 +82,9 @@ messages = "toolang.plugin.adapters.messages:create_model_adapter"
 responses = "toolang.plugin.adapters.responses:create_model_adapter"
 
 [project.entry-points."toolang.model_catalog"]
-models_dev = "toolang.plugin.catalogs.models_dev.catalog:create_models_dev_model_catalog"
-ollama = "toolang.plugin.catalogs.ollama:create_ollama_model_catalog"
-llama_cpp = "toolang.plugin.catalogs.llama_cpp:create_llama_cpp_model_catalog"
+models_dev = "toolang.plugin.catalogs.models_dev:create_model_catalog"
+ollama = "toolang.plugin.catalogs.ollama:create_model_catalog"
+llama_cpp = "toolang.plugin.catalogs.llama_cpp:create_model_catalog"
 
 [project.entry-points."toolang.channel"]
 telegram = "toolang.plugin.channels.telegram:create_channel"

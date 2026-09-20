@@ -35,7 +35,7 @@ fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-GUEST_SOURCE=$REPOSITORY_DIR/src/toolang/plugin/sandboxes
+GUEST_SOURCE=$REPOSITORY_DIR/src/toolang/plugin/sandboxes/docker
 for FILE in docker_guest.sh docker_guest.py; do
     [ -f "$GUEST_SOURCE/$FILE" ] || {
         printf 'Guest file not found · %s\n' "$GUEST_SOURCE/$FILE" >&2

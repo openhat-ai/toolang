@@ -32,7 +32,7 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.schemas import RetryRequest
 from toolang.execution.recall import recall_revisions
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix
-from toolang.plugin.toolsets.filesystem import _FilesystemTool
+from toolang.plugin.toolsets.fs import _FilesystemTool
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.watcher import StateRefresh, StateWatcher
 

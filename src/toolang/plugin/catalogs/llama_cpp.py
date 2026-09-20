@@ -148,7 +148,7 @@ async def _optional_json(client: httpx.AsyncClient, url: str) -> dict[str, objec
     return payload if isinstance(payload, dict) else {}
 
 
-def create_llama_cpp_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in llama.cpp catalog plugin."""
 
     return LlamaCppModelCatalog(

@@ -14,7 +14,7 @@ from toolang.base.utils.function_tools import (
 )
 from toolang.plugin.toolsets.loading import LoadedTool
 from toolang.plugin.toolsets.registry import ToolRef
-from toolang.plugin.toolsets.filesystem import FilesystemToolset
+from toolang.plugin.toolsets.fs import FilesystemToolset
 from toolang.execution.executor.steps.tool import (
     _tool_summary,
     _tool_summary_context,

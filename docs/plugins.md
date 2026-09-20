@@ -154,9 +154,33 @@ as external packages. The implementation packages are:
 - `toolang.plugin.adapters.*`.
 
 Each entry point names one factory such as `create_toolset`, `create_channel`,
-`create_sandbox`, `create_models_dev_model_catalog`,
-`create_ollama_model_catalog`, or `create_model_adapter`. A distribution may
-register multiple entries in one or more families.
+`create_sandbox`, `create_model_catalog`, or `create_model_adapter`. A
+distribution may register multiple entries in one or more families.
+
+The distribution registers 17 built-in plugins. Each plugin has a module or
+package named after its entry-point identity:
+
+| Family | Registered plugins | Implementation parent |
+| --- | --- | --- |
+| Toolset | `fs`, `history`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
+| Toolset | `_toolang`, `me` | `toolang.execution.tools` |
+| Model catalog | `models_dev`, `ollama`, `llama_cpp` | `toolang.plugin.catalogs` |
+| Model adapter | `chat_completions`, `generate_content`, `messages`, `responses` | `toolang.plugin.adapters` |
+| Channel | `telegram` | `toolang.plugin.channels` |
+| Sandbox | `host`, `docker` | `toolang.plugin.sandboxes` |
+
+Runtime-owned toolsets stay under `execution.tools` because they depend on
+execution services. Shared loaders, collections, catalog parsing, and private
+helpers are support code, not additional plugins. Docker owns its CLI helpers
+and packaged guest bootstrap files inside `sandboxes/docker/`.
+
+Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
+`too channel list`, and `too sandboxes`) list entry-point identities and their
+built-in or external source. `too tools` lists leaf tools as `toolset/tool`;
+its tool count is distinct from its toolset count. Tool-call inspection shows
+the recorded plugin identity, independently of its Python module location.
+Model catalog provenance retains the display label `models.dev` for the
+`models_dev` plugin.
 
 `toolang.plugin.loading` owns generic entry-point discovery. Family-specific
 loaders pass explicit configuration into factories and validate the returned

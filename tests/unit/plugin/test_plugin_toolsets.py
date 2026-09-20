@@ -95,10 +95,10 @@ def _test_toolset_factory(toolset_name: str, key: str, leaf_name: str):
 def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_toolset
     from toolang.base.examples.tools import create_math_add_toolset
-    from toolang.plugin.toolsets.filesystem import (
+    from toolang.plugin.toolsets.fs import (
         create_toolset as create_filesystem_tool,
     )
-    from toolang.plugin.toolsets.service_use import (
+    from toolang.plugin.toolsets.service import (
         create_toolset as create_service_use_tool,
     )
     from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
@@ -142,7 +142,7 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
 
 def test_plugin_infos_include_source(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_toolset
-    from toolang.plugin.toolsets.filesystem import (
+    from toolang.plugin.toolsets.fs import (
         create_toolset as create_filesystem_tool,
     )
 
@@ -153,7 +153,7 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
         _FakeEntryPoint(
             "fs",
             create_filesystem_tool,
-            value="toolang.plugin.toolsets.filesystem:create_toolset",
+            value="toolang.plugin.toolsets.fs:create_toolset",
             distribution="toolang",
         ),
         _FakeEntryPoint(

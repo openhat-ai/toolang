@@ -65,7 +65,7 @@ class _LeafTool(Tool):
 
 
 @dataclass(frozen=True, slots=True)
-class _ServiceUseAdapter:
+class _ServiceAdapter:
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
@@ -539,7 +539,7 @@ class _ServiceUseAdapter:
 
 
 @dataclass(slots=True)
-class ServiceUseToolset:
+class ServiceToolset:
     """One service-use toolset backed by mcat_cli modules."""
 
     connection_version: int | None
@@ -549,7 +549,7 @@ class ServiceUseToolset:
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        adapter = _ServiceUseAdapter(
+        adapter = _ServiceAdapter(
             connection_version=self.connection_version,
             write_connection_file=self.write_connection_file,
         )
@@ -560,10 +560,10 @@ class ServiceUseToolset:
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the service_use toolset plugin."""
+    """Create the service toolset plugin."""
 
     del config
-    return ServiceUseToolset(
+    return ServiceToolset(
         connection_version=None,
         write_connection_file=_write_connection_file,
         name="service",
