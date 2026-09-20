@@ -756,14 +756,12 @@ limits, or the allow set is a new version too.
 
 - `AgentSetup` carries a `revision` derived from the same inputs as the
   projection key.
-- The setup publishes versions: `current()` returns the newest,
-  `by_revision(revision)` returns a pinned one, and `updates()` yields each new
-  revision once.
+- The setup keeps only the current version: `current()` returns it and
+  `updates()` yields each new revision once. A run keeps its own reference to the
+  version it started with, so an older version lives exactly as long as something
+  still uses it.
 - A run pins the `AgentSetup` it started with; a refresh never mutates it.
 - Only a fully built setup becomes a version; a failed refresh publishes nothing.
-- Retention: every version referenced by an active run, plus the latest two. The
-  references need no manual bookkeeping — an active run's own Python reference
-  keeps its version alive.
 
 ### CLI inspection
 

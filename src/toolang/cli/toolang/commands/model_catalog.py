@@ -179,31 +179,34 @@ def providers_command(
 
 
 def adapters_command(
+    ctx: typer.Context,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write adapter metadata as JSON"),
     ] = False,
 ) -> None:
-    """List installed protocol adapters."""
+    """List the protocol adapters this setup publishes."""
 
-    infos = tuple(list_plugin_infos(group="toolang.model_adapter"))
+    setup = _setup(ctx)
+    sources = {
+        info.name: info.source
+        for info in list_plugin_infos(group="toolang.model_adapter")
+    }
+    rows = tuple((name, sources.get(name) or "-") for name in sorted(setup.adapters))
     if json_:
         typer.echo(
             json.dumps(
-                [{"id": info.name, "source": info.source} for info in infos],
+                [{"id": name, "source": source} for name, source in rows],
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
             )
         )
         return
-    if not infos:
+    if not rows:
         typer.echo("No adapters found.")
         return
-    echo_table(
-        ("ADAPTER", "SOURCE"),
-        tuple((info.name, info.source) for info in infos),
-    )
+    echo_table(("ADAPTER", "SOURCE"), rows)
 
 
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:

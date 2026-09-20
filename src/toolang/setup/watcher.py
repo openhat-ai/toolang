@@ -56,7 +56,6 @@ from .models import order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
-_SETUP_RETENTION = 2
 logger = logging.getLogger(__name__)
 _LOCAL_CATALOG_ENV = frozenset(
     {
@@ -152,7 +151,6 @@ class SetupWatcher:
             for item in plugin_provenance(group=group)
         )
         self._setup: AgentSetup | None = None
-        self._versions: dict[str, AgentSetup] = {}
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
 
@@ -163,26 +161,15 @@ class SetupWatcher:
             raise RuntimeError("setup watcher has not been refreshed")
         return self._setup
 
-    def by_revision(self, revision: str) -> AgentSetup | None:
-        """Return one published setup revision, newest first."""
-
-        if self._setup is not None and self._setup.revision == revision:
-            return self._setup
-        return self._versions.get(revision)
-
     def _publish(self, setup: AgentSetup) -> None:
-        """Publish one setup and keep the latest versions addressable."""
+        """Publish one setup version.
 
-        previous = self._setup
+        Only the current version is retained. A run keeps its own reference to the
+        version it started with, so an older version stays alive exactly as long
+        as something still uses it.
+        """
+
         self._setup = setup
-        if previous is not None and previous.revision:
-            self._versions[previous.revision] = previous
-        self._versions[setup.revision] = setup
-        while len(self._versions) > _SETUP_RETENTION:
-            oldest = next(iter(self._versions))
-            if oldest == setup.revision:
-                break
-            del self._versions[oldest]
 
     def diagnostics(self) -> tuple[SetupDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
