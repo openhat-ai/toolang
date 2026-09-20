@@ -1,0 +1,3 @@
+flow forget(_: Json, thread: Text, begin: Text, end: Text, bare: Boolean) -> Json:
+  let note =
+    Earlier history was intentionally forgotten.

@@ -1,5 +1,9 @@
 # Standalone compact command
 
+Historical definition. CLI inputs and producer selection are superseded by
+[Compact CLI execution modes](compact-cli-modes.md); result normalization is
+superseded by [Compaction contract](compaction-contract-and-admission.md).
+
 ## Goal and boundary
 
 Run the built-in compact script as a local maintenance command against the

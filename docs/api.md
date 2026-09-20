@@ -39,6 +39,7 @@ Top-level commands are:
 - `rerun`
 - `rewind`
 - `fork`
+- `compact`
 - `inspect`
 - `caps`
 - `models`
@@ -174,6 +175,39 @@ terminal run for retry, rerun, rewind, or fork. Retry reopens the same root run
 and optionally starts at `--anchor`; rerun starts a new root run from the source
 invocation. Fork retains the anchor run, while rewind removes it and the
 following visible suffix.
+
+
+### Compact Local History
+
+```sh
+toolang alice compact thread=THREAD [before=RUN]
+toolang alice compact --algorithm ./compact.too thread=THREAD [before=RUN]
+toolang alice compact --algorithm FORGET thread=THREAD before=RUN
+```
+
+`--algorithm DEFAULT` is the default and runs the bundled `compact.too`.
+`before` is exclusive: that Run and later history remain uncompressed. Script
+modes default to retaining the latest terminal root and automatically reuse a
+valid previous summary. The public inputs are only `thread` and `before`;
+`begin`, `end`, `bare`, and `previous` are internal producer inputs.
+
+An external UTF-8 `.too` file must declare
+`agic compact(thread: Text, begin?: Text, end?: Text, bare?: Boolean, previous?: Text)`.
+It runs with the selected agent's model settings and isolated history tools.
+The framework validates its `{thread, begin, end, summary}` output regardless
+of its authored return type. `--model`, `--catalog`, and `--limit` retain their
+existing selection and override semantics for both script modes.
+
+`FORGET` requires an explicit boundary, rejects `--model`, and makes no model
+calls. It replaces the earlier prefix and any previous summary with
+`Earlier history was intentionally forgotten.` Original records remain
+inspectable; future incremental compaction starts at the retained boundary.
+
+All modes require a nonempty range without active roots inside it and at least
+one retained terminal root. They persist ordinary Runs in `compact_<thread>`,
+print progress to stderr, and return `{run, horizon, output}` JSON on stdout.
+The concrete result retains the internal name `end` for its exclusive bound.
+New Runs may adopt the horizon; existing model calls are never rewritten.
 
 
 ## Agent Selectors
