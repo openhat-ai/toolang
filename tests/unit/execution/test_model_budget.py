@@ -153,7 +153,6 @@ def test_estimate_calibrates_only_an_unchanged_prefix() -> None:
     next_call = replace(request, messages=[*request.messages, appended])
     assert estimate.count(next_call, "binding") == 800 + message_tokens(appended)
     for changed in (
-        replace(next_call, continuation={"reasoning": {"id": "text"}}),
         replace(next_call, reasoning=Reasoning(effort="high")),
         replace(next_call, instructions="new"),
         replace(next_call, tools=()),
@@ -230,3 +229,53 @@ def test_schema_directive_and_continuation_are_counted():
     )
     estimate = InputEstimate()
     assert estimate.count(enriched, None) > estimate.count(request, None) + 3000
+
+
+def test_continuation_update_keeps_measured_prefix_in_admission():
+    from toolang.base.errors import ToolangError
+
+    model = replace(MODEL, limit={"context": 1048576, "output": 384000})
+    frame = cast(
+        _AgicFrame,
+        SimpleNamespace(
+            input_budget=input_budget(model, 384000),
+            input_overhead=0,
+            model=model,
+            reasoning=None,
+            run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
+            recall=("near",),
+        ),
+    )
+    request = ModelCall("", [Message.user("x" * 900000)], max_output_tokens=384000)
+    estimate = InputEstimate()
+    estimate.observe(request, _estimate_binding(frame), 600000)
+    added = Message.user("n " * 150000)
+    next_call = replace(
+        request,
+        messages=[*request.messages, added],
+        continuation={"previous_response_id": "resp_1"},
+    )
+    state = cast(_AgicState, SimpleNamespace(estimate=estimate, execution=None))
+    with pytest.raises(ToolangError, match="input exceeds"):
+        _boundary(state, frame, next_call)
+    assert estimate.count(
+        next_call, _estimate_binding(frame)
+    ) >= 600000 + message_tokens(added)
+    assert estimate.reliable_count(next_call, _estimate_binding(frame)) is not None
+
+
+def test_continuation_changes_count_new_content_without_recounting_retained_content():
+    retained = "retained " * 10000
+    request = ModelCall(
+        "", [Message.user("hello")], continuation={"reasoning": {"old": retained}}
+    )
+    estimate = InputEstimate()
+    estimate.observe(request, "a", 100000)
+    extended = replace(
+        request, continuation={"reasoning": {"old": retained, "new": "new " * 1500}}
+    )
+    assert 102000 < estimate.count(extended, "a") < 102100
+    removed = replace(request, continuation=None)
+    assert estimate.count(removed, "a") >= 100000
+    changed = replace(request, continuation={"reasoning": {"old": "changed " * 1500}})
+    assert estimate.count(changed, "a") >= 104000

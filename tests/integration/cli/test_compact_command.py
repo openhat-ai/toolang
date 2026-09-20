@@ -423,3 +423,27 @@ def test_invalid_previous_chain_cannot_replace_a_valid_summary(harness, invalid)
         )
     with closing(RunStore(h.store.db_path, read_only=True)) as reopened:
         assert horizon(RunHistory(reopened)) == first["horizon"]
+
+
+def test_active_exclusive_end_can_retain_a_later_terminal_root(harness):
+    h = harness
+    project_run_start(
+        h.store,
+        run_id="run_active",
+        thread_id="term_a",
+        origin="chat",
+        input=Message.user("still running"),
+    )
+    project_run_start(
+        h.store,
+        run_id="run_tail",
+        thread_id="term_a",
+        origin="chat",
+        input=Message.user("finished later"),
+    )
+    project_run_end(h.store, run_id="run_tail")
+    responses(h, end="run_active")
+    result = asyncio.run(run(h, end="run_active"))
+    assert result["horizon"] == horizon(RunHistory(h.store))
+    assert result["output"]["end"] == "run_active"
+    assert h.store.get_run(run_id="run_active").status == "running"

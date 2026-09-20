@@ -1,7 +1,9 @@
 """Execution-local input estimates, calibrated against inclusive provider usage."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+from typing import cast
 
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCall
@@ -17,6 +19,22 @@ def message_tokens(message: Message) -> int:
     data = message.to_data()
     media = sum(part.type in {"image", "audio", "document"} for part in message.parts)
     return 8 + text_tokens(json.dumps(data, ensure_ascii=False)) + media * 4096
+
+
+def _added_tokens(previous: object, current: object) -> int:
+    """Conservatively count changed continuation content without discounting usage."""
+    if previous == current or current is None:
+        return 0
+    if isinstance(previous, Mapping) and isinstance(current, Mapping):
+        before = cast(Mapping[str, object], previous)
+        after = cast(Mapping[str, object], current)
+        return sum(
+            _added_tokens(before[key], value)
+            if key in before
+            else text_tokens(json.dumps({key: value}, ensure_ascii=False))
+            for key, value in after.items()
+        )
+    return text_tokens(json.dumps(current, ensure_ascii=False))
 
 
 @dataclass
@@ -38,7 +56,6 @@ class InputEstimate:
             and request.tools == previous.tools
             and request.reasoning == previous.reasoning
             and request.output_schema == previous.output_schema
-            and request.continuation == previous.continuation
             and request.messages[: len(previous.messages)] == previous.messages
         )
 
@@ -49,8 +66,13 @@ class InputEstimate:
             and self.tokens is not None
             and self._extends(request, binding, overhead)
         ):
-            return self.tokens + sum(
-                message_tokens(m) for m in request.messages[len(previous.messages) :]
+            return (
+                self.tokens
+                + sum(
+                    message_tokens(m)
+                    for m in request.messages[len(previous.messages) :]
+                )
+                + _added_tokens(previous.continuation, request.continuation)
             )
         fixed = json.dumps(
             {

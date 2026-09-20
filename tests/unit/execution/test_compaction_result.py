@@ -91,3 +91,10 @@ def test_previous_requires_validated_contiguous_full_prefix():
 def test_concrete_type_rejects_none(field):
     with pytest.raises((TypeError, ValueError)):
         replace(decode(), **{field: None})
+
+
+@pytest.mark.parametrize("end", ["run_1", "run_2"])
+def test_incremental_coverage_must_advance_before_merging(end):
+    request = {**REQUEST, "begin": "run_2", "end": end, "previous": "run_old/output"}
+    with pytest.raises(ValueError, match="nonempty|advance"):
+        decode({**OUTPUT, "begin": None, "end": end}, request, decode())

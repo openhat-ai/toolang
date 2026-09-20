@@ -26,9 +26,17 @@ def decode_compaction(
     # Old runtime controls explicitly stored null for an omitted begin.
     if begin is None:
         begin = str(roots[0])
-    if not isinstance(begin, str) or not isinstance(request.get("end"), str):
+    end = request.get("end")
+    if not isinstance(begin, str) or not isinstance(end, str):
         raise ValueError("compact request requires concrete coverage")
     expected_begin = RunRef.parse(begin)
+    requested_end = RunRef.parse(end)
+    if (
+        expected_begin not in roots
+        or requested_end not in roots
+        or roots.index(expected_begin) >= roots.index(requested_end)
+    ):
+        raise ValueError("compact request must cover a nonempty forward range")
     if request.get("previous") is not None:
         if previous is None or request.get("bare") is True:
             raise ValueError("compact previous must identify a validated summary")
@@ -45,8 +53,6 @@ def decode_compaction(
         raise ValueError("compact output must match its requested coverage")
     if not isinstance(value["summary"], str):
         raise ValueError("compact summary must be text")
-    result = CompactionResult(
-        thread, expected_begin, RunRef.parse(value["end"]), value["summary"]
-    )
+    result = CompactionResult(thread, expected_begin, requested_end, value["summary"])
     result.validate_coverage(thread, roots)
     return result

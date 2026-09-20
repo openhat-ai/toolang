@@ -198,10 +198,11 @@ async def _run(
     thread = cast(str, spec.input["thread"])
     history = RunHistory(store)
 
-    def check_range() -> None:
+    def check_range() -> tuple[RunRef, ...]:
         current = history.thread_view(thread, include_children=False).roots
         if tuple(run.id for run in current[: len(prefix)]) != prefix:
             raise ToolangError("compact range changed; submit a new request")
+        return tuple(RunRef(run.id) for run in current)
 
     lock = store.db_path.with_name(f"{store.db_path.name}.{thread}.compact.lock")
     async with permit(lock):
@@ -230,12 +231,12 @@ async def _run(
                 else result.status
             )
             raise ToolangError(f"compact Run {result.id}: {error}")
-        check_range()
+        roots = check_range()
         try:
             output = history.read_compaction(
                 FieldRef.from_path(RunRef(result.id), "output"),
                 ThreadRef.parse(thread),
-                tuple(RunRef(ref) for ref in prefix),
+                roots,
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise ToolangError(
