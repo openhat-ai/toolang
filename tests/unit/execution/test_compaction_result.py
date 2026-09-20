@@ -1,100 +1,67 @@
-"""Framework compaction coverage does not depend on authored type metadata."""
+"""Concrete compaction values and independently established coverage."""
 
 from dataclasses import replace
 
 import pytest
+from pydantic import TypeAdapter
 
-from toolang.execution.compaction import decode_compaction
-from toolang.execution.types import CompactionResult, RunRef, ThreadRef
-
+from toolang.base.types.compaction import CompactionResult
+from toolang.execution.compaction import assemble_compaction
+from toolang.execution.types import RunRef, ThreadRef
 
 THREAD = ThreadRef("term_test")
 ROOTS = tuple(RunRef(f"run_{i}") for i in range(4))
-REQUEST = {"thread": str(THREAD), "begin": "run_0", "end": "run_2"}
-OUTPUT = {**REQUEST, "summary": "Keep the agreed constraints."}
 
 
-def decode(output=OUTPUT, request=REQUEST, previous=None):
-    return decode_compaction(
-        output, thread=THREAD, roots=ROOTS, request=request, previous=previous
+def assemble(
+    summary="Keep the agreed constraints.", start=ROOTS[0], begin=ROOTS[0], end=ROOTS[2]
+):
+    return assemble_compaction(
+        summary, thread=THREAD, roots=ROOTS, start=start, begin=begin, end=end
     )
 
 
-@pytest.mark.parametrize("begin", [None, "run_0"])
-def test_full_prefix_normalizes_to_concrete_fields(begin):
-    result = decode({**OUTPUT, "begin": begin})
-    assert result == CompactionResult(THREAD, ROOTS[0], ROOTS[2], OUTPUT["summary"])
-    assert result.to_data() == OUTPUT
+@pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])
+@pytest.mark.parametrize("value", [None, "", " ", 0, {}])
+def test_result_requires_concrete_nonempty_text(field, value):
+    with pytest.raises((TypeError, ValueError)):
+        replace(assemble(), **{field: value})
 
 
 @pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])
 def test_missing_result_fields_are_not_defaults(field):
-    output = dict(OUTPUT)
-    del output[field]
+    value = assemble().to_data()
+    del value[field]
     with pytest.raises(ValueError):
-        decode(output)
+        TypeAdapter(CompactionResult).validate_python(value)
 
 
 @pytest.mark.parametrize(
-    "patch",
+    ("start", "begin", "end"),
     [
-        {"thread": "term_other"},
-        {"thread": None},
-        {"begin": 0},
-        {"begin": "run_missing"},
-        {"begin": "run_1"},
-        {"end": None},
-        {"end": "run_0"},
-        {"end": "run_missing"},
-        {"summary": None},
-        {"summary": " \n"},
-        {"summary": {}},
+        ("run_1", "run_0", "run_3"),
+        ("run_0", "run_2", "run_2"),
+        ("run_0", "run_missing", "run_3"),
     ],
 )
-def test_invalid_result_is_rejected(patch):
+def test_invalid_read_range_is_rejected(start, begin, end):
     with pytest.raises(ValueError):
-        decode({**OUTPUT, **patch})
+        assemble(start=RunRef(start), begin=RunRef(begin), end=RunRef(end))
 
 
-def test_interval_cannot_claim_a_full_prefix():
-    request = {**REQUEST, "begin": "run_1"}
-    result = decode({**OUTPUT, "begin": "run_1"}, request)
-    assert result.begin == ROOTS[1]
-    with pytest.raises(ValueError):
-        decode({**OUTPUT, "begin": None}, request)
+def test_explicit_interval_and_incremental_coverage():
+    result = assemble(start=ROOTS[1], begin=ROOTS[2], end=ROOTS[3])
+    assert result.begin == "run_1" and result.end == "run_3"
 
 
-def test_previous_requires_validated_contiguous_full_prefix():
-    previous = decode()
-    request = {
-        **REQUEST,
-        "begin": "run_2",
-        "end": "run_3",
-        "previous": "run_old/output",
-    }
-    output = {**OUTPUT, "begin": None, "end": "run_3"}
-    result = decode(output, request, previous)
-    assert result.begin == ROOTS[0] and result.end == ROOTS[3]
-    for invalid in (
-        None,
-        replace(previous, thread=ThreadRef("term_other")),
-        replace(previous, end=ROOTS[1]),
-        replace(previous, begin=ROOTS[1]),
-    ):
-        with pytest.raises(ValueError):
-            decode(output, request, invalid)
-    with pytest.raises(ValueError):
-        decode(output, {**request, "bare": True}, previous)
+@pytest.mark.parametrize(
+    "summary", ['Quoted "facts"\n中文 {{literal}}', '{"thread":"term_other"}']
+)
+def test_framework_does_not_interpret_summary(summary):
+    assert assemble(summary) == CompactionResult("term_test", "run_0", "run_2", summary)
 
 
-@pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])
-def test_concrete_type_rejects_none(field):
-    with pytest.raises((TypeError, ValueError)):
-        replace(decode(), **{field: None})
-
-
-@pytest.mark.parametrize("end", ["run_1", "run_2"])
-def test_incremental_coverage_must_advance_before_merging(end):
-    request = {**REQUEST, "begin": "run_2", "end": end, "previous": "run_old/output"}
-    with pytest.raises(ValueError, match="nonempty|advance"):
-        decode({**OUTPUT, "begin": None, "end": end}, request, decode())
+@pytest.mark.parametrize("summary", [None, {}, [], 1, "", " \n"])
+def test_framework_rejects_invalid_algorithm_output(summary):
+    with pytest.raises((ValueError, TypeError)):
+        assemble(summary)

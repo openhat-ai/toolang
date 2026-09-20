@@ -119,7 +119,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 44
+_SCHEMA_VERSION = 45
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -197,6 +197,46 @@ class RunStore:
         """Return the shared lock that serializes thread history mutations."""
 
         return self.db_path.with_name(f"{self.db_path.name}.threads.lock")
+
+    def publish_compaction(self, horizon: RunRef, *, roots: Sequence[RunRef]) -> None:
+        """Publish a validated summary Run without modifying any active Run."""
+        from .inspection.history import RunHistory
+
+        with self.write_transaction():
+            run = self.get_run(run_id=str(horizon))
+            control = self.get_run_control(run_id=str(horizon), index=0)
+            if (
+                run is None
+                or control is None
+                or not isinstance(control.payload, RunControlPayload)
+            ):
+                raise ValueError("compaction Run does not exist")
+            target = ThreadRef.parse(cast(str, control.payload.input["thread"]))
+            reader = RunHistory(self)
+            # Appended roots are harmless, but the captured prefix must survive.
+            _, _, members = self.history_thread_members(str(target))
+            current = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+            end = RunRef.parse(cast(str, control.payload.input["end"]))
+            stop = roots.index(end) + 1
+            if current[:stop] != tuple(roots[:stop]):
+                raise ValueError("compact range changed; submit a new request")
+            output = reader.read_compaction(horizon, target, current)
+            if output.result.begin != str(current[0]):
+                raise ValueError("thread horizon must cover the complete prefix")
+            self._conn.execute(
+                "UPDATE threads SET horizon = ?, updated_at = ? WHERE id = ?",
+                (str(horizon), utc_now(), str(target)),
+            )
+
+    def require_idle_compactor(self, thread: str) -> None:
+        """Check persisted unfinished producers while holding the compaction permit."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM runs WHERE thread = ? AND status IN ('pending', 'running') LIMIT 1",
+                (f"compact_{thread}",),
+            ).fetchone()
+        if row is not None:
+            raise ValueError(f"compaction already running: {row['id']}")
 
     def put_content(self, value: bytes) -> ContentRef:
         """Store raw content once and return its verified content reference."""
@@ -294,7 +334,7 @@ class RunStore:
         request_id: str | None,
         created_at: str,
         state_ref: ControlRef | None = None,
-        horizon: FieldRef | None = None,
+        horizon: RunRef | None = None,
         authored_input: CallInput[str] | None = None,
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
@@ -631,7 +671,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        horizon: FieldRef,
+        horizon: RunRef,
         triggered_by: StepRef | None,
         created_at: str,
     ) -> ControlRecord:
@@ -695,20 +735,14 @@ class RunStore:
             ).fetchone()
         return _control_from_row(row)
 
-    def _validate_horizon(self, horizon: FieldRef, *, thread: str) -> None:
+    def _validate_horizon(self, horizon: RunRef, *, thread: str) -> None:
         """Check a new reference inside its write transaction, never on record reads."""
 
-        if not isinstance(horizon.record, RunRef) or horizon.tokens != ("output",):
-            raise ValueError("horizon must reference a Run output")
-        source = self.get_run(run_id=str(horizon.record))
-        if source is None or source.output is None:
-            raise ValueError(f"horizon output is not available: {horizon}")
-        output = self.resolve_local(source.output.local).value
-        if (
-            not isinstance(output, Mapping)
-            or cast(Mapping[str, object], output).get("thread") != thread
-        ):
-            raise ValueError(f"horizon output must target Thread {thread}: {horizon}")
+        from .inspection.history import RunHistory
+
+        _, _, members = self.history_thread_members(thread)
+        roots = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+        RunHistory(self).read_compaction(horizon, ThreadRef.parse(thread), roots)
 
     def accept_run_control(
         self,
@@ -3020,7 +3054,7 @@ class RunStore:
             ),
         )
 
-    def run_horizon(self, run_id: str) -> FieldRef | None:
+    def run_horizon(self, run_id: str) -> RunRef | None:
         """Recover only the horizon actually adopted by this Run's Steps."""
 
         controls = {c.ref: c for c in self.list_run_controls(run_id=run_id)}
@@ -3539,7 +3573,8 @@ class RunStore:
                     origin TEXT NOT NULL,
                     peer TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    horizon TEXT
                 )
                 """
             )
@@ -3847,6 +3882,9 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
         peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
+        horizon=RunRef.parse(str(raw["horizon"]))
+        if raw["horizon"] is not None
+        else None,
     )
 
 

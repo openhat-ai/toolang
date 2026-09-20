@@ -32,6 +32,7 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    RunRef,
     IterationOccurrence,
     RunStatus,
     ModelStepGiven,
@@ -480,3 +481,34 @@ def project_run_end(
     if run is None:
         raise AssertionError(f"run was not projected: {run_id}")
     return run
+
+
+def project_compaction(
+    store: RunStore, *, thread: str, begin: str, end: str, summary: str
+) -> RunRef:
+    """Record an explicit summary Run without publishing a thread horizon."""
+    from uuid import uuid4
+
+    owner = f"compact_{thread}"
+    if store.get_thread(thread_id=owner) is None:
+        store.create_thread(thread_id=owner, origin="test", created_at=utc_now())
+    run, _ = accept_run(
+        store,
+        run_id=f"run_{uuid4().hex}",
+        parent=None,
+        thread=owner,
+        input=CallInput(
+            {
+                "thread": thread,
+                "summary": "",
+                "start": begin,
+                "begin": begin,
+                "end": end,
+            }
+        ),
+        context={},
+        request_id=None,
+        created_at=utc_now(),
+    )
+    project_run_end(store, run_id=run.id, output=Output(Local(summary), None))
+    return RunRef(run.id)

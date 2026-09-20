@@ -1,58 +1,129 @@
-"""Decode producer output using explicit, independently established coverage."""
+"""Framework-owned compaction execution, validation, and publication."""
 
-from collections.abc import Mapping, Sequence
-from typing import cast
+from __future__ import annotations
 
-from .types import CompactionResult, RunRef, ThreadRef
+import asyncio
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+import fcntl
+from functools import lru_cache
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from toolang.base.errors import ToolangError
+from toolang.base.types.compaction import CompactionResult
+from toolang.plugin.toolsets.collections import ToolCollection
+from toolang.plugin.toolsets.loading import load_tools
+from toolang.state.builtin import prepare_builtin_state
+from toolang.state.state import AgentState
+from .assembly import prompts
+from .types import RunRef, ThreadRef, validate_compaction_coverage
+
+if TYPE_CHECKING:
+    from .store import RunStore
+    from .executor.executor import RunExecutor, RunSpec
+    from .schemas import CompactionOutput
+    from .events import RunTracer
 
 
-def decode_compaction(
-    raw: object,
+def available_horizon(store: RunStore, thread: str) -> RunRef | None:
+    """Freeze applicable history at root creation, never while replaying a call."""
+    if thread.startswith("compact_"):
+        return None
+    from .inspection.history import RunHistory
+
+    history = RunHistory(store)
+    output = history.get_compaction(thread)
+    if output is None:
+        return None
+    return output.ref
+
+
+@asynccontextmanager
+async def permit(path: Path, *, wait: bool = True) -> AsyncIterator[None]:
+    """A cancellable cross-process wait; never hold a SQLite transaction here."""
+    with path.open("a+b") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not wait:
+                    raise ToolangError("compaction already running") from None
+                await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@lru_cache(maxsize=1)
+def compact_state() -> AgentState:
+    return prepare_builtin_state(prompts.load("defaults/compact.too"))
+
+
+@lru_cache(maxsize=1)
+def compact_tools() -> ToolCollection:
+    """The internal program's read-only tools, independent of user selectors."""
+    return ToolCollection.from_tools(load_tools(toolsets=("history",)))
+
+
+def assemble_compaction(
+    summary: object,
     *,
     thread: ThreadRef,
     roots: Sequence[RunRef],
-    request: Mapping[str, object],
-    previous: CompactionResult | None = None,
+    start: RunRef,
+    begin: RunRef,
+    end: RunRef,
 ) -> CompactionResult:
-    """Normalize legacy null only when recorded coverage proves a full prefix."""
-    if not isinstance(raw, Mapping):
-        raise ValueError("compact output must be an object")
-    value = cast(Mapping[str, object], raw)
-    if not {"thread", "begin", "end", "summary"} <= value.keys() or not roots:
-        raise ValueError("compact output requires thread, begin, end, and summary")
-    if request.get("thread") != str(thread) or value["thread"] != str(thread):
-        raise ValueError("compact output targets another Thread")
-    begin = request.get("begin", str(roots[0]))
-    # Old runtime controls explicitly stored null for an omitted begin.
-    if begin is None:
-        begin = str(roots[0])
-    end = request.get("end")
-    if not isinstance(begin, str) or not isinstance(end, str):
-        raise ValueError("compact request requires concrete coverage")
-    expected_begin = RunRef.parse(begin)
-    requested_end = RunRef.parse(end)
-    if (
-        expected_begin not in roots
-        or requested_end not in roots
-        or roots.index(expected_begin) >= roots.index(requested_end)
-    ):
-        raise ValueError("compact request must cover a nonempty forward range")
-    if request.get("previous") is not None:
-        if previous is None or request.get("bare") is True:
-            raise ValueError("compact previous must identify a validated summary")
-        previous.validate_coverage(thread, roots)
-        if previous.begin != roots[0] or previous.end != expected_begin:
-            raise ValueError("compact previous coverage must be a contiguous prefix")
-        expected_begin = previous.begin
-    output_begin = value["begin"]
-    if output_begin is None and expected_begin == roots[0]:
-        output_begin = str(roots[0])
-    if not isinstance(output_begin, str) or not isinstance(value["end"], str):
-        raise ValueError("compact bounds must be concrete Run references")
-    if output_begin != str(expected_begin) or value["end"] != request["end"]:
-        raise ValueError("compact output must match its requested coverage")
-    if not isinstance(value["summary"], str):
+    if not isinstance(summary, str):
         raise ValueError("compact summary must be text")
-    result = CompactionResult(thread, expected_begin, requested_end, value["summary"])
-    result.validate_coverage(thread, roots)
+    result = CompactionResult(str(thread), str(start), str(end), summary)
+    validate_compaction_coverage(result, thread, roots)
+    if begin not in roots or not roots.index(start) <= roots.index(begin) < roots.index(
+        end
+    ):
+        raise ValueError("compact read range must be a nonempty suffix of its coverage")
     return result
+
+
+@lru_cache(maxsize=1)
+def forget_state() -> AgentState:
+    return prepare_builtin_state(prompts.load("defaults/forget.too"))
+
+
+async def execute_algorithm(
+    executor: RunExecutor,
+    spec: RunSpec,
+    *,
+    roots: Sequence[RunRef],
+    tracer: RunTracer | None = None,
+) -> tuple[str, CompactionOutput]:
+    from .inspection.history import RunHistory
+
+    handle = executor.run(spec, tracer=tracer)
+    try:
+        record = await handle
+    except asyncio.CancelledError:
+        if not handle.task.done():
+            try:
+                handle.cancel(reason="compaction interrupted")
+            except ValueError:
+                record = executor.store.get_run(run_id=handle.run_id)
+                if record is None or record.status in {"pending", "running"}:
+                    raise
+            await asyncio.shield(handle.task)
+        raise
+    if record.status != "succeeded":
+        error = (
+            executor.store.resolve_error(record.error)
+            if record.error is not None
+            else record.status
+        )
+        raise ToolangError(f"compact Run {record.id}: {error}")
+    reader = RunHistory(executor.store)
+    output = reader.read_compaction(
+        RunRef(record.id), ThreadRef.parse(str(spec.input["thread"])), roots
+    )
+    return record.id, output

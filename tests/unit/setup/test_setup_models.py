@@ -86,12 +86,14 @@ def test_compact_selection_filters_capabilities_and_preserves_order():
             model("test/first"),
         )
     )
-    assert select_compact_model(models, None).ref == "test/second"
+    assert select_compact_model(models, None).ref == "test/unknown"
     assert select_compact_model(models.match("test/first, *"), None).ref == "test/first"
     assert (
         select_compact_model(models, parse_model_body("test/first")).ref == "test/first"
     )
-    for ref in ("test/missing", "test/no-tools", "test/unknown", "test/no-schema"):
+    for ref in ("test/unknown", "test/no-schema"):
+        assert select_compact_model(models, parse_model_body(ref)).ref == ref
+    for ref in ("test/missing", "test/no-tools"):
         with pytest.raises(ToolangError, match="available, allowed"):
             select_compact_model(models, parse_model_body(ref))
     with pytest.raises(ToolangError, match="disabled"):

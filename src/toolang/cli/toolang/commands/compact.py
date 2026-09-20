@@ -18,12 +18,17 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.files import file_write_lock
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
-from toolang.execution.assembly import prompts
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.compact import compact_state, compact_tools, permit
+from toolang.execution.compaction import (
+    compact_state,
+    compact_tools,
+    permit,
+    execute_algorithm,
+    forget_state,
+)
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.types import FieldRef, RunRef, ThreadRef
+from toolang.execution.types import RunRef, ThreadRef
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import Value
 from toolang.lang.input import (
@@ -54,7 +59,7 @@ from ...common.policy import (
     resolve_limit_overrides,
 )
 from ...common.script_progress import ScriptRunPresenter
-from .script import await_script_run, collect_named_arguments
+from .script import collect_named_arguments
 
 
 @lru_cache(maxsize=1)
@@ -72,7 +77,7 @@ def _program(algorithm: str) -> AgentState:
     if algorithm == "DEFAULT":
         return compact_state()
     if algorithm == "FORGET":
-        return prepare_builtin_state(prompts.load("defaults/forget.too"))
+        return forget_state()
     path = Path(algorithm).expanduser().resolve()
     if path.suffix != ".too":
         raise ToolangError("compact algorithm must be DEFAULT, FORGET, or a .too file")
@@ -88,10 +93,15 @@ def _program(algorithm: str) -> AgentState:
     def signature(item: AgicDecl) -> dict[str, tuple[str | None, bool]]:
         return {p.name: (p.type_name, p.optional) for p in item.params}
 
-    if runnable is None or signature(runnable) != signature(expected):
+    if (
+        runnable is None
+        or runnable.input is not None
+        or runnable.output != "Text"
+        or signature(runnable) != signature(expected)
+    ):
         raise ToolangError(
-            "compact algorithm requires agic compact(thread: Text, begin?: Text, "
-            "end?: Text, bare?: Boolean, previous?: Text)"
+            "compact algorithm requires agic compact(thread: Text, summary: Text, "
+            "start: Text, begin: Text, end: Text) -> Text"
         )
     return state
 
@@ -227,18 +237,11 @@ def _prepare(
         "thread": thread,
         "begin": begin,
         "end": end,
-        "bare": not reuse,
+        "start": previous.result.begin if reuse and previous is not None else begin,
+        "summary": previous.result.summary if reuse and previous is not None else "",
     }
-    if reuse:
-        assert previous is not None
-        resolved["previous"] = str(previous.ref)
     if forget:
-        resolved["_"] = {
-            "thread": thread,
-            "begin": begin,
-            "end": end,
-            "summary": "Earlier history was intentionally forgotten.",
-        }
+        resolved["_"] = "Earlier history was intentionally forgotten."
     request = (
         None if forget else select_compact_model(setup.models, setup.compact_model)
     )
@@ -293,7 +296,8 @@ async def _run(
         return tuple(RunRef(run.id) for run in current)
 
     lock = store.db_path.with_name(f"{store.db_path.name}.{thread}.compact.lock")
-    async with permit(lock):
+    async with permit(lock, wait=False):
+        store.require_idle_compactor(thread)
         check_range()
         current = history.get_compaction(thread)
         if (current.ref if current is not None else None) != summary_ref:
@@ -311,34 +315,19 @@ async def _run(
         )
         executor.start()
         try:
-            result = await await_script_run(executor.run(spec, tracer=tracer))
+            producer, output = await execute_algorithm(
+                executor, spec, roots=check_range(), tracer=tracer
+            )
+        except (ValueError, TypeError) as exc:
+            raise ToolangError(f"invalid summary: {exc}") from exc
         finally:
             try:
                 await executor.stop()
             finally:
                 tracer.close()
-        if result.status != "succeeded":
-            error = (
-                store.resolve_error(result.error)
-                if result.error is not None
-                else result.status
-            )
-            raise ToolangError(f"compact Run {result.id}: {error}")
-        roots = check_range()
-        try:
-            output = history.read_compaction(
-                FieldRef.from_path(RunRef(result.id), "output"),
-                ThreadRef.parse(thread),
-                roots,
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            raise ToolangError(
-                f"compact Run {result.id}: output must match its coverage and contain a nonempty summary: {exc}"
-            ) from exc
+        store.publish_compaction(output.ref, roots=check_range())
         return {
-            "run": result.id,
-            "horizon": str(output.ref)
-            if str(output.result.begin) == prefix[0]
-            else None,
+            "run": producer,
+            "horizon": str(output.ref),
             "output": output.result.to_data(),
         }

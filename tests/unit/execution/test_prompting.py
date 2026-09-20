@@ -10,6 +10,7 @@ import pytest
 
 from tests.support.prompting import instruction_inputs, render_instructions
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.model import Model, ModelRoute, ModelToolang
@@ -20,9 +21,6 @@ from toolang.execution.assembly.history import MessageHistory
 from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.assembly.utils import literal_delta, render_delta
 from toolang.execution.types import (
-    CompactionResult,
-    ThreadRef,
-    FieldRef,
     ModelMessages,
     RunRef,
     StepRef,
@@ -290,14 +288,15 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
 
 @pytest.mark.parametrize("recall", [(), ("far",), ("near",), ("far", "near")])
 def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypatch):
-    root, summary = RunRef("run_ab12"), RunRef("run_cd34")
-    horizon = FieldRef.from_path(summary, "output")
+    from toolang.execution.types import FieldRef
+
+    root = RunRef("run_ab12")
+    horizon = RunRef("run_summary")
     near = (Message.user("Earlier {{literal}}"),)
 
     def resolve(ref):
-        if ref.ref.tokens[-1] == "summary":
-            return "Summary {{literal}}"
-        return {"thread": "thread", "end": str(root), "summary": "Summary {{literal}}"}
+        assert ref.ref == FieldRef.from_path(horizon, "output", "local", "value")
+        return "Summary {{literal}}"
 
     history = MessageHistory(
         "thread",
@@ -306,7 +305,7 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
         lambda _: (),
         resolve,
         lambda _: CompactionResult(
-            ThreadRef("thread"), RunRef("run_prior"), root, "Summary {{literal}}"
+            "thread", "run_prior", str(root), "Summary {{literal}}"
         ),
     )
     head = StepRef.parse("run_ef56.0")

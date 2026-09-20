@@ -117,7 +117,7 @@ from .common import (
     value_parts,
     value_text,
 )
-from .compact import available_horizon
+from ..compaction import available_horizon
 from .resources import (
     apply_agent_ceiling,
     resource_caps,
@@ -203,7 +203,7 @@ class RunSpec:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1551,7 +1551,7 @@ class _Execution:
         """Read the live binding before an uncommitted ModelCall preparation."""
         return self._current_state
 
-    def compact(self, step: StepRef, horizon: FieldRef) -> tuple[ControlRef, ...]:
+    def compact(self, step: StepRef, horizon: RunRef) -> tuple[ControlRef, ...]:
         """Record the result for adoption, retaining its online receipt facts."""
         pending = self.runtime_controls(step.run_id)
         if self.horizon_for(step.run_id) == horizon:
@@ -1561,12 +1561,14 @@ class _Execution:
                 if control.payload.horizon == horizon:
                     return (control.ref,)
                 break
-        control = self.store.accept_compact_control(
-            run_id=step.run_id,
-            horizon=horizon,
-            triggered_by=step,
-            created_at=utc_now(),
-        )
+        with self.store.write_transaction():
+            self.store.publish_compaction(horizon, roots=self.message_history().roots)
+            control = self.store.accept_compact_control(
+                run_id=step.run_id,
+                horizon=horizon,
+                triggered_by=step,
+                created_at=utc_now(),
+            )
         self._runtime_controls[step.run_id][control.index] = control
         return (control.ref,)
 
@@ -1582,7 +1584,7 @@ class _Execution:
             available.update((control.index, control) for control in additions)
         return tuple(available.values())
 
-    def horizon_for(self, run_id: str, *, pending: bool = False) -> FieldRef | None:
+    def horizon_for(self, run_id: str, *, pending: bool = False) -> RunRef | None:
         binding = self._active_bindings[run_id]
         return adopted_horizon(
             binding.horizon,

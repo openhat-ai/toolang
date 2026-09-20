@@ -10,10 +10,6 @@ from tests.support.execution_assertions import (
     assert_replayed,
     without_route_snapshots,
 )
-from tests.support.execution_fixtures import (
-    accept_run,
-    project_run_end,
-)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -34,16 +30,11 @@ from toolang.execution.records import (
     StoredModelStepGiven,
 )
 from toolang.execution.types import (
-    Output,
     ContentRef,
-    FieldRef,
-    Local,
     RunRef,
     ThreadPrefix,
 )
 from toolang.state.prepare import prepare_agent_state
-from toolang.lang.input import RunnableInput
-from toolang.common.time import utc_now
 
 
 SOURCE = """
@@ -60,31 +51,17 @@ agic chat(_: Part[]) -> Part[]:
 
 
 def _summary(harness, thread, end, *, summary="Earlier facts.", begin=None):
-    # Keep explicit adoption independent of automatic compact-thread discovery.
-    summary_thread = f"summary_{thread}"
-    if harness.store.get_thread(thread_id=summary_thread) is None:
-        harness.store.create_thread(
-            thread_id=summary_thread, origin="test", created_at=utc_now()
-        )
-    run, _ = accept_run(
+    from tests.support.execution_fixtures import project_compaction
+    from toolang.execution.inspection.history import RunHistory
+
+    roots = RunHistory(harness.store).thread_view(thread, include_children=False).roots
+    return project_compaction(
         harness.store,
-        run_id=harness.ids.issue_run(),
-        parent=None,
-        thread=summary_thread,
-        input=RunnableInput({"thread": thread, "begin": begin, "end": end}),
-        context={},
-        request_id=None,
-        created_at=utc_now(),
+        thread=thread,
+        begin=begin or roots[0].id,
+        end=end,
+        summary=summary,
     )
-    project_run_end(
-        harness.store,
-        run_id=run.id,
-        output=Output(
-            Local({"thread": thread, "begin": begin, "end": end, "summary": summary}),
-            None,
-        ),
-    )
-    return FieldRef.from_path(RunRef(run.id), "output")
 
 
 async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
@@ -520,7 +497,7 @@ def test_each_call_records_context_without_rerendering_history(
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
     compacted = False
 
     class Tracer(RecordingRunTracer):
@@ -641,29 +618,30 @@ def test_invalid_compact_coverage_never_dispatches(
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             current = harness.ids.issue_run()
-            horizon = _summary(
-                harness,
-                thread,
-                current
-                if invalid == "current"
-                else f"{second.id}.0"
-                if invalid == "step"
-                else second.id,
-                begin=second.id if invalid == "partial" else None,
-                summary=42 if invalid == "summary" else "Earlier facts.",
-            )
-            run = await harness.executor.run(
-                replace(
-                    harness.run_spec(
-                        thread=thread, runnable="chat", primary=(TextPart("current"),)
+            with pytest.raises((ValueError, TypeError)):
+                horizon = _summary(
+                    harness,
+                    thread,
+                    current
+                    if invalid == "current"
+                    else f"{second.id}.0"
+                    if invalid == "step"
+                    else second.id,
+                    begin=second.id if invalid == "partial" else None,
+                    summary=42 if invalid == "summary" else "Earlier facts.",
+                )
+                await harness.executor.run(
+                    replace(
+                        harness.run_spec(
+                            thread=thread,
+                            runnable="chat",
+                            primary=(TextPart("current"),),
+                        ),
+                        horizon=horizon,
                     ),
-                    horizon=horizon,
-                ),
-                run_id=current,
-                tracer=tracer,
-            )
-            assert run.status == "failed"
-            assert harness.store.list_steps(run_id=current) == []
+                    run_id=current,
+                    tracer=tracer,
+                )
             assert len(harness.adapter.invocations) == 2
 
     asyncio.run(scenario())
@@ -1023,7 +1001,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             ModelCallResult(message=Message.assistant("rerun done")),
         ],
     )
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
     compact: ControlRecord | None = None
 
     class Tracer(RecordingRunTracer):

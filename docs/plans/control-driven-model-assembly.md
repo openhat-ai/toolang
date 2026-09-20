@@ -17,7 +17,7 @@ and compact outputs directly.
 ## Terms
 
 - **binding:** the effective state, runnable, and input for execution.
-- **horizon:** a reference to the adopted compact Run output, or `None`.
+- **horizon:** a reference to the adopted compact Run, or `None`.
 - **far:** the summary of the compacted historical prefix.
 - **near:** role-preserving history after that prefix, before the current root Run.
 - **now:** messages in the current Run's active execution sequence.
@@ -28,24 +28,19 @@ and compact outputs directly.
 Add horizon to run payloads and introduce a run-scoped compact control:
 
 ```python
-RunControlPayload.horizon: FieldRef | None = None
-CompactControlPayload.horizon: FieldRef
+RunControlPayload.horizon: RunRef | None = None
+CompactControlPayload.horizon: RunRef
 ```
 
-Horizon references a compact Run's `output`, whose resolved value is:
+Horizon references a successful summary Run. Reconstruct the concrete result
+from its required `{thread, summary, start, begin, end}` entry input and Text
+output as `{thread, begin: start, end, summary: output}`. See
+[Text-only algorithms](compact-summary-algorithm.md) for publication rules.
 
-```yaml
-thread: ThreadRef
-begin: RunRef | StepRef | None
-end: RunRef | StepRef
-summary: Text
-```
-
-The summary covers `[begin, end)`; `thread` must equal the target Thread.
-This PR supports complete-prefix summaries and root Run boundaries only.
-`begin` is `None` or the first logical root; `end` must be a historical root
-strictly before the active root, retaining at least one historical root in near.
-Partial-summary merging and Step-level boundaries are deferred.
+The summary covers `[begin, end)` and targets the same Thread. Assembly supports
+complete-prefix summaries and root Run boundaries: `begin` is the first logical
+root and `end` retains at least one terminal historical root in near.
+Partial-summary merging and Step-level boundaries remain out of scope.
 
 A run control establishes the initial horizon. A compact control replaces its
 effective value; neither changes earlier payloads nor copies summary content.

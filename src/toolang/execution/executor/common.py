@@ -54,6 +54,7 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    RunRef,
     Local as RecordLocal,
     Output,
     Occurrence,
@@ -129,7 +130,7 @@ class BoundRun:
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
 
 
 @dataclass(frozen=True, slots=True)

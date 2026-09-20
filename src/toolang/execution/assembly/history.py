@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import (
     Message,
     MessageRole,
@@ -28,15 +29,15 @@ from ..records import (
     StoredModelStepGiven,
 )
 from ..types import (
-    CompactionResult,
     ThreadRef,
-    ControlRef,
     FieldRef,
+    validate_compaction_coverage,
     Local,
     ContentRef,
     MessageTemplate,
     RecallTarget,
     RunRef,
+    ControlRef,
     ToolStepGiven,
     TypedRef,
 )
@@ -85,7 +86,7 @@ class MessageHistory:
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageTemplate]]],
         tail: Callable[[Sequence[RunRef]], tuple[MessageTemplate, ...]],
         resolve: Callable[[TypedRef | ContentRef], object],
-        compaction: Callable[[FieldRef], CompactionResult],
+        compaction: Callable[[RunRef], CompactionResult],
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
@@ -94,21 +95,23 @@ class MessageHistory:
         self._resolve = resolve
         self._compaction = compaction
         self._roots: dict[RunRef, _RootMessages] = {}
-        self._selections: dict[FieldRef | None, HistorySelection] = {}
+        self._selections: dict[RunRef | None, HistorySelection] = {}
         self._tails: dict[
             tuple[RunRef, ...], tuple[tuple[MessageTemplate, ...], tuple[Message, ...]]
         ] = {}
 
-    def select(self, horizon: FieldRef | None) -> HistorySelection:
+    def select(self, horizon: RunRef | None) -> HistorySelection:
         if horizon not in self._selections:
             summary = ""
             begin = 0
             if horizon is not None:
                 result = self._compaction(horizon)
-                result.validate_coverage(ThreadRef.parse(self.thread), self.roots)
-                if result.begin != self.roots[0]:
+                validate_compaction_coverage(
+                    result, ThreadRef.parse(self.thread), self.roots
+                )
+                if result.begin != str(self.roots[0]):
                     raise ValueError("compact output must cover the complete prefix")
-                begin = self.roots.index(result.end)
+                begin = self.roots.index(RunRef(result.end))
                 summary = result.summary
             selected = self.roots[begin:]
             missing = tuple(root for root in selected if root not in self._roots)
@@ -125,12 +128,17 @@ class MessageHistory:
                 revisions.update(root.recalls)
             far_template = None
             if summary:
-                if horizon is None or not isinstance(horizon.record, RunRef):
-                    raise ValueError("far summary requires a durable Run output")
+                if horizon is None:
+                    raise ValueError("far summary requires a durable summary Run")
                 far_template = MessageTemplate(
                     "user",
-                    (TypedRef(horizon.select("local", "value", "summary"), "Text"),),
-                    source=horizon.record,
+                    (
+                        TypedRef(
+                            FieldRef.from_path(horizon, "output", "local", "value"),
+                            "Text",
+                        ),
+                    ),
+                    source=horizon,
                 )
             start = max(
                 (index for index, (_ref, root) in enumerate(roots) if root.templates),
@@ -161,8 +169,8 @@ class MessageHistory:
 
 
 def adopted_horizon(
-    horizon: FieldRef | None, controls: Sequence[ControlRecord], run: RunRef
-) -> FieldRef | None:
+    horizon: RunRef | None, controls: Sequence[ControlRecord], run: RunRef
+) -> RunRef | None:
     """Only controls targeting this Run can replace its horizon."""
 
     for control in controls:

@@ -21,7 +21,7 @@ from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.executor.compact import permit
+from toolang.execution.compaction import permit
 from toolang.execution.executor.budget import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
@@ -104,7 +104,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                             ),
                         )
                     ),
-                    reply(summary),
+                    ModelCallResult(message=Message.assistant(summary["summary"])),
                     reply("now"),
                     reply("later"),
                 ]
@@ -148,7 +148,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             roots = history.thread_view(
                 f"compact_{thread}", include_children=False
             ).roots
-            assert len(roots) == 1 and roots[0].parent is None
+            assert len(roots) == 1 and all(root.parent is None for root in roots)
             compact_steps = [
                 s
                 for member in history.thread_view(f"compact_{thread}").members
@@ -206,7 +206,7 @@ async def seed(harness):
 
 def compact_responses(thread, end, *, summary="Earlier facts."):
     return [
-        reply({"thread": thread, "begin": None, "end": end, "summary": summary}),
+        ModelCallResult(message=Message.assistant(summary)),
     ]
 
 
@@ -341,13 +341,12 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
     asyncio.run(scenario())
 
 
-def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
+def test_compact_reads_history_pages_with_supplied_summary(tmp_path):
     from toolang.base.types.policy import RunBindings
     from toolang.common.time import utc_now
-    from toolang.execution.executor.compact import compact_state, compact_tools
+    from toolang.execution.compaction import compact_state, compact_tools
     from toolang.execution.executor.executor import RunSpec
     from toolang.execution.executor.tool_history import _ToolHistory
-    from toolang.execution.types import local_to_protocol_data
     from toolang.lang.input import RunnableInput
 
     harness = ExecutionHarness.create(
@@ -362,7 +361,7 @@ def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
     async def scenario():
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            await harness.executor.run(spec(harness, thread, "old input"))
+            oldest = await harness.executor.run(spec(harness, thread, "old input"))
             first = await harness.executor.run(spec(harness, thread, "new input"))
             last = await harness.executor.run(spec(harness, thread, "last input"))
             compact_thread = f"compact_{thread}"
@@ -381,7 +380,9 @@ def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
                         bindings=RunBindings(
                             model="test/scripted", runnable="agic:compact"
                         ),
-                        input=RunnableInput({"thread": thread, **input}),
+                        input=RunnableInput(
+                            {"thread": thread, "start": oldest.id, **input}
+                        ),
                     )
                 )
 
@@ -391,8 +392,14 @@ def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
                 "end": first.id,
                 "summary": "Earlier facts.",
             }
-            harness.adapter._responses.append(reply(prior))
-            previous = await run_compact(end=first.id, bare=True)
+            harness.adapter._responses.append(
+                ModelCallResult(message=Message.assistant(prior["summary"]))
+            )
+            previous = await run_compact(
+                begin=oldest.id,
+                end=first.id,
+                summary="",
+            )
             assert previous.status == "succeeded"
             cursor = _ToolHistory(harness.store.db_path, thread).read_steps(
                 run=first.id, limit=1
@@ -406,29 +413,28 @@ def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
             }
             harness.adapter._responses.extend(
                 [
-                    call("history__read_output", {"run": previous.id}),
                     call(
                         "history__read_runs",
                         {"thread": thread, "begin": first.id, "end": last.id},
                     ),
                     call("history__read_steps", {"run": first.id, "limit": 1}),
                     call("history__read_steps", {"cursor": cursor}),
-                    reply(output),
+                    ModelCallResult(message=Message.assistant(output["summary"])),
                 ]
             )
             compact = await run_compact(
-                begin=first.id, end=last.id, previous=f"{previous.id}/output"
+                begin=first.id, end=last.id, summary=prior["summary"]
             )
             assert compact.status == "succeeded", compact.error
             history = RunHistory(harness.store)
             result = history.get_output(compact.id)
             assert result is not None
-            assert local_to_protocol_data(result.local)["value"] == output
+            assert result.local.value == output["summary"]
             view = history.thread_view(compact_thread)
             assert {r.id for r in view.members} == {previous.id, compact.id}
             steps = harness.store.list_steps(run_id=compact.id)
             reads = [s for s in steps if isinstance(s.given, ToolStepGiven)]
-            assert len(reads) == 4 and all(s.status == "succeeded" for s in reads)
+            assert len(reads) == 3 and all(s.status == "succeeded" for s in reads)
             calls = [history.get_model_call(s.ref) for s in steps if s.kind == "model"]
             assert calls == [
                 invocation.call for invocation in harness.adapter.invocations[4:]
@@ -441,7 +447,7 @@ def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["provider", "wrong_range", "empty"])
+@pytest.mark.parametrize("failure", ["provider", "empty"])
 def test_compact_failure_never_dispatches_the_oversized_normal_call(tmp_path, failure):
     harness = seeded_harness(tmp_path)
 
@@ -455,10 +461,6 @@ def test_compact_failure_never_dispatches_the_oversized_normal_call(tmp_path, fa
             )
             if failure == "provider":
                 turns = [RuntimeError("provider unavailable")]
-            elif failure == "wrong_range":
-                turns[-1] = reply(
-                    {"thread": thread, "begin": end, "end": end, "summary": "partial"}
-                )
             harness.adapter._responses.extend(turns)
             current = await harness.executor.run(spec(harness, thread, "current"))
             assert current.status == "failed"
@@ -658,9 +660,7 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
             current = await harness.executor.run(spec(harness, thread, "current"))
             assert current.status == "failed"
             steps = harness.store.list_steps(run_id=current.id)
-            assert len(steps) == 1 and "tool calls and structured output" in str(
-                steps[0].error
-            )
+            assert len(steps) == 1 and "tool calls" in str(steps[0].error)
             assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
             assert len(harness.adapter.invocations) == 3
 
@@ -853,14 +853,7 @@ def test_oversized_completed_summary_fails_without_repeating_the_range(tmp_path)
         async with harness:
             thread, end = await seed(harness)
             turns = compact_responses(thread, end)
-            turns[-1] = reply(
-                {
-                    "thread": thread,
-                    "begin": None,
-                    "end": end,
-                    "summary": "large " * 15000,
-                }
-            )
+            turns[-1] = ModelCallResult(message=Message.assistant("large " * 15000))
             harness.adapter._responses.extend(turns)
             current = await harness.executor.run(spec(harness, thread, "current"))
             assert current.status == "failed"
@@ -903,7 +896,7 @@ def test_cancel_before_oversized_first_call_still_has_a_canceled_step(tmp_path):
     asyncio.run(scenario())
 
 
-def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypatch):
+def test_automatic_publication_and_control_roll_back_together(tmp_path, monkeypatch):
     harness = seeded_harness(tmp_path)
 
     async def scenario():
@@ -925,20 +918,23 @@ def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypat
                 for c in harness.store.list_run_controls(run_id=root.id)
                 if isinstance(c.payload, CompactControlPayload)
             ]
-            assert len(controls) == 1 and controls[0].status == "applied"
+            assert controls == []
+            assert harness.store.get_thread(thread_id=thread).horizon is None
+            history = RunHistory(harness.store)
+            assert history.get_compaction(thread) is None
+            producers = history.thread_view(f"compact_{thread}").roots
+            assert len(producers) == 1 and producers[0].status == "succeeded"
             assert not [
                 s for s in harness.store.list_steps(run_id=root.id) if s.kind == "model"
             ]
-            harness.adapter._responses.append(reply("next"))
-            later = await harness.executor.run(spec(harness, thread, "next input"))
-            assert later.status == "succeeded"
-            assert [s.kind for s in harness.store.list_steps(run_id=later.id)] == [
-                "model"
-            ]
-            assert (
-                len(RunHistory(harness.store).thread_view(f"compact_{thread}").roots)
-                == 1
+            # A fresh attempt publishes a new summary; the unpublished Run is not reused.
+            harness.adapter._responses.extend(
+                [*compact_responses(thread, end), reply("next")]
             )
+            later = await harness.executor.run(spec(harness, thread, "next input"))
+            assert later.status == "succeeded", later.error
+            assert history.get_compaction(thread) is not None
+            assert len(history.thread_view(f"compact_{thread}").roots) == 2
 
     asyncio.run(scenario())
 
@@ -985,13 +981,122 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
             assert latest.result.begin == previous.result.begin
             assert str(latest.result.end) == retained.id
             control = harness.store.get_run_control(
-                run_id=str(latest.ref.record), index=0
+                run_id=history.thread_view(f"compact_{thread}").roots[-1].id, index=0
             )
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.input["previous"] == str(previous.ref)
+            assert control.payload.input["summary"] == previous.result.summary
             assert control.payload.input["begin"] == str(previous.result.end)
-            assert control.payload.input["bare"] is False
             text = str(harness.adapter.invocations[-1].call.messages)
             assert "Combined prefix." in text and "large output" not in text
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("algorithm", ["DEFAULT", "FORGET"])
+@pytest.mark.parametrize("outside_history", [False, True])
+def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
+    tmp_path, algorithm, outside_history
+):
+    from types import SimpleNamespace
+    from typing import cast
+
+    from tests.support.execution_fixtures import project_run_end, project_run_start
+    from toolang.cli.toolang.commands import compact
+    from toolang.execution.events import StepBegin
+    from toolang.lang.input import CallInput, RunnableInput
+    from toolang.setup import SetupWatcher
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE + "\nflow job(_: Part[]) -> Text:\n  run chat\n",
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+    published = None
+
+    async def scenario():
+        nonlocal published
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            roots = []
+            for text in ("old", "middle", "recent"):
+                root = await harness.executor.run(
+                    harness.run_spec(
+                        thread=thread, runnable="flow:job", primary=(TextPart(text),)
+                    )
+                )
+                assert root.status == "succeeded"
+                roots.append(root)
+            constrain(harness)
+
+            async def refresh():
+                return harness.setup
+
+            class Tracer(RecordingRunTracer):
+                async def on_event(self, event):
+                    nonlocal published
+                    await super().on_event(event)
+                    if (
+                        not isinstance(event, StepBegin)
+                        or event.kind != "tool"
+                        or published
+                    ):
+                        return
+                    step = harness.store.get_step(ref=event.step)
+                    assert step is not None and isinstance(step.given, ToolStepGiven)
+                    assert step.given.call.input["end"] == roots[1].id
+                    before = roots[-1].id
+                    if outside_history:
+                        # CLI may retain the active Run and a later terminal root.
+                        project_run_start(
+                            harness.store,
+                            run_id="run_later",
+                            thread_id=thread,
+                            origin="test",
+                            input=Message.user("later"),
+                        )
+                        project_run_end(harness.store, run_id="run_later")
+                        before = event.step.run_id
+                    published = await compact._run(
+                        harness.store,
+                        harness.ids,
+                        cast(SetupWatcher, SimpleNamespace(refresh=refresh)),
+                        RunnableInput({"thread": thread, "before": before}),
+                        CallInput(),
+                        max_width=100,
+                        algorithm=algorithm,
+                    )
+
+            harness.adapter._responses.extend(
+                ([reply("CLI summary.")] if algorithm == "DEFAULT" else [])
+                + [reply("done")]
+            )
+            tracer = Tracer()
+            current = await harness.executor.run(
+                spec(harness, thread, "current"), tracer=tracer
+            )
+            assert published is not None
+            history = RunHistory(harness.store)
+            latest = history.get_compaction(thread)
+            assert latest is not None and str(latest.ref) == published["horizon"]
+            assert len(history.thread_view(f"compact_{thread}").roots) == 1
+            controls = [
+                c
+                for c in harness.store.list_run_controls(run_id=current.id)
+                if isinstance(c.payload, CompactControlPayload)
+            ]
+            if outside_history:
+                assert current.status == "failed"
+                assert current.error is not None
+                assert "outside the calling Run's history" in str(
+                    harness.store.resolve_error(current.error)
+                )
+                assert not controls
+            else:
+                assert current.status == "succeeded", current.error
+                assert len(controls) == 1 and controls[0].payload.horizon == latest.ref
+                call = harness.adapter.invocations[-1].call
+                assert latest.result.summary in str(call.messages)
+                assert "old old" not in str(call.messages)
+                assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())

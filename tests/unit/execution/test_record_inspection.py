@@ -235,6 +235,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         step_data = record_to_data(stored_step)
 
         assert set(thread_data) == {
+            "horizon",
             "id",
             "origin",
             "peer",
@@ -624,7 +625,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         ("reload", ReloadControlPayload(revision), {"state"}),
         (
             "compact",
-            CompactControlPayload(FieldRef.parse("run_compact/output")),
+            CompactControlPayload(RunRef("run_compact")),
             {"horizon"},
         ),
         (

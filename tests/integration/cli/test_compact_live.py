@@ -74,10 +74,20 @@ _EXPECTED = {
 }
 
 
-def test_live_compact_preserves_constraints_across_unrelated_updates(tmp_path, request):
+@pytest.mark.parametrize("algorithm", ["DEFAULT", "file"])
+def test_live_compact_preserves_constraints_across_unrelated_updates(
+    tmp_path, request, algorithm
+):
     model = request.config.getoption("--live-model")
     if not model:
         pytest.skip("pass --live-model with a concrete tool-capable model")
+
+    if algorithm == "file":
+        from toolang.execution.assembly import prompts
+
+        source_path = tmp_path / "custom-compact.too"
+        source_path.write_text(prompts.load("defaults/compact.too"), encoding="utf-8")
+        algorithm = str(source_path)
 
     async def scenario():
         layout = AgentLayout.resident(tmp_path, "probe")
@@ -124,6 +134,7 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(tmp_path, r
                     RunnableInput(inputs),
                     CallInput(inputs),
                     max_width=100,
+                    algorithm=algorithm,
                 )
                 assert result["horizon"]
                 output = cast(dict[str, object], result["output"])
@@ -159,6 +170,29 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(tmp_path, r
                 call = RunHistory(store).get_model_call(step.ref)
                 with closing(RunStore(layout.run_store, read_only=True)) as reopened:
                     assert RunHistory(reopened).get_model_call(step.ref) == call
+                incremental = await compact._run(
+                    store,
+                    ids,
+                    watcher,
+                    RunnableInput({"thread": thread, "before": roots[9].id}),
+                    CallInput({"thread": thread, "before": roots[9].id}),
+                    max_width=100,
+                    algorithm=algorithm,
+                )
+                merged = cast(dict[str, object], incremental["output"])
+                assert merged["begin"] == output["begin"]
+                assert merged["end"] == roots[9].id
+                assert "HF42" in str(merged["summary"])
+                assert "amber-kite-731" in str(merged["summary"])
+                assert "Q9:violet/27|NORTH" not in str(merged["summary"])
+                producer = store.get_run_control(
+                    run_id=cast(str, incremental["run"]), index=0
+                )
+                assert producer is not None and isinstance(
+                    producer.payload, RunControlPayload
+                )
+                assert producer.payload.input["begin"] == roots[8].id
+                assert producer.payload.input["summary"] == summary
             finally:
                 await executor.stop()
 

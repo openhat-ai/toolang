@@ -20,7 +20,8 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import compact
-from toolang.execution.executor.compact import permit
+from toolang.execution.assembly import prompts
+from toolang.execution.compaction import permit
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
@@ -68,7 +69,7 @@ def harness(tmp_path):
 def responses(h, *, begin=None, end="run_8", summary="Facts zero through seven."):
     h.adapter._responses.extend(
         [
-            reply({"thread": "term_a", "begin": begin, "end": end, "summary": summary}),
+            ModelCallResult(message=Message.assistant(summary)),
         ]
     )
 
@@ -139,21 +140,26 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
         "end": "run_8",
         "summary": "Facts zero through seven.",
     }
-    assert result["horizon"] == f"{result['run']}/output"
-    assert "∎" in captured_output.err and result["run"] in captured_output.err
+    assert result["horizon"] == result["run"]
+    assert "∎" in captured_output.err
     assert captured["sandbox"] == "host"
     assert captured["compact_override"].identity == "test/configured"
     assert captured["compact_override"].effort == "low"
     assert captured["limit_overrides"]
     control = h.store.get_run_control(run_id=result["run"], index=0)
     assert control is not None and isinstance(control.payload, RunControlPayload)
-    assert control.payload.input == {
+    assert dict(control.payload.input) == {
         "thread": "term_a",
         "begin": "run_0",
+        "start": "run_0",
         "end": "run_8",
-        "bare": True,
+        "summary": "",
     }
     assert control.payload.authored_input == {"thread": "term_a", "before": "run_8"}
+    assert result["run"] in captured_output.err
+    producer = RunHistory(h.store).get_output(result["run"])
+    assert producer is not None
+    assert producer.local.value == "Facts zero through seven."
 
     async def next_run():
         h.adapter._responses.append(reply("remembered"))
@@ -191,13 +197,12 @@ def test_range_defaults_freeze_previous_reference(
     previous = asyncio.run(run(h, before="run_5"))
     spec, prefix = prepare(h, **arguments)
     assert spec.input.get("begin") == expected_begin
-    assert spec.input.get("previous") == (previous["horizon"] if reuse else None)
-    assert spec.input["bare"] is not reuse
+    assert spec.input["summary"] == (previous["output"]["summary"] if reuse else "")
     assert spec.input["end"] == arguments.get("before", "run_9")
     assert prefix[-1] == spec.input["end"]
 
 
-def test_incremental_results_keep_previous_summary(harness):
+def test_incremental_results_keep_summary(harness):
     h = harness
 
     async def scenario():
@@ -207,7 +212,7 @@ def test_incremental_results_keep_previous_summary(harness):
         latest = await run(h)
         assert horizon(RunHistory(h.store)) == latest["horizon"]
         control = h.store.get_run_control(run_id=latest["run"], index=0)
-        assert control.payload.input["previous"] == first["horizon"]
+        assert control.payload.input["summary"] == first["output"]["summary"]
         assert control.payload.input["begin"] == "run_5"
         with pytest.raises(ToolangError, match="nothing to compact"):
             await run(h)
@@ -216,12 +221,7 @@ def test_incremental_results_keep_previous_summary(harness):
 
 
 @pytest.mark.parametrize(
-    ("input", "output"),
-    [
-        ({}, {"begin": "run_5"}),
-        ({}, {"end": "run_7"}),
-        ({}, {"summary": ""}),
-    ],
+    "input,output", [({}, {"summary": ""}), ({}, {"summary": " \n"})]
 )
 def test_bad_output_does_not_hide_old_summary_or_rewrite_run_status(
     harness, input, output
@@ -232,7 +232,7 @@ def test_bad_output_does_not_hide_old_summary_or_rewrite_run_status(
         responses(h, end="run_3")
         first = await run(h, before="run_3")
         responses(h, **output)
-        with pytest.raises(ToolangError, match="output must match"):
+        with pytest.raises(ToolangError, match="invalid summary"):
             await run(h, before="run_8", **input)
         history = RunHistory(h.store)
         assert (
@@ -348,12 +348,8 @@ def test_cancel_waiter_or_script_releases_permit(harness, after_admission):
             assert len(roots) == 1 and roots[0].status == "canceled"
         else:
             async with permit(path):
-                task = asyncio.create_task(run(h))
-                await asyncio.sleep(0.1)
-                assert not task.done()
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
+                with pytest.raises(ToolangError, match="already running"):
+                    await run(h)
                 assert h.store.get_thread(thread_id="compact_term_a") is None
         async with asyncio.timeout(2), permit(path):
             pass
@@ -361,40 +357,15 @@ def test_cancel_waiter_or_script_releases_permit(harness, after_admission):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "invalid", ["missing", "cycle", "gap", "bare", "missing_bound", "other_thread"]
-)
-def test_invalid_previous_chain_cannot_replace_a_valid_summary(harness, invalid):
+def test_run_output_is_not_a_published_compaction(harness):
     from tests.support.execution_fixtures import accept_run
-    from toolang.execution.types import FieldRef, Local, Output, RunRef, ThreadRef
+    from toolang.execution.types import Local, Output, RunRef, ThreadRef
 
     h = harness
     responses(h, end="run_3")
     first = asyncio.run(run(h, before="run_3"))
-    request = {
-        "thread": "term_a",
-        "begin": "run_3",
-        "end": "run_8",
-        "previous": first["horizon"],
-    }
-    output = {
-        "thread": "term_a",
-        "begin": None,
-        "end": "run_8",
-        "summary": "Forged prefix",
-    }
-    if invalid == "missing":
-        request["previous"] = "run_missing/output"
-    elif invalid == "cycle":
-        request["previous"] = "run_forged/output"
-    elif invalid == "gap":
-        request["begin"] = "run_4"
-    elif invalid == "bare":
-        request["bare"] = True
-    elif invalid == "missing_bound":
-        del output["begin"]
-    else:
-        output["thread"] = "term_other"
+    request = {"thread": "term_a", "begin": "run_0", "end": "run_8"}
+    output = {**request, "summary": "Unpublished complete result"}
     accept_run(
         h.store,
         run_id="run_forged",
@@ -410,7 +381,7 @@ def test_invalid_previous_chain_cannot_replace_a_valid_summary(harness, invalid)
     assert horizon(history) == first["horizon"]
     with pytest.raises((ValueError, KeyError)):
         history.read_compaction(
-            FieldRef.parse("run_forged/output"),
+            RunRef("run_forged"),
             ThreadRef("term_a"),
             tuple(RunRef(f"run_{i}") for i in range(10)),
         )
@@ -447,9 +418,9 @@ def test_algorithm_executes_selected_source(harness, tmp_path, algorithm):
     h = harness
     if algorithm == "file":
         path = tmp_path / "custom.too"
-        source = compact.prompts.load("defaults/compact.too").replace(
-            "Summarize the given conversation range",
-            "CUSTOM ALGORITHM: Summarize the range",
+        source = prompts.load("defaults/compact.too").replace(
+            "Read the Runs and Steps",
+            "CUSTOM ALGORITHM: Read the Runs and Steps",
         )
         path.write_text(source)
         algorithm = str(path)
@@ -457,7 +428,8 @@ def test_algorithm_executes_selected_source(harness, tmp_path, algorithm):
     result = asyncio.run(run(h, algorithm=algorithm, before="run_8"))
     assert result["horizon"] == horizon(RunHistory(h.store))
     request = h.adapter.invocations[-1].call
-    assert ("CUSTOM ALGORITHM" in request.instructions) == (algorithm != "DEFAULT")
+    assert request.output_schema is None
+    assert ("CUSTOM ALGORITHM" in str(request.messages)) == (algorithm != "DEFAULT")
 
 
 def test_forget_without_models_replaces_summary_and_survives_restart(harness):
@@ -481,9 +453,8 @@ def test_forget_without_models_replaces_summary_and_survives_restart(harness):
         "end": "run_8",
         "summary": "Earlier history was intentionally forgotten.",
     }
-    control = h.store.get_run_control(run_id=forgotten["run"], index=0)
-    assert control.payload.model_request is None
-    assert "previous" not in control.payload.input
+    assert forgotten["run"] == forgotten["horizon"]
+    assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == 2
     assert forgotten["horizon"] != first["horizon"]
     with closing(RunStore(h.store.db_path, read_only=True)) as reopened:
         assert horizon(RunHistory(reopened)) == forgotten["horizon"]
@@ -513,7 +484,7 @@ def test_forget_without_models_replaces_summary_and_survives_restart(harness):
         incremental = await run(h, before="run_9")
         control = h.store.get_run_control(run_id=incremental["run"], index=0)
         assert control.payload.input["begin"] == "run_8"
-        assert control.payload.input["previous"] == forgotten["horizon"]
+        assert control.payload.input["summary"] == forgotten["output"]["summary"]
 
     asyncio.run(scenario())
     assert_replayed(h.store.db_path, tracer.events)
@@ -554,7 +525,9 @@ def test_invalid_algorithm_options_fail_before_setup(
     "source",
     [
         "agic other() -> Text:\n  user: hello\n",
+        "agic compact(_: Text, thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text:\n  Return text.\n",
         "agic compact(thread: Text) -> Text:\n  user: {{thread}}\n",
+        "agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Json:\n  Return an object.\n",
     ],
 )
 def test_external_signature_rejected_before_creating_run(harness, tmp_path, source):
@@ -606,9 +579,9 @@ def test_forget_cli_uses_real_setup_without_provider_calls(
 
 def test_custom_algorithm_invalid_result_does_not_publish_horizon(harness, tmp_path):
     path = tmp_path / "custom.too"
-    path.write_text(compact.prompts.load("defaults/compact.too"))
+    path.write_text(prompts.load("defaults/compact.too"))
     responses(harness, summary="")
-    with pytest.raises(ToolangError, match="output must match"):
+    with pytest.raises(ToolangError, match="invalid summary"):
         asyncio.run(run(harness, algorithm=str(path), before="run_8"))
     assert RunHistory(harness.store).get_compaction("term_a") is None
 
@@ -653,13 +626,13 @@ def test_waiting_compact_rejects_a_summary_replaced_by_forget(
         first_wait = True
 
         @asynccontextmanager
-        async def delayed(path):
+        async def delayed(path, *, wait=True):
             nonlocal first_wait
             if first_wait:
                 first_wait = False
                 entered.set()
                 await release.wait()
-            async with original(path):
+            async with original(path, wait=wait):
                 yield
 
         monkeypatch.setattr(compact, "permit", delayed)
@@ -679,7 +652,112 @@ def test_waiting_compact_rejects_a_summary_replaced_by_forget(
         assert horizon(RunHistory(h.store)) == forgotten["horizon"]
         # A fresh request resolves the new marker and starts after forgotten roots.
         spec, _ = prepare(h, before="run_9")
-        assert spec.input["previous"] == forgotten["horizon"]
+        assert spec.input["summary"] == forgotten["output"]["summary"]
         assert spec.input["begin"] == "run_8"
 
     asyncio.run(scenario())
+
+
+def test_text_algorithm_does_not_require_native_structured_output(harness):
+    h = harness
+    h.setup = replace(
+        h.setup,
+        models=ModelCollection(
+            tuple(
+                replace(model, structured_output=False)
+                for model in h.setup.models.entries
+            )
+        ),
+    )
+    responses(h)
+    result = asyncio.run(run(h, before="run_8"))
+    assert result["output"]["summary"] == "Facts zero through seven."
+    assert all(call.call.output_schema is None for call in h.adapter.invocations)
+
+
+def test_unpublished_text_producer_cannot_replace_a_durable_result(
+    harness, monkeypatch
+):
+    h = harness
+    responses(h, end="run_5", summary="Existing summary.")
+    first = asyncio.run(run(h, before="run_5"))
+
+    def fail_publication(*args, **kwargs):
+        raise ToolangError("result publication failed")
+
+    monkeypatch.setattr(h.store, "publish_compaction", fail_publication)
+    responses(h, summary="Unpublished new summary.")
+    with pytest.raises(ToolangError, match="publication failed"):
+        asyncio.run(run(h, before="run_8"))
+    with closing(RunStore(h.store.db_path, read_only=True)) as reopened:
+        history = RunHistory(reopened)
+        assert horizon(history) == first["horizon"]
+        producer = history.thread_view("compact_term_a").roots[-1]
+        output = history.get_output(producer.id)
+        assert producer.status == "succeeded"
+        assert output is not None and output.local.value == "Unpublished new summary."
+
+
+def test_first_forget_publishes_one_model_free_summary_run(harness):
+    result = asyncio.run(run(harness, algorithm="FORGET", before="run_8"))
+    assert result["run"] == result["horizon"]
+    assert not harness.adapter.invocations
+    history = RunHistory(harness.store)
+    roots = history.thread_view("compact_term_a").roots
+    assert len(roots) == 1 and roots[0].id == result["run"]
+    output = history.get_output(result["run"])
+    assert output is not None and output.local.value == result["output"]["summary"]
+    assert str(harness.store.get_thread(thread_id="term_a").horizon) == result["run"]
+    assert all(
+        c.kind != "compact"
+        for i in range(10)
+        for c in harness.store.list_run_controls(run_id=f"run_{i}")
+    )
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        ("run_8", "run_3"),
+        ("run_missing", "run_8"),
+        ("run_0", "run_missing"),
+        ("run_3", "run_8"),
+    ],
+)
+def test_invalid_publication_is_atomic(harness, bounds):
+    from tests.support.execution_fixtures import project_compaction
+    from toolang.execution.types import RunRef
+
+    first = asyncio.run(run(harness, algorithm="FORGET", before="run_3"))
+    ref = project_compaction(
+        harness.store,
+        thread="term_a",
+        begin=bounds[0],
+        end=bounds[1],
+        summary="Invalid coverage",
+    )
+    before = tuple(harness.store._conn.iterdump())
+    with pytest.raises(ValueError):
+        harness.store.publish_compaction(
+            ref,
+            roots=tuple(RunRef(f"run_{i}") for i in range(10)),
+        )
+    assert tuple(harness.store._conn.iterdump()) == before
+    assert horizon(RunHistory(harness.store)) == first["horizon"]
+
+
+@pytest.mark.parametrize("algorithm", ["DEFAULT", "FORGET"])
+def test_cli_rejects_unfinished_compact_run_after_lock_is_released(harness, algorithm):
+    h = harness
+    project_run_start(
+        h.store,
+        run_id="run_stranded",
+        thread_id="compact_term_a",
+        origin="script",
+        input=Message.user("unfinished producer"),
+    )
+    with pytest.raises(ValueError, match="compaction already running: run_stranded"):
+        asyncio.run(run(h, algorithm=algorithm, before="run_8"))
+    assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == 1
+    assert not h.adapter.invocations
+    assert h.store.get_thread(thread_id="term_a").horizon is None

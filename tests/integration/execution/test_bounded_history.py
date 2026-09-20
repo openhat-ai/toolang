@@ -8,7 +8,6 @@ import sqlite3
 import pytest
 
 from tests.support.execution_fixtures import (
-    accept_run,
     project_run_control,
     project_run_end,
     project_run_start,
@@ -34,7 +33,6 @@ from toolang.execution.types import (
     StepRef,
     ThreadRef,
 )
-from toolang.lang.input import RunnableInput
 import toolang.execution.store as store_module
 
 
@@ -619,28 +617,12 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     project_run_end(
         store, run_id="run_old", output=Output(Local("obsolete summary"), None)
     )
-    output = Output(
-        Local(
-            {
-                "thread": "term_a",
-                "begin": None,
-                "end": "run_b",
-                "summary": "earlier facts",
-            }
-        ),
-        None,
+    from tests.support.execution_fixtures import project_compaction
+
+    ref = project_compaction(
+        store, thread="term_a", begin="run_a", end="run_b", summary="earlier facts"
     )
-    accept_run(
-        store,
-        run_id="run_compact",
-        parent=None,
-        thread="compact_term_a",
-        input=RunnableInput({"thread": "term_a", "end": "run_b"}),
-        context={},
-        request_id=None,
-        created_at="2026-01-01T00:00:00Z",
-    )
-    project_run_end(store, run_id="run_compact", output=output)
+    store.publish_compaction(ref, roots=(RunRef("run_a"), RunRef("run_b")))
     start(store, "run_failed", thread="compact_term_a")
     project_run_end(store, run_id="run_failed", status="failed")
     original = store_module._run_from_row
@@ -652,14 +634,13 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     monkeypatch.setattr(store_module, "_run_from_row", decode)
     found = history.get_compaction("term_a")
     assert found is not None
-    assert found.ref == FieldRef.from_path(RunRef("run_compact"), "output")
+    assert found.ref == ref
     assert found.result.to_data() == {
         "thread": "term_a",
         "begin": "run_a",
         "end": "run_b",
         "summary": "earlier facts",
     }
-    assert history.get_output("run_compact") == output
     with pytest.raises(KeyError):
         history.get_compaction("term_missing")
 

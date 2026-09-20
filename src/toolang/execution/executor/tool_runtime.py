@@ -62,7 +62,7 @@ class _ToolRuntime(ToolRuntime):
         )
 
     async def compact(self, thread: str, begin: str | None, end: str) -> ToolResult:
-        from .compact import execute
+        from ..tools.compact import execute
 
         return ToolResult(await execute(self.state, self.step, thread, begin, end))
 
