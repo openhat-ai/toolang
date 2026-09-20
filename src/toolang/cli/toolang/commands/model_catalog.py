@@ -230,13 +230,15 @@ def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
     return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
 
 
-def _route_reason(route: ModelRoute) -> str:
+def _route_reason(*routes: ModelRoute) -> str:
+    """Summarize missing prerequisites once each, in a stable display order."""
+
     return "; ".join(
         reason
         for missing, reason in (
-            (route.adapter is None, "Adapter unresolved or not installed"),
-            (route.api is None, "API missing or unresolved"),
-            (route.env is None, "Environment requirements unmet"),
+            (any(route.adapter is None for route in routes), "No adapter"),
+            (any(route.api is None for route in routes), "No API URL"),
+            (any(route.env is None for route in routes), "Missing env"),
         )
         if missing
     )
@@ -245,15 +247,7 @@ def _route_reason(route: ModelRoute) -> str:
 def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
     if not models:
         return _route_reason(provider._toolang.route) or "No models"
-    return "; ".join(
-        sorted(
-            {
-                reason
-                for model in models
-                if (reason := _route_reason(model._toolang.route))
-            }
-        )
-    )
+    return _route_reason(*(model._toolang.route for model in models))
 
 
 def _provider_adapters_cell(provider: CatalogProviderView) -> Text:

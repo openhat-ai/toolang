@@ -733,6 +733,40 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert "resolved" not in provider
 
 
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_reasons_are_concise_and_provider_causes_are_deduplicated(
+    tmp_path: Path, monkeypatch, command: str
+) -> None:
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    provider["npm"] = "@missing/adapter"
+    provider["api"] = "${TEST_MISSING_API}"
+    models = cast(dict[str, dict[str, object]], provider["models"])
+    models["one"]["provider"] = {"api": "https://one.test/v1"}
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    monkeypatch.delenv("TEST_MISSING_API", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _disable_local_discovery(monkeypatch)
+    rows: list[Sequence[str | Text]] = []
+    monkeypatch.setattr(
+        model_catalog_commands,
+        "echo_table",
+        lambda headers, values, **kwargs: rows.extend(values),
+    )
+
+    result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "-a"])
+
+    assert result.exit_code == 0, result.stderr
+    reasons = {row[0]: row[-1] for row in rows}
+    if command == "models":
+        assert reasons == {
+            "test/one": "No adapter; Missing env",
+            "test/two": "No adapter; No API URL; Missing env",
+        }
+    else:
+        assert reasons == {"test": "No adapter; No API URL; Missing env"}
+
+
 @pytest.mark.parametrize("available_models", [0, 1])
 def test_provider_api_and_counts_use_independent_availability(
     tmp_path: Path, monkeypatch, available_models: int
@@ -778,7 +812,7 @@ def test_provider_api_and_counts_use_independent_availability(
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY"
     assert not _is_red(env, 0)
-    assert rows[0][-1] == "API missing or unresolved"
+    assert rows[0][-1] == "No API URL"
 
     default_result = runner.invoke(
         cli.app,
@@ -1220,8 +1254,8 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
     assert result.exit_code == 0, result.exception
     assert rows
-    assert all("Environment requirements unmet" in str(row[-1]) for row in rows)
-    assert all("Adapter unresolved" not in str(row[-1]) for row in rows)
+    assert all("Missing env" in str(row[-1]) for row in rows)
+    assert all("No adapter" not in str(row[-1]) for row in rows)
     assert all("added-after-publication" not in str(row) for row in rows)
 
 

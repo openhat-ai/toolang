@@ -96,7 +96,9 @@ Internal tools remain recognizable by their `_toolang` identity; do not add an
 Model query field `available` retains its readiness meaning; it is not rendered
 as a separate boolean table column. Provider OK counts read the effective setup
 collection; they must exclude ready-but-blocked models. Provider reasons include
-unready models even when other models are ready.
+unready models even when other models are ready. Route reasons use `No adapter`,
+`No API URL`, and `Missing env`, in that order, joined with `; ` and deduplicated
+across provider models. Empty providers without route failures show `No models`.
 
 All resource and plugin inventory tables have an unindented summary. Tools use
 `N tools, M toolsets`, aggregate caps use `N caps, M kinds`, and models use

@@ -401,8 +401,11 @@ exports have no summary or presentation status. Prices independently right-align
 the input and output amounts across displayed rows so their `/` separators align.
 
 `too models --all` and `too providers --all` show coarse unavailability reasons
-from the route's missing fields. They do not identify individual missing
-credentials or distinguish unknown adapters from uninstalled ones.
+from the route's missing fields: `No adapter`, `No API URL`, and `Missing env`.
+Multiple reasons are joined with `; ` in that order and appear only once in a
+provider's summary. An empty provider with no route failures shows `No models`.
+These labels do not identify individual missing credentials or distinguish
+unknown adapters from uninstalled ones.
 
 Providers show `ADAPTERS`, `DEFAULT API`, `ENV`, and `REASON`. Adapter names are
 aggregated from the selected models; empty providers show their default adapter.
