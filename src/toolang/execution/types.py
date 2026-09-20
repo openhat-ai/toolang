@@ -1373,7 +1373,7 @@ class MessageTemplate:
     escape_text: bool = False
     # Imported historical messages are context, not a new contribution by the
     # receiving Run. Preserve their owner when recording a new message head.
-    source: RunRef | ControlRef | None = None
+    source: RunRef | None = None
 
     def __post_init__(self) -> None:
         if self.role not in {"user", "assistant", "tool"}:
@@ -1952,7 +1952,6 @@ ControlKind = Literal[
     "retry",
     "reload",
     "compact",
-    "compaction",
     "execute",
     "steer",
     "cancel",

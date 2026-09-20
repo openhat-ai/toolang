@@ -21,12 +21,13 @@ CompactionResult(thread: str, begin: str, end: str, summary: str)
 - The shared value lives in `base/types/compaction.py`; execution validates
   references and coverage. `CompactionOutput` carries the durable reference and
   value. Callers resolve bounds and previous summaries before execution.
-- Algorithms return Text; the framework assembles and directly publishes an
-  immutable compaction record. Incremental coverage must be contiguous. No
-  old Run-output or null-field compatibility is supported. See the text-only
-  algorithm plan for current persistence and entry-point ownership.
-- Invalid explicit horizons fail; discovery skips invalid or interval results
-  and may use an older valid result. The authored type cannot change this contract.
+- Algorithms return Text. Reconstruct the result from recorded
+  `{thread, summary, start, begin, end}` input and successful output; publish the
+  summary Run reference in thread.horizon. See the text-only algorithm plan for
+  persistence and entry-point ownership. No old-format compatibility is supported.
+- Invalid explicit horizons fail. Discovery validates the published thread
+  horizon without scanning or falling back to older producers. The authored
+  output type cannot change the framework result contract.
 
 ## Model-call rules
 

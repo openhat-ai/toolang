@@ -31,7 +31,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.types import (
     ContentRef,
-    FieldRef,
+    RunRef,
     ThreadPrefix,
 )
 from toolang.state.prepare import prepare_agent_state
@@ -497,7 +497,7 @@ def test_each_call_records_context_without_rerendering_history(
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
     compacted = False
 
     class Tracer(RecordingRunTracer):
@@ -1001,7 +1001,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             ModelCallResult(message=Message.assistant("rerun done")),
         ],
     )
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
     compact: ControlRecord | None = None
 
     class Tracer(RecordingRunTracer):

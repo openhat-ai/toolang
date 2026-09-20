@@ -191,30 +191,32 @@ modes default to retaining the latest terminal root and automatically reuse a
 valid previous summary. The public inputs are only `thread` and `before`;
 `begin`, `end`, `bare`, and `previous` are not public CLI inputs.
 
-An external UTF-8 `.too` file must declare
-`agic compact(thread: Text, begin: Text, end: Text, previous_summary: Text) -> Text`.
-It runs with the selected agent's model settings and isolated history tools.
-The algorithm receives concrete read bounds and the validated previous summary
-text (empty on the first call). It returns only nonempty summary text; it never
-discovers previous summaries or chooses the final coverage. The framework
-constructs `{thread, begin, end, summary}` and directly publishes an immutable
-`compaction` record in `compact_<thread>`. The horizon selects its
-`payload/result`; the algorithm Run keeps its original Text output. No extra
-result Run is created. `--model`, `--catalog`, and `--limit` retain their
-existing selection and override semantics for both script modes. A compact
-model requires tool calls; native structured output is no longer required.
+An external UTF-8 `.too` file must declare:
 
-`FORGET` requires an explicit boundary, rejects `--model`, and makes no model
-calls or Runs. Its response contains `horizon` and `output`; algorithm modes
-also include the producer `run`. It replaces the earlier prefix and any previous summary with
-`Earlier history was intentionally forgotten.` Original records remain
-inspectable; future incremental compaction starts at the retained boundary.
+```text
+agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text
+```
 
-All modes require a nonempty range without active roots inside it and at least
-one retained terminal root. Results are recorded in `compact_<thread>`.
-Algorithm modes print progress to stderr; all modes return JSON on stdout.
-The concrete result retains the internal name `end` for its exclusive bound.
-New Runs may adopt the horizon; existing model calls are never rewritten.
+All inputs are required. `summary` is previous summary text or `""`. The algorithm
+reads `[begin, end)` and returns nonempty summary text. `start` records the full
+coverage start; the algorithm does not use it. The framework reconstructs
+`{thread, begin: start, end, summary: output}` from the summary Run's input/output.
+It runs with selected model settings and isolated history tools; native structured
+output is not required. `--model`, `--catalog`, and `--limit` retain their usual
+selection semantics for both script modes.
+
+`FORGET` requires an explicit boundary, rejects `--model`, and creates one
+model-free summary Run returning `Earlier history was intentionally forgotten.`
+Original records remain inspectable. All modes return `{run, horizon, output}`;
+`horizon` is the summary Run ID. Progress goes to stderr and JSON to stdout.
+
+The CLI rejects a busy compaction lock or pending/running Runs in
+`compact_<thread>`. Active target Runs are allowed outside the covered range;
+at least one terminal root must remain. Success updates only the target
+thread's horizon. New Runs snapshot that reference; existing Runs retain their
+recorded horizon. Automatic compaction also writes the calling Run's compact
+control for subsequent adoption. Replay uses recorded controls, not the latest
+thread horizon. Failed or unpublished summary Runs do not replace it.
 
 
 ## Agent Selectors

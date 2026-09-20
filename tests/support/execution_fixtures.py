@@ -32,6 +32,7 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    RunRef,
     IterationOccurrence,
     RunStatus,
     ModelStepGiven,
@@ -484,31 +485,30 @@ def project_run_end(
 
 def project_compaction(
     store: RunStore, *, thread: str, begin: str, end: str, summary: str
-) -> FieldRef:
-    """Record an explicit result without enabling automatic discovery."""
-    from toolang.base.types.compaction import CompactionResult
-    from toolang.execution.records import CompactionControlPayload
+) -> RunRef:
+    """Record an explicit summary Run without publishing a thread horizon."""
+    from uuid import uuid4
 
-    owner = f"summary_{thread}"
+    owner = f"compact_{thread}"
     if store.get_thread(thread_id=owner) is None:
         store.create_thread(thread_id=owner, origin="test", created_at=utc_now())
-    with store.write_transaction():
-        ref = ControlRef.for_thread(
-            owner, len(store.list_thread_controls(thread_id=owner))
-        )
-        now = utc_now()
-        store._insert_control(
-            ref=ref,
-            kind="compaction",
-            timing="immediate",
-            payload=CompactionControlPayload(
-                CompactionResult(thread, begin, end, summary)
-            ),
-            request=None,
-            status="applied",
-            error=None,
-            created_at=now,
-            finished_at=now,
-            claimed=True,
-        )
-    return FieldRef.from_path(ref, "payload", "result")
+    run, _ = accept_run(
+        store,
+        run_id=f"run_{uuid4().hex}",
+        parent=None,
+        thread=owner,
+        input=CallInput(
+            {
+                "thread": thread,
+                "summary": "",
+                "start": begin,
+                "begin": begin,
+                "end": end,
+            }
+        ),
+        context={},
+        request_id=None,
+        created_at=utc_now(),
+    )
+    project_run_end(store, run_id=run.id, output=Output(Local(summary), None))
+    return RunRef(run.id)

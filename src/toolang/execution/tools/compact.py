@@ -53,6 +53,7 @@ async def execute(
         if boundary != end_ref:
             raise ToolangError("compact range changed while waiting; retry required")
         reader = RunHistory(store)
+        store.require_idle_compactor(thread)
         output = reader.get_compaction(target)
         if output is None or output.result.end != str(end_ref):
             reuse = (
@@ -63,12 +64,16 @@ async def execute(
             )
             resolved: dict[str, str] = {
                 "thread": str(target),
+                "start": str(history.roots[0]),
+                "summary": "",
                 "begin": str(history.roots[0]),
                 "end": end,
             }
             if reuse:
                 assert output is not None
                 resolved["begin"] = output.result.end
+                resolved["start"] = output.result.begin
+                resolved["summary"] = output.result.summary
             frame = state.frame_for_step(*execution.state_snapshot())
             resources = frame.run.agent_resources
             if resources is None:
@@ -92,10 +97,9 @@ async def execute(
                 model_request=request,
                 input=RunnableInput(resolved),
             )
-            previous = output.result if reuse and output is not None else None
             try:
                 _producer, output = await execute_algorithm(
-                    execution.executor, spec, roots=history.roots, previous=previous
+                    execution.executor, spec, roots=history.roots
                 )
             except (ValueError, TypeError) as exc:
                 raise ToolangError(f"invalid compact summary: {exc}") from exc

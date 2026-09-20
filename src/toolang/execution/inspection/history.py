@@ -12,7 +12,6 @@ from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
 from ..records import (
     RunControlPayload,
-    CompactionControlPayload,
     ControlRecord,
     RunRecord,
     StepRecord,
@@ -35,8 +34,6 @@ from ..types import (
     ControlRef,
     ErrorMessage,
     ErrorRef,
-    FieldRef,
-    validate_compaction_coverage,
     Local,
     Output,
     Pointer,
@@ -283,9 +280,9 @@ class RunHistory:
             return self._store.rebuild_model_calls((record,))[ref]
 
     def read_compaction(
-        self, ref: FieldRef, thread: ThreadRef, roots: Sequence[RunRef]
+        self, ref: RunRef, thread: ThreadRef, roots: Sequence[RunRef]
     ) -> CompactionOutput:
-        """Validate a published result against the current visible history."""
+        """Reconstruct a summary Run against the current visible history."""
         with self._store.read_transaction():
             _, _, members = self._store.history_thread_members(str(thread))
             visible = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
@@ -293,21 +290,39 @@ class RunHistory:
                 raise ValueError(
                     "compact range changed; historical prefix is no longer visible"
                 )
-            if not isinstance(ref.record, ControlRef) or ref != FieldRef.from_path(
-                ref.record, "payload", "result"
-            ):
-                raise ValueError("compact horizon must reference a compaction record")
-            control = self._store.get_control(
-                target=str(ref.record.target), index=ref.record.index
-            )
+            from ..compaction import assemble_compaction
+
+            run = self._require_run(str(ref))
+            control = self._store.get_run_control(run_id=run.id, index=0)
+            raw = self.get_output(run.id)
             if (
-                control is None
-                or control.status != "applied"
-                or not isinstance(control.payload, CompactionControlPayload)
+                run.parent is not None
+                or run.status != "succeeded"
+                or control is None
+                or not isinstance(control.payload, RunControlPayload)
+                or raw is None
             ):
-                raise ValueError("compact horizon must reference a published result")
-            result = control.payload.result
-            validate_compaction_coverage(result, thread, roots)
+                raise ValueError(
+                    "compact horizon requires a successful root summary Run"
+                )
+            request = control.payload.input
+            if any(
+                not isinstance(request.get(key), str)
+                for key in ("thread", "summary", "start", "begin", "end")
+            ):
+                raise ValueError(
+                    "compact input requires thread, summary, start, begin, and end text"
+                )
+            if request["thread"] != str(thread):
+                raise ValueError("compact output targets another Thread")
+            result = assemble_compaction(
+                raw.local.value,
+                thread=thread,
+                roots=roots,
+                start=RunRef.parse(cast(str, request["start"])),
+                begin=RunRef.parse(cast(str, request["begin"])),
+                end=RunRef.parse(cast(str, request["end"])),
+            )
             start, stop = (
                 roots.index(RunRef(result.begin)),
                 roots.index(RunRef(result.end)),
@@ -324,36 +339,20 @@ class RunHistory:
             return CompactionOutput(ref, result)
 
     def get_compaction(self, thread: ThreadRef | str) -> CompactionOutput | None:
-        """Find the latest validated full-prefix result, skipping interval outputs."""
+        """Read the thread's published horizon without scanning producer history."""
         target = ThreadRef.parse(thread)
         with self._store.read_transaction():
-            if self._store.get_thread(thread_id=str(target)) is None:
+            record = self._store.get_thread(thread_id=str(target))
+            if record is None:
                 raise KeyError(str(target))
-            compact_id = f"compact_{target}"
-            if self._store.get_thread(thread_id=compact_id) is None:
+            if record.horizon is None:
                 return None
-            _, _, target_members = self._store.history_thread_members(str(target))
-            roots = tuple(
-                RunRef(ref) for ref, root in target_members.items() if ref == root
-            )
-            if len(roots) < 2:
+            _, _, members = self._store.history_thread_members(str(target))
+            roots = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+            try:
+                return self.read_compaction(record.horizon, target, roots)
+            except (KeyError, ValueError, TypeError):
                 return None
-            for control in reversed(
-                self._store.list_thread_controls(thread_id=compact_id)
-            ):
-                if not isinstance(control.payload, CompactionControlPayload):
-                    continue
-                try:
-                    output = self.read_compaction(
-                        FieldRef.from_path(control.ref, "payload", "result"),
-                        target,
-                        roots,
-                    )
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if output.result.begin == str(roots[0]):
-                    return output
-            return None
 
     def thread_view(
         self,

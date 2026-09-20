@@ -1,0 +1,3 @@
+flow forget(_: Text, thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text:
+  let note =
+    Return the supplied forgetting marker without calling a model.

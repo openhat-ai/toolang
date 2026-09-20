@@ -140,7 +140,7 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
         "end": "run_8",
         "summary": "Facts zero through seven.",
     }
-    assert result["horizon"] == "compact_term_a@1/payload/result"
+    assert result["horizon"] == result["run"]
     assert "∎" in captured_output.err
     assert captured["sandbox"] == "host"
     assert captured["compact_override"].identity == "test/configured"
@@ -151,8 +151,9 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
     assert dict(control.payload.input) == {
         "thread": "term_a",
         "begin": "run_0",
+        "start": "run_0",
         "end": "run_8",
-        "previous_summary": "",
+        "summary": "",
     }
     assert control.payload.authored_input == {"thread": "term_a", "before": "run_8"}
     assert result["run"] in captured_output.err
@@ -196,14 +197,12 @@ def test_range_defaults_freeze_previous_reference(
     previous = asyncio.run(run(h, before="run_5"))
     spec, prefix = prepare(h, **arguments)
     assert spec.input.get("begin") == expected_begin
-    assert spec.input["previous_summary"] == (
-        previous["output"]["summary"] if reuse else ""
-    )
+    assert spec.input["summary"] == (previous["output"]["summary"] if reuse else "")
     assert spec.input["end"] == arguments.get("before", "run_9")
     assert prefix[-1] == spec.input["end"]
 
 
-def test_incremental_results_keep_previous_summary(harness):
+def test_incremental_results_keep_summary(harness):
     h = harness
 
     async def scenario():
@@ -213,7 +212,7 @@ def test_incremental_results_keep_previous_summary(harness):
         latest = await run(h)
         assert horizon(RunHistory(h.store)) == latest["horizon"]
         control = h.store.get_run_control(run_id=latest["run"], index=0)
-        assert control.payload.input["previous_summary"] == first["output"]["summary"]
+        assert control.payload.input["summary"] == first["output"]["summary"]
         assert control.payload.input["begin"] == "run_5"
         with pytest.raises(ToolangError, match="nothing to compact"):
             await run(h)
@@ -349,12 +348,8 @@ def test_cancel_waiter_or_script_releases_permit(harness, after_admission):
             assert len(roots) == 1 and roots[0].status == "canceled"
         else:
             async with permit(path):
-                task = asyncio.create_task(run(h))
-                await asyncio.sleep(0.1)
-                assert not task.done()
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
+                with pytest.raises(ToolangError, match="already running"):
+                    await run(h)
                 assert h.store.get_thread(thread_id="compact_term_a") is None
         async with asyncio.timeout(2), permit(path):
             pass
@@ -364,7 +359,7 @@ def test_cancel_waiter_or_script_releases_permit(harness, after_admission):
 
 def test_run_output_is_not_a_published_compaction(harness):
     from tests.support.execution_fixtures import accept_run
-    from toolang.execution.types import FieldRef, Local, Output, RunRef, ThreadRef
+    from toolang.execution.types import Local, Output, RunRef, ThreadRef
 
     h = harness
     responses(h, end="run_3")
@@ -386,7 +381,7 @@ def test_run_output_is_not_a_published_compaction(harness):
     assert horizon(history) == first["horizon"]
     with pytest.raises((ValueError, KeyError)):
         history.read_compaction(
-            FieldRef.parse("run_forged/output"),
+            RunRef("run_forged"),
             ThreadRef("term_a"),
             tuple(RunRef(f"run_{i}") for i in range(10)),
         )
@@ -458,8 +453,8 @@ def test_forget_without_models_replaces_summary_and_survives_restart(harness):
         "end": "run_8",
         "summary": "Earlier history was intentionally forgotten.",
     }
-    assert "run" not in forgotten
-    assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == 1
+    assert forgotten["run"] == forgotten["horizon"]
+    assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == 2
     assert forgotten["horizon"] != first["horizon"]
     with closing(RunStore(h.store.db_path, read_only=True)) as reopened:
         assert horizon(RunHistory(reopened)) == forgotten["horizon"]
@@ -489,9 +484,7 @@ def test_forget_without_models_replaces_summary_and_survives_restart(harness):
         incremental = await run(h, before="run_9")
         control = h.store.get_run_control(run_id=incremental["run"], index=0)
         assert control.payload.input["begin"] == "run_8"
-        assert (
-            control.payload.input["previous_summary"] == forgotten["output"]["summary"]
-        )
+        assert control.payload.input["summary"] == forgotten["output"]["summary"]
 
     asyncio.run(scenario())
     assert_replayed(h.store.db_path, tracer.events)
@@ -532,8 +525,9 @@ def test_invalid_algorithm_options_fail_before_setup(
     "source",
     [
         "agic other() -> Text:\n  user: hello\n",
+        "agic compact(_: Text, thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text:\n  Return text.\n",
         "agic compact(thread: Text) -> Text:\n  user: {{thread}}\n",
-        "agic compact(thread: Text, begin: Text, end: Text, previous_summary: Text) -> Json:\n  Return an object.\n",
+        "agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Json:\n  Return an object.\n",
     ],
 )
 def test_external_signature_rejected_before_creating_run(harness, tmp_path, source):
@@ -632,13 +626,13 @@ def test_waiting_compact_rejects_a_summary_replaced_by_forget(
         first_wait = True
 
         @asynccontextmanager
-        async def delayed(path):
+        async def delayed(path, *, wait=True):
             nonlocal first_wait
             if first_wait:
                 first_wait = False
                 entered.set()
                 await release.wait()
-            async with original(path):
+            async with original(path, wait=wait):
                 yield
 
         monkeypatch.setattr(compact, "permit", delayed)
@@ -658,7 +652,7 @@ def test_waiting_compact_rejects_a_summary_replaced_by_forget(
         assert horizon(RunHistory(h.store)) == forgotten["horizon"]
         # A fresh request resolves the new marker and starts after forgotten roots.
         spec, _ = prepare(h, before="run_9")
-        assert spec.input["previous_summary"] == forgotten["output"]["summary"]
+        assert spec.input["summary"] == forgotten["output"]["summary"]
         assert spec.input["begin"] == "run_8"
 
     asyncio.run(scenario())
@@ -704,39 +698,66 @@ def test_unpublished_text_producer_cannot_replace_a_durable_result(
         assert output is not None and output.local.value == "Unpublished new summary."
 
 
-def test_first_forget_publishes_a_record_without_creating_any_run(harness):
-    from pydantic import TypeAdapter
-    from toolang.execution.records import CompactionControlPayload, ControlRecord
-    from toolang.execution.schemas import record_to_data
-    from toolang.execution.types import FieldRef, ControlRef
-
+def test_first_forget_publishes_one_model_free_summary_run(harness):
     result = asyncio.run(run(harness, algorithm="FORGET", before="run_8"))
-    assert "run" not in result
+    assert result["run"] == result["horizon"]
     assert not harness.adapter.invocations
-    assert RunHistory(harness.store).thread_view("compact_term_a").roots == ()
-    ref = FieldRef.parse(result["horizon"])
-    assert isinstance(ref.record, ControlRef)
-    record = harness.store.get_control(
-        target=str(ref.record.target), index=ref.record.index
+    history = RunHistory(harness.store)
+    roots = history.thread_view("compact_term_a").roots
+    assert len(roots) == 1 and roots[0].id == result["run"]
+    output = history.get_output(result["run"])
+    assert output is not None and output.local.value == result["output"]["summary"]
+    assert str(harness.store.get_thread(thread_id="term_a").horizon) == result["run"]
+    assert all(
+        c.kind != "compact"
+        for i in range(10)
+        for c in harness.store.list_run_controls(run_id=f"run_{i}")
     )
-    assert record is not None and isinstance(record.payload, CompactionControlPayload)
-    assert record.payload.result.to_data() == result["output"]
-    assert TypeAdapter(ControlRecord).validate_python(record_to_data(record)) == record
 
 
 @pytest.mark.parametrize(
-    "bounds", [("run_8", "run_3"), ("run_missing", "run_8"), ("run_0", "run_missing")]
+    "bounds",
+    [
+        ("run_8", "run_3"),
+        ("run_missing", "run_8"),
+        ("run_0", "run_missing"),
+        ("run_3", "run_8"),
+    ],
 )
 def test_invalid_publication_is_atomic(harness, bounds):
-    from toolang.base.types.compaction import CompactionResult
+    from tests.support.execution_fixtures import project_compaction
     from toolang.execution.types import RunRef
 
     first = asyncio.run(run(harness, algorithm="FORGET", before="run_3"))
+    ref = project_compaction(
+        harness.store,
+        thread="term_a",
+        begin=bounds[0],
+        end=bounds[1],
+        summary="Invalid coverage",
+    )
     before = tuple(harness.store._conn.iterdump())
     with pytest.raises(ValueError):
         harness.store.publish_compaction(
-            CompactionResult("term_a", bounds[0], bounds[1], "Invalid coverage"),
+            ref,
             roots=tuple(RunRef(f"run_{i}") for i in range(10)),
         )
     assert tuple(harness.store._conn.iterdump()) == before
     assert horizon(RunHistory(harness.store)) == first["horizon"]
+
+
+@pytest.mark.parametrize("algorithm", ["DEFAULT", "FORGET"])
+def test_cli_rejects_unfinished_compact_run_after_lock_is_released(harness, algorithm):
+    h = harness
+    project_run_start(
+        h.store,
+        run_id="run_stranded",
+        thread_id="compact_term_a",
+        origin="script",
+        input=Message.user("unfinished producer"),
+    )
+    with pytest.raises(ValueError, match="compaction already running: run_stranded"):
+        asyncio.run(run(h, algorithm=algorithm, before="run_8"))
+    assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == 1
+    assert not h.adapter.invocations
+    assert h.store.get_thread(thread_id="term_a").horizon is None

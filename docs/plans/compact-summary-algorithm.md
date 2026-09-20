@@ -1,45 +1,60 @@
 # Text-only compaction algorithms
 
-Status: revised design approved in conversation; no compatibility required.
+Status: approved. Replaces separate result records; no compatibility required.
 
-## Contract and ownership
+## Contract
 
-- `base/types/compaction.py` defines `CompactionResult(thread, begin, end,
-  summary)`. Every field is required nonempty text; coverage is `[begin, end)`.
-  Execution parses references and validates coverage against visible history.
-- Bundled and external `agic compact(thread: Text, begin: Text, end: Text,
-  previous_summary: Text) -> Text` only read history and return a summary.
-  An absent previous summary is `""`. The bundled prompt uses implicit user
-  prose, read-only history tools, `recall = none`, and `context: none`.
-- Model-call preflight owns automatic admission and boundary selection. The
-  compact tool implementation lives beside other execution tools. CLI owns
-  argument resolution and external source loading; its usage stays unchanged.
-- Execution shares algorithm invocation, cancellation, result assembly and
-  publication. Callers adopt results. Algorithms never update runtime state.
+```text
+compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text
+```
 
-## Persistence
+All inputs are required. `summary` is previous text or `""`; read `[begin, end)`
+and combine it with that text. `start` records complete coverage and is unused
+by the algorithm. Require `start <= begin < end`; initially `start == begin`.
+Bundled and external algorithms share this signature and isolated history tools.
+The bundled prompt uses implicit user prose.
 
-Store complete results directly as immutable `compaction` records in the
-existing compact Thread control log. A horizon selects the record's
-`payload/result`; assembly selects its summary. This reuses durable reference
-resolution without introducing a new record namespace or synthetic Run.
-The algorithm Run keeps its original Text output. FORGET publishes a result
-without any Run or model call; its CLI response omits `run`.
+Reconstruct `CompactionResult(thread, start, end, output)` from the successful
+summary Run's entry input and Text output. Its four fields are concrete,
+nonempty strings defined in base. No result wrapper, extra coverage metadata,
+or recursive summary chain is needed. Explicit intervals are valid results;
+published thread horizons must cover the complete prefix and retain a terminal root.
 
-Publication validates current coverage and terminal roots inside its write
-transaction. Keep the compaction permit across generation and publication;
-queued CLI requests reject changed roots or summary generations. Empty, failed,
-or canceled generation never publishes a result. Each published result is
-self-contained; remove legacy null normalization and producer-chain decoding.
+## Persistence and adoption
 
-## Acceptance and risks
+- `ThreadRecord.horizon` stores the latest published summary `RunRef` or null.
+  All horizon references identify a Run, not an output field.
+- CLI updates only thread.horizon. It rejects pending/running Runs in
+  `compact_<target>`; active target Runs are allowed outside the covered range.
+- Automatic `_toolang/compact` atomically updates thread.horizon and writes the
+  calling Run's existing compact control: `{horizon: run_summary}`, with its
+  tool Step as `triggered_by`.
+- New Runs snapshot thread.horizon. Active Runs adopt only their own controls;
+  adopting Steps record `preceded_by`. Replay uses these recorded facts.
+- FORGET creates one model-free summary Run returning the forgetting marker,
+  with the same coverage inputs and publication path.
+- Discovery reads thread.horizon, never scans for the latest successful producer.
+  Unpublished success does not change the horizon.
 
-Update execution types/records/store, history assembly, preflight integration,
-compact tool, CLI, and affected documentation/tests. Verify DEFAULT, external
-algorithms, FORGET, incremental coverage, invalid output, cancellation,
-concurrency, restart/replay, and post-compaction reasoning/output budgets.
-Run default offline checks and opt-in real-provider tests.
+## Concurrency and ownership
 
-Old Run-output horizons and old algorithm signatures are unsupported. Summary
-quality remains model-dependent. Full results remain immutable even when
-rewinding history makes their coverage ineligible.
+Keep database-and-target-thread `flock` through admission, generation, and
+publication. CLI rejects a busy lock without waiting, including the gap between
+producer completion and publication. Auto may wait, recheck preflight, and reuse
+an applicable published result. Both reject unfinished compact Runs left behind.
+
+Use short SQL transactions. Recheck captured coverage and producer validity;
+failed, empty, canceled, or stale results do not publish. Automatic publication
+and control creation commit or roll back together.
+
+Preflight owns admission and output/reasoning budgets; `execution/tools/compact.py`
+owns the tool; CLI owns argument/file resolution; execution reconstructs results;
+store/records own persistence. No leases or automatic recovery of stranded Runs.
+
+## Acceptance
+
+Touch base types, execution records/store/schemas, history/assembly, tool, CLI,
+prompts, and related tests/docs. Verify DEFAULT/file/FORGET, incremental and
+explicit ranges, active target Runs, busy compact rejection, cancellation,
+atomic rollback, restart/replay, and unchanged issued model calls. Run default
+checks and opt-in provider tests. Old persisted horizon formats are unsupported.

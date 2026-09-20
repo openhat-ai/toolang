@@ -617,10 +617,12 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     project_run_end(
         store, run_id="run_old", output=Output(Local("obsolete summary"), None)
     )
-    from toolang.base.types.compaction import CompactionResult
+    from tests.support.execution_fixtures import project_compaction
 
-    expected = CompactionResult("term_a", "run_a", "run_b", "earlier facts")
-    ref = store.publish_compaction(expected, roots=(RunRef("run_a"), RunRef("run_b")))
+    ref = project_compaction(
+        store, thread="term_a", begin="run_a", end="run_b", summary="earlier facts"
+    )
+    store.publish_compaction(ref, roots=(RunRef("run_a"), RunRef("run_b")))
     start(store, "run_failed", thread="compact_term_a")
     project_run_end(store, run_id="run_failed", status="failed")
     original = store_module._run_from_row

@@ -24,9 +24,7 @@ from toolang.execution.types import (
 
 def test_history_selection_shares_root_and_tail_caches_across_horizons():
     first, second = RunRef("run_ab12"), RunRef("run_cd34")
-    horizon = FieldRef.from_path(
-        ControlRef.for_thread("compact_thread", 1), "payload", "result"
-    )
+    horizon = RunRef("run_summary")
     loaded, tails = [], []
 
     def load(roots):
@@ -149,9 +147,7 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
     roots = (RunRef("run_one"), RunRef("run_two"), RunRef("run_three"))
     first, second = _control(1), _control(2, ServiceRecallTarget("service"), "2")
     controls = {c.ref: c for c in (first, second)}
-    horizon = FieldRef.from_path(
-        ControlRef.for_thread("compact_term_test", 1), "payload", "result"
-    )
+    horizon = RunRef("run_summary")
     reads = []
 
     def load(selected):
@@ -160,13 +156,8 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         return {root: deltas[root] for root in selected}
 
     def resolve(ref):
-        if ref.ref == horizon.select("local", "value"):
-            return {
-                "thread": "term_test",
-                "begin": None,
-                "end": str(roots[1]),
-                "summary": '<skill ref="skill/testing">far is not recall</skill>',
-            }
+        if ref.ref == FieldRef.from_path(horizon, "output", "local", "value"):
+            return '<skill ref="skill/testing">far is not recall</skill>'
         return controls[ref.ref.record].payload.content
 
     history = MessageHistory(

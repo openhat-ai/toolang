@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
 import fcntl
 from functools import lru_cache
 from pathlib import Path
@@ -13,13 +12,12 @@ from typing import TYPE_CHECKING
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.compaction import CompactionResult
-from toolang.lang.input import RunnableInput
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.state.builtin import prepare_builtin_state
 from toolang.state.state import AgentState
 from .assembly import prompts
-from .types import FieldRef, RunRef, ThreadRef, validate_compaction_coverage
+from .types import RunRef, ThreadRef, validate_compaction_coverage
 
 if TYPE_CHECKING:
     from .store import RunStore
@@ -28,7 +26,7 @@ if TYPE_CHECKING:
     from .events import RunTracer
 
 
-def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
+def available_horizon(store: RunStore, thread: str) -> RunRef | None:
     """Freeze applicable history at root creation, never while replaying a call."""
     if thread.startswith("compact_"):
         return None
@@ -42,7 +40,7 @@ def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
 
 
 @asynccontextmanager
-async def permit(path: Path) -> AsyncIterator[None]:
+async def permit(path: Path, *, wait: bool = True) -> AsyncIterator[None]:
     """A cancellable cross-process wait; never hold a SQLite transaction here."""
     with path.open("a+b") as lock:
         while True:
@@ -50,6 +48,8 @@ async def permit(path: Path) -> AsyncIterator[None]:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if not wait:
+                    raise ToolangError("compaction already running") from None
                 await asyncio.sleep(0.05)
         try:
             yield
@@ -73,34 +73,24 @@ def assemble_compaction(
     *,
     thread: ThreadRef,
     roots: Sequence[RunRef],
+    start: RunRef,
     begin: RunRef,
     end: RunRef,
-    previous: CompactionResult | None,
 ) -> CompactionResult:
     if not isinstance(summary, str):
         raise ValueError("compact summary must be text")
-    requested = CompactionResult(str(thread), str(begin), str(end), summary)
-    validate_compaction_coverage(requested, thread, roots)
-    if previous is not None:
-        validate_compaction_coverage(previous, thread, roots)
-        if previous.begin != str(roots[0]) or previous.end != str(begin):
-            raise ValueError("compact previous coverage must be a contiguous prefix")
-    return (
-        replace(requested, begin=previous.begin) if previous is not None else requested
-    )
+    result = CompactionResult(str(thread), str(start), str(end), summary)
+    validate_compaction_coverage(result, thread, roots)
+    if begin not in roots or not roots.index(start) <= roots.index(begin) < roots.index(
+        end
+    ):
+        raise ValueError("compact read range must be a nonempty suffix of its coverage")
+    return result
 
 
-def algorithm_input(
-    request: RunnableInput, previous: CompactionResult | None
-) -> RunnableInput:
-    return RunnableInput(
-        {
-            "thread": request["thread"],
-            "begin": request["begin"],
-            "end": request["end"],
-            "previous_summary": previous.summary if previous is not None else "",
-        }
-    )
+@lru_cache(maxsize=1)
+def forget_state() -> AgentState:
+    return prepare_builtin_state(prompts.load("defaults/forget.too"))
 
 
 async def execute_algorithm(
@@ -108,15 +98,11 @@ async def execute_algorithm(
     spec: RunSpec,
     *,
     roots: Sequence[RunRef],
-    previous: CompactionResult | None,
     tracer: RunTracer | None = None,
 ) -> tuple[str, CompactionOutput]:
     from .inspection.history import RunHistory
-    from .schemas import CompactionOutput
 
-    handle = executor.run(
-        replace(spec, input=algorithm_input(spec.input, previous)), tracer=tracer
-    )
+    handle = executor.run(spec, tracer=tracer)
     try:
         record = await handle
     except asyncio.CancelledError:
@@ -137,14 +123,7 @@ async def execute_algorithm(
         )
         raise ToolangError(f"compact Run {record.id}: {error}")
     reader = RunHistory(executor.store)
-    raw = reader.get_output(record.id)
-    result = assemble_compaction(
-        raw.local.value if raw is not None else None,
-        thread=ThreadRef.parse(str(spec.input["thread"])),
-        roots=roots,
-        begin=RunRef.parse(str(spec.input["begin"])),
-        end=RunRef.parse(str(spec.input["end"])),
-        previous=previous,
+    output = reader.read_compaction(
+        RunRef(record.id), ThreadRef.parse(str(spec.input["thread"])), roots
     )
-    ref = executor.store.publish_compaction(result, roots=roots)
-    return record.id, CompactionOutput(ref, result)
+    return record.id, output

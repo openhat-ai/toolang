@@ -341,7 +341,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
     asyncio.run(scenario())
 
 
-def test_compact_reads_history_pages_with_supplied_previous_summary(tmp_path):
+def test_compact_reads_history_pages_with_supplied_summary(tmp_path):
     from toolang.base.types.policy import RunBindings
     from toolang.common.time import utc_now
     from toolang.execution.compaction import compact_state, compact_tools
@@ -380,7 +380,9 @@ def test_compact_reads_history_pages_with_supplied_previous_summary(tmp_path):
                         bindings=RunBindings(
                             model="test/scripted", runnable="agic:compact"
                         ),
-                        input=RunnableInput({"thread": thread, **input}),
+                        input=RunnableInput(
+                            {"thread": thread, "start": oldest.id, **input}
+                        ),
                     )
                 )
 
@@ -396,7 +398,7 @@ def test_compact_reads_history_pages_with_supplied_previous_summary(tmp_path):
             previous = await run_compact(
                 begin=oldest.id,
                 end=first.id,
-                previous_summary="",
+                summary="",
             )
             assert previous.status == "succeeded"
             cursor = _ToolHistory(harness.store.db_path, thread).read_steps(
@@ -421,7 +423,7 @@ def test_compact_reads_history_pages_with_supplied_previous_summary(tmp_path):
                 ]
             )
             compact = await run_compact(
-                begin=first.id, end=last.id, previous_summary=prior["summary"]
+                begin=first.id, end=last.id, summary=prior["summary"]
             )
             assert compact.status == "succeeded", compact.error
             history = RunHistory(harness.store)
@@ -894,7 +896,7 @@ def test_cancel_before_oversized_first_call_still_has_a_canceled_step(tmp_path):
     asyncio.run(scenario())
 
 
-def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypatch):
+def test_automatic_publication_and_control_roll_back_together(tmp_path, monkeypatch):
     harness = seeded_harness(tmp_path)
 
     async def scenario():
@@ -916,20 +918,23 @@ def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypat
                 for c in harness.store.list_run_controls(run_id=root.id)
                 if isinstance(c.payload, CompactControlPayload)
             ]
-            assert len(controls) == 1 and controls[0].status == "applied"
+            assert controls == []
+            assert harness.store.get_thread(thread_id=thread).horizon is None
+            history = RunHistory(harness.store)
+            assert history.get_compaction(thread) is None
+            producers = history.thread_view(f"compact_{thread}").roots
+            assert len(producers) == 1 and producers[0].status == "succeeded"
             assert not [
                 s for s in harness.store.list_steps(run_id=root.id) if s.kind == "model"
             ]
-            harness.adapter._responses.append(reply("next"))
-            later = await harness.executor.run(spec(harness, thread, "next input"))
-            assert later.status == "succeeded"
-            assert [s.kind for s in harness.store.list_steps(run_id=later.id)] == [
-                "model"
-            ]
-            assert (
-                len(RunHistory(harness.store).thread_view(f"compact_{thread}").roots)
-                == 1
+            # A fresh attempt publishes a new summary; the unpublished Run is not reused.
+            harness.adapter._responses.extend(
+                [*compact_responses(thread, end), reply("next")]
             )
+            later = await harness.executor.run(spec(harness, thread, "next input"))
+            assert later.status == "succeeded", later.error
+            assert history.get_compaction(thread) is not None
+            assert len(history.thread_view(f"compact_{thread}").roots) == 2
 
     asyncio.run(scenario())
 
@@ -979,7 +984,7 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
                 run_id=history.thread_view(f"compact_{thread}").roots[-1].id, index=0
             )
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.input["previous_summary"] == previous.result.summary
+            assert control.payload.input["summary"] == previous.result.summary
             assert control.payload.input["begin"] == str(previous.result.end)
             text = str(harness.adapter.invocations[-1].call.messages)
             assert "Combined prefix." in text and "large output" not in text

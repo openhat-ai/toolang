@@ -133,9 +133,9 @@ class HistoryToolCursor:
 
 @dataclass(frozen=True)
 class CompactionOutput:
-    """The selected compact Run's typed output and its stable field reference."""
+    """A summary Run and its framework-assembled result."""
 
-    ref: FieldRef
+    ref: RunRef
     result: CompactionResult
 
 

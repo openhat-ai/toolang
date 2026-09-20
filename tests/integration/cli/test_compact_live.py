@@ -192,7 +192,7 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(
                     producer.payload, RunControlPayload
                 )
                 assert producer.payload.input["begin"] == roots[8].id
-                assert producer.payload.input["previous_summary"] == summary
+                assert producer.payload.input["summary"] == summary
             finally:
                 await executor.stop()
 

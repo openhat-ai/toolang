@@ -214,7 +214,7 @@ def test_protocol_authoring_is_conditional_and_points_to_details() -> None:
     assert "```" not in authoring
 
 
-@pytest.mark.parametrize("field", ["thread", "begin", "end", "previous_summary"])
+@pytest.mark.parametrize("field", ["thread", "summary", "start", "begin", "end"])
 def test_compact_requires_concrete_inputs_and_returns_only_text(field: str) -> None:
     from toolang.lang.input import resolve_runnable_input
 
@@ -228,9 +228,10 @@ def test_compact_requires_concrete_inputs_and_returns_only_text(field: str) -> N
     assert coerce_output("Notes.", agic.output) == "Notes."
     values = {
         "thread": "term_a",
+        "start": "run_a",
         "begin": "run_a",
         "end": "run_b",
-        "previous_summary": "",
+        "summary": "",
     }
     del values[field]
     with pytest.raises(ValueError, match=field):

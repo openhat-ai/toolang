@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter, ValidationInfo
 
-from toolang.base.types.compaction import CompactionResult
 from toolang.base.money import cost_text
 from toolang.base.types.message import (
     AudioPart,
@@ -179,13 +178,7 @@ def delta_from_data(data: object) -> tuple[MessageTemplate, ...]:
                 tag=tag,
                 recall=recall,
                 escape_text=escaped,
-                source=(
-                    ControlRef.parse(message["source"])
-                    if "@" in message["source"]
-                    else RunRef.parse(message["source"])
-                )
-                if "source" in message
-                else None,
+                source=RunRef.parse(message["source"]) if "source" in message else None,
             )
         )
     return tuple(messages)
@@ -303,7 +296,7 @@ class RunControlPayload:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
-    horizon: FieldRef | None = None
+    horizon: RunRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
@@ -347,17 +340,10 @@ class ReloadControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class CompactionControlPayload:
-    """A framework-published result, independent of an algorithm Run output."""
-
-    result: CompactionResult
-
-
-@dataclass(frozen=True, slots=True)
 class CompactControlPayload:
     """One published compaction made available for adoption."""
 
-    horizon: FieldRef
+    horizon: RunRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,19 +461,13 @@ RunScopedControlPayload = (
     | CancelControlPayload
     | RecallControlPayload
 )
-ThreadControlPayload = (
-    CreateControlPayload
-    | ForkControlPayload
-    | RewindControlPayload
-    | CompactionControlPayload
-)
+ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
 ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "retry": RetryControlPayload,
     "reload": ReloadControlPayload,
     "compact": CompactControlPayload,
-    "compaction": CompactionControlPayload,
     "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
@@ -555,6 +535,7 @@ class ThreadRecord:
     peer: ThreadPeer
     created_at: str
     updated_at: str
+    horizon: RunRef | None = None
 
     def __post_init__(self) -> None:
         if not valid_thread_id(self.id):
@@ -683,9 +664,7 @@ class ControlRecord:
     def __post_init__(self) -> None:
         ref = self.ref
         expected_scope = (
-            "thread"
-            if self.kind in {"create", "fork", "rewind", "compaction"}
-            else "run"
+            "thread" if self.kind in {"create", "fork", "rewind"} else "run"
         )
         valid_target = (
             isinstance(ref.target, ThreadRef)
@@ -994,7 +973,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             runnable=runnable,
             model=model,
             input=input_value,
-            horizon=FieldRef.parse(cast(str, payload["horizon"]))
+            horizon=RunRef.parse(cast(str, payload["horizon"]))
             if payload.get("horizon") is not None
             else None,
             model_request=model_request,
@@ -1008,13 +987,9 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         return ReloadControlPayload(
             state=_required_payload_text(payload, "state"),
         )
-    if kind == "compaction":
-        return CompactionControlPayload(
-            TypeAdapter(CompactionResult).validate_python(payload["result"])
-        )
     if kind == "compact":
         return CompactControlPayload(
-            horizon=FieldRef.parse(_required_payload_text(payload, "horizon")),
+            horizon=RunRef.parse(_required_payload_text(payload, "horizon")),
         )
     if kind == "execute":
         return ExecuteControlPayload(
@@ -1074,8 +1049,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         }
     if isinstance(payload, ReloadControlPayload):
         return {"state": payload.state}
-    if isinstance(payload, CompactionControlPayload):
-        return {"result": payload.result.to_data()}
     if isinstance(payload, CompactControlPayload):
         return {"horizon": str(payload.horizon)}
     if isinstance(payload, ExecuteControlPayload):

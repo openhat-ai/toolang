@@ -24,8 +24,8 @@ from toolang.execution.compaction import (
     compact_tools,
     permit,
     execute_algorithm,
+    forget_state,
 )
-from toolang.execution.compaction import assemble_compaction
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunRef, ThreadRef
@@ -73,11 +73,11 @@ def compact_runnable() -> AgicDecl:
     return runnable
 
 
-def _program(algorithm: str) -> AgentState | None:
+def _program(algorithm: str) -> AgentState:
     if algorithm == "DEFAULT":
         return compact_state()
     if algorithm == "FORGET":
-        return None
+        return forget_state()
     path = Path(algorithm).expanduser().resolve()
     if path.suffix != ".too":
         raise ToolangError("compact algorithm must be DEFAULT, FORGET, or a .too file")
@@ -95,12 +95,13 @@ def _program(algorithm: str) -> AgentState | None:
 
     if (
         runnable is None
+        or runnable.input is not None
         or runnable.output != "Text"
         or signature(runnable) != signature(expected)
     ):
         raise ToolangError(
-            "compact algorithm requires agic compact(thread: Text, begin: Text, "
-            "end: Text, previous_summary: Text) -> Text"
+            "compact algorithm requires agic compact(thread: Text, summary: Text, "
+            "start: Text, begin: Text, end: Text) -> Text"
         )
     return state
 
@@ -236,20 +237,21 @@ def _prepare(
         "thread": thread,
         "begin": begin,
         "end": end,
-        "previous_summary": previous.result.summary
-        if reuse and previous is not None
-        else "",
+        "start": previous.result.begin if reuse and previous is not None else begin,
+        "summary": previous.result.summary if reuse and previous is not None else "",
     }
+    if forget:
+        resolved["_"] = "Earlier history was intentionally forgotten."
     request = (
         None if forget else select_compact_model(setup.models, setup.compact_model)
     )
     return RunSpec(
         setup=replace(setup, tools=compact_tools()),
-        state=program if program is not None else compact_state(),
+        state=program,
         thread=f"compact_{thread}",
         bindings=RunBindings(
             model=request.ref if request is not None else None,
-            runnable="agic:compact",
+            runnable="flow:forget" if forget else "agic:compact",
         ),
         model_request=request,
         limits=setup.limits,
@@ -294,7 +296,8 @@ async def _run(
         return tuple(RunRef(run.id) for run in current)
 
     lock = store.db_path.with_name(f"{store.db_path.name}.{thread}.compact.lock")
-    async with permit(lock):
+    async with permit(lock, wait=False):
+        store.require_idle_compactor(thread)
         check_range()
         current = history.get_compaction(thread)
         if (current.ref if current is not None else None) != summary_ref:
@@ -306,24 +309,6 @@ async def _run(
                 store.create_thread(
                     thread_id=spec.thread, origin="script", created_at=utc_now()
                 )
-        prior = (
-            previous.result
-            if algorithm != "FORGET"
-            and previous is not None
-            and spec.input["begin"] == previous.result.end
-            else None
-        )
-        if algorithm == "FORGET":
-            result = assemble_compaction(
-                "Earlier history was intentionally forgotten.",
-                thread=ThreadRef.parse(thread),
-                roots=check_range(),
-                begin=RunRef(str(spec.input["begin"])),
-                end=RunRef(str(spec.input["end"])),
-                previous=None,
-            )
-            ref = store.publish_compaction(result, roots=check_range())
-            return {"horizon": str(ref), "output": result.to_data()}
         executor = RunExecutor(store, ids)
         tracer = ScriptRunPresenter(
             run_id=None, operation="compact", max_width=max_width
@@ -331,7 +316,7 @@ async def _run(
         executor.start()
         try:
             producer, output = await execute_algorithm(
-                executor, spec, roots=check_range(), previous=prior, tracer=tracer
+                executor, spec, roots=check_range(), tracer=tracer
             )
         except (ValueError, TypeError) as exc:
             raise ToolangError(f"invalid summary: {exc}") from exc
@@ -340,6 +325,7 @@ async def _run(
                 await executor.stop()
             finally:
                 tracer.close()
+        store.publish_compaction(output.ref, roots=check_range())
         return {
             "run": producer,
             "horizon": str(output.ref),

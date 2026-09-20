@@ -1,4 +1,4 @@
-agic compact(thread: Text, begin: Text, end: Text, previous_summary: Text) -> Text:
+agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text:
   recall = none
   tools = history/*
 
@@ -19,5 +19,5 @@ agic compact(thread: Text, begin: Text, end: Text, previous_summary: Text) -> Te
   Return only the summary text. If the range cannot be read completely, return
   an empty string. Do not discover or read history outside the requested range.
 
-  Previous summary (empty for the first compaction):
-  {{previous_summary}}
+  Previous summary (empty text means no supplied content):
+  {{summary}}

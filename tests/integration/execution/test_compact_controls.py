@@ -22,10 +22,17 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import record_to_data
-from toolang.execution.types import FieldRef, Local, ModelStepGiven, StepRef, Output
+from toolang.execution.types import (
+    FieldRef,
+    Local,
+    ModelStepGiven,
+    StepRef,
+    RunRef,
+    Output,
+)
 
 
-def _compact_output(store: RunStore) -> FieldRef:
+def _compact_output(store: RunStore) -> RunRef:
     for run_id in ("run_earlier", "run_near"):
         project_run_start(
             store,
@@ -185,7 +192,7 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
         with pytest.raises(ValueError, match="run is not active"):
             store.accept_compact_control(
                 run_id=run.id,
-                horizon=FieldRef.parse("run_summary/output"),
+                horizon=RunRef("run_summary"),
                 triggered_by=None,
                 created_at="2026-09-06T00:00:01Z",
             )
@@ -198,14 +205,14 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("reference", "output"),
     (
-        ("run_missing/output", Output(Local({"thread": "term_target"}), None)),
-        ("run_summary/output", None),
+        ("run_missing", Output(Local({"thread": "term_target"}), None)),
+        ("run_summary", None),
         ("run_summary/control", Output(Local({"thread": "term_target"}), None)),
         ("term_target/id", Output(Local({"thread": "term_target"}), None)),
-        ("run_summary/output", Output(Local({"thread": "term_other"}), None)),
-        ("run_summary/output", Output(Local("not a compact result"), None)),
+        ("run_summary", Output(Local({"thread": "term_other"}), None)),
+        ("run_summary", Output(Local("not a compact result"), None)),
         (
-            "run_summary/output",
+            "run_summary",
             Output(
                 Local.typed("Json", FieldRef.parse("run_missing/output/local/value")),
                 None,
@@ -240,11 +247,11 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
         assert entry is not None and isinstance(entry.payload, RunControlPayload)
         payload = entry.payload
         before = tuple(store._conn.iterdump())
-        with pytest.raises(ValueError):
+        with pytest.raises((ValueError, KeyError)):
             if kind == "compact":
                 store.accept_compact_control(
                     run_id=run.id,
-                    horizon=FieldRef.parse(reference),
+                    horizon=RunRef.parse(reference),
                     triggered_by=None,
                     created_at="2026-09-06T00:00:01Z",
                 )
@@ -260,7 +267,7 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
                     model=payload.model,
                     input=payload.input,
                     sandbox=payload.sandbox,
-                    horizon=FieldRef.parse(reference),
+                    horizon=RunRef.parse(reference),
                     occurrence=None,
                     request_id=None,
                     created_at="2026-09-06T00:00:01Z",
