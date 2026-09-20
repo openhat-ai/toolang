@@ -24,7 +24,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import Model, Reasoning
-from toolang.common.immutable import mutable_data
+from ._payload import request_options
 from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
@@ -163,7 +163,7 @@ def generate_content_payload(
         if request.output_schema is not None and native_schema is None
         else request.instructions
     )
-    options = mutable_data(model._toolang.route.options)
+    options = request_options(model._toolang.route.options)
     payload: dict[str, object] = {
         "contents": [
             _encode_message(
@@ -454,11 +454,11 @@ def _generate_headers(
     environ: Mapping[str, str],
 ) -> dict[str, str]:
     api_key = credential_value(model._toolang.route.env, environ=environ)
-    if not api_key:
+    if not api_key and model._toolang.route.env != ():
         raise ToolangError("Generate Content adapter requires a resolved API key")
     return {
         "content-type": "application/json",
-        "x-goog-api-key": api_key,
+        **({"x-goog-api-key": api_key} if api_key else {}),
         **model._toolang.route.headers,
     }
 

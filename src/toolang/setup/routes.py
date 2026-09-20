@@ -114,7 +114,9 @@ def resolve_provider(
         api=_resolve_api(
             provider.api,
             environ=environ,
-            default=adapter.default_api if adapter else None,
+            default=_default_api(
+                adapter, npm=provider.npm if not provider._toolang.adapter else None
+            ),
         ),
         env=satisfied,
         headers=cast(Mapping[str, str], _convention_block(provider.id)["headers"]),
@@ -130,7 +132,7 @@ def resolve_provider(
             api=_resolve_api(
                 _optional_text(override.get("api")) or provider.api,
                 environ=environ,
-                default=implementation.default_api if implementation else None,
+                default=_default_api(implementation, npm=_model_npm(provider, model)),
             ),
             env=satisfied,
             headers=model_headers(provider, model),
@@ -142,6 +144,28 @@ def resolve_provider(
         models=models,
         _toolang=replace(provider._toolang, route=default_route),
     )
+
+
+def _default_api(adapter: ModelAdapter | None, *, npm: str | None) -> str | None:
+    mapped = _NPM_ROUTES.get(npm or "")
+    if mapped is not None and mapped[1] is not None:
+        return mapped[1]
+    return adapter.default_api if adapter is not None else None
+
+
+def _model_npm(provider: Provider, model: Model) -> str | None:
+    """Use npm defaults only when npm selects the model's adapter."""
+
+    override = model.provider or {}
+    declared = override.get("_toolang")
+    if isinstance(declared, ProviderToolang) and declared.adapter:
+        return None
+    if _normalized_shape(override.get("shape")) is not None:
+        return None
+    npm = _optional_text(override.get("npm"))
+    if npm is not None:
+        return npm
+    return provider.npm if not provider._toolang.adapter else None
 
 
 def provider_adapter(provider: Provider) -> str | None:

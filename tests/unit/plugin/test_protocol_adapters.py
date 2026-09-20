@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 import json
@@ -1519,3 +1520,87 @@ def test_adapter_payload_detaches_nested_route_options(adapter):
     assert json.loads(json.dumps(payload))["custom"] == {"items": ["original"]}
     cast(dict[str, Any], payload["custom"])["items"].append("changed")
     assert model._toolang.route.options["custom"] == {"items": ("original",)}
+
+
+@pytest.mark.parametrize(
+    "adapter", ["responses", "chat_completions", "messages", "generate_content"]
+)
+@pytest.mark.parametrize("cached", [False, True])
+def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
+    adapter, cached, tmp_path
+):
+    import httpx
+
+    from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+    from toolang.base.types.model import ModelCatalogSnapshot
+    from toolang.setup.cache import ModelCatalogCache
+
+    raw = json.loads(
+        '{"test":{"id":"test","name":"Test","npm":"@ai-sdk/openai","env":[],"models":{"one":'
+        '{"id":"one","name":"One","modalities":{},"limit":{},"cost":{"input":0.123456789012345678901},'
+        '"provider":{"body":{"temperature":0.7,"custom":{"values":[0.25]}}}}}}}',
+        parse_float=Decimal,
+    )
+    provider = parse_model_catalog_data(raw)["test"]
+    if cached:
+        snapshot = ModelCatalogSnapshot(
+            providers={"test": provider},
+            models=tuple(provider.models.values()),
+            revision="test",
+        )
+        ModelCatalogCache(tmp_path).store_source(
+            "models_dev", revision="test", snapshot=snapshot
+        )
+        loaded = ModelCatalogCache(tmp_path).load_source("models_dev", revision="test")
+        assert loaded is not None
+        provider = loaded.providers["test"]
+    model = provider.models["one"]
+    assert model.provider is not None
+    model = model.with_route(
+        _route(
+            adapter=adapter,
+            options=dict(cast(Mapping[str, object], model.provider["body"])),
+        )
+    )
+    request = ModelCall("", [Message.user("hello")], max_output_tokens=128)
+    if adapter == "responses":
+        payload = responses.response_payload(model, request, stateful=False)
+    elif adapter == "chat_completions":
+        payload = chat_completions.chat_completion_payload(model, request, stream=False)
+    elif adapter == "messages":
+        payload = messages_payload(model, request, stream=False)
+    else:
+        payload = generate_content_payload(model, request)
+    wire = json.loads(
+        httpx.Request("POST", "https://example.invalid", json=payload).content
+    )
+    assert wire["temperature"] == 0.7
+    assert wire["custom"]["values"] == [0.25]
+    assert model._toolang.route.options["temperature"] == Decimal("0.7")
+    assert model.cost == {"input": Decimal("0.123456789012345678901")}
+
+
+@pytest.mark.parametrize(
+    "build_headers,auth_header",
+    [
+        (messages_adapter._headers, "x-api-key"),
+        (generate_content_adapter._generate_headers, "x-goog-api-key"),
+    ],
+)
+def test_http_adapters_allow_explicit_no_auth_routes(build_headers, auth_header):
+    model = _model().with_route(_route(api="http://localhost:8000/v1"))
+    assert model._toolang.ready
+    assert auth_header not in build_headers(model, environ={})
+    declared = model.with_route(
+        replace(model._toolang.route, headers={auth_header: "custom"})
+    )
+    assert build_headers(declared, environ={})[auth_header] == "custom"
+    for env in (None, ("TEST_API_KEY",)):
+        required = model.with_route(replace(model._toolang.route, env=env))
+        with pytest.raises(ToolangError, match="requires a resolved API key"):
+            build_headers(required, environ={})
+    required = model.with_route(replace(model._toolang.route, env=("TEST_API_KEY",)))
+    assert (
+        build_headers(required, environ={"TEST_API_KEY": "secret"})[auth_header]
+        == "secret"
+    )

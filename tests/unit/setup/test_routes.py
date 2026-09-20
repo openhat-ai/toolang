@@ -419,3 +419,51 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
     assert ready.models["model"]._toolang.ready is True
     assert ready._toolang.route.adapter == "responses"
     assert ready.models["model"]._toolang.route.adapter == "messages"
+
+
+def test_resolver_uses_npm_service_endpoints_for_provider_and_model_routes():
+    provider = _provider("gateway", npm="@ai-sdk/groq", env=())
+    resolved = resolve_provider(provider, adapters=_adapters(), environ={})
+    assert resolved._toolang.route.api == "https://api.groq.com/openai/v1"
+    assert resolved.models["model"]._toolang.ready
+    assert resolved.models["model"]._toolang.route.api == resolved._toolang.route.api
+
+    model = replace(provider.models["model"], provider={"npm": "@ai-sdk/mistral"})
+    provider = replace(provider, models={"model": model})
+    resolved = resolve_provider(provider, adapters=_adapters(), environ={})
+    assert resolved.models["model"]._toolang.route.api == "https://api.mistral.ai/v1"
+    assert resolved.models["model"]._toolang.ready
+    explicit = resolve_provider(
+        replace(provider, api="https://catalog.test/v1"),
+        adapters=_adapters(),
+        environ={},
+    )
+    assert explicit.models["model"]._toolang.route.api == "https://catalog.test/v1"
+    model = replace(
+        model, provider={"npm": "@ai-sdk/mistral", "api": "https://model.test/v1"}
+    )
+    explicit = resolve_provider(
+        replace(provider, api="https://catalog.test/v1", models={"model": model}),
+        adapters=_adapters(),
+        environ={},
+    )
+    assert explicit.models["model"]._toolang.route.api == "https://model.test/v1"
+
+
+def test_resolver_does_not_apply_npm_endpoints_to_explicit_adapter_declarations():
+    provider = _provider("custom", npm="@ai-sdk/groq", env=())
+    declared = replace(provider, _toolang=ProviderToolang(adapter="chat_completions"))
+    resolved = resolve_provider(declared, adapters=_adapters(), environ={})
+    assert resolved._toolang.route.api is None
+    assert resolved.models["model"]._toolang.route.api is None
+    for declaration in (
+        {"shape": "chat_completions"},
+        {"_toolang": ProviderToolang(adapter="chat_completions")},
+    ):
+        model = replace(
+            provider.models["model"], provider={"npm": "@ai-sdk/mistral", **declaration}
+        )
+        resolved = resolve_provider(
+            replace(provider, models={"model": model}), adapters=_adapters(), environ={}
+        )
+        assert resolved.models["model"]._toolang.route.api is None

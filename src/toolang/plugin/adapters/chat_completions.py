@@ -24,7 +24,7 @@ from toolang.base.types.message import (
     message_summary,
 )
 from toolang.base.types.model import Model, Reasoning
-from toolang.common.immutable import mutable_data
+from ._payload import request_options
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -285,7 +285,7 @@ def chat_completion_payload(
     }
     if request.tools:
         payload["tools"] = [tool_payload(item) for item in request.tools]
-    options = mutable_data(model._toolang.route.options)
+    options = request_options(model._toolang.route.options)
     if options:
         payload.update(options)
     _apply_structured_output(

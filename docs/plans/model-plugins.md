@@ -476,12 +476,12 @@ The cache is internal to the setup. Its contract is only:
     call data; each is dropped, moved to its owner, or computed where it is
     used. `mode` is provider-declared catalog data (58 published models use it),
     so it stays.
-12. Effective `headers` and `options` are merged per model into the call-time
+12. Effective `headers` and `options` are merged by setup into each model's
     `Model._toolang.route`, without new durable record fields. Raw catalog
     provider blocks remain on the model and in catalog exports.
-13. `api_key` is never a record field. The setup trims the process environment
-    to the names a provider declares and passes that mapping through the call
-    site; the adapter selects the credential from the mapping and never reads the
+13. `api_key` is never a record field. The executor trims the run-pinned setup
+    environment to the names the resolved route declares and passes that mapping
+    through the call site; the adapter selects the credential from the mapping and never reads the
     process environment. The same rule answers availability inspection.
 14. Catalog provenance is not stored per record. `Model` carries no
     `catalog`/`catalog_revision`; the published setup marks it, and
@@ -500,7 +500,7 @@ resolution, inspection, execution, or accounting today.
 | `knowledge` | model | parsed, exported, never read | only appears in `parsing.py` and `Model.to_data()` |
 | `interleaved` | model | parsed, exported, never read | 1003 published models declare `{"field": "reasoning_content"}` |
 | `limit` keys other than `context`, `output` | model | only `context` and `output` are read | `setup/models.py`, `plugin/models/collections.py` |
-| `cost` keys other than `input`, `output`, `tiers` | model | `cache_read`, `cache_write`, `context_over_200k`, `reasoning`, `audio` parsed, never read | `execution/accounting.py` reads `input`/`output`/`tiers` |
+| `cost.context_over_200k`, `cost.audio` | model | parsed, exported, never read | Accounting reads `input`, `output`, `tiers`, `cache_read`, `cache_write`, `reasoning`, `input_audio`, and `output_audio` |
 | `doc` | provider | parsed, exported, never read | only `Provider.to_data()` |
 | unknown top-level fields | provider, model | ignored at parse time | not modelled by any type |
 
