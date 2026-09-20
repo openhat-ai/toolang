@@ -46,12 +46,10 @@ def select_compact_model(
     """Select once from allowed models, independently of the normal Run model."""
     if override is not None and override.identity == "unset":
         raise ToolangError("automatic compaction is disabled by compact.model")
-    eligible = models.match("*[tool_call; structured_output]")
+    eligible = models.match("*[tool_call]")
     if override is None:
         if not eligible.entries:
-            raise ToolangError(
-                "compaction requires an allowed model with tool calls and structured output"
-            )
+            raise ToolangError("compaction requires an allowed model with tool calls")
         request = ModelRequest(eligible.entries[0].ref)
     else:
         request = apply_model_override(None, None, override)
@@ -59,7 +57,7 @@ def select_compact_model(
         if not eligible.contains(request.ref):
             raise ToolangError(
                 f"compact model {request.ref!r} must be available, allowed, and support "
-                "tool calls and structured output"
+                "tool calls"
             )
     model = eligible.resolve(request.ref)
     resolve_model_reasoning(model, request.reasoning)

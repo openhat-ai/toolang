@@ -24,12 +24,15 @@ from toolang.state.state import AgentState
 from ..inspection.history import RunHistory
 from ..records import CompactControlPayload
 from ..assembly.tool_replies import control_summary
-from ..types import FieldRef, RunRef, StepRef, ThreadRef
+from ..types import CompactionResult, FieldRef, RunRef, StepRef, ThreadRef
+from ..compaction import assemble_compaction
+from toolang.lang.types import Value
 from ..assembly import prompts
 
 if TYPE_CHECKING:
     from ..store import RunStore
     from .runs.agic import _AgicState
+    from .executor import RunSpec
 
 
 def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
@@ -68,6 +71,43 @@ def compact_state() -> AgentState:
 def compact_tools() -> ToolCollection:
     """The internal program's read-only tools, independent of user selectors."""
     return ToolCollection.from_tools(load_tools(toolsets=("history",)))
+
+
+@lru_cache(maxsize=1)
+def result_state() -> AgentState:
+    return prepare_builtin_state(prompts.load("defaults/compaction-result.too"))
+
+
+def algorithm_input(
+    request: RunnableInput, previous: CompactionResult | None
+) -> RunnableInput:
+    return RunnableInput(
+        {
+            "thread": request["thread"],
+            "begin": request["begin"],
+            "end": request["end"],
+            "previous_summary": previous.summary if previous is not None else "",
+        }
+    )
+
+
+def result_spec(
+    spec: RunSpec, result: CompactionResult, producer: RunRef | None = None
+) -> RunSpec:
+    """Publish a validated object through an ordinary model-free Run."""
+    values: dict[str, Value] = {
+        key: value for key, value in spec.input.items() if key != "_"
+    }
+    values["_"] = result.to_data()
+    if producer is not None:
+        values["summary_run"] = str(producer)
+    return replace(
+        spec,
+        state=result_state(),
+        bindings=RunBindings(runnable="flow:result"),
+        model_request=None,
+        input=RunnableInput(values),
+    )
 
 
 async def execute(
@@ -134,26 +174,46 @@ async def execute(
             # This isolated program has only read-only history tools. In particular
             # it cannot reload into the human's State or transfer out of compact.
             setup = replace(frame.run.setup, models=models, tools=compact_tools())
+            spec = RunSpec(
+                setup=setup,
+                state=compact_state(),
+                thread=compact_thread,
+                bindings=RunBindings(model=request.ref, runnable="agic:compact"),
+                limits=frame.run.limits,
+                model_request=request,
+                input=RunnableInput(resolved),
+            )
+            previous = output.result if reuse and output is not None else None
             handle = execution.executor.run(
-                RunSpec(
-                    setup=setup,
-                    state=compact_state(),
-                    thread=compact_thread,
-                    bindings=RunBindings(model=request.ref, runnable="agic:compact"),
-                    limits=frame.run.limits,
-                    model_request=request,
-                    input=RunnableInput(resolved),
-                )
+                replace(spec, input=algorithm_input(spec.input, previous))
             )
             try:
                 record = await handle
+                if record.status != "succeeded":
+                    raise ToolangError(f"compact Run {record.id} {record.status}")
+                raw = reader.get_output(record.id)
+                try:
+                    result = assemble_compaction(
+                        raw.local.value if raw is not None else None,
+                        thread=target,
+                        roots=history.roots,
+                        request=spec.input,
+                        previous=previous,
+                    )
+                except (ValueError, TypeError) as exc:
+                    raise ToolangError(f"invalid compact summary: {exc}") from exc
+                handle = execution.executor.run(
+                    result_spec(spec, result, RunRef(record.id))
+                )
+                record = await handle
+                if record.status != "succeeded":
+                    raise ToolangError(
+                        f"compact result Run {record.id} {record.status}"
+                    )
             except asyncio.CancelledError:
-                # This request owns the admitted work; other waiters own no Run.
                 handle.cancel()
                 await handle
                 raise
-            if record.status != "succeeded":
-                raise ToolangError(f"compact Run {record.id} {record.status}")
             try:
                 output = reader.read_compaction(
                     FieldRef.from_path(RunRef(record.id), "output"),

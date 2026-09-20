@@ -6,7 +6,6 @@ from xml.etree import ElementTree
 
 import pytest
 
-from toolang.base.errors import ToolangError
 from toolang.execution.assembly import prompts
 from toolang.execution.executor.compact import compact_state
 from toolang.execution.recall import recall_revisions
@@ -215,16 +214,24 @@ def test_protocol_authoring_is_conditional_and_points_to_details() -> None:
     assert "```" not in authoring
 
 
-@pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])
-def test_compact_declares_one_agic_with_structured_coverage(field: str) -> None:
+@pytest.mark.parametrize("field", ["thread", "begin", "end", "previous_summary"])
+def test_compact_requires_concrete_inputs_and_returns_only_text(field: str) -> None:
+    from toolang.lang.input import resolve_runnable_input
+
     program = compact_state().modules["agent"]
-    assert not program.flows
+    assert not program.flows and not program.structs
     assert len(program.agics) == 1
     agic = program.find_agic("compact")
-    assert agic is not None and agic.output is not None
-    structs = {s.name: s for s in program.structs}
-    output = {"thread": "term_a", "begin": None, "end": "run_b", "summary": "Notes."}
-    coerce_output(output, agic.output, structs=structs)
-    del output[field]
-    with pytest.raises(ToolangError, match=f"missing Compacted fields: {field}"):
-        coerce_output(output, agic.output, structs=structs)
+    assert agic is not None and agic.output == "Text"
+    assert agic.instruct is None
+    assert all(message.role == "user" for message in agic.messages)
+    assert coerce_output("Notes.", agic.output) == "Notes."
+    values = {
+        "thread": "term_a",
+        "begin": "run_a",
+        "end": "run_b",
+        "previous_summary": "",
+    }
+    del values[field]
+    with pytest.raises(ValueError, match=field):
+        resolve_runnable_input(agic, values)

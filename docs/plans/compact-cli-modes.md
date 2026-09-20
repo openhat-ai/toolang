@@ -16,8 +16,8 @@ toolang AGENT compact --algorithm FORGET thread=THREAD before=RUN
   `agic compact` with existing model selection.
 - `--algorithm FILE`: execute `agic compact` from a local UTF-8 `.too` file.
   Resolve and read the file once before admission. Require the existing compact
-  input signature (`thread`, `begin`, `end`, `bare`, `previous`); validate its
-  returned value with the framework contract, independently of authored types.
+  text-only signature defined in [Text-only algorithms](compact-summary-algorithm.md).
+  The framework assembles the complete result from frozen coverage and returned text.
   Use the target agent's store/model settings and isolated history tools, as
   the bundled producer does. No implicit entry selection, extra arguments,
   adjacent project configuration, or extra tool permissions.
@@ -48,7 +48,7 @@ Store each successful result in `compact_<thread>` and return the existing
 
 Forget produces `CompactionResult` with the fixed nonempty summary
 `Earlier history was intentionally forgotten.` It keeps the existing type and
-validator unchanged. Persist it through a model-free internal passthrough flow
+validator unchanged. Persist it through a shared model-free internal result flow
 and the normal Run lifecycle, with explicit thread/begin/end/bare inputs;
 do not fabricate successful Run records directly. Original records remain
 inspectable. New model calls adopting this horizon see only the marker and

@@ -189,14 +189,19 @@ toolang alice compact --algorithm FORGET thread=THREAD before=RUN
 `before` is exclusive: that Run and later history remain uncompressed. Script
 modes default to retaining the latest terminal root and automatically reuse a
 valid previous summary. The public inputs are only `thread` and `before`;
-`begin`, `end`, `bare`, and `previous` are internal producer inputs.
+`begin`, `end`, `bare`, and `previous` are not public CLI inputs.
 
 An external UTF-8 `.too` file must declare
-`agic compact(thread: Text, begin?: Text, end?: Text, bare?: Boolean, previous?: Text)`.
+`agic compact(thread: Text, begin: Text, end: Text, previous_summary: Text) -> Text`.
 It runs with the selected agent's model settings and isolated history tools.
-The framework validates its `{thread, begin, end, summary}` output regardless
-of its authored return type. `--model`, `--catalog`, and `--limit` retain their
-existing selection and override semantics for both script modes.
+The algorithm receives concrete read bounds and the validated previous summary
+text (empty on the first call). It returns only nonempty summary text; it never
+discovers previous summaries or chooses the final coverage. The framework
+constructs `{thread, begin, end, summary}` and persists it through a separate
+model-free result Run linked to the producer by `summary_run`. The horizon
+points to this full object; the producer's original text output is preserved. `--model`, `--catalog`, and `--limit` retain their
+existing selection and override semantics for both script modes. A compact
+model requires tool calls; native structured output is no longer required.
 
 `FORGET` requires an explicit boundary, rejects `--model`, and makes no model
 calls. It replaces the earlier prefix and any previous summary with

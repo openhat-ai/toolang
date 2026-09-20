@@ -1,11 +1,12 @@
 # Compaction contract and model-call admission
 
-Status: approved for implementation.
+Status: implemented. Producer details are superseded by
+[Text-only compaction algorithms](compact-summary-algorithm.md).
 
 ## Scope
 
 Define a fixed framework result and safe model-call assembly/admission for
-CLI and automatic compaction. Leave `compact.too` and summary quality unchanged.
+CLI and automatic compaction. The original scope left `compact.too` unchanged.
 Current consumers independently read dictionaries; input admission does not
 reserve output, and uncalibrated calls skip output clipping.
 

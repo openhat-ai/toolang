@@ -56,3 +56,26 @@ def decode_compaction(
     result = CompactionResult(thread, expected_begin, requested_end, value["summary"])
     result.validate_coverage(thread, roots)
     return result
+
+
+def assemble_compaction(
+    summary: object,
+    *,
+    thread: ThreadRef,
+    roots: Sequence[RunRef],
+    request: Mapping[str, object],
+    previous: CompactionResult | None = None,
+) -> CompactionResult:
+    """Only the framework selects coverage; the algorithm supplies summary text."""
+    return decode_compaction(
+        {
+            "thread": str(thread),
+            "begin": str(previous.begin) if previous is not None else request["begin"],
+            "end": request["end"],
+            "summary": summary,
+        },
+        thread=thread,
+        roots=roots,
+        request=request,
+        previous=previous,
+    )

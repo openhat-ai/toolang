@@ -98,3 +98,48 @@ def test_incremental_coverage_must_advance_before_merging(end):
     request = {**REQUEST, "begin": "run_2", "end": end, "previous": "run_old/output"}
     with pytest.raises(ValueError, match="nonempty|advance"):
         decode({**OUTPUT, "begin": None, "end": end}, request, decode())
+
+
+@pytest.mark.parametrize(
+    "summary", ['Quoted "facts"\n中文 {{literal}}', '{"thread":"term_other"}']
+)
+def test_framework_assembles_coverage_without_interpreting_summary(summary):
+    from toolang.execution.compaction import assemble_compaction
+
+    result = assemble_compaction(summary, thread=THREAD, roots=ROOTS, request=REQUEST)
+    assert result == CompactionResult(THREAD, ROOTS[0], ROOTS[2], summary)
+
+
+@pytest.mark.parametrize("summary", [None, {}, [], 1, "", " \n"])
+def test_framework_rejects_invalid_algorithm_output(summary):
+    from toolang.execution.compaction import assemble_compaction
+
+    with pytest.raises((ValueError, TypeError)):
+        assemble_compaction(summary, thread=THREAD, roots=ROOTS, request=REQUEST)
+
+
+def test_incremental_algorithm_gets_text_but_result_retains_complete_coverage():
+    from toolang.execution.compaction import assemble_compaction
+    from toolang.execution.executor.compact import algorithm_input
+    from toolang.lang.input import RunnableInput
+
+    previous = decode()
+    request = RunnableInput(
+        {
+            "thread": str(THREAD),
+            "begin": "run_2",
+            "end": "run_3",
+            "previous": "run_old/output",
+            "bare": False,
+        }
+    )
+    assert dict(algorithm_input(request, previous)) == {
+        "thread": str(THREAD),
+        "begin": "run_2",
+        "end": "run_3",
+        "previous_summary": previous.summary,
+    }
+    result = assemble_compaction(
+        "Combined.", thread=THREAD, roots=ROOTS, request=request, previous=previous
+    )
+    assert result.begin == ROOTS[0] and result.end == ROOTS[3]
