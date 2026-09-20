@@ -657,6 +657,22 @@ class QueryDataset(Generic[_T]):
                     for column in self.schema.columns
                 )
             )
+        for index, column in enumerate(self.schema.columns):
+            if column.formatter != "currency-pair" or not rows:
+                continue
+            pairs = [row[index].split(" / ") for row in rows]
+            widths = [max(len(pair[side]) for pair in pairs) for side in range(2)]
+            rows = [
+                (
+                    *row[:index],
+                    " / ".join(
+                        value.rjust(width)
+                        for value, width in zip(pair, widths, strict=True)
+                    ),
+                    *row[index + 1 :],
+                )
+                for row, pair in zip(rows, pairs, strict=True)
+            ]
         return (
             tuple(column.label for column in self.schema.columns),
             tuple(rows),

@@ -2633,25 +2633,70 @@ def test_tools_visibility_queries_and_counts(
     for name in ("_toolang", "me", "shell", "vendor"):
         assert (f"{name}/echo" in result.stdout) == (name in visible)
     if not visible:
-        assert result.stdout.strip() == "No tools matched query."
+        assert result.stdout.strip() == "0 tools"
         return
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
     assert header.split() == [
         "TOOL",
+        *(["STATUS"] if "--all" in options else []),
         "DESCRIPTION",
-        "SOURCE",
-        *(["ALLOWED", "INTERNAL"] if "--all" in options else []),
     ]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
     tool_plural = "" if tool_count == 1 else "s"
     toolset_plural = "" if toolset_count == 1 else "s"
     assert result.stdout.strip().endswith(
-        f"{tool_count} tool{tool_plural}, {toolset_count} toolset{toolset_plural}"
+        f"{tool_count} tool{tool_plural}"
+        + (f", {toolset_count} toolset{toolset_plural}" if tool_count > 1 else "")
     )
     assert "Echo text." in result.stdout
-    if "vendor" in visible:
-        assert "external" in result.stdout
+    assert "SOURCE" not in header
+    assert "external" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("tools",),
+        ("toolsets",),
+        ("models",),
+        ("providers",),
+        ("caps",),
+        ("psyche", "list"),
+        ("skill", "list"),
+        ("service", "list"),
+        ("prompt", "list"),
+        ("alice", "task", "list"),
+        ("alice", "chore", "list"),
+    ],
+)
+def test_all_short_option_matches_long_option(
+    tmp_path: Path, plugin_inventory, command
+):
+    _create_agent(tmp_path)
+    long = _invoke(tmp_path, *command, "--all")
+    short = _invoke(tmp_path, *command, "-a")
+    assert long.exit_code == 0, long.stderr
+    assert short.exit_code == 0, short.stderr
+    assert short.stdout == long.stdout
+
+
+def test_cap_summary_counts_filtered_entries_and_kinds(tmp_path: Path) -> None:
+    from toolang.catalog.cap import AuthoredCaps, CapFile
+
+    for kind, name in (("psyche", "one"), ("psyche", "two"), ("prompt", "three")):
+        AuthoredCaps(tmp_path).create(CapFile.parse("Content.", kind=kind, name=name))
+    for query, summary in (
+        (None, "3 caps, 2 kinds"),
+        ("psyche/*", "2 caps, 1 kind"),
+        ("psyche/one", "1 cap"),
+        ("absent", "0 caps"),
+    ):
+        result = _invoke(tmp_path, "caps", *(("-q", query) if query else ()))
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.strip().splitlines()[-1] == summary
+        if summary == "0 caps":
+            assert result.stdout == "0 caps\n"
 
 
 @pytest.mark.parametrize("all_", [False, True])
@@ -2664,6 +2709,8 @@ def test_toolsets_inventory_does_not_construct_plugins(
     assert ("_toolang" in result.stdout) == all_
     assert all(name in result.stdout for name in ("me", "shell", "vendor"))
     assert result.stdout.count("_toolang") == int(all_)
+    assert "INTERNAL" not in result.stdout
+    assert result.stdout.strip().endswith("4 toolsets" if all_ else "3 toolsets")
     assert "external" in result.stdout
     assert plugin_inventory == []
 
@@ -2694,7 +2741,7 @@ def test_tools_uses_selected_scope_and_effective_allow(
     assert ("shell/repeat" in result.stdout) is all_
     assert ("me/echo" in result.stdout) is all_
     assert ("_toolang/echo" in result.stdout) is all_
-    summary = "5 tools, 4 toolsets" if all_ else "1 tool, 1 toolset"
+    summary = "5 tools, 4 toolsets" if all_ else "1 tool"
     assert result.stdout.strip().endswith(summary)
     assert dict(plugin_inventory)["shell"] == {
         "choice": "agent" if target else "root",
@@ -2720,7 +2767,7 @@ def test_tools_all_bypasses_empty_allow_for_inspection(
         assert "me/echo" in result.stdout
         assert result.stdout.strip().endswith("5 tools, 4 toolsets")
     else:
-        assert result.stdout.strip() == "No tools found."
+        assert result.stdout.strip() == "0 tools"
 
 
 def test_tools_reads_published_query_views_without_rediscovering_plugins(
@@ -2745,15 +2792,15 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
 
     monkeypatch.setattr(plugin_commands, "load_setup", load_published)
     monkeypatch.setattr("toolang.plugin.loading.entry_points", reject_discovery)
-    result = _invoke(tmp_path, "tools")
+    result = _invoke(tmp_path, "tools", "--query", "*[source=built-in]")
 
     assert result.exit_code == 0, result.stderr
     assert "shell/exec" in result.stdout
-    assert "built-in" in result.stdout
+    assert "SOURCE" not in result.stdout
 
 
 @pytest.mark.parametrize("all_", [False, True])
-def test_tools_status_columns_distinguish_allow_and_internal(
+def test_tools_status_column_distinguishes_allow_without_internal_badges(
     tmp_path: Path, plugin_inventory, monkeypatch: pytest.MonkeyPatch, all_: bool
 ) -> None:
     root = tmp_path / "toolang"
@@ -2773,15 +2820,16 @@ def test_tools_status_columns_distinguish_allow_and_internal(
     assert result.exit_code == 0, result.stderr
     by_tool = {row["TOOL"]: row for row in rows}
     if all_:
-        assert by_tool["shell/echo"]["ALLOWED"] == "yes"
-        assert by_tool["shell/repeat"]["ALLOWED"] == "no"
-        assert by_tool["me/echo"]["ALLOWED"] == "no"
-        assert by_tool["_toolang/echo"]["ALLOWED"] == "yes"
-        assert by_tool["_toolang/echo"]["INTERNAL"] == "yes"
-        assert by_tool["shell/echo"]["INTERNAL"] == "no"
+        assert by_tool["shell/echo"]["STATUS"] == "ok"
+        assert by_tool["shell/repeat"]["STATUS"] == "blocked"
+        assert by_tool["me/echo"]["STATUS"] == "blocked"
+        assert by_tool["_toolang/echo"]["STATUS"] == "ok"
+        assert "INTERNAL" not in by_tool["_toolang/echo"]
+        assert "SOURCE" not in by_tool["shell/echo"]
+        assert tuple(by_tool["shell/echo"]) == ("TOOL", "STATUS", "DESCRIPTION")
     else:
         assert set(by_tool) == {"shell/echo"}
-        assert "ALLOWED" not in by_tool["shell/echo"]
+        assert "STATUS" not in by_tool["shell/echo"]
         assert "INTERNAL" not in by_tool["shell/echo"]
 
 
@@ -2855,13 +2903,13 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     )
     assert set(by_name) == expected
     if all_:
-        assert by_name["shared_cap"]["ALLOWED"] == ("no" if agent else "yes")
-        assert by_name["blocked_cap"]["ALLOWED"] == "no"
+        assert by_name["shared_cap"]["STATUS"] == ("blocked" if agent else "ok")
+        assert by_name["blocked_cap"]["STATUS"] == "blocked"
         if agent:
-            assert by_name["private_cap"]["ALLOWED"] == "yes"
+            assert by_name["private_cap"]["STATUS"] == "ok"
             assert by_name["private_cap"]["SCOPE"] == "home"
     else:
-        assert all("ALLOWED" not in row for row in rows)
+        assert all("STATUS" not in row for row in rows)
 
 
 @pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
@@ -2912,10 +2960,10 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     assert "Rewrite" in rewrite
     assert "root" in rewrite
     if all_:
-        assert rewrite.split()[-1] == "yes"
+        assert rewrite.split()[1] == "ok"
         other = next(line for line in stdout.splitlines() if "prompt/other" in line)
         assert "Other" in other
-        assert other.split()[-1] == "no"
+        assert other.split()[1] == "blocked"
     else:
         assert "prompt/other" not in stdout
     assert len(fetched) == 2
@@ -2923,7 +2971,12 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     if not prepared:
         assert not (tmp_path / "agents").exists()
         _create_agent(tmp_path)
-    agent = _invoke(tmp_path, "alice", "caps", *flags)
+    agent = _invoke(
+        tmp_path,
+        "alice",
+        *(command if command != ("standalone",) else ("caps",)),
+        *flags,
+    )
     assert agent.exit_code == 0, agent.stderr
     assert agent.stdout == stdout
     assert len(fetched) == 2
@@ -2957,7 +3010,7 @@ def test_root_caps_missing_root_remains_an_empty_read(tmp_path: Path) -> None:
     result = _invoke(root, "caps")
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout == "No caps found.\n"
+    assert result.stdout == "0 caps\n"
     assert not root.exists()
 
 
@@ -3033,7 +3086,7 @@ def test_internal_only_inventory_has_an_empty_default_view(
     )
     result = _invoke(tmp_path / "toolang", command)
     assert result.exit_code == 0, result.stderr
-    assert result.stdout.strip() == f"No {command} found."
+    assert result.stdout.strip() == f"0 {command}"
 
     expanded = _invoke(tmp_path / "toolang", command, "--all")
     assert expanded.exit_code == 0, expanded.stderr
@@ -3048,28 +3101,28 @@ def test_internal_only_inventory_has_an_empty_default_view(
             "toolang.model_adapter",
             "ADAPTER",
             "responses",
-            "No adapters found.",
+            "0 adapters",
         ),
         (
             "catalogs",
             "toolang.model_catalog",
             "CATALOG",
             "models_dev",
-            "No catalogs found.",
+            "0 catalogs",
         ),
         (
             "toolsets",
             "toolang.toolset",
             "TOOLSET",
             "shell",
-            "No toolsets found.",
+            "0 toolsets",
         ),
         (
             "sandboxes",
             "toolang.sandbox",
             "SANDBOX",
             "docker",
-            "No sandboxes found.",
+            "0 sandboxes",
         ),
     ),
 )
@@ -3414,13 +3467,13 @@ def test_standalone_caps_all_preserves_scope_and_query(
 
     assert result == 0, output.err
     if all_:
-        assert "ALLOWED" in output.out
+        assert "STATUS" in output.out
         row = next(line for line in output.out.splitlines() if "shared_cap" in line)
         assert "home" in row
-        assert row.split()[-1] == "no"
+        assert row.split()[1] == "blocked"
         assert output.out.count("psyche/shared_cap") == 1
     else:
-        assert output.out.strip() == "No caps matched query."
+        assert output.out.strip() == "0 caps"
 
 
 @pytest.mark.parametrize("target", ["alice", "agent:alice"])

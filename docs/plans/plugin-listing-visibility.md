@@ -29,7 +29,7 @@ arguments. Existing visiting/roaming restrictions remain unchanged.
 ## Scope and precedence
 
 - Plugin inventories include installed entries even when their dependencies or
-  factories cannot load. Keep sorted identities, source labels, empty messages,
+  factories cannot load. Keep sorted identities, distribution source labels, collection summaries,
   and adapter JSON. Remove `AgentSetup.adapter_sources`; runtime adapter
   instances and provenance used for cache invalidation remain setup-owned.
 - `tools` reads `setup.tools` and its existing query views. Do not reconstruct
@@ -75,25 +75,42 @@ arguments. Existing visiting/roaming restrictions remain unchanged.
   program. Inspect setup with default/compact model validation disabled, as in
   model inspection. Keep existing options and query diagnostics.
 
-## Output states
+## Output and summaries
 
-| Resource | Default columns | Additional `--all` columns |
+All existing `--all` options accept `-a`, including cap-kind and job lists.
+Resource scope, policy, query semantics, and JSON catalog exports stay unchanged.
+
+| Resource | Default view | Full view (`--all` / `-a`) |
 | --- | --- | --- |
-| Caps | Existing identity, description, scope, form, source | `ALLOWED` |
-| Tools | Existing identity, description, source | `ALLOWED`, `INTERNAL` |
-| Models | Existing identity, `AVAILABLE` readiness, capabilities and prices | `ALLOWED`, route `REASON` |
-| Providers | Existing readiness counts, routes and environment | `ALLOWED MODELS` count alongside readiness counts; preserve `REASON` |
-| Toolsets | Identity and distribution source | `INTERNAL` |
+| Caps | Identity, description, scope, form, source | Add `STATUS` immediately after identity |
+| Tools | Identity and description; no `SOURCE` | Add `STATUS` immediately after identity |
+| Models | Identity, context/output sizes, modalities, capabilities, price | Add `STATUS` immediately after identity and route `REASON` last |
+| Providers | `MODELS` counts effective models | `MODELS (OK/ALL)` counts effective models over all models in scope |
+| Plugin inventories | Identity and distribution source | Toolsets additionally include internal entries; no extra state column |
 
-`ALLOWED` is independent of readiness. Setup resolves model allow membership
-against the complete catalog before selecting ready runtime models, so unready
-but allowed models remain distinguishable from excluded ones. Provider full-view
-readiness and allow counts each use the full provider model count as denominator;
-default counts describe only the ready, allowed rows. Runtime-internal tools are
-allowed independently of user allow policy. Caps/tools have no separate readiness
-protocol. Keep model/provider JSON as raw catalog exports, without inspection
-columns or secrets. Query filters and totals operate on the selected view.
-Provider reasons include unready models even when other models are ready.
+`STATUS` is `ok`, `blocked`, `unready`, or `blocked, unready`. Policy and readiness
+remain independent: `ok` means ready AND allowed, not readiness alone. Tools and
+caps have no independent readiness protocol, so their status is `ok` or `blocked`.
+Internal tools remain recognizable by their `_toolang` identity; do not add an
+`INTERNAL` label or column. Runtime-internal tools bypass user allow policy.
+Model query field `available` retains its readiness meaning; it is not rendered
+as a separate boolean table column. Provider OK counts read the effective setup
+collection; they must exclude ready-but-blocked models. Provider reasons include
+unready models even when other models are ready.
+
+All resource and plugin inventory tables have an unindented summary. Tools use
+`N tools, M toolsets`, aggregate caps use `N caps, M kinds`, and models use
+`N models, M providers`. Omit the second count when N is zero or one; otherwise
+include it even when M is one. Other lists use their own noun, such as `N prompts`
+or `N adapters`. Use English singular/plural forms. Count only displayed rows
+and their distinct groups after scope, policy, visibility, and query filters.
+Print one blank line between a nonempty table and its summary. Empty results
+print only `0 <items>` without headers or an additional empty-result message.
+JSON exports include neither summaries nor presentation states.
+
+Format prices as `INPUT / OUTPUT`, with each amount right-aligned independently
+to the widest formatted value among displayed rows. Align `/` and both numeric
+columns, including zero and missing (`-`) values; filtering recomputes widths.
 Cap preparation progress identifies root and agent-home layers separately.
 
 ## Implementation layout
@@ -146,8 +163,11 @@ Cap preparation progress identifies root and agent-home layers separately.
    never create a default-agent home; root and agent versions remain distinct.
 7. Resident tools use layout-only preparation; missing agents and unsupported
    target forms fail without creating agent homes. Help performs no loading.
-8. Full-view columns distinguish allowed/excluded, ready/unready, and internal
-   tools; default columns remain concise. Counts and queries use displayed rows.
+8. Full-view STATUS distinguishes all policy/readiness combinations; provider
+   OK/ALL excludes ready-but-blocked models. Default columns omit constant
+   states, and tools omit SOURCE. All summaries handle empty, single, multiple,
+   and filtered rows. Prices align both amounts and their separator. Every
+   --all option has an equivalent -a alias.
 9. Default lint, format, type, and offline test checks pass; packaged entry
    points and Docker resources remain valid.
 

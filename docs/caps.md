@@ -43,13 +43,18 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope and adds an
-`ALLOWED` column alongside scope, form, and source. It does not resurrect
+`STATUS` column immediately after identity (`ok` or `blocked`), alongside
+description, scope, form, and source. It does not resurrect
 shadowed definitions or grant runtime access. Default output omits that column
 because all displayed entries pass the policy. This applies to aggregate and
 kind-specific lists through both CLIs, for example `too alice caps --all`,
 `too alice skill list --all`, and `caps alice list --all`. Queries filter the
 chosen default/full view. Caps have no separate readiness protocol; an invalid
 or unresolvable definition remains an error, not an invented unavailable row.
+`-a` aliases `--all`. Aggregate summaries use `N caps, M kinds`; omit the kind
+count for zero or one cap. Kind-specific summaries use their own noun, such as
+`N skills`. Empty results print only `0 caps` or `0 skills`, without a table.
+Counts describe displayed rows after filtering.
 Per-module and run declarations can further narrow execution resources.
 
 HTTP write payloads use `root` and `home` directly. CLI write commands expose

@@ -202,11 +202,14 @@ execution permissions. Queries and counts use the selected view. An
 internal-only tool query needs `--all`. Tool-call inspection shows the
 recorded plugin identity, independently of its Python module location.
 
-Full cap/tool/model tables add `ALLOWED`; full tool/toolset tables add `INTERNAL`.
-Models also keep their independent `AVAILABLE` readiness and route `REASON`.
-Full provider tables show separate readiness and allow counts. Default tables
-omit redundant policy/internal columns after filtering. Plugin inventories
-have no agent allow policy.
+Full cap/tool/model tables group diagnostics into `STATUS` immediately after
+identity: `ok`, `blocked`, `unready`, or both failure states. `ok` means ready
+and allowed; caps/tools have only allow status. Internal names need no extra
+label. Full provider tables use `MODELS (OK/ALL)`; default provider tables use
+`MODELS` for the effective count. Tools omit SOURCE; plugin inventories retain
+it. All lists have summaries, including zero counts for empty results. Resource
+summaries include group counts only when more than one row is displayed.
+Every `--all` option accepts `-a`. Plugin inventories have no agent allow policy.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
 and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.

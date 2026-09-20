@@ -22,7 +22,7 @@ from toolang.state import state as cap_state
 from toolang.state.prepare import inspect_root_caps, prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.help import CliCommand
-from ..common.output import echo_block, echo_table
+from ..common.output import echo_block, echo_collection_summary, echo_table
 from ..common.query import query_items
 from ..common.routing import (
     OptionalPrefixAgentCommand,
@@ -184,7 +184,7 @@ def list_caps(
         ),
     ] = None,
     all_: Annotated[
-        bool, typer.Option("--all", help="Include allow-excluded caps")
+        bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
     ] = False,
 ) -> None:
     from toolang.state.collections import cap_table, query_cap_views
@@ -206,10 +206,11 @@ def list_caps(
     headers, rows = cap_table(
         selected, allowed=_allowed_cap_keys(allowed) if all_ else None
     )
-    if not rows:
-        typer.echo("No caps matched query." if query else "No caps found.")
-        return
-    echo_table(headers, rows)
+    if rows:
+        echo_table(headers, rows)
+    echo_collection_summary(
+        len(selected), "cap", group=(len({cap.kind for cap in selected}), "kind")
+    )
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
@@ -225,7 +226,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             ),
         ] = None,
         all_: Annotated[
-            bool, typer.Option("--all", help="Include allow-excluded caps")
+            bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
         ] = False,
     ) -> None:
         from toolang.state.collections import cap_dataset, cap_table
@@ -245,10 +246,9 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         headers, rows = cap_table(
             selected, kind=kind, allowed=_allowed_cap_keys(allowed) if all_ else None
         )
-        if not rows:
-            typer.echo(f"No {kind}s matched query." if query else f"No {kind}s found.")
-            return
-        echo_table(headers, rows)
+        if rows:
+            echo_table(headers, rows)
+        echo_collection_summary(len(selected), kind)
 
     return list_caps
 

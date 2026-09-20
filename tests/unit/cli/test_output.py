@@ -25,6 +25,28 @@ EXPECTED_INFO_AVATAR = """\
  ██        ███"""
 
 
+@pytest.mark.parametrize(
+    "count,noun,group,expected",
+    [
+        (0, "tool", (0, "toolset"), "0 tools\n"),
+        (1, "tool", (1, "toolset"), "\n1 tool\n"),
+        (2, "tool", (1, "toolset"), "\n2 tools, 1 toolset\n"),
+        (0, "cap", (0, "kind"), "0 caps\n"),
+        (1, "cap", (1, "kind"), "\n1 cap\n"),
+        (2, "cap", (2, "kind"), "\n2 caps, 2 kinds\n"),
+        (0, "model", (0, "provider"), "0 models\n"),
+        (1, "model", (1, "provider"), "\n1 model\n"),
+        (2, "model", (1, "provider"), "\n2 models, 1 provider\n"),
+        (0, "provider", None, "0 providers\n"),
+        (1, "provider", None, "\n1 provider\n"),
+        (2, "provider", None, "\n2 providers\n"),
+    ],
+)
+def test_collection_summary_counts_displayed_rows(capsys, count, noun, group, expected):
+    output.echo_collection_summary(count, noun, group=group)
+    assert capsys.readouterr().out == expected
+
+
 def test_table_preserves_explicit_cell_styles(monkeypatch) -> None:
     rendered = StringIO()
     monkeypatch.setattr(

@@ -11,14 +11,18 @@ from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute, Provider
+from toolang.base.types.model import Model, ModelRoute, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
     context_root,
     resolve_model_catalog_option,
 )
-from toolang.cli.common.output import echo_table
+from toolang.cli.common.output import (
+    echo_collection_summary,
+    echo_table,
+    inspection_status,
+)
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -39,7 +43,7 @@ def models_command(
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[
         bool,
-        typer.Option("--all", help="Include unready and allow-excluded models"),
+        typer.Option("--all", "-a", help="Include unready and allow-excluded models"),
     ] = False,
     query: Annotated[
         list[str] | None,
@@ -74,36 +78,32 @@ def models_command(
         content = dumps(snapshot.to_data(models=selected))
         typer.echo(content, nl=False)
         return
-    headers, rows = dataset.table(selected_views)
+    headers, raw_rows = dataset.table(selected_views)
+    # Readiness remains queryable; the table groups it with policy in STATUS.
+    headers = (headers[0], *headers[2:])
+    rows = [(row[0], *row[2:]) for row in raw_rows]
+    justify = (None, "right", "right", None, None, "right")
     if all_:
-        headers = (*headers, "ALLOWED", "REASON")
+        headers = (headers[0], "STATUS", *headers[1:], "REASON")
         rows = [
             (
-                *row,
-                "yes" if setup.model_allowed(model.ref) else "no",
+                row[0],
+                inspection_status(
+                    allowed=setup.model_allowed(model.ref), ready=model._toolang.ready
+                ),
+                *row[1:],
                 _route_reason(model._toolang.route),
             )
             for row, model in zip(rows, selected, strict=True)
         ]
-    if not rows:
-        typer.echo("No models matched query." if query else "No models found.")
-        return
-    echo_table(
-        headers,
-        rows,
-        justify=(
-            None,
-            None,
-            "right",
-            "right",
-            None,
-            None,
-            "right",
-            *((None, None) if all_ else ()),
-        ),
+        justify = (None, None, *justify[1:], None)
+    if rows:
+        echo_table(headers, rows, justify=justify)
+    echo_collection_summary(
+        len(selected),
+        "model",
+        group=(len({model._toolang.provider for model in selected}), "provider"),
     )
-    typer.echo()
-    typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
 
 
 def providers_command(
@@ -112,7 +112,7 @@ def providers_command(
     all_: Annotated[
         bool,
         typer.Option(
-            "--all", help="Include unready, allow-excluded, and empty providers"
+            "--all", "-a", help="Include unready, allow-excluded, and empty providers"
         ),
     ] = False,
     json_: Annotated[
@@ -132,7 +132,7 @@ def providers_command(
     }
     for model in snapshot.models:
         by_provider[model._toolang.provider].append(model)
-    available = {model.ref for model in snapshot.models if model._toolang.ready}
+    available = set(setup.models.refs())
     selected_views = catalog_provider_views(
         base_providers,
         models=by_provider,
@@ -163,7 +163,7 @@ def providers_command(
         return
     headers = (
         "PROVIDER",
-        "AVAILABLE MODELS",
+        "MODELS (OK/ALL)" if all_ else "MODELS",
         "ADAPTERS",
         "DEFAULT API",
         "ENV",
@@ -173,7 +173,9 @@ def providers_command(
         (
             item.id,
             Text(
-                f"{item.available_models}/{item.model_count}",
+                f"{item.available_models}/{item.model_count}"
+                if all_
+                else str(item.available_models),
                 style="red" if item.available_models == 0 else "",
             ),
             _provider_adapters_cell(item),
@@ -183,25 +185,9 @@ def providers_command(
         )
         for item in selected_views
     ]
-    if all_:
-        headers = (*headers[:-1], "ALLOWED MODELS", headers[-1])
-        rows = [
-            (
-                *row[:-1],
-                f"{sum(setup.model_allowed(model.ref) for model in by_provider[item.id])}/{item.model_count}",
-                row[-1],
-            )
-            for row, item in zip(rows, selected_views, strict=True)
-        ]
-    if not rows:
-        typer.echo("No providers found.")
-        return
-    echo_table(
-        headers,
-        rows,
-    )
-    typer.echo()
-    typer.echo(f" {_provider_catalog_summary(snapshot, providers=providers)}")
+    if rows:
+        echo_table(headers, rows)
+    echo_collection_summary(len(providers), "provider")
 
 
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
@@ -224,16 +210,6 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
             validate_defaults=False,
         )
     )
-
-
-def _catalog_summary(
-    snapshot: ModelCatalogSnapshot,
-    *,
-    models: Sequence[Model],
-) -> str:
-    del snapshot
-    model_noun = "model" if len(models) == 1 else "models"
-    return f"{len(models)} {model_noun}"
 
 
 def _provider_adapters(provider: Provider, models: Sequence[Model]) -> tuple[str, ...]:
@@ -308,13 +284,3 @@ def _provider_env_cell(provider: CatalogProviderView) -> Text:
             style="red" if provider.record._toolang.route.env is None else "",
         )
     return cell
-
-
-def _provider_catalog_summary(
-    snapshot: ModelCatalogSnapshot,
-    *,
-    providers: Sequence[Provider],
-) -> str:
-    del snapshot
-    provider_noun = "provider" if len(providers) == 1 else "providers"
-    return f"{len(providers)} {provider_noun}"

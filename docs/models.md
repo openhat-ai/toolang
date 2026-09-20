@@ -377,21 +377,28 @@ too catalogs
 too adapters [--json]
 ```
 
-`too models` shows ready, allowed models plus an `AVAILABLE` yes/no column.
+`too models` shows ready, allowed models without a redundant status column.
 `too providers` lists only providers with at least one such model, and its nested
 model lists use the same scope. Add `--all` to either command to inspect the
 complete directory, including unready and allow-excluded entries; `providers
 --all` also includes empty providers. The `available` query field describes
 readiness independently of allow membership.
 
-`too models --all` adds `ALLOWED` independently of `AVAILABLE`: a model may be
-ready but excluded by policy, or allowed but missing runtime prerequisites.
-`too providers --all` adds `ALLOWED MODELS` alongside `AVAILABLE MODELS`;
-the counts describe allow membership and readiness independently, each over
-that provider's complete model set. Default provider counts describe only
-ready, allowed models. Default tables omit redundant policy columns. `--all`
-keeps the selected configuration and catalog precedence and grants no runtime
-access, matching cap/tool resource inspection.
+`too models --all` (or `-a`) adds `STATUS` immediately after identity: `ok`,
+`blocked`, `unready`, or `blocked, unready`. `ok` means ready AND allowed;
+readiness alone does not make a model usable. Default tables omit STATUS and
+REASON. The query field `available` continues to describe readiness alone.
+`too providers --all` uses `MODELS (OK/ALL)`: the numerator counts ready,
+allowed models, and the denominator counts all provider models in scope.
+Without `--all`, `MODELS` shows only the effective count; providers with none
+are hidden. No separate allow count is displayed. `--all` preserves scope,
+configuration, and catalog precedence and grants no runtime access.
+
+Model summaries use `N models, M providers`; omit the provider count for zero
+or one model. Provider summaries use `N providers`. Empty results print only
+the zero count, without table headers. Summaries count displayed rows; JSON
+exports have no summary or presentation status. Prices independently right-align
+the input and output amounts across displayed rows so their `/` separators align.
 
 `too models --all` and `too providers --all` show coarse unavailability reasons
 from the route's missing fields. They do not identify individual missing

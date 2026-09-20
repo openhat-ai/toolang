@@ -139,9 +139,9 @@ def cap_table(
             values.extend(dataset.table()[1])
         rows = tuple(values)
     if allowed is not None:
-        headers = (*headers, "ALLOWED")
+        headers = (headers[0], "STATUS", *headers[1:])
         rows = tuple(
-            (*row, "yes" if (view.kind, view.name) in allowed else "no")
+            (row[0], "ok" if (view.kind, view.name) in allowed else "blocked", *row[1:])
             for row, view in zip(rows, views, strict=True)
         )
     return headers, rows

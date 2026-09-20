@@ -62,15 +62,15 @@ def test_empty_model_allow_keeps_complete_diagnostic_view(
     result = capsys.readouterr()
     assert exit_code == 0, result.err
     if not all_:
-        assert result.out.strip() == f"No {command} found."
+        assert result.out.strip() == f"0 {command}"
     elif command == "models":
-        assert "ALLOWED" in result.out
+        assert "STATUS" in result.out
         for ref in ("test/one", "test/two"):
             row = next(line for line in result.out.splitlines() if ref in line)
-            assert row.split()[-1] == "no"
+            assert row.split()[1] == "blocked"
     else:
-        assert "ALLOWED MODELS" in result.out
-        assert "2/2" in result.out
+        assert "MODELS (OK/ALL)" in result.out
+        assert "2/2" not in result.out
         assert "0/2" in result.out
 
 
@@ -358,7 +358,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     assert all(
         label in header
         for label in (
-            "AVAILABLE",
+            "STATUS",
             "CONTEXT",
             "OUTPUT",
             "INPUT",
@@ -368,7 +368,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     )
     values = (
         "test/one",
-        "no",
+        "unready",
         "1_000_000",
         "100_000",
         "text,image",
@@ -389,6 +389,34 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
     assert "1 model" in stdout
+
+
+@pytest.mark.parametrize("all_option", [None, "-a"])
+def test_models_render_aligned_prices_and_group_summary(
+    tmp_path: Path, monkeypatch, all_option
+) -> None:
+    data = _catalog_data()
+    models = cast(
+        dict[str, dict[str, object]], cast(dict[str, object], data["test"])["models"]
+    )
+    models["one"]["cost"] = {"input": 0.43, "output": 0.87}
+    models["two"]["cost"] = {"input": 1.25, "output": 10}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    _disable_local_discovery(monkeypatch)
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path), "models", *((all_option,) if all_option else ())],
+    )
+    assert result.exit_code == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if "test/" in line]
+    assert len(lines) == 2
+    assert "$0.43 /  $0.87" in lines[0]
+    assert "$1.25 / $10.00" in lines[1]
+    assert lines[0].rindex("/") == lines[1].rindex("/")
+    assert ("STATUS" in result.stdout) == bool(all_option)
+    assert "AVAILABLE" not in result.stdout
+    assert result.stdout.strip().endswith("2 models, 1 provider")
 
 
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
@@ -549,7 +577,7 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     assert "2 providers" in providers_result.stdout
     assert captured_headers == (
         "PROVIDER",
-        "AVAILABLE MODELS",
+        "MODELS",
         "ADAPTERS",
         "DEFAULT API",
         "ENV",
@@ -559,10 +587,10 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     ollama_available = by_provider["ollama"][1]
     llama_available = by_provider["llama_cpp"][1]
     assert isinstance(ollama_available, Text)
-    assert ollama_available.plain == "1/1"
+    assert ollama_available.plain == "1"
     assert not _is_red(ollama_available, 0)
     assert isinstance(llama_available, Text)
-    assert llama_available.plain == "1/1"
+    assert llama_available.plain == "1"
     assert not _is_red(llama_available, 0)
     llama_adapters = by_provider["llama_cpp"][2]
     assert isinstance(llama_adapters, Text)
@@ -845,9 +873,9 @@ def test_models_uses_isolated_resident_catalogs(
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
-                assert "AVAILABLE" in output.out
+                assert "STATUS" in output.out
             else:
-                assert output.out.strip() == "No models matched query."
+                assert output.out.strip() == "0 models"
 
 
 @pytest.mark.parametrize("json_output", [False, True])
@@ -1291,22 +1319,21 @@ def test_model_status_columns_separate_readiness_and_allow(
             else {"test/one"}
         )
         if all_:
-            assert by_id["test/two"]["ALLOWED"] == "no"
-            assert str(by_id["test/two"]["AVAILABLE"]) == "yes"
-            assert by_id["offline/one"]["ALLOWED"] == "yes"
-            assert str(by_id["offline/one"]["AVAILABLE"]) == "no"
-            assert by_id["offline/two"]["ALLOWED"] == "no"
+            assert by_id["test/one"]["STATUS"] == "ok"
+            assert by_id["test/two"]["STATUS"] == "blocked"
+            assert by_id["offline/one"]["STATUS"] == "unready"
+            assert by_id["offline/two"]["STATUS"] == "blocked, unready"
+            assert tuple(by_id["test/one"])[1] == "STATUS"
+            assert "AVAILABLE" not in by_id["test/one"]
             assert by_id["offline/two"]["REASON"] != "-"
         else:
-            assert "ALLOWED" not in by_id["test/one"]
+            assert "STATUS" not in by_id["test/one"]
     else:
         by_id = {str(row["PROVIDER"]): row for row in rows}
         assert set(by_id) == ({"test", "offline"} if all_ else {"test"})
         if all_:
-            assert str(by_id["test"]["AVAILABLE MODELS"]) == "2/2"
-            assert by_id["test"]["ALLOWED MODELS"] == "1/2"
-            assert str(by_id["offline"]["AVAILABLE MODELS"]) == "0/2"
-            assert by_id["offline"]["ALLOWED MODELS"] == "1/2"
+            assert str(by_id["test"]["MODELS (OK/ALL)"]) == "1/2"
+            assert str(by_id["offline"]["MODELS (OK/ALL)"]) == "0/2"
         else:
-            assert str(by_id["test"]["AVAILABLE MODELS"]) == "1/1"
-            assert "ALLOWED MODELS" not in by_id["test"]
+            assert str(by_id["test"]["MODELS"]) == "1"
+            assert "MODELS (OK/ALL)" not in by_id["test"]

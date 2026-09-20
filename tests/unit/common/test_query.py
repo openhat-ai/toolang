@@ -521,6 +521,26 @@ def test_table_formats_currency_pairs_and_env_requirements() -> None:
         (("$1.26 / $0.00", "PRIMARY, USER + TOKEN (missing)"),),
     )
 
+    varied = QueryDataset(
+        schema,
+        (
+            DisplayView("one", Decimal("0.43"), Decimal("0.87"), (), ()),
+            DisplayView("two", Decimal("1.25"), Decimal("10"), (), ()),
+            DisplayView("three", Decimal("100"), Decimal("0"), (), ()),
+            DisplayView("four", None, None, (), ()),
+        ),
+    )
+    _, rows = varied.table()
+    assert tuple(row[0] for row in rows) == (
+        "  $0.43 /  $0.87",
+        "  $1.25 / $10.00",
+        "$100.00 /  $0.00",
+        "      - /      -",
+    )
+    assert len({row[0].index("/") for row in rows}) == 1
+    assert varied.table(varied.query("one"))[1][0][0] == "$0.43 / $0.87"
+    assert varied.table(())[1] == ()
+
 
 def test_exact_match_quotes_glob_identity() -> None:
     item = ModelView(

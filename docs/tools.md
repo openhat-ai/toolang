@@ -24,10 +24,12 @@ allow-filtered runtime collection; inspection does not expand runtime grants.
 `me/*` follows normal allow policy in the default view and appears with `--all`.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
-not guessed tools from an unloadable plugin. Full tables add `ALLOWED` and
-`INTERNAL`: an internal tool can be allowed while hidden in the default list,
-and an ordinary tool can be present but excluded by policy. Default tables
-omit these redundant columns after filtering.
+not guessed tools from an unloadable plugin. Full tables add one `STATUS` column
+immediately after the tool name: `ok` or `blocked`. Internal tools are identifiable
+by their `_toolang` names without an extra label. Default tables show only name
+and description; SOURCE is omitted from both tool views but remains queryable.
+Summaries use `N tools, M toolsets`, with no toolset count for zero or one tool.
+Empty results print only `0 tools`. `-a` is an alias for `--all`.
 `too toolsets [--all]` instead lists locally installed toolset plugins, without
 agent configuration, policy, or factory loading.
 

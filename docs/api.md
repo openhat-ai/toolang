@@ -816,12 +816,19 @@ selected view. `me` is not internally hidden and follows normal tool allow polic
 
 `models --json` and `providers --json` export the same selected setup version as
 models.dev-compatible catalog data without Toolang metadata or resolved secrets.
-Models display identity, availability, context/output sizes, modalities,
-capabilities, and prices. Providers display readiness counts, adapters, default
-API, environment requirements, and reasons. Full cap/tool/model tables show `ALLOWED`; tool/toolset tables also show
-`INTERNAL`. Full provider tables distinguish ready counts from allow counts.
-Model `--all` also adds reasons for unready routes. Default tables omit redundant
-allow/internal columns after filtering. API readiness does not prove remote reachability or entitlement.
+Models display identity, context/output sizes, modalities, capabilities, and
+prices. Full cap/tool/model tables add `STATUS` immediately after identity:
+`ok`, `blocked`, `unready`, or `blocked, unready`. `ok` means ready AND allowed;
+caps/tools have no independent readiness check. Model full views add REASON.
+Provider tables show `MODELS` for effective models, or `MODELS (OK/ALL)` with
+`--all`. Ready-but-blocked models do not count as OK. Tools omit SOURCE; plugin
+inventories retain it. Internal names need no separate INTERNAL label.
+
+Every `--all` accepts `-a`. Lists always show displayed-row summaries; empty
+results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
+toolset, kind, or provider count when more than one row is displayed. JSON has
+no summary. Prices independently align input/output amounts and their separator.
+API readiness does not prove remote reachability or entitlement.
 See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semantics.
 
 
