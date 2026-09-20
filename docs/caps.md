@@ -37,6 +37,10 @@ filtered by root cap-kind allow policy. `too alice caps` combines root resources
 with Alice's home and program capabilities using the precedence above, then
 reads the main agent module's published effective allow selection. Other agents'
 private resources, including an implicit `default` agent, are outside that view.
+Root inspection prepares or reuses the shared root State layer, including resolved
+remote metadata, before applying allow and query filters. It never prepares an
+agent home. Remote content follows the same cache and refresh behavior as agent
+State preparation.
 
 `--all` includes resources excluded by allow in the same scope and adds an
 `ALLOWED` column alongside scope, form, and source. It does not resurrect

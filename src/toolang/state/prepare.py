@@ -21,9 +21,16 @@ from .state import (
     flow_export,
     flow_module_name,
     public_runnable_index,
+    _allowed_caps,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
-from .config import canonical_state_config, normalize_cap_overrides, parse_config
+from .config import (
+    canonical_state_config,
+    normalize_cap_overrides,
+    parse_config,
+    resolve_cap_allows,
+)
+from .types import EntryKind
 from .state import (
     materialize_program_caps,
     materialize_scope,
@@ -248,6 +255,22 @@ def prepare_root(
             progress=progress,
         )
         return load_root_layer(layout)
+
+
+def inspect_root_caps(
+    layout: AgentLayout,
+    *,
+    kinds: set[EntryKind],
+    progress: ProgressSink | None = None,
+) -> tuple[tuple[StateCap, ...], tuple[StateCap, ...]]:
+    """Read complete and allowed caps from the shared root layer, without a home."""
+
+    root = prepare_root(layout, progress=progress)
+    entries = tuple(cap for cap in root.caps if cap.kind in kinds)
+    allowed = _allowed_caps(
+        entries, agent_name="", allows=resolve_cap_allows((root.config,))
+    )
+    return entries, allowed
 
 
 def prepare_home(

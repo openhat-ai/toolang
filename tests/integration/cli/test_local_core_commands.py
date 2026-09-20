@@ -2864,6 +2864,103 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         assert all("ALLOWED" not in row for row in rows)
 
 
+@pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("all_", [False, True])
+def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: tuple[str, ...],
+    prepared: bool,
+    all_: bool,
+) -> None:
+    from toolang.cli.caps import main as caps_cli
+    from toolang.state import state as cap_state
+
+    (tmp_path / "config.toml").write_text(
+        "[prompts]\n"
+        'rewrite = { ref = "github://acme/caps/prompts/rewrite.md@main" }\n'
+        'other = { ref = "github://acme/caps/prompts/other.md@main" }\n'
+        '[allow]\nprompts = ["*[description=Rewrite]"]\n'
+    )
+    fetched = []
+
+    def fetch(ref):
+        fetched.append(ref.path)
+        description = "Rewrite" if ref.path.endswith("rewrite.md") else "Other"
+        return f"---\ndescription: {description}\n---\nPrompt text.\n".encode()
+
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    if prepared:
+        _create_agent(tmp_path)
+        agent = _invoke(tmp_path, "alice", "caps")
+        assert agent.exit_code == 0, agent.stderr
+        assert "prompt/rewrite" in agent.stdout
+
+    flags = ("--all",) if all_ else ()
+    if command == ("standalone",):
+        exit_code = caps_cli.main(["--root", str(tmp_path), "list", *flags])
+        output = capsys.readouterr()
+        stdout, stderr = output.out, output.err
+    else:
+        result = _invoke(tmp_path, *command, *flags)
+        exit_code, stdout, stderr = result.exit_code, result.stdout, result.stderr
+
+    assert exit_code == 0, stderr
+    rewrite = next(line for line in stdout.splitlines() if "prompt/rewrite" in line)
+    assert "Rewrite" in rewrite
+    assert "root" in rewrite
+    if all_:
+        assert rewrite.split()[-1] == "yes"
+        other = next(line for line in stdout.splitlines() if "prompt/other" in line)
+        assert "Other" in other
+        assert other.split()[-1] == "no"
+    else:
+        assert "prompt/other" not in stdout
+    assert len(fetched) == 2
+    assert not (tmp_path / "agents" / "default").exists()
+    if not prepared:
+        assert not (tmp_path / "agents").exists()
+        _create_agent(tmp_path)
+    agent = _invoke(tmp_path, "alice", "caps", *flags)
+    assert agent.exit_code == 0, agent.stderr
+    assert agent.stdout == stdout
+    assert len(fetched) == 2
+
+
+def test_root_caps_reports_unresolvable_remote_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.state import state as cap_state
+
+    (tmp_path / "config.toml").write_text(
+        '[prompts]\nmissing = { ref = "github://acme/caps/missing.md@main" }\n'
+    )
+
+    def fail_fetch(ref):
+        raise ValueError("remote prompt not found")
+
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fail_fetch)
+    result = _invoke(tmp_path, "caps", "--all")
+
+    assert result.exit_code == 1
+    assert "remote prompt not found" in result.stderr
+    assert "prompt/missing" not in result.stdout
+    assert "Traceback" not in result.stderr
+    assert not (tmp_path / "agents").exists()
+
+
+def test_root_caps_missing_root_remains_an_empty_read(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+
+    result = _invoke(root, "caps")
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "No caps found.\n"
+    assert not root.exists()
+
+
 @pytest.mark.parametrize("target", [(), ("alice",)])
 def test_caps_inspection_combines_root_and_selected_agent_resources(
     tmp_path: Path, target: tuple[str, ...]

@@ -19,7 +19,7 @@ from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
-from toolang.state.prepare import prepare_agent_state
+from toolang.state.prepare import inspect_root_caps, prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.help import CliCommand
 from ..common.output import echo_block, echo_table
@@ -503,27 +503,29 @@ def _cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
-    if prepare:
-        from ..common.progress import make_cli_progress
+    from ..common.progress import make_cli_progress
 
-        progress = make_cli_progress()
-        try:
-            with progress:
-                state = user_call(
-                    prepare_agent_state,
-                    AgentLayout.resident(toolang_root, agent_name),
+    if not prepare and not toolang_root.exists():
+        return (), ()
+    layout = AgentLayout.resident(toolang_root, agent_name)
+    progress = make_cli_progress()
+    try:
+        with progress:
+            if not prepare:
+                return user_call(
+                    inspect_root_caps,
+                    layout,
+                    kinds=kinds,
                     progress=progress.sink,
                 )
-                entries = tuple(cap for cap in state.caps.values() if cap.kind in kinds)
-                allowed = tuple(
-                    cap for cap in state.caps_for("agent") if cap.kind in kinds
-                )
-                return entries, allowed
-        except Exception as exc:
-            if progress.failure_stage is not None:
-                raise ClickException(progress.failure_message(exc)) from exc
-            raise
-    return user_call(cap_state.inspect_root_caps, toolang_root, kinds=kinds)
+            state = user_call(prepare_agent_state, layout, progress=progress.sink)
+            entries = tuple(cap for cap in state.caps.values() if cap.kind in kinds)
+            allowed = tuple(cap for cap in state.caps_for("agent") if cap.kind in kinds)
+            return entries, allowed
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise ClickException(progress.failure_message(exc)) from exc
+        raise
 
 
 def _allowed_cap_keys(

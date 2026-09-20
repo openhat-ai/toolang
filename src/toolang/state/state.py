@@ -31,7 +31,6 @@ from toolang.state.source import (
     SourceSnapshot,
     ProgramSource,
     read_authored_source,
-    read_root_source,
 )
 from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
@@ -1233,28 +1232,6 @@ def list_entries(
     authored = read_authored_source(toolang_root, agent_name)
     entries, _ = _collect_scope_entries_with_files(authored, scope=scope, kinds=kinds)
     return entries
-
-
-def inspect_root_caps(
-    toolang_root: Path,
-    *,
-    kinds: set[EntryKind],
-) -> tuple[tuple[StateCap, ...], tuple[StateCap, ...]]:
-    """Read complete and allowed root caps from one captured source, without a home."""
-
-    from .config import parse_config, resolve_cap_allows
-
-    authored = read_root_source(toolang_root)
-    entries, _ = _collect_scope_entries_with_files(authored, scope="root", kinds=kinds)
-    configs = tuple(
-        parse_config(item.content)
-        for item in authored.files
-        if item.category == "config"
-    )
-    allowed = _allowed_caps(
-        entries, agent_name=authored.agent_name, allows=resolve_cap_allows(configs)
-    )
-    return entries, allowed
 
 
 def entry_origin(entry: StateCap) -> SourceOrigin:

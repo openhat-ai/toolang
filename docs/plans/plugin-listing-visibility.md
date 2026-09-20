@@ -63,9 +63,12 @@ arguments. Existing visiting/roaming restrictions remain unchanged.
   than silently fall back.
 - Caps apply existing cap-kind allow policy by default; `--all` includes
   allow-excluded resources in the same scope. Agent lists consume State's
-  published main-module effective caps and full cap index. Root lists capture
-  only root source and apply the shared State policy selector once. Aggregate
-  and kind-specific lists, including standalone `caps`, share this behavior.
+  published main-module effective caps and full cap index. Root lists prepare or
+  reuse the shared root State layer and apply the shared State policy selector
+  once against its resolved metadata and configuration, without reading or
+  creating an agent home. Remote content uses the existing root cache and refresh
+  behavior. Aggregate and kind-specific lists, including standalone `caps`, share
+  this behavior.
   Preserve home/here precedence: `--all` does not resurrect shadowed definitions
   or include other agents' resources. Runtime grants are unchanged.
 - Tools/models/providers need a resident home, not a running or parsed agent
@@ -114,7 +117,7 @@ Cap preparation progress identifies root and agent-home layers separately.
 - CLI plugin/model commands, registration, routing, and optional-agent help.
 - Setup watcher/types: remove inventory-only adapter source publication; retain
   full tools and model allow membership alongside effective runtime resources.
-- State cap selection and CLI cap commands: reuse policy, root-only source reads,
+- State cap selection and CLI cap commands: reuse policy and prepared root layers,
   complete/effective views, and status columns.
 - Plugin modules, factories, callers, package resources, and their tests.
 - CLI integration tests for metadata-only inventories and scoped resources;
@@ -136,6 +139,8 @@ Cap preparation progress identifies root and agent-home layers separately.
 5. Caps default/`--all` honor root/agent scope and policy, same-name precedence,
    and kind-specific allow fields; no other agent's resources leak. Aggregate,
    per-kind, and standalone lists share the behavior.
+   Remote descriptions participate in allow/query selection identically in root
+   and agent views, with cold preparation and reuse of the same root cache.
 6. Models and providers share static catalog precedence, replacement semantics,
    root/agent isolation, and default/`--all` policy behavior. Root cache writes
    never create a default-agent home; root and agent versions remain distinct.

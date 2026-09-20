@@ -5,6 +5,9 @@
 Implemented. The `_me` leaf catalog in this plan is superseded by
 [Define Compact Current-Agent Authoring Tools](compact-current-agent-authoring-tools.md).
 Its tool-name grammar and internal-authority decisions remain active.
+Source-module naming and default listing visibility are superseded by
+[Plugin layout and inspection scopes](plugin-listing-visibility.md), which
+requires implementation modules to match plugin identities.
 
 ## Goal
 
@@ -160,15 +163,15 @@ later presentation policy.
 
 | Old toolset | New toolset | Source module |
 | --- | --- | --- |
-| `filesystem` | `fs` | `toolang.plugin.toolsets.filesystem` |
+| `filesystem` | `fs` | `toolang.plugin.toolsets.fs` |
 | `web_search` | `web` | `toolang.plugin.toolsets.web` |
 | `shell` | `shell` | `toolang.plugin.toolsets.shell` |
-| `service_use` | `service` | `toolang.plugin.toolsets.service_use` |
+| `service_use` | `service` | `toolang.plugin.toolsets.service` |
 | `agent_state` | `_me` | `toolang.execution.tools.agent_state` |
 
-Python source-module and class names may remain descriptive. Runtime plugin,
-toolset, selector, model-name, configuration, and tool-room identities use the
-new names.
+Runtime plugin, toolset, selector, model-name, configuration, and tool-room
+identities use the new names. Implementation modules now follow those identities
+under the superseding plugin-layout definition.
 
 ## Leaf Tool Renames
 
@@ -249,7 +252,7 @@ adapter-specific name rewrites.
 - `src/toolang/plugin/toolsets/loading.py`: pass source provenance into every
   tool registration.
 - `pyproject.toml`: canonical built-in entry-point names.
-- `src/toolang/plugin/toolsets/{filesystem,web,shell,service_use}.py`:
+- `src/toolang/plugin/toolsets/{fs,web,shell,service}.py`:
   runtime toolset and leaf identities.
 - `src/toolang/execution/tools/agent_state.py`: `_me` toolset and verb-first
   leaves.
