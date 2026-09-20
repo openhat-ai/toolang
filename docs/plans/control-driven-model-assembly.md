@@ -118,11 +118,17 @@ subsequent Steps and controls, plus the initiating input for a new sequence.
 The Model Step that first assembles them records them in its own delta.
 Persisted deltas are never amended or backfilled.
 
-Ownership follows recording, not the referenced fact. If R2's first ModelCall
-first assembles R1's final output and cancel, those messages belong to R2's delta
-alongside R2's new input. R1's deltas remain unchanged. When a compact boundary
-is at R2, these messages stay with R2; do not move them into R1's range, infer
-their ownership from their content references, or add origin metadata.
+Message ownership follows the producing root Run, independently of which Model
+Step first records the message. Reconstruct each historical root from its own
+non-imported deltas plus its terminal exchange. Imported templates use `source`
+to identify that root. A compact boundary at R2 excludes R1's terminal reply and
+cancel messages along with R1's input; R2's own exchange stays intact.
+
+Historical tails belong to near, never to the current Run's now buffer. Changing
+horizon or recall may remove them from a new call without changing any previously
+recorded call. Preserve complete exchanges and immutable call snapshots; do not
+infer ownership from message text or rewrite old deltas. The recording semantics
+require a new store schema version; old stores are not migrated.
 
 Child internals remain outside the Thread conversation; a parent Tool Step
 contributes its result once. Preserve complete tool exchanges when consuming

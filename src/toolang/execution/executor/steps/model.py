@@ -98,10 +98,6 @@ def _candidate(
         if state.execution is not None
         else None
     )
-    if history is not None and not messages.started and "near" in prepared.recall:
-        # Resolve the tail before publishing controls; failed history must not
-        # leave new declarations behind. Assembly reuses this cached result.
-        _ = history.tail
     if state.execution is not None:
         resident = (
             state.model_frame.declarations
@@ -217,14 +213,11 @@ def _boundary(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
     history_size = len(history.near) + bool(history.far and "far" in prepared.recall)
-    if not state.messages.started:
-        # A staged historical tail may shrink before its first delta commits.
-        history_size += len(history.tail[1])
     required = replace(
         request,
         messages=[*roots[-1][1], *request.messages[history_size:]],
     )
-    # This lower bound excludes summary and any uncommitted historical tail.
+    # This lower bound excludes the summary.
     if InputEstimate().count(required, None, prepared.input_overhead) > budget:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"

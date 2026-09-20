@@ -22,24 +22,19 @@ from toolang.execution.types import (
 )
 
 
-def test_history_selection_shares_root_and_tail_caches_across_horizons():
+def test_history_selection_shares_complete_root_caches_across_horizons():
     first, second = RunRef("run_ab12"), RunRef("run_cd34")
     horizon = RunRef("run_summary")
-    loaded, tails = [], []
+    loaded = []
 
     def load(roots):
         loaded.append(roots)
         return {root: (MessageTemplate("user", (str(root),)),) for root in roots}
 
-    def tail(roots):
-        tails.append(roots)
-        return (MessageTemplate("assistant", ("terminal",)),)
-
     history = MessageHistory(
         "thread",
         (first, second),
         load,
-        tail,
         lambda _: "earlier",
         lambda _: CompactionResult("thread", str(first), str(second), "earlier"),
     )
@@ -48,9 +43,6 @@ def test_history_selection_shares_root_and_tail_caches_across_horizons():
     assert history.select(None) is selected
     assert history.select(horizon) is compacted
     assert loaded == [(first, second)]
-    assert tails == []
-    assert selected.tail is compacted.tail
-    assert tails == [(second,)]
     assert [ref for ref, _ in selected.roots] == [first, second]
     assert [ref for ref, _ in compacted.roots] == [second]
     assert len(selected.templates) == len(selected.near) == 2
@@ -164,7 +156,6 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         "term_test",
         roots,
         load,
-        lambda _: (),
         resolve,
         lambda _: CompactionResult(
             "term_test",

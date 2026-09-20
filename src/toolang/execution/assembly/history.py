@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from functools import partial
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import (
@@ -56,12 +55,6 @@ class HistorySelection:
     templates: tuple[MessageTemplate, ...]
     recalls: Mapping[RecallTarget, str]
     roots: tuple[tuple[RunRef, tuple[Message, ...]], ...]
-    _tail: Callable[[], tuple[tuple[MessageTemplate, ...], tuple[Message, ...]]]
-
-    @property
-    def tail(self) -> tuple[tuple[MessageTemplate, ...], tuple[Message, ...]]:
-        """Resolve the unrecorded terminal exchange only when it is needed."""
-        return self._tail()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +68,8 @@ class MessageHistory:
     """A fixed historical prefix, with lazily resolved, reusable messages.
 
     The loader supplies records and a value resolver. No State or Store policy
-    participates in selection or rendering. Tail templates become the next
-    recording Model Step's delta; they never amend the preceding Run.
+    participates in selection or rendering. Each root contributes its own
+    complete exchange, including its terminal reply.
     """
 
     def __init__(
@@ -84,21 +77,16 @@ class MessageHistory:
         thread: str,
         roots: Sequence[RunRef],
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageTemplate]]],
-        tail: Callable[[Sequence[RunRef]], tuple[MessageTemplate, ...]],
         resolve: Callable[[TypedRef | ContentRef], object],
         compaction: Callable[[RunRef], CompactionResult],
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
         self._load = load
-        self._load_tail = tail
         self._resolve = resolve
         self._compaction = compaction
         self._roots: dict[RunRef, _RootMessages] = {}
         self._selections: dict[RunRef | None, HistorySelection] = {}
-        self._tails: dict[
-            tuple[RunRef, ...], tuple[tuple[MessageTemplate, ...], tuple[Message, ...]]
-        ] = {}
 
     def select(self, horizon: RunRef | None) -> HistorySelection:
         if horizon not in self._selections:
@@ -140,10 +128,6 @@ class MessageHistory:
                     ),
                     source=horizon,
                 )
-            start = max(
-                (index for index, (_ref, root) in enumerate(roots) if root.templates),
-                default=0,
-            )
             self._selections[horizon] = HistorySelection(
                 far=summary,
                 far_template=far_template,
@@ -155,17 +139,8 @@ class MessageHistory:
                 ),
                 recalls=revisions,
                 roots=tuple((ref, root.messages) for ref, root in roots),
-                _tail=partial(self._tail, selected[start:]),
             )
         return self._selections[horizon]
-
-    def _tail(
-        self, pending: tuple[RunRef, ...]
-    ) -> tuple[tuple[MessageTemplate, ...], tuple[Message, ...]]:
-        if pending not in self._tails:
-            delta = self._load_tail(pending)
-            self._tails[pending] = delta, render_delta(delta, self._resolve)
-        return self._tails[pending]
 
 
 def adopted_horizon(
