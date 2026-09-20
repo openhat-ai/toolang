@@ -1541,11 +1541,12 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
         '"provider":{"body":{"temperature":0.7,"custom":{"values":[0.25]}}}}}}}',
         parse_float=Decimal,
     )
-    provider = parse_model_catalog_data(raw)["test"]
+    providers, models = parse_model_catalog_data(raw)
+    provider = providers["test"]
     if cached:
         snapshot = ModelCatalogSnapshot(
             providers={"test": provider},
-            models=tuple(provider.models.values()),
+            models=models,
             revision="test",
         )
         ModelCatalogCache(tmp_path).store_source(
@@ -1554,7 +1555,8 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
         loaded = ModelCatalogCache(tmp_path).load_source("models_dev", revision="test")
         assert loaded is not None
         provider = loaded.providers["test"]
-    model = provider.models["one"]
+        models = loaded.models
+    model = models[0]
     assert model.provider is not None
     model = model.with_route(
         _route(

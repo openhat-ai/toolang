@@ -62,7 +62,6 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
             name="OpenAI",
             env=(),
             npm="@ai-sdk/openai",
-            models={},
         )
     }
     adapters = {"responses": cast(Any, object())}
@@ -138,7 +137,6 @@ def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
                     name="Actual",
                     env=(),
                     npm="@ai-sdk/openai-compatible",
-                    models={},
                 ),
             },
             adapters={},

@@ -41,9 +41,7 @@ from toolang.common.json import dumps
 _CATALOG_KIND = "catalog"
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-_PROVIDER_FIELDS = frozenset(
-    {"id", "name", "npm", "api", "doc", "env", "_toolang", "models"}
-)
+_PROVIDER_FIELDS = frozenset({"id", "name", "npm", "api", "doc", "env", "_toolang"})
 _MODEL_FIELDS = frozenset(
     {
         "id",
@@ -300,10 +298,6 @@ def _provider_to_data(provider: Provider, *, resolved: bool) -> dict[str, object
         "api": provider.api,
         "doc": provider.doc,
         "env": list(provider.env),
-        "models": {
-            model_id: _model_to_data(model, resolved=resolved)
-            for model_id, model in sorted(provider.models.items())
-        },
         "_toolang": _provider_toolang_to_data(provider._toolang, resolved=resolved),
     }
 
@@ -315,20 +309,9 @@ def _provider_from_data(
     resolved: bool,
 ) -> Provider:
     toolang = _mapping(data, "_toolang")
-    raw_models = data.get("models")
-    if not isinstance(raw_models, Mapping):
-        raise TypeError("cached provider models must be an object")
-    models = {
-        str(model_id): _model_from_data(
-            cast(Mapping[str, object], raw_model),
-            resolved=resolved,
-        )
-        for model_id, raw_model in cast(Mapping[object, object], raw_models).items()
-    }
     return Provider(
         id=provider_id,
         name=_text(data, "name"),
-        models=models,
         _toolang=_provider_toolang_from_data(toolang, resolved=resolved),
         npm=_optional_text(data, "npm"),
         api=_optional_text(data, "api"),

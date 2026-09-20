@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,7 +17,7 @@ from toolang.base.types.model import (
     ProviderToolang,
 )
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
-from toolang.setup.routes import model_adapter, resolve_provider
+from toolang.setup.routes import model_adapter, resolve_provider, resolve_model
 from toolang.setup.cache import ModelCatalogCache
 
 
@@ -35,12 +36,16 @@ def test_source_cache_round_trip_preserves_catalog_facts(
         reasoning_options=({"type": "effort", "values": ["low", "high"]},),
     )
     snapshot = ModelCatalogSnapshot(
-        providers={"test": Provider(id="test", name="Test", models={"one": model})},
+        providers={"test": Provider(id="test", name="Test")},
         models=(model,),
         revision="source-revision",
     )
     cache = ModelCatalogCache(tmp_path)
     cache.store_source("models_dev", revision=snapshot.revision, snapshot=snapshot)
+    payload = json.loads((tmp_path / "models_dev.json").read_text())["payload"]
+    assert "models" not in payload["providers"]["test"]
+    assert len(payload["models"]) == 1
+    assert payload["models"][0]["_toolang"]["provider"] == "test"
 
     loaded = ModelCatalogCache(tmp_path).load_source(
         "models_dev", revision=snapshot.revision
@@ -65,7 +70,6 @@ def test_skipped_probe_write_uses_content_revision(
     provider = Provider(
         id="local",
         name="Local",
-        models={},
         api="http://localhost/v1?api_key=test-placeholder",
     )
     if skip_reason == "oversized":
@@ -96,9 +100,7 @@ def test_source_cache_preserves_provider_adapter_trust(
             )
         },
     )
-    provider = Provider(
-        id="test", name="Test", npm="@ai-sdk/openai", models={"one": model}
-    )
+    provider = Provider(id="test", name="Test", npm="@ai-sdk/openai")
     snapshot = ModelCatalogSnapshot(
         providers={"test": provider}, models=(model,), revision="source"
     )
@@ -110,9 +112,7 @@ def test_source_cache_preserves_provider_adapter_trust(
     cold = resolve_provider(provider, adapters=adapters, environ={})
     warm = resolve_provider(loaded.providers["test"], adapters=adapters, environ={})
 
-    assert model_adapter(warm, warm.models["one"]) == model_adapter(
-        cold, cold.models["one"]
-    )
+    assert model_adapter(warm, loaded.models[0]) == model_adapter(cold, model)
 
 
 def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
@@ -131,7 +131,7 @@ def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
         reasoning_options=(MappingProxyType({"values": efforts}),),
     )
     snapshot = ModelCatalogSnapshot(
-        providers={"test": Provider(id="test", name="Test", models={"one": model})},
+        providers={"test": Provider(id="test", name="Test")},
         models=(model,),
         revision="v1",
     )
@@ -158,7 +158,6 @@ def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
     provider = Provider(
         id="test",
         name="Test",
-        models={"one": model},
         _toolang=ProviderToolang(adapter="responses", env=("ACCOUNT",)),
     )
     resolved = resolve_provider(
@@ -166,13 +165,18 @@ def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
         adapters={"responses": ResponsesModelAdapter()},
         environ={"ACCOUNT": "private-account"},
     )
-    published_model = resolved.models["one"].with_route(
+    resolved_model = resolve_model(
+        model,
+        resolved,
+        adapters={"responses": ResponsesModelAdapter()},
+        environ={"ACCOUNT": "private-account"},
+    )
+    published_model = resolved_model.with_route(
         replace(
-            resolved.models["one"]._toolang.route,
+            resolved_model._toolang.route,
             options={"nested": {"values": [Decimal("0.1234567890123456789")]}},
         )
     )
-    resolved = replace(resolved, models={"one": published_model})
     snapshot = ModelCatalogSnapshot(
         providers={"test": resolved},
         models=(published_model,),
@@ -217,3 +221,26 @@ def test_route_detaches_nested_plugin_data():
     assert route.options == {"nested": {"values": ("text",)}}
     with pytest.raises(TypeError):
         cast(Any, route.options["nested"])["values"] = ()
+
+
+def test_flat_cache_rejects_unknown_model_ownership(tmp_path):
+    from toolang.common.cache import store_document
+    from toolang.setup.cache import _snapshot_document
+
+    model = Model(id="one", name="One", _toolang=ModelToolang(provider="test"))
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider(id="test", name="Test")},
+        models=(model,),
+        revision="source",
+    )
+    document = _snapshot_document(snapshot)
+    document["providers"] = {}
+    assert store_document(
+        tmp_path / "models_dev.json",
+        kind="catalog",
+        key="models_dev",
+        document={**document, "revision": "source"},
+    )
+    assert (
+        ModelCatalogCache(tmp_path).load_source("models_dev", revision="source") is None
+    )

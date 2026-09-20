@@ -15,7 +15,7 @@ from pydantic_core import from_json
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.json import dumps
 
-CACHE_SCHEMA = 8
+CACHE_SCHEMA = 9
 _MAX_CACHE_BYTES = 128 * 1024 * 1024
 _REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 _SENSITIVE_HEADER_NAME_RE = re.compile(

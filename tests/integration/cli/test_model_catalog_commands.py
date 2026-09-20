@@ -130,9 +130,11 @@ def test_models_query_exports_a_valid_complete_catalog(
 
     assert result.exit_code == 0, result.stderr
     data = json.loads(result.stdout, parse_float=Decimal)
-    providers = parse_model_catalog_data(data)
+    providers, models = parse_model_catalog_data(data)
     assert tuple(providers) == ("test",)
-    assert tuple(providers["test"].models) == ("two",)
+    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
+        "two",
+    )
 
 
 def test_models_query_accepts_combined_models_dev_catalog(
@@ -173,9 +175,13 @@ def test_models_query_accepts_combined_models_dev_catalog(
     )
 
     assert result.exit_code == 0, result.stderr
-    providers = parse_model_catalog_data(json.loads(result.stdout, parse_float=Decimal))
+    providers, models = parse_model_catalog_data(
+        json.loads(result.stdout, parse_float=Decimal)
+    )
     assert tuple(providers) == ("test",)
-    assert tuple(providers["test"].models) == ("one",)
+    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
+        "one",
+    )
 
 
 def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
@@ -403,7 +409,6 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://ollama.test/v1",
-            models={model.id: model},
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -426,7 +431,6 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://llama.test/v1",
-            models={model.id: model},
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -773,10 +777,18 @@ def test_models_uses_isolated_resident_catalogs(
             assert result == 0, output.err
             assert not output.err
             if json_output:
-                providers = parse_model_catalog_data(
+                providers, models = parse_model_catalog_data(
                     json.loads(output.out, parse_float=Decimal)
                 )
-                actual = tuple(providers["test"].models) if providers else ()
+                actual = (
+                    tuple(
+                        model.id
+                        for model in models
+                        if model._toolang.provider == "test"
+                    )
+                    if providers
+                    else ()
+                )
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
@@ -829,12 +841,14 @@ def test_models_uses_agent_provider_config_and_environment(
         assert not output.err
         assert "synthetic-agent-key" not in output.out
         if json_output:
-            providers = parse_model_catalog_data(
+            providers, models = parse_model_catalog_data(
                 json.loads(output.out, parse_float=Decimal)
             )
             assert tuple(providers) == (("test",) if available else ())
             if available:
-                assert tuple(providers["test"].models) == ("one", "two")
+                assert tuple(
+                    model.id for model in models if model._toolang.provider == "test"
+                ) == ("one", "two")
                 assert providers["test"].npm == "@ai-sdk/openai-compatible"
                 assert "resolved" not in output.out
         else:

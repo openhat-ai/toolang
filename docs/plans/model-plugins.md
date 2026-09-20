@@ -86,7 +86,7 @@ Setup persists one complete file per catalog. The models.dev source is captured
 once per changed file observation, then decoded from a matching source cache or
 parsed from the captured bytes. There is no separate persisted filtered view.
 
-`CACHE_SCHEMA` is 8. Older source caches are rebuilt; source documents retain
+`CACHE_SCHEMA` is 9. Older source caches are rebuilt; source documents retain
 catalog declarations and ownership, never effective routes or readiness.
 Imported flat `env` lists are resolved by setup rather than treated as explicit
 plugin OR alternatives.
@@ -203,10 +203,13 @@ One catalog definition; resolution returns another instance of the same type
 whose single `_toolang` sub-record (`ProviderToolang`) holds the Toolang-side
 facts, with no `resolved` field.
 
-A models.dev provider record has exactly `id`, `name`, `env`, `npm`, `api`,
-`doc`, and `models`; a models.dev model record has exactly the 21 fields the
-importer accepts. Anything else our records carry is a Toolang-side fact, not
-catalog data.
+External models.dev provider records contain `id`, `name`, `env`, `npm`, `api`,
+`doc`, and nested `models`. Internal Provider records omit `models`: snapshots
+and setup hold providers and models separately, joined by
+`Model._toolang.provider`. Source caches and private full-view payloads store
+each model only once. Parsing flattens either supported external format; export
+rebuilds the nested models object. Provider summaries group the selected models
+by ownership when needed, without retaining a second model collection.
 
 The resolved instance carries `ProviderToolang{env, adapter, route}`. The first
 two fields preserve trusted catalog declarations; `route` carries effective
@@ -749,8 +752,8 @@ while setup retains a version-pinned complete catalog for explicit inspection.
 - Persist complete source catalogs regardless of readiness or `allow.models`.
   Do not persist a second filtered catalog.
 - `AgentSetup.models` contains only ready models matching `allow.models`, in
-  configured preference order. `providers` contains only their providers, with
-  each provider's nested models filtered to exactly the same membership.
+  configured preference order. `providers` contains only their providers. The
+  collections are joined by `Model._toolang.provider`; Provider stores no models.
 - `setup.model_catalog()` projects the default view. `all=True` materializes the
   complete resolved catalog on demand, including unready models, allow-excluded
   models, and providers with no models. This never broadens runtime selection.
@@ -771,7 +774,7 @@ Touchpoints: setup types, watcher publication and cache codec; catalog CLI
 commands; model documentation; setup and CLI acceptance tests.
 
 Acceptance: mixed ready/unready and allowed/excluded models prove both view
-memberships and nested provider consistency; empty providers appear only in the
+memberships and ownership consistency; empty providers appear only in the
 complete view; automatic default/compaction never selects unready models; source
 changes and cache deletion cannot change a pinned view; root and agent CLI,
 queries and JSON preserve the selected scope, including local models.

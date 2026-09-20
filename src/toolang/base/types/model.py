@@ -410,11 +410,10 @@ def normalized_env(env: ResolvedEnv) -> ResolvedEnv:
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """One models.dev-compatible provider and its model catalog entries."""
+    """One provider definition; models link to it through their ownership key."""
 
     id: str
     name: str
-    models: Mapping[str, Model]  # keyed by local model id
     _toolang: ProviderToolang = ProviderToolang()
     npm: str | None = None
     api: str | None = None
@@ -424,12 +423,6 @@ class Provider:
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("provider id and name are required")
-        normalized = dict(self.models)
-        if any(key != model.id for key, model in normalized.items()):
-            raise ValueError(f"provider {self.id!r} model keys must match model ids")
-        if any(model._toolang.provider != self.id for model in normalized.values()):
-            raise ValueError(f"provider {self.id!r} contains foreign models")
-        object.__setattr__(self, "models", MappingProxyType(normalized))
 
     def to_data(
         self, *, models: Mapping[str, Model] | None = None
@@ -444,7 +437,7 @@ class Provider:
                 "env": list(self.env),
                 "models": {
                     key: model.to_data()
-                    for key, model in sorted((models or self.models).items())
+                    for key, model in sorted((models or {}).items())
                 },
             }
         )
@@ -485,14 +478,22 @@ class ModelCatalogSnapshot:
         identities = [(model._toolang.provider, model.id) for model in models]
         if len(identities) != len(set(identities)):
             raise ValueError("catalog models must have unique provider/model identity")
+        if any(model._toolang.provider not in providers for model in models):
+            raise ValueError("catalog models reference unknown providers")
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "models", models)
 
     def find(self, provider_id: str, model_id: str) -> Model | None:
         """Find one exact model in this snapshot."""
 
-        provider = self.providers.get(provider_id)
-        return provider.models.get(model_id) if provider is not None else None
+        return next(
+            (
+                model
+                for model in self.models
+                if model._toolang.provider == provider_id and model.id == model_id
+            ),
+            None,
+        )
 
     def to_data(
         self,

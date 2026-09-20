@@ -11,8 +11,11 @@ allow policy. Durable records and their serialized formats stay unchanged.
 
 ## Data contract
 
-Keep the existing Model and Provider catalog fields as source facts. Extend the
-existing Toolang metadata rather than introducing replacement model types:
+Keep Model and Provider source facts without a nested Provider.models field.
+Snapshots and setup maintain separate provider and model collections, joined by
+Model._toolang.provider. Flatten nested models.dev input at parsing and rebuild
+the nested models object only when exporting catalog JSON. Extend the existing
+Toolang metadata rather than introducing replacement model types:
 
 ```python
 class ModelToolang:
@@ -68,7 +71,8 @@ Split the currently shared source-cache and published-snapshot codec entry
 points. They may share field helpers, but their persisted content differs:
 
 1. Source-cache encoding stores complete catalog declarations, model ownership,
-   and trusted plugin declarations. It omits ready and effective route at every
+   and trusted plugin declarations. Providers never contain models or model IDs;
+   each model is encoded exactly once in the top-level models list. It omits ready and effective route at every
    level. Preserve the distinction between trusted typed plugin declarations
    and arbitrary raw _toolang mappings. Raw models.dev metadata must not gain
    plugin configuration authority through a cache round trip.
@@ -104,7 +108,7 @@ credential selection. No adapter reads the process environment.
 
 CLI models uses published route fields for query/display and derives generic
 unavailability labels from None fields. Providers aggregates adapters and ready
-counts from the selected nested models; an empty provider can display its
+counts from the selected models joined by ownership; an empty provider can display its
 published default route. The provider API column explicitly represents the
 default endpoint and marks differing model endpoints as overrides. Environment
 requirements shown for unavailable entries are catalog declarations, not a
@@ -146,7 +150,10 @@ relocation is not required for this change.
   or cache deletion cannot alter an older setup's default or full view.
 - Invalid catalog modes do not reject startup or refresh; cold/warm loads,
   allow exclusion, recovery, and old snapshot stability retain this behavior.
-- Default and --all membership, nested provider membership, empty providers,
+- Flat providers/models have one authoritative ownership key; unknown owners
+  and duplicate provider/model identities are rejected. Cold/warm cache round
+  trips store and construct each model only once.
+- Default and --all membership, exported provider membership, empty providers,
   query adapter fields, and catalog-only JSON exports retain their contracts.
 - Built-in adapter request/stream behavior remains equivalent, and existing
   durable serialization regressions continue to pass.

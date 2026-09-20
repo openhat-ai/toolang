@@ -369,6 +369,7 @@ def catalog_model_dataset(
 def catalog_provider_views(
     providers: Sequence[Provider],
     *,
+    models: Mapping[str, Sequence[Model]],
     available: set[str],
     adapters: Mapping[str, Sequence[str]],
     apis: Mapping[str, str | None],
@@ -382,11 +383,11 @@ def catalog_provider_views(
             record=provider,
             name=provider.name,
             catalog=None,
-            ready=any(model._toolang.ready for model in provider.models.values()),
+            ready=any(model._toolang.ready for model in models.get(provider.id, ())),
             available_models=sum(
-                f"{provider.id}/{model_id}" in available for model_id in provider.models
+                model.ref in available for model in models.get(provider.id, ())
             ),
-            model_count=len(provider.models),
+            model_count=len(models.get(provider.id, ())),
             adapters=tuple(adapters.get(provider.id, ())),
             api=apis.get(provider.id),
             env_requirements=tuple(env_requirements.get(provider.id, ())),

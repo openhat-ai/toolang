@@ -9,7 +9,7 @@ the setup resolver joins those facts once for the current process.
 | Term | Meaning |
 | --- | --- |
 | `Provider` | One models.dev-compatible provider record |
-| `Model` | One models.dev-compatible model record nested under a provider |
+| `Model` | One model record linked by `_toolang.provider` |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
 | `ModelRequest` | One run's concrete model demand |
@@ -134,7 +134,11 @@ Built-in catalog plugins live in `toolang.plugin.catalogs`:
 
 `toolang.setup` combines ordered snapshots with `MergedModelCatalog`, which
 rejects identity conflicts, and resolves them into effective `Provider` and
-`Model` instances.
+`Model` instances. Providers contain no models list: snapshots and setup hold
+separate provider and model collections, joined by `Model._toolang.provider`.
+The parser flattens external nested catalogs and JSON export rebuilds that
+structure. Provider display counts and availability use the selected models
+joined by ownership.
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
@@ -155,6 +159,8 @@ at different guest paths. Invalid, unsafe, or legacy cache entries are misses, a
 a cache write failure does not reject a valid in-memory Setup.
 
 Persistence retains all source records, independently of readiness or allow rules.
+Both source caches and private full-view payloads store each model once in a
+top-level list; provider records contain neither models nor model IDs.
 The published setup indexes only ready, allowed models and their providers.
 `setup.model_catalog()` returns that default view; `setup.model_catalog(all=True)`
 materializes the complete resolved view from compact serialized records pinned to

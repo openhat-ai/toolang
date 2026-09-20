@@ -15,22 +15,29 @@ from toolang.base.types.model import (
 )
 
 
-def parse_model_catalog_data(data: object) -> dict[str, Provider]:
-    """Validate parsed JSON and return typed providers."""
+def parse_model_catalog_data(
+    data: object,
+) -> tuple[dict[str, Provider], tuple[Model, ...]]:
+    """Flatten external catalog JSON into providers and owned models."""
 
     data = _provider_map_from_catalog_data(data)
     providers: dict[str, Provider] = {}
+    models: list[Model] = []
     for raw_provider_id, raw_provider in data.items():
         if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
             raise TypeError("model catalog provider keys must be non-empty strings")
         provider_id = raw_provider_id.strip()
         if not isinstance(raw_provider, Mapping):
             raise TypeError(f"provider {provider_id!r} must be an object")
-        providers[provider_id] = _parse_provider(
+        provider, entries = _parse_provider(
             provider_id,
             cast(Mapping[str, object], raw_provider),
         )
-    return providers
+        providers[provider_id] = provider
+        models.extend(entries)
+    return providers, tuple(
+        sorted(models, key=lambda model: (model._toolang.provider, model.id))
+    )
 
 
 def model_catalog_snapshot_from_data(
@@ -41,13 +48,7 @@ def model_catalog_snapshot_from_data(
 ) -> ModelCatalogSnapshot:
     """Validate normalized catalog data and rebuild one immutable snapshot."""
 
-    providers = parse_model_catalog_data(data)
-    models = tuple(
-        provider.models[model_id]
-        for provider_id in sorted(providers)
-        for model_id in sorted(providers[provider_id].models)
-        for provider in (providers[provider_id],)
-    )
+    providers, models = parse_model_catalog_data(data)
     return ModelCatalogSnapshot(
         providers=providers,
         models=models,
@@ -92,7 +93,7 @@ def _is_provider_agnostic_model_map(data: Mapping[object, object]) -> bool:
 def _parse_provider(
     provider_id: str,
     data: Mapping[str, object],
-) -> Provider:
+) -> tuple[Provider, tuple[Model, ...]]:
     parsed_id = _required_text(data.get("id"), label=f"provider {provider_id} id")
     if parsed_id != provider_id:
         raise ValueError(
@@ -114,15 +115,15 @@ def _parse_provider(
             cast(Mapping[str, object], raw_model),
         )
     env = _string_list(data.get("env"), label=f"provider {provider_id} env")
-    return Provider(
+    provider = Provider(
         id=provider_id,
         name=_required_text(data.get("name"), label=f"provider {provider_id} name"),
         env=env,
         npm=_required_text(data.get("npm"), label=f"provider {provider_id} npm"),
         api=_optional_text(data.get("api"), label=f"provider {provider_id} api"),
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
-        models=models,
     )
+    return provider, tuple(models.values())
 
 
 def _parse_model(

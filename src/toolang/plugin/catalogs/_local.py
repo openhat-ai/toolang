@@ -74,23 +74,21 @@ def local_snapshot(
 ) -> ModelCatalogSnapshot:
     """Build one ephemeral snapshot for a local runtime provider."""
 
-    by_id = {model.id: model for model in models}
     provider = Provider(
         id=provider_id,
         name=provider_name,
-        models=by_id,
         _toolang=ProviderToolang(env=(), adapter="chat_completions"),
         api=endpoint,
     )
     identity = json.dumps(
-        provider.to_data(),
+        provider.to_data(models={model.id: model for model in models}),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     )
     return ModelCatalogSnapshot(
         providers={provider_id: provider},
-        models=tuple(by_id[key] for key in sorted(by_id)),
+        models=tuple(sorted(models, key=lambda model: model.id)),
         revision=f"runtime:{sha256(identity.encode()).hexdigest()}",
         local=True,
     )

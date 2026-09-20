@@ -87,7 +87,12 @@ def resolve_catalog_providers(
     return ModelCatalogSnapshot(
         providers=providers,
         models=tuple(
-            providers[model._toolang.provider].models[model.id]
+            resolve_model(
+                model,
+                providers[model._toolang.provider],
+                adapters=adapters,
+                environ=environ,
+            )
             for model in snapshot.models
         ),
         revision=snapshot.revision,
@@ -102,7 +107,7 @@ def resolve_provider(
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
 ) -> Provider:
-    """Publish default and model routes without changing catalog declarations."""
+    """Publish a provider default route without changing its declarations."""
 
     env = _resolve_env(provider)
     satisfied = env if env_is_ready(env, environ=environ) else None
@@ -121,35 +126,40 @@ def resolve_provider(
         headers=cast(Mapping[str, str], _convention_block(provider.id)["headers"]),
         options=cast(Mapping[str, object], _convention_block(provider.id)["options"]),
     )
-    models = {}
-    for model_id, model in provider.models.items():
-        name = model_adapter(provider, model)
-        implementation = adapters.get(name) if name is not None else None
-        override = model.provider or {}
-        mode_blocks = _mode_provider_blocks(model)
-        route = ModelRoute(
-            adapter=name
-            if implementation is not None and mode_blocks is not None
-            else None,
-            api=_resolve_api(
-                _optional_text(override.get("api")) or provider.api,
-                environ=environ,
-                default=_default_api(implementation, npm=_model_npm(provider, model)),
-            ),
-            env=satisfied,
-            headers=model_headers(provider, model, mode_blocks=mode_blocks)
-            if mode_blocks is not None
-            else {},
-            options=model_options(provider, model, mode_blocks=mode_blocks)
-            if mode_blocks is not None
-            else {},
-        )
-        models[model_id] = model.with_route(route)
-    return replace(
-        provider,
-        models=models,
-        _toolang=replace(provider._toolang, route=default_route),
+    return replace(provider, _toolang=replace(provider._toolang, route=default_route))
+
+
+def resolve_model(
+    model: Model,
+    provider: Provider,
+    *,
+    adapters: Mapping[str, ModelAdapter],
+    environ: Mapping[str, str],
+) -> Model:
+    """Resolve a model against its published provider defaults."""
+
+    name = model_adapter(provider, model)
+    implementation = adapters.get(name) if name is not None else None
+    override = model.provider or {}
+    mode_blocks = _mode_provider_blocks(model)
+    route = ModelRoute(
+        adapter=name
+        if implementation is not None and mode_blocks is not None
+        else None,
+        api=_resolve_api(
+            _optional_text(override.get("api")) or provider.api,
+            environ=environ,
+            default=_default_api(implementation, npm=_model_npm(provider, model)),
+        ),
+        env=provider._toolang.route.env,
+        headers=model_headers(provider, model, mode_blocks=mode_blocks)
+        if mode_blocks is not None
+        else {},
+        options=model_options(provider, model, mode_blocks=mode_blocks)
+        if mode_blocks is not None
+        else {},
     )
+    return model.with_route(route)
 
 
 def _default_api(adapter: ModelAdapter | None, *, npm: str | None) -> str | None:

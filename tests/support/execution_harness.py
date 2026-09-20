@@ -234,11 +234,9 @@ class FakeModels:
         return (self.catalog_model(),)
 
     def catalog_provider(self) -> Provider:
-        model = self.catalog_model()
         return Provider(
             id=self.name,
             name="Test",
-            models={model.id: model},
             _toolang=ProviderToolang(
                 env=(),
                 adapter=ScriptedModelAdapter.name,

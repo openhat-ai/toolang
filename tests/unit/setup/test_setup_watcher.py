@@ -230,8 +230,8 @@ def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
     warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
     actual = asyncio.run(warm.refresh())
 
-    expected_cost = expected.providers["test"].models["one"].cost
-    actual_cost = actual.providers["test"].models["one"].cost
+    expected_cost = expected.models.resolve("test/one").cost
+    actual_cost = actual.models.resolve("test/one").cost
     assert expected_cost is not None
     assert actual_cost is not None
     assert actual_cost["input"] == expected_cost["input"]
@@ -435,7 +435,6 @@ def test_setup_watcher_detects_local_models_without_force(
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://127.0.0.1:11434/v1",
-            models={model.id: model},
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -655,7 +654,6 @@ def test_setup_watcher_keeps_probe_changes_when_cache_write_is_skipped(
         name="Ollama",
         npm="@ai-sdk/openai-compatible",
         api="http://localhost/v1?api_key=test-placeholder",
-        models={model.id: model},
     )
     probe = replace(
         _empty_local("ollama"), providers={provider.id: provider}, models=(model,)
@@ -810,7 +808,9 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
     assert len(setup.models._matcher.items) == 1
     assert len(setup.tools._matcher.items) == 1
     assert tuple(setup.providers) == ("test",)
-    assert tuple(setup.providers["test"].models) == ("one",)
+    assert tuple(
+        model.id for model in setup.models.entries if model._toolang.provider == "test"
+    ) == ("one",)
     assert setup.defaults.model == ModelRequest("test/one")
     assert setup.defaults.runnable == "agic:chat"
     assert setup.limits.tokens == 300
@@ -1033,7 +1033,6 @@ def _empty_local(provider_id: str) -> ModelCatalogSnapshot:
         name=provider_id,
         env=(),
         npm="@ai-sdk/openai-compatible",
-        models={},
     )
     return ModelCatalogSnapshot(
         providers={provider_id: provider},
@@ -1183,7 +1182,9 @@ def test_setup_filters_readiness_and_allow_but_retains_complete_catalog(
     assert setup.models.refs() == ("test/one",)
     assert len(setup.models._matcher.items) == 1
     assert tuple(setup.providers) == ("test",)
-    assert tuple(setup.providers["test"].models) == ("one",)
+    assert tuple(
+        model.id for model in setup.models.entries if model._toolang.provider == "test"
+    ) == ("one",)
     assert setup.model_catalog().models == setup.models.entries
     complete = setup.model_catalog(all=True)
     assert complete.revision == setup.revision
@@ -1313,7 +1314,9 @@ def test_setup_publishes_around_invalid_modes_and_recovers(
     assert setup is not previous
     assert not watcher.diagnostics()
     assert set(setup.models.refs()) == {"test/one", "test/three"}
-    assert set(setup.providers["test"].models) == {"one", "three"}
+    assert {
+        model.id for model in setup.models.entries if model._toolang.provider == "test"
+    } == {"one", "three"}
     full = setup.model_catalog(all=True)
     invalid = full.find("test", "two")
     assert invalid is not None and not invalid._toolang.ready

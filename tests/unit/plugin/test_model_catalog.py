@@ -74,7 +74,6 @@ def test_merged_catalog_reuses_records_with_complete_origin() -> None:
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
-        models={model.id: model},
     )
     snapshot = ModelCatalogSnapshot(
         providers={provider.id: provider},
@@ -292,29 +291,29 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
 
 
 def test_filtered_export_round_trips_deterministically() -> None:
-    provider = _provider({"one": _model("one"), "two": _model("two")})
-    snapshot = _snapshot(provider)
+    snapshot = _snapshot(_provider(), (_model("one"), _model("two")))
     selected = tuple(model for model in snapshot.models if model.id == "two")
 
     first = dumps(snapshot.to_data(models=selected))
     second = dumps(snapshot.to_data(models=selected))
-    imported = parse_model_catalog_data(json.loads(first, parse_float=Decimal))
+    imported, models = parse_model_catalog_data(json.loads(first, parse_float=Decimal))
 
     assert first == second
     assert tuple(imported) == ("test",)
-    assert tuple(imported["test"].models) == ("two",)
+    assert tuple(model.id for model in models) == ("two",)
 
 
 def test_strict_export_rejects_local_only_models() -> None:
-    provider = _provider({"local": _model("local")})
-    snapshot = dataclasses.replace(_snapshot(provider), local=True)
+    snapshot = dataclasses.replace(
+        _snapshot(_provider(), (_model("local"),)), local=True
+    )
 
     with pytest.raises(ValueError, match="local-only catalog cannot be exported"):
         snapshot.to_data()
 
 
 def test_model_protocol_hints_override_the_provider_default() -> None:
-    provider = _resolve(_provider({}), ChatCompletionsModelAdapter())
+    provider = _resolve(_provider(), ChatCompletionsModelAdapter())
     model = Model(
         id="one",
         name="One",
@@ -332,7 +331,6 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
             name="Anthropic",
             env=("ANTHROPIC_API_KEY",),
             npm="@ai-sdk/anthropic",
-            models={},
         ),
         MessagesModelAdapter(),
         environ={"ANTHROPIC_API_KEY": "secret"},
@@ -389,14 +387,13 @@ def _model(
     )
 
 
-def _provider(models: dict[str, Model]) -> Provider:
+def _provider() -> Provider:
     return Provider(
         id="test",
         name="Test",
         env=("TEST_API_KEY",),
         npm="@ai-sdk/openai-compatible",
         api="https://api.test/v1",
-        models=models,
     )
 
 
@@ -413,9 +410,36 @@ def _resolve(
     )
 
 
-def _snapshot(provider: Provider) -> ModelCatalogSnapshot:
+def _snapshot(provider: Provider, models: tuple[Model, ...]) -> ModelCatalogSnapshot:
     return ModelCatalogSnapshot(
         providers={provider.id: provider},
-        models=tuple(provider.models.values()),
+        models=models,
         revision="sha256:test",
     )
+
+
+def test_flat_snapshot_joins_same_local_ids_by_provider_and_exports_selection():
+    providers = {
+        name: Provider(id=name, name=name) for name in ("first", "second", "empty")
+    }
+    models = tuple(
+        Model(id="same", name=name, _toolang=ModelToolang(provider=name))
+        for name in ("first", "second")
+    )
+    snapshot = ModelCatalogSnapshot(providers=providers, models=models, revision="test")
+    assert all(
+        not hasattr(provider, "models") for provider in snapshot.providers.values()
+    )
+    assert snapshot.find("first", "same") is models[0]
+    assert snapshot.find("second", "same") is models[1]
+    assert snapshot.find("empty", "same") is None
+    assert snapshot.find("missing", "same") is None
+    assert snapshot.to_data(models=(models[1],)) == {
+        "second": providers["second"].to_data(models={"same": models[1]})
+    }
+    assert providers["empty"].to_data()["models"] == {}
+    assert snapshot.to_data(models=()) == {}
+    with pytest.raises(ValueError, match="unknown providers"):
+        dataclasses.replace(snapshot, providers={"first": providers["first"]})
+    with pytest.raises(ValueError, match="unique provider/model identity"):
+        dataclasses.replace(snapshot, models=(models[0], models[0]))

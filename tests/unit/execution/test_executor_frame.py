@@ -79,7 +79,6 @@ def _provider() -> Provider:
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
-        models={},
         _toolang=ProviderToolang(
             env=(),
             adapter="test",

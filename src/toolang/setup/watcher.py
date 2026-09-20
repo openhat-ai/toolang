@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal
 import logging
 from pathlib import Path
@@ -593,20 +593,10 @@ def _build_setup(
     if validate_defaults and defaults.model is not None:
         model = models.resolve(defaults.model.ref)
         resolve_model_reasoning(model, defaults.model.reasoning)
-    all_providers = dict(snapshot.providers)
-    provider_models: dict[str, set[str]] = {}
-    for model in models.models:
-        provider_models.setdefault(model._toolang.provider, set()).add(model.id)
+    provider_ids = {model._toolang.provider for model in models.entries}
     providers = {
-        provider_id: replace(
-            all_providers[provider_id],
-            models={
-                model_id: model
-                for model_id, model in all_providers[provider_id].models.items()
-                if model_id in model_ids
-            },
-        )
-        for provider_id, model_ids in provider_models.items()
+        provider_id: snapshot.providers[provider_id]
+        for provider_id in sorted(provider_ids)
     }
     return AgentSetup(
         layout=layout,

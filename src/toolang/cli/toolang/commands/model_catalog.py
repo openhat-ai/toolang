@@ -125,12 +125,19 @@ def providers_command(
     base_providers = tuple(
         snapshot.providers[provider_id] for provider_id in sorted(snapshot.providers)
     )
+    by_provider: dict[str, list[Model]] = {
+        provider.id: [] for provider in base_providers
+    }
+    for model in snapshot.models:
+        by_provider[model._toolang.provider].append(model)
     available = {model.ref for model in snapshot.models if model._toolang.ready}
     selected_views = catalog_provider_views(
         base_providers,
+        models=by_provider,
         available=available,
         adapters={
-            provider.id: _provider_adapters(provider) for provider in base_providers
+            provider.id: _provider_adapters(provider, by_provider[provider.id])
+            for provider in base_providers
         },
         apis={provider.id: provider._toolang.route.api for provider in base_providers},
         env_requirements={
@@ -141,7 +148,14 @@ def providers_command(
     providers = tuple(item.record for item in selected_views)
     if json_:
         typer.echo(
-            dumps({provider.id: provider.to_data() for provider in providers}),
+            dumps(
+                {
+                    provider.id: provider.to_data(
+                        models={model.id: model for model in by_provider[provider.id]}
+                    )
+                    for provider in providers
+                }
+            ),
             nl=False,
         )
         return
@@ -161,9 +175,9 @@ def providers_command(
                 style="red" if item.available_models == 0 else "",
             ),
             _provider_adapters_cell(item),
-            _provider_api_cell(item),
+            _provider_api_cell(item, by_provider[item.id]),
             _provider_env_cell(item),
-            _provider_reason(item.record),
+            _provider_reason(item.record, by_provider[item.id]),
         )
         for item in selected_views
     ]
@@ -241,13 +255,13 @@ def _catalog_summary(
     return f"{len(models)} {model_noun}"
 
 
-def _provider_adapters(provider: Provider) -> tuple[str, ...]:
+def _provider_adapters(provider: Provider, models: Sequence[Model]) -> tuple[str, ...]:
     adapters = {
         model._toolang.route.adapter
-        for model in provider.models.values()
+        for model in models
         if model._toolang.route.adapter is not None
     }
-    if not provider.models and provider._toolang.route.adapter is not None:
+    if not models and provider._toolang.route.adapter is not None:
         adapters.add(provider._toolang.route.adapter)
     return tuple(sorted(adapters))
 
@@ -271,16 +285,16 @@ def _route_reason(route: ModelRoute) -> str:
     )
 
 
-def _provider_reason(provider: Provider) -> str:
-    if any(model._toolang.ready for model in provider.models.values()):
+def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
+    if any(model._toolang.ready for model in models):
         return ""
-    if not provider.models:
+    if not models:
         return _route_reason(provider._toolang.route) or "No models"
     return "; ".join(
         sorted(
             {
                 reason
-                for model in provider.models.values()
+                for model in models
                 if (reason := _route_reason(model._toolang.route))
             }
         )
@@ -295,12 +309,10 @@ def _provider_adapters_cell(provider: CatalogProviderView) -> Text:
     )
 
 
-def _provider_api_cell(provider: CatalogProviderView) -> Text:
+def _provider_api_cell(provider: CatalogProviderView, models: Sequence[Model]) -> Text:
     api = provider.api
     unavailable = api is None
-    overridden = any(
-        model._toolang.route.api != api for model in provider.record.models.values()
-    )
+    overridden = any(model._toolang.route.api != api for model in models)
     label = (api or "-") + (" (model overrides)" if overridden else "")
     return Text(label, style="red" if unavailable else "")
 
