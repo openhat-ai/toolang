@@ -15,6 +15,7 @@ from toolang.base.types.model import (
     LOCAL_STATUS_READY,
     Model,
     ModelCatalogSnapshot,
+    ModelToolang,
 )
 
 from toolang.plugin.values import (
@@ -139,8 +140,8 @@ def _llama_cpp_model(
         }
     )
     return Model(
-        provider_id="llama_cpp",
         id=model_id,
+        _toolang=ModelToolang(provider="llama_cpp"),
         name=model_id,
         description=_llama_cpp_description(meta),
         family=optional_text(meta.get("architecture"))

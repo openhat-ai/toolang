@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, TypeAlias
 
 from .message import Delta, Message, Part, PartType
+from .model import Reasoning
 from .tool import ToolDefinition
 
 ModelContinuation: TypeAlias = dict[str, Any]
@@ -155,12 +156,16 @@ class ModelCall:
     )
     # Inclusive output ceiling, including reasoning, fixed by the runtime.
     max_output_tokens: int | None = None
+    # Effective reasoning control for this call; the model keeps the capability.
+    reasoning: Reasoning | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_tokens is not None and (
             type(self.max_output_tokens) is not int or self.max_output_tokens <= 0
         ):
             raise ValueError("model max_output_tokens must be a positive integer")
+        if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
+            raise TypeError("model call reasoning must be Reasoning")
 
 
 @dataclass(frozen=True, slots=True)

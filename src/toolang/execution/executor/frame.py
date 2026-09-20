@@ -14,13 +14,15 @@ from toolang.base.types.message import (
     Message,
     message_text,
 )
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model, ModelRoute, Reasoning
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import is_generated_ref
+from toolang.plugin.models.provider_resolver import model_route, trimmed_environ
 from toolang.plugin.models.resolution import (
-    apply_model_parameters,
+    model_reasoning_effort_applicable,
+    resolve_model_reasoning,
 )
 from toolang.plugin.models.budget import (
     context_capacity,
@@ -60,8 +62,10 @@ class _AgicFrame:
 
     run: BoundRun
     agic: AgicDecl
-    model: ModelTarget
+    model: Model
+    route: ModelRoute
     adapter: ModelAdapter
+    environ: Mapping[str, str]
     instructions: str
     inputs: prompting.PromptInputs
     tools: dict[str, Tool]
@@ -70,6 +74,7 @@ class _AgicFrame:
     declarations: tuple[RecallControlPayload, ...] = ()
     workspaces: tuple[RecallControlPayload, ...] = ()
     recall: tuple[str, ...] = ("far", "near")
+    reasoning: Reasoning | None = None
     output_budget: int | None = None
     input_budget: int | None = None
     context_capacity: int | None = None
@@ -101,17 +106,31 @@ def build_agic_frame(
     ref = run.model_request.ref if run.model_request is not None else run.bindings.model
     if ref is None:
         raise ToolangError(f"run requires a model: {name}")
-    entry = selection.resolve(ref)
-    if entry.key not in model_keys:
+    resolved_model = selection.resolve(ref)
+    if resolved_model.ref not in model_keys:
         raise ToolangError(f"model ref is outside run resources: {ref}")
-    model = entry.target
-    if run.model_request is not None:
-        model = apply_model_parameters(
-            selection,
-            model,
-            reasoning=run.model_request.reasoning,
-            max_output=run.model_request.max_output,
-        )
+    request = run.model_request
+    reasoning = (
+        resolve_model_reasoning(resolved_model, request.reasoning)
+        if request is not None
+        else None
+    )
+    max_output = request.max_output if request is not None else None
+    # A run that does not state a control inherits the configured default for
+    # the same model. The default request is authored policy, not catalog data.
+    default_request = run.setup.defaults.model
+    if default_request is not None and default_request.ref == resolved_model.ref:
+        if (
+            reasoning is None
+            and default_request.reasoning is not None
+            and model_reasoning_effort_applicable(resolved_model)
+        ):
+            reasoning = resolve_model_reasoning(
+                resolved_model,
+                default_request.reasoning,
+            )
+        if max_output is None:
+            max_output = default_request.max_output
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(run.state, agic)
     runtime_tools = (
@@ -126,7 +145,7 @@ def build_agic_frame(
     tools.update(runtime_tools)
     caps = resource_caps(run.state, resources, module=run.module)
     services = tuple(item for item in caps if item.kind == "service")
-    if runtime_tools and model.tools:
+    if runtime_tools and resolved_model.tool_call is True:
         active = context.active_runnable_identities(run)
         callable_routes = replace(
             routes,
@@ -139,13 +158,31 @@ def build_agic_frame(
         runnables = runnable_descriptions(run.state, callable_routes)
     else:
         runnables = ()
+    provider = run.setup.providers.get(resolved_model._toolang.provider)
+    if provider is None:
+        raise ToolangError(
+            f"unknown model provider: {resolved_model._toolang.provider}"
+        )
+    route = model_route(
+        provider,
+        resolved_model,
+        adapters=run.setup.adapters,
+        environ=run.setup.envs,
+    )
+    adapter = run.setup.adapters.get(route.adapter)
+    if adapter is None:
+        raise ToolangError(f"unknown model adapter: {route.adapter}")
+    environ = trimmed_environ(provider, environ=run.setup.envs)
+    output = output_budget(resolved_model, demand=max_output, reasoning=reasoning)
+
     inputs = prompting.PromptInputs(
         run.state,
         run.setup,
         agic,
         module=run.module,
         runnable_name=name,
-        model=model,
+        model=resolved_model,
+        route=route,
         caps=caps,
         facts={
             "date": context.date,
@@ -161,15 +198,13 @@ def build_agic_frame(
     _, _, prompt_invocations = inputs.rendered_input
     if prompt_invocations:
         context.record_prompt_invocations(run, prompt_invocations)
-    adapter = run.setup.adapters.get(model.adapter)
-    if adapter is None:
-        raise ToolangError(f"unknown model adapter: {model.adapter}")
-    output = output_budget(model, entry.info)
     prepared = _AgicFrame(
         run=run,
         agic=agic,
-        model=model,
+        model=resolved_model,
+        route=route,
         adapter=adapter,
+        environ=environ,
         instructions=instructions,
         inputs=inputs,
         declarations=declarations,
@@ -180,9 +215,10 @@ def build_agic_frame(
         recall=recall_sources(
             next((item.values for item in agic.directives if item.name == "recall"), ())
         ),
+        reasoning=reasoning,
         output_budget=output,
-        input_budget=input_budget(entry.info),
-        context_capacity=context_capacity(entry.info),
+        input_budget=input_budget(resolved_model),
+        context_capacity=context_capacity(resolved_model),
     )
     _log_frame(prepared)
     return prepared

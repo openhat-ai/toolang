@@ -21,7 +21,8 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model, ModelRoute, Reasoning
+from toolang.plugin.models.provider_resolver import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -48,14 +49,17 @@ class MessagesModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        target: ModelTarget,
+        route: ModelRoute,
+        model: Model,
         request: ModelCall,
+        *,
+        environ: Mapping[str, str],
     ) -> ModelCallResult:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                _messages_url(target),
-                headers=_headers(target),
-                json=messages_payload(target, request, stream=False),
+                _messages_url(route),
+                headers=_headers(route, environ=environ),
+                json=messages_payload(route, model, request, stream=False),
             )
             response.raise_for_status()
             result = parse_message_response(_json_object(response.json()))
@@ -69,12 +73,14 @@ class MessagesModelAdapter(ModelAdapter):
 
     async def stream(
         self,
-        target: ModelTarget,
+        route: ModelRoute,
+        model: Model,
         request: ModelCall,
         *,
+        environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
-        payload = messages_payload(target, request, stream=True)
+        payload = messages_payload(route, model, request, stream=True)
         text: list[str] = []
         tool_blocks: dict[int, dict[str, object]] = {}
         thinking_blocks: dict[int, dict[str, object]] = {}
@@ -82,8 +88,8 @@ class MessagesModelAdapter(ModelAdapter):
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
-                _messages_url(target),
-                headers=_headers(target),
+                _messages_url(route),
+                headers=_headers(route, environ=environ),
                 json=payload,
             ) as response:
                 response.raise_for_status()
@@ -182,14 +188,15 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 
 
 def messages_payload(
-    target: ModelTarget,
+    route: ModelRoute,
+    model: Model,
     request: ModelCall,
     *,
     stream: bool,
 ) -> dict[str, object]:
     """Encode one canonical request for Anthropic Messages."""
 
-    native_schema = request.output_schema if target.structured_output is True else None
+    native_schema = request.output_schema if model.structured_output is True else None
     instructions = (
         append_structured_output_directive(
             request.instructions,
@@ -198,7 +205,7 @@ def messages_payload(
         if request.output_schema is not None and native_schema is None
         else request.instructions
     )
-    options = dict(target.options)
+    options = dict(route.options)
     configured_max_tokens = options.pop("max_tokens", None)
     max_tokens = (
         request.max_output_tokens
@@ -216,7 +223,7 @@ def messages_payload(
         or max_tokens <= 0
     ):
         raise ToolangError("Messages max_tokens must be a positive integer")
-    budget = target.reasoning.get("budget_tokens")
+    budget = request.reasoning.budget_tokens if request.reasoning else None
     if isinstance(budget, int) and not isinstance(budget, bool):
         if budget <= 0:
             raise ToolangError("Messages thinking budget_tokens must be positive")
@@ -225,7 +232,7 @@ def messages_payload(
                 "Messages thinking budget_tokens must be lower than max_tokens"
             )
     payload: dict[str, object] = {
-        "model": target.model,
+        "model": model.id,
         "max_tokens": max_tokens,
         "messages": [
             _encode_message(
@@ -248,7 +255,7 @@ def messages_payload(
             for tool in request.tools
         ]
     payload.update(options)
-    _apply_reasoning(payload, target.reasoning)
+    _apply_reasoning(payload, request.reasoning)
     _apply_structured_output(
         payload,
         request.output_schema,
@@ -488,20 +495,25 @@ def _encode_message(
     return {"role": role, "content": content}
 
 
-def _messages_url(target: ModelTarget) -> str:
-    if target.base_url is None:
+def _messages_url(route: ModelRoute) -> str:
+    if route.api is None:
         raise ToolangError("Messages adapter requires a resolved API")
-    return f"{target.base_url.rstrip('/')}/messages"
+    return f"{route.api.rstrip('/')}/messages"
 
 
-def _headers(target: ModelTarget) -> dict[str, str]:
-    if not target.api_key:
+def _headers(
+    route: ModelRoute,
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    api_key = credential_value(route.env, environ=environ)
+    if not api_key:
         raise ToolangError("Messages adapter requires a resolved API key")
     return {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
-        "x-api-key": target.api_key,
-        **target.headers,
+        "x-api-key": api_key,
+        **route.headers,
     }
 
 
@@ -542,16 +554,14 @@ def _int(value: object) -> int | None:
 
 def _apply_reasoning(
     payload: dict[str, object],
-    reasoning: Mapping[str, object],
+    reasoning: Reasoning | None,
 ) -> None:
-    if not reasoning:
+    if reasoning is None:
         return
-    unknown = set(reasoning) - {"effort", "budget_tokens"}
-    if unknown:
-        joined = ", ".join(sorted(unknown))
-        raise ToolangError(f"unknown Messages reasoning controls: {joined}")
-    effort = reasoning.get("effort")
-    budget = reasoning.get("budget_tokens")
+    effort = reasoning.effort
+    budget = reasoning.budget_tokens
+    if effort is None and budget is None:
+        return
     disabled = effort == "none"
     if disabled and budget is not None:
         raise ToolangError("disabled Messages reasoning conflicts with a token budget")

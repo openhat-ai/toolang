@@ -310,30 +310,24 @@ agic reply(_: Part[]) -> Part[]:
     )
     harness.setup = replace(
         harness.setup,
+        defaults=replace(
+            harness.setup.defaults,
+            model=ModelRequest(TEST_MODEL_REF, reasoning=Reasoning("medium")),
+        ),
         models=ModelCollection(
             tuple(
                 replace(
-                    entry,
-                    target=replace(
-                        entry.target,
-                        reasoning={"enabled": True, "effort": "medium"},
-                    ),
-                    info=replace(
-                        entry.info,
-                        metadata={
-                            **entry.info.metadata,
-                            "reasoning_options": [
-                                {"type": "toggle"},
-                                {
-                                    "type": "effort",
-                                    "values": ["medium", "high", "low"],
-                                    "exhaustive": True,
-                                },
-                            ],
+                    model,
+                    reasoning_options=(
+                        {"type": "toggle"},
+                        {
+                            "type": "effort",
+                            "values": ["medium", "high", "low"],
+                            "exhaustive": True,
                         },
                     ),
                 )
-                for entry in harness.setup.models.entries
+                for model in harness.setup.models.entries
             )
         ),
     )
@@ -420,14 +414,11 @@ agic reply(_: Part[]) -> Part[]:
             assert isinstance(replacement_control.payload, RunControlPayload)
             assert replacement_control.payload.model_request == low
 
-            automatic_spec = replace(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="reply",
-                    primary=resolve_input_parts("automatic"),
-                    model=TEST_MODEL_REF,
-                ),
-                model_request=ModelRequest(TEST_MODEL_REF),
+            automatic_spec = harness.run_spec(
+                thread=thread,
+                runnable="reply",
+                primary=resolve_input_parts("automatic"),
+                model=TEST_MODEL_REF,
             )
             automatic = await harness.executor.run(automatic_spec)
 
@@ -440,21 +431,20 @@ agic reply(_: Part[]) -> Part[]:
                 == ("succeeded")
             )
             assert [
-                invocation.target.reasoning
-                for invocation in harness.adapter.invocations
+                invocation.call.reasoning for invocation in harness.adapter.invocations
             ] == [
-                {"effort": "high"},
-                {"effort": "high"},
-                {"effort": "high"},
-                {"effort": "low"},
-                {"effort": "low"},
-                {"enabled": True, "effort": "medium"},
+                Reasoning("high"),
+                Reasoning("high"),
+                Reasoning("high"),
+                Reasoning("low"),
+                Reasoning("low"),
+                Reasoning("medium"),
             ]
             for run, expected in (
                 (preserved, {"effort": "high"}),
                 (sparse, {"effort": "low"}),
                 (replacement, {"effort": "low"}),
-                (automatic, {"enabled": True, "effort": "medium"}),
+                (automatic, {"effort": "medium"}),
             ):
                 step = harness.store.list_steps(run_id=run.id)[0]
                 assert isinstance(step.noted, ModelStepNoted)
@@ -1779,14 +1769,10 @@ agic reply(_: Text) -> Text:
         models=ModelCollection(
             tuple(
                 replace(
-                    entry,
-                    info=replace(
-                        entry.info,
-                        input_price=0.01,
-                        output_price=0.02,
-                    ),
+                    model,
+                    cost={"input": 10000, "output": 20000},
                 )
-                for entry in harness.setup.models.entries
+                for model in harness.setup.models.entries
             )
         ),
     )

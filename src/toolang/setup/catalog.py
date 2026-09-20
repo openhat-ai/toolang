@@ -27,17 +27,16 @@ from toolang.plugin.models.collections import (
     ModelQueryView,
     catalog_model_dataset,
 )
-from toolang.plugin.models.config import (
-    configure_catalog_providers,
-    parse_provider_configs,
+from toolang.plugin.models.config import validate_models_config
+from toolang.plugin.models.provider_resolver import (
+    model_adapter,
+    resolve_catalog_providers,
 )
-from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import build_model_collection
 
 from .cache import (
     ModelProjectionCache,
     environment_readiness,
-    hydrate_model_infos,
     model_projection_key,
 )
 from .config import (
@@ -47,7 +46,6 @@ from .config import (
     load_setup_envs,
     project_model_setup_config,
 )
-from .models import model_info_from_catalog
 
 _LOCAL_CATALOG_ENV = frozenset(
     {
@@ -222,23 +220,13 @@ async def _materialize_catalog_inspection(
             for catalog, snapshot in zip(ordered, snapshots, strict=True)
         )
     ).snapshot()
-    provider_configs = parse_provider_configs(configs)
-    providers = configure_catalog_providers(merged.providers, provider_configs)
+    validate_models_config(configs)
     resolved = resolve_catalog_providers(
-        ModelCatalogSnapshot(
-            providers=providers,
-            models=merged.models,
-            revision=merged.revision,
-            source=merged.source,
-        ),
+        merged,
         adapters=adapters,
         environ=envs,
-        configs=provider_configs,
     )
-    readiness = environment_readiness(merged, envs)
-    for config in provider_configs.values():
-        if config.key_env is not None:
-            readiness[config.key_env] = bool(envs.get(config.key_env, "").strip())
+    readiness = environment_readiness(resolved, envs)
     context_key = model_projection_key(
         kind="inspection",
         scope=load.scope,
@@ -249,54 +237,36 @@ async def _materialize_catalog_inspection(
         allow_models=None,
     )
     cached = await asyncio.to_thread(context_cache.load_context, context_key)
-    infos = (
-        hydrate_model_infos(cached.model_infos, resolved)
-        if cached is not None
-        else None
-    )
-    if cached is not None and infos is None:
-        cached = None
-    if infos is None:
-        infos = tuple(model_info_from_catalog(model) for model in resolved.models)
-    models = build_model_collection(
-        providers=resolved.providers,
-        models=infos,
-        envs=envs,
-        provider_configs=provider_configs,
-        query_views=cached.query_views if cached is not None else None,
-    )
-    available = set(models.refs())
+    snapshot = cached.snapshot if cached is not None else resolved
+    models = build_model_collection(snapshot.models)
+    available = {model.ref for model in snapshot.models if model._toolang.ready}
     adapter_by_identity = {
-        model.identity: model.resolved.adapter
-        for model in resolved.models
-        if model.resolved is not None and model.resolved.adapter is not None
+        model.identity: adapter
+        for model in snapshot.models
+        if model._toolang.provider in snapshot.providers
+        for adapter in (
+            model_adapter(snapshot.providers[model._toolang.provider], model),
+        )
+        if adapter is not None
     }
-    cached_catalog_queries = (
-        cached.catalog_query_views
-        if cached is not None and cached.catalog_query_views
-        else None
-    )
     catalog_models = catalog_model_dataset(
-        resolved,
+        snapshot,
         available=available,
         adapters=adapter_by_identity,
-        query_views=cached_catalog_queries,
     )
     inspection = CatalogInspection(
-        snapshot=resolved,
+        snapshot=snapshot,
         adapters=adapters,
         envs=envs,
         models=models,
         catalog_models=catalog_models,
     )
-    if cached is None or cached_catalog_queries is None:
+    if cached is None:
         try:
             await asyncio.to_thread(
                 context_cache.store_context,
-                key=context_key,
-                model_infos=tuple(entry.info for entry in models.entries),
-                query_views=models.query_views(),
-                catalog_query_views=tuple(catalog_models.items),
+                context_key,
+                snapshot=resolved,
                 environment_names=tuple(readiness),
             )
         except Exception:
@@ -374,14 +344,16 @@ class MergedModelCatalog(ModelCatalog):
         providers: dict[str, Provider] = {}
         models: dict[tuple[str, str], Model] = {}
         for source, raw_snapshot in zip(self.sources, snapshots, strict=True):
-            snapshot = _with_catalog_origin(raw_snapshot, source.name)
+            snapshot = _with_catalog_origin(raw_snapshot)
             for provider_id, provider in snapshot.providers.items():
                 existing = providers.get(provider_id)
-                if existing is not None and not (existing.local and provider.local):
+                if existing is not None and not (
+                    existing._toolang.local and provider._toolang.local
+                ):
                     raise ValueError(f"duplicate catalog provider: {provider_id}")
                 providers[provider_id] = provider
             for model in snapshot.models:
-                identity = (model.provider_id, model.id)
+                identity = (model._toolang.provider, model.id)
                 if identity in models:
                     raise ValueError(f"duplicate catalog model: {model.identity}")
                 models[identity] = model
@@ -395,56 +367,25 @@ class MergedModelCatalog(ModelCatalog):
 
 def _with_catalog_origin(
     snapshot: ModelCatalogSnapshot,
-    name: str,
 ) -> ModelCatalogSnapshot:
-    """Attach runtime-only source provenance to every raw catalog record."""
+    """Attach the declaring catalog's locality to every provider record."""
 
-    catalog = "models.dev" if name == "models_dev" else name
-    models = {
-        (model.provider_id, model.id): (
-            model
-            if model.catalog is not None
-            and model.catalog_revision is not None
-            and model.local == snapshot.local
-            else replace(
-                model,
-                catalog=model.catalog or catalog,
-                catalog_revision=model.catalog_revision or snapshot.revision,
-                local=snapshot.local,
-            )
-        )
-        for model in snapshot.models
-    }
     providers: dict[str, Provider] = {}
     for provider_id, provider in snapshot.providers.items():
-        provider_models = {
-            model_id: models.get((provider_id, model_id), model)
-            for model_id, model in provider.models.items()
-        }
         providers[provider_id] = (
             provider
-            if provider.catalog is not None
-            and provider.catalog_revision is not None
-            and provider.local == snapshot.local
-            and all(
-                provider_models[model_id] is model
-                for model_id, model in provider.models.items()
-            )
+            if provider._toolang.local == snapshot.local
             else replace(
                 provider,
-                models=provider_models,
-                catalog=provider.catalog or catalog,
-                catalog_revision=provider.catalog_revision or snapshot.revision,
-                local=snapshot.local,
+                _toolang=replace(provider._toolang, local=snapshot.local),
             )
         )
     return ModelCatalogSnapshot(
         providers=providers,
-        models=tuple(
-            models[(model.provider_id, model.id)] for model in snapshot.models
-        ),
+        models=snapshot.models,
         revision=snapshot.revision,
         source=snapshot.source,
+        local=snapshot.local,
     )
 
 

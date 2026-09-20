@@ -6,7 +6,6 @@ from dataclasses import replace
 import re
 import shlex
 from collections.abc import Sequence
-from typing import cast
 
 from toolang.base.types.model import (
     ModelEffort,
@@ -14,13 +13,9 @@ from toolang.base.types.model import (
     ModelOverride,
     ModelRequest,
     Reasoning,
-    ReasoningEffort,
 )
 
 _BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
-_REASONING_EFFORTS = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-)
 
 
 def parse_model_body(body: str) -> ModelOverride:
@@ -163,9 +158,9 @@ def _effort_value(raw: str) -> ModelEffort:
         return "auto"
     if _BUDGET_RE.fullmatch(raw):
         return int(raw)
-    if raw in _REASONING_EFFORTS:
-        return cast(ReasoningEffort, raw)
-    raise ValueError(f"unknown reasoning effort: {raw!r}")
+    # The catalog's reasoning_options decides which levels exist; accept the
+    # token here and let call assembly validate it against the model.
+    return raw
 
 
 __all__ = [

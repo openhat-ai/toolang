@@ -7,7 +7,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import (
+    Model,
+    ModelCatalogSnapshot,
+    ModelToolang,
+    Provider,
+    ProviderToolang,
+    normalized_env,
+)
 
 _PROVIDER_FIELDS = frozenset({"id", "env", "npm", "api", "name", "doc", "models"})
 _MODEL_FIELDS = frozenset(
@@ -37,12 +44,7 @@ _MODEL_FIELDS = frozenset(
 )
 
 
-def parse_model_catalog_data(
-    data: object,
-    *,
-    catalog: str | None = None,
-    catalog_revision: str | None = None,
-) -> dict[str, Provider]:
+def parse_model_catalog_data(data: object) -> dict[str, Provider]:
     """Validate parsed JSON and return typed providers."""
 
     data = _provider_map_from_catalog_data(data)
@@ -56,8 +58,6 @@ def parse_model_catalog_data(
         providers[provider_id] = _parse_provider(
             provider_id,
             cast(Mapping[str, object], raw_provider),
-            catalog=catalog,
-            catalog_revision=catalog_revision,
         )
     return providers
 
@@ -67,15 +67,10 @@ def model_catalog_snapshot_from_data(
     *,
     revision: str,
     source: Path | None = None,
-    catalog: str | None = None,
 ) -> ModelCatalogSnapshot:
     """Validate normalized catalog data and rebuild one immutable snapshot."""
 
-    providers = parse_model_catalog_data(
-        data,
-        catalog=catalog,
-        catalog_revision=revision,
-    )
+    providers = parse_model_catalog_data(data)
     models = tuple(
         provider.models[model_id]
         for provider_id in sorted(providers)
@@ -126,9 +121,6 @@ def _is_provider_agnostic_model_map(data: Mapping[object, object]) -> bool:
 def _parse_provider(
     provider_id: str,
     data: Mapping[str, object],
-    *,
-    catalog: str | None = None,
-    catalog_revision: str | None = None,
 ) -> Provider:
     parsed_id = _required_text(data.get("id"), label=f"provider {provider_id} id")
     if parsed_id != provider_id:
@@ -149,8 +141,6 @@ def _parse_provider(
             provider_id,
             model_id,
             cast(Mapping[str, object], raw_model),
-            catalog=catalog,
-            catalog_revision=catalog_revision,
         )
     env = _string_list(data.get("env"), label=f"provider {provider_id} env")
     return Provider(
@@ -161,8 +151,7 @@ def _parse_provider(
         api=_optional_text(data.get("api"), label=f"provider {provider_id} api"),
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
         models=models,
-        catalog=catalog,
-        catalog_revision=catalog_revision,
+        _toolang=ProviderToolang(env=normalized_env(env)),
         extra={
             key: value for key, value in data.items() if key not in _PROVIDER_FIELDS
         },
@@ -173,9 +162,6 @@ def _parse_model(
     provider_id: str,
     model_id: str,
     data: Mapping[str, object],
-    *,
-    catalog: str | None = None,
-    catalog_revision: str | None = None,
 ) -> Model:
     parsed_id = _required_text(
         data.get("id"), label=f"model {provider_id}/{model_id} id"
@@ -195,9 +181,9 @@ def _parse_model(
     if interleaved is not None and not isinstance(interleaved, bool | Mapping):
         raise TypeError(f"{label} interleaved must be a boolean or object")
     return Model(
-        provider_id=provider_id,
         id=model_id,
         name=_required_text(data.get("name"), label=f"{label} name"),
+        _toolang=ModelToolang(provider=provider_id),
         description=_optional_text(
             data.get("description"), label=f"{label} description"
         ),
@@ -235,8 +221,6 @@ def _parse_model(
         ),
         provider=_optional_mapping(data.get("provider"), label=f"{label} provider"),
         cost=cost,
-        catalog=catalog,
-        catalog_revision=catalog_revision,
         extra={key: value for key, value in data.items() if key not in _MODEL_FIELDS},
     )
 

@@ -16,6 +16,7 @@ from toolang.base.types.model import (
     LOCAL_STATUS_READY,
     Model,
     ModelCatalogSnapshot,
+    ModelToolang,
 )
 
 from toolang.plugin.values import (
@@ -149,8 +150,8 @@ async def _ollama_model(
         }
     )
     return Model(
-        provider_id="ollama",
         id=model_id,
+        _toolang=ModelToolang(provider="ollama"),
         name=model_id,
         description=_ollama_description(details),
         family=family,

@@ -13,6 +13,7 @@ from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
     Provider,
+    ProviderToolang,
 )
 
 
@@ -66,9 +67,12 @@ def local_snapshot(
     provider = Provider(
         id=provider_id,
         name=provider_name,
-        env=(),
         models=by_id,
-        adapter="chat_completions",
+        _toolang=ProviderToolang(
+            env=(),
+            adapter="chat_completions",
+            local=True,
+        ),
         api=endpoint,
         extra={LOCAL_RUNTIME_EXTRA: dict(provider_runtime)},
     )

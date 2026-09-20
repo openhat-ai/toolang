@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget, Provider
+from dataclasses import replace
+
+from toolang.base.types.model import (
+    Model,
+    ModelToolang,
+    Reasoning,
+)
 from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
     build_model_accounting,
@@ -16,7 +22,7 @@ from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageM
 
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=1000,
@@ -75,7 +81,7 @@ def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() ->
 
 
 def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=1000, output_tokens=100),
         _catalog({"input": 0.14, "output": 0.28}),
@@ -88,7 +94,7 @@ def test_accounting_accepts_fractional_float_rates_from_effective_resources() ->
 
 
 def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -120,7 +126,7 @@ def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
 
 
 def test_accounting_selects_context_tier_and_records_match() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=300, output_tokens=100),
         _catalog(
@@ -145,7 +151,7 @@ def test_accounting_selects_context_tier_and_records_match() -> None:
 
 
 def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=10,
@@ -164,7 +170,7 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
 
 
 def test_zero_prices_produce_a_complete_zero_cost() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=100, output_tokens=50),
         _catalog({"input": 0, "output": 0}),
@@ -178,44 +184,16 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
 
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
-    model = Model(
-        provider_id="llama_cpp",
-        id="local",
-        name="Local",
-        cost={"input": 0, "output": 0},
-        local=True,
-    )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "llama_cpp": Provider(
-                id="llama_cpp",
-                name="llama.cpp",
-                env=(),
-                npm="@ai-sdk/openai-compatible",
-                models={model.id: model},
-                local=True,
-            )
-        },
-        models=(model,),
-        revision="runtime:local",
-    )
+    model = _model({"input": 0, "output": 0})
     accounting = build_model_accounting(
-        ModelTarget(
-            ref="llama_cpp/local",
-            provider="llama_cpp",
-            name="Local",
-            model="local",
-            adapter="chat_completions",
-            catalog="llama_cpp",
-            catalog_revision="runtime:local",
-        ),
+        model,
         ModelUsage(
             input_tokens=4100,
             output_tokens=15,
             input_uncached_tokens=123,
             input_cache_read_tokens=3977,
         ),
-        catalog,
+        local=True,
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -225,7 +203,7 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
 
 
 def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=10,
@@ -246,7 +224,7 @@ def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
 
 
 def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=100, output_tokens=10),
         _catalog({"input": 1, "output": 2, "cache_read": Decimal("0.1")}),
@@ -258,43 +236,14 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
 
 
 def test_accounting_selects_advertised_mode_price() -> None:
-    target = _target()
-    target = ModelTarget(
-        ref=target.ref,
-        provider=target.provider,
-        name=target.name,
-        model=target.model,
-        adapter=target.adapter,
-        catalog_revision=target.catalog_revision,
-        mode="fast",
-    )
-    catalog = _catalog({"input": 1, "output": 2})
-    model = catalog.models[0]
-    mode_model = Model(
-        provider_id=model.provider_id,
-        id=model.id,
-        name=model.name,
+    model = _model(
+        {"input": 1, "output": 2},
+        provider={"mode": "fast"},
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
-        cost=model.cost,
     )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "test": Provider(
-                id="test",
-                name="Test",
-                env=(),
-                npm="@ai-sdk/openai",
-                models={"one": mode_model},
-            )
-        },
-        models=(mode_model,),
-        revision="sha256:catalog",
-    )
-
     accounting = build_model_accounting(
-        target,
+        model,
         ModelUsage(input_tokens=100, output_tokens=50),
-        catalog,
     )
 
     assert accounting is not None and accounting.pricing is not None
@@ -305,7 +254,7 @@ def test_accounting_selects_advertised_mode_price() -> None:
 
 
 def test_accounting_records_unsupported_billing_context_as_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -313,6 +262,7 @@ def test_accounting_records_unsupported_billing_context_as_partial() -> None:
             billing={"service_tier": "priority", "inference_geo": "us"},
         ),
         _catalog({"input": 1, "output": 2}),
+        requested=Reasoning("high"),
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -326,7 +276,7 @@ def test_accounting_records_unsupported_billing_context_as_partial() -> None:
 
 
 def test_accounting_accepts_standard_billing_context() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -341,7 +291,7 @@ def test_accounting_accepts_standard_billing_context() -> None:
 
 
 def test_accounting_preserves_billing_context_without_catalog_price() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -355,65 +305,29 @@ def test_accounting_preserves_billing_context_without_catalog_price() -> None:
 
     assert accounting is not None and accounting.pricing is not None
     assert accounting.pricing.source == "unknown"
-    assert accounting.pricing.revision == "sha256:catalog"
+    assert accounting.pricing.revision is None
     assert accounting.pricing.match == {"billing": {"service_tier": "priority"}}
     assert accounting.reported is not None
     assert accounting.estimate is None
 
 
 def test_accounting_uses_model_catalog_provenance_without_inventing_reasoning() -> None:
-    model = Model(
-        provider_id="ollama",
-        id="local",
-        name="Local",
-        reasoning=True,
-        cost={"input": 0, "output": 0},
-        catalog="ollama",
-        catalog_revision="runtime:local",
-        local=True,
-    )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "ollama": Provider(
-                id="ollama",
-                name="Ollama",
-                env=(),
-                npm="@ai-sdk/openai-compatible",
-                models={model.id: model},
-                catalog="ollama",
-                catalog_revision="runtime:local",
-                local=True,
-            )
-        },
-        models=(model,),
-        revision="sha256:merged",
-    )
-    target = ModelTarget(
-        ref="ollama/local",
-        provider="ollama",
-        name="Local",
-        model="local",
-        adapter="chat_completions",
-        catalog="ollama",
-        catalog_revision="runtime:local",
-        reasoning={"effort": "high"},
-    )
-
+    model = _model({"input": 0, "output": 0})
     accounting = build_model_accounting(
-        target,
+        model,
         ModelUsage(input_tokens=10, output_tokens=5),
-        catalog,
+        requested=Reasoning("high"),
     )
 
     assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.source == "ollama"
-    assert accounting.pricing.revision == "runtime:local"
+    assert accounting.pricing.source == "unknown"
+    assert accounting.pricing.revision is None
     assert accounting.reasoning.requested == {"effort": "high"}
     assert accounting.reasoning.selected is None
 
 
 def test_audio_rates_replace_overlapping_base_token_rates() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -441,7 +355,7 @@ def test_audio_rates_replace_overlapping_base_token_rates() -> None:
 
 
 def test_durable_model_accounting_round_trips_without_repricing() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -480,37 +394,40 @@ def test_legacy_model_noted_data_projects_version_zero_accounting() -> None:
     assert restored.accounting.estimate.complete is False
 
 
-def _target() -> ModelTarget:
-    return ModelTarget(
-        ref="test/one",
-        provider="test",
-        name="One",
-        model="one",
-        adapter="responses",
-        catalog_revision="sha256:catalog",
-        reasoning={"effort": "high"},
-    )
+def _target() -> Model:
+    return _model()
 
 
-def _catalog(cost: dict[str, object]) -> ModelCatalogSnapshot:
-    model = Model(
-        provider_id="test",
+def _model(
+    cost: dict[str, object] | None = None,
+    *,
+    provider: dict[str, object] | None = None,
+    experimental: dict[str, object] | None = None,
+) -> Model:
+    return Model(
         id="one",
         name="One",
+        _toolang=ModelToolang(provider="test", ready=True),
         reasoning=True,
         modalities={"input": ("text",), "output": ("text",)},
         limit={"context": 1000},
         cost=cost,
+        provider=provider,
+        experimental=experimental,
     )
-    provider = Provider(
-        id="test",
-        name="Test",
-        env=(),
-        npm="@ai-sdk/openai",
-        models={"one": model},
-    )
-    return ModelCatalogSnapshot(
-        providers={"test": provider},
-        models=(model,),
-        revision="sha256:catalog",
-    )
+
+
+def _catalog(cost: dict[str, object]) -> dict[str, object]:
+    return cost
+
+
+def _accounting(
+    model: Model,
+    usage: ModelUsage | None,
+    cost: dict[str, object] | None = None,
+    *,
+    local: bool = False,
+    requested: Reasoning | None = None,
+) -> ModelAccounting | None:
+    resolved = replace(model, cost=cost) if cost is not None else model
+    return build_model_accounting(resolved, usage, local=local, requested=requested)

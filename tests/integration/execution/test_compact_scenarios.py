@@ -16,6 +16,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
+from toolang.base.types.model import Reasoning
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
@@ -52,13 +53,11 @@ def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
         models=ModelCollection(
             tuple(
                 replace(
-                    entry,
-                    info=replace(
-                        entry.info, context_window=context, max_output_tokens=512
-                    ),
-                    target=replace(entry.target, structured_output=True),
+                    model,
+                    limit={**model.limit, "context": context, "output": 512},
+                    structured_output=True,
                 )
-                for entry in harness.setup.models.entries
+                for model in harness.setup.models.entries
             )
         ),
     )
@@ -540,29 +539,19 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
         async with harness:
             thread, end = await seed(harness)
             original = harness.setup.models.entries[0]
-            metadata = {
-                "reasoning_options": [{"type": "effort", "values": ["low", "high"]}]
-            }
+            reasoning_options = ({"type": "effort", "values": ["low", "high"]},)
             normal = replace(
                 original,
-                info=replace(original.info, tools=False, metadata=metadata),
-                target=replace(original.target, tools=False, structured_output=False),
+                tool_call=False,
+                structured_output=False,
+                reasoning_options=reasoning_options,
             )
             candidates = tuple(
                 replace(
                     original,
-                    key=f"test/{name}",
-                    ref=f"test/{name}",
-                    info=replace(
-                        original.info,
-                        ref=f"test/{name}",
-                        name=name,
-                        model=name,
-                        metadata=metadata,
-                    ),
-                    target=replace(
-                        original.target, ref=f"test/{name}", name=name, model=name
-                    ),
+                    id=name,
+                    name=name,
+                    reasoning_options=reasoning_options,
                 )
                 for name in ("first", "second")
             )
@@ -593,21 +582,24 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             expected = "test/first" if selection == "auto" else "test/second"
             compact_calls = harness.adapter.invocations[3:-1]
             assert len(compact_calls) == 1
-            assert all(call.target.ref == expected for call in compact_calls)
+            assert all(call.model.ref == expected for call in compact_calls)
             assert all(
-                call.target.reasoning
-                == ({"effort": "low"} if selection == "explicit" else {})
+                call.call.reasoning
+                == (Reasoning("low") if selection == "explicit" else None)
                 for call in compact_calls
             )
-            assert harness.adapter.invocations[-1].target.reasoning == {
-                "effort": "high"
-            }
+            assert harness.adapter.invocations[-1].call.reasoning == Reasoning("high")
             history = RunHistory(harness.store)
             for root in history.thread_view(f"compact_{thread}").members:
                 for step in harness.store.list_steps(run_id=root.id):
                     if step.kind == "model":
-                        assert history.get_model_call(step.ref) in [
-                            call.call for call in compact_calls
+                        # The durable call record does not persist the
+                        # effective reasoning yet (deferred records change), so
+                        # compare the rebuilt call with that control normalized.
+                        assert replace(
+                            history.get_model_call(step.ref), reasoning=None
+                        ) in [
+                            replace(call.call, reasoning=None) for call in compact_calls
                         ]
             root = history.thread_view(
                 f"compact_{thread}", include_children=False
@@ -650,12 +642,8 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
                 harness.setup,
                 models=ModelCollection(
                     tuple(
-                        replace(
-                            entry,
-                            info=replace(entry.info, tools=False),
-                            target=replace(entry.target, tools=False),
-                        )
-                        for entry in harness.setup.models.entries
+                        replace(model, tool_call=False)
+                        for model in harness.setup.models.entries
                     )
                 ),
             )

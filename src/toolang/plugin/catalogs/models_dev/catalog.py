@@ -144,7 +144,6 @@ def _model_catalog_snapshot_from_bytes(
         payload,
         revision=revision,
         source=source,
-        catalog="models.dev",
     )
 
 

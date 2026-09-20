@@ -85,9 +85,9 @@ class AgentSetup:
                     f"provider mapping key {key!r} does not match {identity!r}"
                 )
         missing_providers = {
-            entry.target.provider
+            entry._toolang.provider
             for entry in self.models.entries
-            if entry.target.provider not in providers
+            if entry._toolang.provider not in providers
         }
         if missing_providers:
             raise ValueError(

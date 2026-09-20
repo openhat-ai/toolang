@@ -11,18 +11,7 @@ from toolang.plugin.models.provider_resolver import env_is_ready
 def required_provider_env_vars(provider: Provider) -> tuple[str, ...]:
     """Return required environment variables for one provider."""
 
-    resolved = provider.resolved
-    if resolved is None:
-        return env_names(provider.env)
-    return tuple(
-        dict.fromkeys(
-            name
-            for alternative in resolved.env
-            for name in (
-                (alternative,) if isinstance(alternative, str) else alternative
-            )
-        )
-    )
+    return env_names(provider._toolang.env)
 
 
 def missing_provider_env_vars(
@@ -32,10 +21,10 @@ def missing_provider_env_vars(
 ) -> tuple[str, ...]:
     """Return missing required environment variables for one provider."""
 
-    if provider.resolved is not None:
+    if provider._toolang.env:
         return (
             ()
-            if env_is_ready(provider.resolved.env, environ=environ)
+            if env_is_ready(provider._toolang.env, environ=environ)
             else required_provider_env_vars(provider)
         )
     return tuple(
@@ -62,8 +51,7 @@ def absent_provider_env_vars(
 def provider_env_requirements(provider: Provider) -> tuple[str, ...]:
     """Return displayable OR alternatives with AND groups joined by `` + ``."""
 
-    resolved = provider.resolved
-    values = resolved.env if resolved is not None else provider.env
+    values = provider._toolang.env
     return tuple(
         alternative if isinstance(alternative, str) else " + ".join(alternative)
         for alternative in values
@@ -78,13 +66,11 @@ def default_provider_base_url(
     """Return the default API base URL for one provider when known."""
 
     del environ
-    if provider.resolved is None:
-        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
-    return provider.resolved.api
+    return provider.api
 
 
 def default_provider_api_key_env(provider: Provider) -> str | None:
     """Return the default API key environment variable for one provider."""
 
-    names = env_names(provider.env)
+    names = env_names(provider._toolang.env)
     return names[0] if names else None

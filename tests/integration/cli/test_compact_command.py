@@ -47,8 +47,8 @@ def harness(tmp_path):
         h.setup,
         models=ModelCollection(
             tuple(
-                replace(entry, target=replace(entry.target, structured_output=True))
-                for entry in h.setup.models.entries
+                replace(model, structured_output=True)
+                for model in h.setup.models.entries
             )
         ),
     )

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, ModelOverride
+from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
@@ -24,15 +24,10 @@ from toolang.plugin.catalogs.models_dev.catalog import (
     ModelsDevModelCatalog,
 )
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
-from toolang.plugin.models.config import (
-    ProviderConfig,
-    configure_catalog_providers,
-    parse_provider_configs,
-)
-from toolang.plugin.models.collections import ModelQueryView
+from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import (
-    apply_model_parameters,
+    resolve_model_reasoning,
     build_model_collection,
 )
 from toolang.plugin.toolsets.collections import ToolCollection
@@ -42,7 +37,6 @@ from .cache import (
     CachedModelProjection,
     ModelProjectionCache,
     environment_readiness,
-    hydrate_model_infos,
     model_projection_key,
 )
 from .catalog import MergedModelCatalog
@@ -58,7 +52,7 @@ from .config import (
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import model_info_from_catalog, order_models, select_compact_model
+from .models import order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -108,8 +102,7 @@ class _Candidate:
 @dataclass(frozen=True, slots=True)
 class _PendingModelCache:
     projection_key: str
-    model_infos: tuple[ModelInfo, ...]
-    query_views: tuple[ModelQueryView, ...]
+    snapshot: ModelCatalogSnapshot
     environment_names: tuple[str, ...]
 
 
@@ -202,7 +195,7 @@ class SetupWatcher:
         defaults = resolve_run_defaults(configs, overrides=self._default_overrides)
         compact_model = resolve_compact_model(configs, override=self._compact_override)
         limits = resolve_run_limits(configs, overrides=self._limit_overrides)
-        provider_configs = parse_provider_configs(configs)
+        validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
         catalog_path = resolve_model_catalog_path(
@@ -281,7 +274,6 @@ class SetupWatcher:
             merged,
             adapters=adapters,
             envs=inputs.envs,
-            provider_configs=provider_configs,
         )
         projection_key = _projection_key(
             additional=additional,
@@ -290,7 +282,6 @@ class SetupWatcher:
             ),
             merged=merged,
             envs=inputs.envs,
-            provider_configs=provider_configs,
             allow_models=allow.models,
             plugin_provenance=self._model_plugin_provenance,
             scope=f"agent:{self.layout.name}",
@@ -303,32 +294,19 @@ class SetupWatcher:
                 projection_key,
             )
         )
-        model_infos = (
-            hydrate_model_infos(cache_entry.model_infos, resolved_catalog)
-            if cache_entry is not None
-            else None
-        )
-        if cache_entry is not None and model_infos is None:
-            cache_entry = None
-        if model_infos is None:
-            model_infos = tuple(
-                model_info_from_catalog(model) for model in resolved_catalog.models
-            )
         setup = _build_setup(
             layout=self.layout,
             sandbox=self._sandbox,
-            resolved_catalog=resolved_catalog,
-            model_infos=model_infos,
+            snapshot=(
+                cache_entry.snapshot if cache_entry is not None else resolved_catalog
+            ),
             adapters=adapters,
             tools=tools,
             envs=inputs.envs,
-            provider_configs=provider_configs,
             allow=allow,
             defaults=defaults,
             compact_model=compact_model,
             limits=limits,
-            query_views=(cache_entry.query_views if cache_entry is not None else None),
-            apply_model_allow=cache_entry is None,
         )
         if self._setup is not None and _setups_equal(setup, self._setup):
             setup = self._setup
@@ -337,23 +315,18 @@ class SetupWatcher:
         self._commit_candidate(candidate)
         self._diagnostics = ()
         if cache_entry is None:
-            model_infos = tuple(entry.info for entry in setup.models.entries)
-            query_views = setup.models.query_views()
             self._cache_entry = CachedModelProjection(
+                snapshot=resolved_catalog,
                 key=projection_key,
-                model_infos=model_infos,
-                query_views=query_views,
             )
             self._pending_model_cache = _PendingModelCache(
                 projection_key=projection_key,
-                model_infos=model_infos,
-                query_views=query_views,
+                snapshot=resolved_catalog,
                 environment_names=tuple(
                     sorted(
                         _projection_environment_readiness(
                             merged,
                             inputs.envs,
-                            provider_configs,
                         )
                     )
                 ),
@@ -453,8 +426,7 @@ class SetupWatcher:
             await asyncio.to_thread(
                 self._model_cache.store_context,
                 key=pending.projection_key,
-                model_infos=pending.model_infos,
-                query_views=pending.query_views,
+                snapshot=pending.snapshot,
                 environment_names=pending.environment_names,
             )
         except asyncio.CancelledError:
@@ -524,48 +496,24 @@ def _resolve_catalog(
     *,
     adapters: Mapping[str, ModelAdapter],
     envs: Mapping[str, str],
-    provider_configs: Mapping[str, ProviderConfig],
 ) -> ModelCatalogSnapshot:
-    providers = configure_catalog_providers(merged.providers, provider_configs)
-    return resolve_catalog_providers(
-        ModelCatalogSnapshot(
-            providers=providers,
-            models=merged.models,
-            revision=merged.revision,
-            source=merged.source,
-        ),
-        adapters=adapters,
-        environ=envs,
-        configs=provider_configs,
-    )
+    return resolve_catalog_providers(merged, adapters=adapters, environ=envs)
 
 
 def _build_setup(
     *,
     layout: AgentLayout,
     sandbox: str,
-    resolved_catalog: ModelCatalogSnapshot,
-    model_infos: tuple[ModelInfo, ...],
+    snapshot: ModelCatalogSnapshot,
     adapters: dict[str, ModelAdapter],
     tools: dict[str, Tool],
     envs: dict[str, str],
-    provider_configs: Mapping[str, ProviderConfig],
     allow: AgentCeiling,
     defaults: RunDefaults,
     limits: RunLimits,
     compact_model: ModelOverride | None = None,
-    query_views: tuple[ModelQueryView, ...] | None = None,
-    apply_model_allow: bool = True,
 ) -> AgentSetup:
-    models = build_model_collection(
-        providers=resolved_catalog.providers,
-        models=model_infos,
-        envs=envs,
-        provider_configs=provider_configs,
-        query_views=query_views,
-    )
-    if apply_model_allow:
-        models = order_models(models, allow.models)
+    models = order_models(build_model_collection(snapshot.models), allow.models)
     if compact_model is not None and compact_model.identity != "unset":
         select_compact_model(models, compact_model)
     tool_collection = ToolCollection.from_tools(tools)
@@ -577,17 +525,12 @@ def _build_setup(
             (*tool_collection.runtime, *selected)
         ).compact()
     if defaults.model is not None:
-        entry = models.resolve(defaults.model.ref)
-        apply_model_parameters(
-            models,
-            entry.target,
-            reasoning=defaults.model.reasoning,
-            max_output=defaults.model.max_output,
-        )
-    all_providers = dict(resolved_catalog.providers)
+        model = models.resolve(defaults.model.ref)
+        resolve_model_reasoning(model, defaults.model.reasoning)
+    all_providers = dict(snapshot.providers)
     provider_models: dict[str, set[str]] = {}
-    for entry in models.entries:
-        provider_models.setdefault(entry.target.provider, set()).add(entry.info.model)
+    for model in models.models:
+        provider_models.setdefault(model._toolang.provider, set()).add(model.id)
     providers = {
         provider_id: replace(
             all_providers[provider_id],
@@ -619,12 +562,11 @@ def _projection_key(
     config_value: object,
     merged: ModelCatalogSnapshot,
     envs: Mapping[str, str],
-    provider_configs: Mapping[str, ProviderConfig],
     allow_models: tuple[str, ...] | None,
     plugin_provenance: tuple[object, ...],
     scope: str,
 ) -> str:
-    readiness = _projection_environment_readiness(merged, envs, provider_configs)
+    readiness = _projection_environment_readiness(merged, envs)
     return model_projection_key(
         kind="runtime",
         scope=scope,
@@ -642,13 +584,8 @@ def _projection_key(
 def _projection_environment_readiness(
     merged: ModelCatalogSnapshot,
     envs: Mapping[str, str],
-    provider_configs: Mapping[str, ProviderConfig],
 ) -> dict[str, bool]:
-    readiness = environment_readiness(merged, envs)
-    for config in provider_configs.values():
-        if config.key_env is not None:
-            readiness[config.key_env] = bool(envs.get(config.key_env, "").strip())
-    return readiness
+    return environment_readiness(merged, envs)
 
 
 def _ordered_additional_catalogs(

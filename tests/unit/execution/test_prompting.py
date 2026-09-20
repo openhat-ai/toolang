@@ -12,7 +12,7 @@ from tests.support.prompting import instruction_inputs, render_instructions
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import ImagePart, Message, TextPart
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model, ModelRoute, ModelToolang
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.execution.assembly import prompting, prompts
@@ -255,13 +255,12 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
         agic,
         runnable_name="chat",
         module="agent",
-        model=ModelTarget(
-            ref="test/model",
-            provider="test",
+        model=Model(
+            id="model",
             name="model",
-            model="model",
-            adapter="test",
+            _toolang=ModelToolang(provider="test", ready=True),
         ),
+        route=ModelRoute(provider="test", adapter="test", api=None, env=()),
         values={"_": primary},
         facts={},
         caps=(),

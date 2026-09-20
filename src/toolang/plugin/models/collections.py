@@ -13,8 +13,6 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
-    ModelInfo,
-    ModelTarget,
     Provider,
 )
 from toolang.common.query import (
@@ -90,7 +88,6 @@ class ModelQueryView:
     available: bool
     adapter: str | None
     catalog: str | None
-    alias: tuple[str, ...] | None
     route: ModelRouteView
     tags: tuple[str, ...]
     streaming: bool | None
@@ -140,50 +137,42 @@ MODEL_SCHEMA = CollectionSchema.from_type(
 MODEL_DEFINITION = CollectionDefinition(MODEL_SCHEMA)
 
 
-@dataclass(frozen=True, slots=True)
-class ModelEntry:
-    """One effective model route published for execution."""
-
-    key: str
-    ref: str
-    target: ModelTarget
-    info: ModelInfo
-
-    def __post_init__(self) -> None:
-        if not self.key or self.key != self.key.strip():
-            raise ValueError("model entry requires a canonical key")
-        if not self.ref or self.ref != self.ref.strip():
-            raise ValueError("model entry requires a canonical ref")
-
-
 @dataclass(frozen=True, slots=True, eq=False, init=False)
 class ModelCollection:
     """Immutable effective models with one shared matcher and exact indexes."""
 
-    entries: tuple[ModelEntry, ...]
-    _by_key: Mapping[str, ModelEntry]
-    _by_ref: Mapping[str, ModelEntry]
+    models: tuple[Model, ...]
+    _by_ref: Mapping[str, Model]
     _matcher: QueryDataset[ModelQueryView]
 
     def __init__(
         self,
-        entries: Sequence[ModelEntry] = (),
+        models: Sequence[Model] = (),
         *,
         query_views: Sequence[ModelQueryView] | None = None,
+        local: frozenset[str] = frozenset(),
     ) -> None:
-        values = tuple(entries)
-        _validate_model_entries(values)
+        values = tuple(models)
+        _validate_models(values)
         if query_views is None:
-            views = tuple(_model_entry_view(entry) for entry in values)
+            views = tuple(
+                _catalog_model_view(
+                    model,
+                    available=True,
+                    adapter=None,
+                    local=model._toolang.provider in local,
+                )
+                for model in values
+            )
         else:
             raw_views = tuple(query_views)
             if tuple(view.key for view in raw_views) != tuple(
-                entry.key for entry in values
+                model.ref for model in values
             ):
-                raise ValueError("model query views must match collection entry keys")
+                raise ValueError("model query views must match collection refs")
             views = tuple(
-                replace(view, record=entry)
-                for entry, view in zip(values, raw_views, strict=True)
+                replace(view, record=model)
+                for model, view in zip(values, raw_views, strict=True)
             )
         matcher = MODEL_DEFINITION.dataset(
             views,
@@ -193,17 +182,21 @@ class ModelCollection:
 
     def _initialize(
         self,
-        values: tuple[ModelEntry, ...],
+        values: tuple[Model, ...],
         *,
         matcher: QueryDataset[ModelQueryView],
     ) -> None:
-        _validate_model_entries(values)
-        by_key = {entry.key: entry for entry in values}
-        by_ref = {entry.ref: entry for entry in values}
-        object.__setattr__(self, "entries", values)
-        object.__setattr__(self, "_by_key", MappingProxyType(by_key))
+        _validate_models(values)
+        by_ref = {model.ref: model for model in values}
+        object.__setattr__(self, "models", values)
         object.__setattr__(self, "_by_ref", MappingProxyType(by_ref))
         object.__setattr__(self, "_matcher", matcher)
+
+    @property
+    def entries(self) -> tuple[Model, ...]:
+        """Return the effective models in collection order."""
+
+        return self.models
 
     def match(
         self,
@@ -216,17 +209,17 @@ class ModelCollection:
         parsed = (
             queries if isinstance(queries, MatchUnion) else MODEL_SCHEMA.parse(queries)
         )
-        selected: list[ModelEntry] = []
+        selected: list[Model] = []
         seen: set[str] = set()
         for match in parsed.matches:
             matched = {
-                cast(ModelEntry, item.record).key
+                cast(Model, item.record).ref
                 for item in self._matcher.query(MatchUnion((match,)))
             }
-            for entry in self.entries:
-                if entry.key in matched and entry.key not in seen:
-                    selected.append(entry)
-                    seen.add(entry.key)
+            for model in self.models:
+                if model.ref in matched and model.ref not in seen:
+                    selected.append(model)
+                    seen.add(model.ref)
         return self._derive(tuple(selected))
 
     def apply(
@@ -237,11 +230,11 @@ class ModelCollection:
 
         if not operations:
             return self
-        available = set(self._by_key)
+        available = set(self._by_ref)
         active = set(available)
         for operator, query in operations:
             matched = {
-                cast(ModelEntry, item.record).key for item in self._matcher.query(query)
+                cast(Model, item.record).ref for item in self._matcher.query(query)
             } & available
             if operator == "=":
                 active.intersection_update(matched)
@@ -252,34 +245,31 @@ class ModelCollection:
             else:  # pragma: no cover - SetOperator is a closed vocabulary
                 raise ToolangError(f"unknown collection set operator: {operator!r}")
         return self._derive(
-            tuple(entry for entry in self.entries if entry.key in active)
+            tuple(model for model in self.models if model.ref in active)
         )
 
-    def resolve(self, ref: str) -> ModelEntry:
+    def resolve(self, ref: str) -> Model:
         """Resolve one exact public model ref in O(1)."""
 
-        entry = self._by_ref.get(ref)
-        if entry is None:
+        model = self._by_ref.get(ref)
+        if model is None:
             raise ToolangError(f"model ref is unavailable: {ref}")
-        return entry
+        return model
 
-    def entry(self, key: str) -> ModelEntry:
+    def entry(self, key: str) -> Model:
         """Resolve one persisted model resource key in O(1)."""
 
-        entry = self._by_key.get(key)
-        if entry is None:
-            raise ToolangError(f"run model resource is unavailable: {key}")
-        return entry
+        return self.resolve(key)
 
     def subset(self, keys: Sequence[str]) -> ModelCollection:
         """Resolve an ordered persisted-key subset without interpreting queries."""
 
-        return self._derive(tuple(self.entry(key) for key in keys))
+        return self._derive(tuple(self.resolve(key) for key in keys))
 
     def compact(self) -> ModelCollection:
         """Fix this subset as a standalone publication matcher."""
 
-        return ModelCollection(self.entries, query_views=self.query_views())
+        return ModelCollection(self.models, query_views=self.query_views())
 
     def contains(self, ref: str) -> bool:
         """Return whether one exact public ref is available."""
@@ -289,47 +279,45 @@ class ModelCollection:
     def refs(self) -> tuple[str, ...]:
         """Return public refs in collection order."""
 
-        return tuple(entry.ref for entry in self.entries)
+        return tuple(model.ref for model in self.models)
+
+    def keys(self) -> tuple[str, ...]:
+        """Return stable resource keys in collection order."""
+
+        return self.refs()
 
     def effective_default(self, preferred: str | None) -> str | None:
         """Return a preferred available ref, then the first collection ref."""
 
         if preferred is not None and self.contains(preferred):
             return preferred
-        return self.entries[0].ref if self.entries else None
-
-    def keys(self) -> tuple[str, ...]:
-        """Return stable resource keys in collection order."""
-
-        return tuple(entry.key for entry in self.entries)
+        return self.models[0].ref if self.models else None
 
     def query_views(self) -> tuple[ModelQueryView, ...]:
-        """Return query facts aligned with the effective collection entries."""
+        """Return query facts aligned with the effective collection models."""
 
         by_key = {view.key: view for view in self._matcher.items}
-        return tuple(by_key[entry.key] for entry in self.entries)
+        return tuple(by_key[model.ref] for model in self.models)
 
     def __bool__(self) -> bool:
-        return bool(self.entries)
+        return bool(self.models)
 
     def __len__(self) -> int:
-        return len(self.entries)
+        return len(self.models)
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, ModelCollection) and self.entries == other.entries
+        return isinstance(other, ModelCollection) and self.models == other.models
 
-    def _derive(self, entries: tuple[ModelEntry, ...]) -> ModelCollection:
-        if entries == self.entries:
+    def _derive(self, models: tuple[Model, ...]) -> ModelCollection:
+        if models == self.models:
             return self
         derived = object.__new__(ModelCollection)
-        derived._initialize(entries, matcher=self._matcher)
+        derived._initialize(models, matcher=self._matcher)
         return derived
 
 
-def _validate_model_entries(values: tuple[ModelEntry, ...]) -> None:
-    if len({entry.key for entry in values}) != len(values):
-        raise ValueError("model collection contains duplicate entry keys")
-    if len({entry.ref for entry in values}) != len(values):
+def _validate_models(values: tuple[Model, ...]) -> None:
+    if len({model.ref for model in values}) != len(values):
         raise ValueError("model collection contains duplicate public refs")
 
 
@@ -365,8 +353,15 @@ def catalog_model_dataset(
 
     available_identities = available or set()
     adapter_by_identity = adapters or {}
+
+    def _local(provider_id: str) -> bool:
+        owner = snapshot.providers.get(provider_id)
+        return owner._toolang.local if owner is not None else False
+
     models = tuple(
-        model for model in snapshot.models if include_local or not model.local
+        model
+        for model in snapshot.models
+        if include_local or not _local(model._toolang.provider)
     )
     if query_views is None:
         items = tuple(
@@ -374,6 +369,7 @@ def catalog_model_dataset(
                 model,
                 available=model.identity in available_identities,
                 adapter=adapter_by_identity.get(model.identity),
+                local=_local(model._toolang.provider),
             )
             for model in models
         )
@@ -410,10 +406,10 @@ def catalog_provider_views(
             id=provider.id,
             record=provider,
             name=provider.name,
-            catalog=provider.catalog,
-            local=provider.local,
+            catalog=None,
+            local=provider._toolang.local,
             offline=_provider_offline(provider),
-            ready=provider.resolved.ready if provider.resolved is not None else False,
+            ready=any(model._toolang.ready for model in provider.models.values()),
             available_models=sum(
                 f"{provider.id}/{model_id}" in available for model_id in provider.models
             ),
@@ -441,12 +437,13 @@ def _catalog_model_view(
     *,
     available: bool,
     adapter: str | None,
+    local: bool,
 ) -> ModelQueryView:
-    scope: Literal["local", "remote"] = "local" if model.local else "remote"
+    scope: Literal["local", "remote"] = "local" if local else "remote"
     return ModelQueryView(
         key=model.identity,
         record=model,
-        provider=model.provider_id,
+        provider=model._toolang.provider,
         model=model.id,
         name=model.name,
         description=model.description,
@@ -454,10 +451,9 @@ def _catalog_model_view(
         scope=scope,
         available=available,
         adapter=adapter,
-        catalog=model.catalog,
-        alias=None,
+        catalog=None,
         route=ModelRouteView(
-            provider=model.provider_id,
+            provider=model._toolang.provider,
             adapter=adapter,
             scope=scope,
         ),
@@ -490,79 +486,6 @@ def _catalog_model_view(
             )
         ),
     )
-
-
-def _model_entry_view(entry: ModelEntry) -> ModelQueryView:
-    target = entry.target
-    info = entry.info
-    provider, separator, model = entry.ref.partition("/")
-    if not separator or not provider or not model:
-        provider, model = target.provider, target.model
-    metadata = info.metadata
-    modalities = metadata.get("modalities")
-    input_modalities = (
-        modalities.get("input") if isinstance(modalities, Mapping) else None
-    )
-    output_modalities = (
-        modalities.get("output") if isinstance(modalities, Mapping) else None
-    )
-    return ModelQueryView(
-        key=entry.key,
-        record=entry,
-        provider=provider,
-        model=model,
-        name=target.name,
-        description=info.details,
-        family=_metadata_text(metadata, "family"),
-        scope=target.scope,
-        available=True,
-        adapter=target.adapter,
-        catalog=target.catalog,
-        alias=None,
-        route=ModelRouteView(
-            provider=target.provider,
-            adapter=target.adapter,
-            scope=target.scope,
-        ),
-        tags=tuple(target.tags),
-        streaming=target.streaming,
-        attachment=_metadata_bool(metadata, "attachment"),
-        reasoning=_metadata_bool(metadata, "reasoning"),
-        tool_call=target.tools,
-        temperature=_metadata_bool(metadata, "temperature"),
-        structured_output=target.structured_output,
-        open_weights=_metadata_bool(metadata, "open_weights"),
-        status=_metadata_text(metadata, "status"),
-        release_date=parse_model_query_date(_metadata_text(metadata, "release_date")),
-        last_updated=parse_model_query_date(_metadata_text(metadata, "last_updated")),
-        modalities=ModelModalitiesView(
-            input=_string_values(input_modalities),
-            output=_string_values(output_modalities),
-        ),
-        limit=ModelLimitView(
-            context=info.context_window,
-            output=info.max_output_tokens,
-        ),
-        cost=ModelCostView(
-            input=_optional_decimal(info.input_price),
-            output=_optional_decimal(info.output_price),
-        ),
-        parameters=ModelParametersView(
-            reasoning=ModelReasoningParametersView(
-                effort=_reasoning_efforts_from_metadata(metadata)
-            )
-        ),
-    )
-
-
-def _reasoning_efforts(options: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
-    values: list[str] = []
-    for option in options:
-        raw_values = option.get("values")
-        if option.get("type") != "effort" or not isinstance(raw_values, list | tuple):
-            continue
-        values.extend(value for value in raw_values if isinstance(value, str))
-    return tuple(dict.fromkeys(values))
 
 
 def parse_model_query_date(value: str | None) -> date | None:
@@ -598,6 +521,22 @@ def _string_values(value: object) -> tuple[str, ...]:
     return tuple(item for item in value if isinstance(item, str))
 
 
+def _reasoning_efforts(
+    options: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    values: list[str] = []
+    for option in options:
+        if option.get("type") != "effort":
+            continue
+        raw = option.get("values")
+        if not isinstance(raw, list | tuple):
+            continue
+        for value in raw:
+            if isinstance(value, str) and value not in values:
+                values.append(value)
+    return tuple(values)
+
+
 def _reasoning_efforts_from_metadata(
     metadata: Mapping[str, object],
 ) -> tuple[str, ...]:
@@ -620,7 +559,6 @@ __all__ = [
     "MODEL_SCHEMA",
     "ModelCollection",
     "ModelCostView",
-    "ModelEntry",
     "ModelLimitView",
     "ModelModalitiesView",
     "ModelParametersView",

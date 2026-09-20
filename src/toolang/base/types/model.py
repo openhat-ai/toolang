@@ -1,30 +1,19 @@
-"""Shared model catalog, alias, and execution value types."""
+"""Shared model catalog and execution value types."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Self, TypeAlias, cast
+from typing import Literal, TypeAlias, cast
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
-ReasoningEffort: TypeAlias = Literal[
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-]
-ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
+# Effect levels are provider-defined; the catalog's reasoning_options is the only
+# source of truth, so Toolang keeps no closed vocabulary here.
+ModelEffort: TypeAlias = str | int | Literal["auto"]
 ModelMaxOutput: TypeAlias = int | Literal["auto"]
-_REASONING_EFFORTS = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-)
 
 
 def _exclude_none(value: object) -> bool:
@@ -35,7 +24,7 @@ def _exclude_none(value: object) -> bool:
 class Reasoning:
     """One reasoning control requested for a model selection or call."""
 
-    effort: ReasoningEffort | None = field(
+    effort: str | None = field(
         default=None,
         metadata={"exclude_if": _exclude_none},
     )
@@ -45,8 +34,10 @@ class Reasoning:
     )
 
     def __post_init__(self) -> None:
-        if self.effort is not None and self.effort not in _REASONING_EFFORTS:
-            raise ValueError(f"unknown reasoning effort: {self.effort!r}")
+        if self.effort is not None and not (
+            isinstance(self.effort, str) and self.effort.strip()
+        ):
+            raise ValueError("reasoning effort requires a non-empty level")
         if self.budget_tokens is not None:
             if isinstance(self.budget_tokens, bool) or not isinstance(
                 self.budget_tokens, int
@@ -56,6 +47,16 @@ class Reasoning:
                 raise ValueError("reasoning budget_tokens must be non-negative")
         if self.effort is not None and self.budget_tokens is not None:
             raise ValueError("reasoning accepts either effort or budget_tokens")
+
+    def to_data(self) -> dict[str, object]:
+        """Return the reasoning control as a protocol-neutral mapping."""
+
+        data: dict[str, object] = {}
+        if self.effort is not None:
+            data["effort"] = self.effort
+        if self.budget_tokens is not None:
+            data["budget_tokens"] = self.budget_tokens
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,8 +114,8 @@ class ModelOverride:
             if isinstance(self.effort, int):
                 if self.effort < 0:
                     raise ValueError("model effort token budget must be non-negative")
-            elif self.effort not in {*_REASONING_EFFORTS, "auto"}:
-                raise ValueError(f"unknown model effort: {self.effort!r}")
+            elif not self.effort.strip():
+                raise ValueError("model effort requires a non-empty level or auto")
         if self.max_output is not None and self.max_output != "auto":
             if isinstance(self.max_output, bool) or not isinstance(
                 self.max_output, int
@@ -133,12 +134,41 @@ class ModelOverride:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderToolang:
+    """Toolang-side facts attached to one catalog provider record."""
+
+    env: ResolvedEnv = ()
+    adapter: str | None = None
+    local: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ModelToolang:
+    """Toolang-side facts attached to one catalog model record."""
+
+    ready: bool = False
+    provider: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRoute:
+    """The effective connection one call must use, computed from data."""
+
+    provider: str
+    adapter: str
+    api: str | None
+    env: ResolvedEnv
+    headers: Mapping[str, str] = field(default_factory=dict)
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Model:
     """One models.dev-compatible model record within a provider."""
 
-    provider_id: str
     id: str
     name: str
+    _toolang: ModelToolang
     description: str | None = None
     family: str | None = None
     attachment: bool | None = None
@@ -159,27 +189,29 @@ class Model:
     provider: Mapping[str, object] | None = None
     cost: Mapping[str, object] | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
-    local: bool = False
-    catalog: str | None = None
-    catalog_revision: str | None = None
-    adapter: str | None = None
-    api: str | None = None
-    ready: bool = False
-    resolved: Model | None = None
 
     def __post_init__(self) -> None:
-        if not self.provider_id or not self.id or not self.name:
-            raise ValueError("model provider_id, id, and name are required")
-        object.__setattr__(
-            self,
-            "modalities",
-            MappingProxyType(
-                {str(key): tuple(value) for key, value in self.modalities.items()}
-            ),
-        )
-        object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
-        object.__setattr__(self, "extra", _immutable_mapping(self.extra))
-        if self.reasoning_options is not None:
+        if not self.id or not self.name:
+            raise ValueError("model id and name are required")
+        if not self._toolang.provider:
+            raise ValueError("model requires its provider id")
+        # Freeze idempotently: a resolved copy (`replace`) must reuse the same
+        # immutable nested values instead of re-wrapping them.
+        if not isinstance(self.modalities, MappingProxyType):
+            object.__setattr__(
+                self,
+                "modalities",
+                MappingProxyType(
+                    {str(key): tuple(value) for key, value in self.modalities.items()}
+                ),
+            )
+        if not isinstance(self.limit, MappingProxyType):
+            object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
+        if not isinstance(self.extra, MappingProxyType):
+            object.__setattr__(self, "extra", _immutable_mapping(self.extra))
+        if self.reasoning_options is not None and not isinstance(
+            self.reasoning_options, tuple
+        ):
             object.__setattr__(
                 self,
                 "reasoning_options",
@@ -187,9 +219,11 @@ class Model:
             )
         for name in ("experimental", "provider", "cost"):
             value = getattr(self, name)
-            if value is not None:
+            if value is not None and not isinstance(value, MappingProxyType):
                 object.__setattr__(self, name, _immutable_mapping(value))
-        if isinstance(self.interleaved, Mapping):
+        if isinstance(self.interleaved, Mapping) and not isinstance(
+            self.interleaved, MappingProxyType
+        ):
             object.__setattr__(
                 self, "interleaved", _immutable_mapping(self.interleaved)
             )
@@ -198,14 +232,13 @@ class Model:
     def identity(self) -> str:
         """Return the exact provider/model catalog identity."""
 
-        return f"{self.provider_id}/{self.id}"
+        return f"{self._toolang.provider}/{self.id}"
 
-    def with_resolution(self, resolved: Model) -> Self:
-        """Attach one resolved instance without rebuilding frozen catalog fields."""
+    @property
+    def ref(self) -> str:
+        """Return the public exact ref used to select this model."""
 
-        result = copy(self)
-        object.__setattr__(result, "resolved", resolved)
-        return result
+        return self.identity
 
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
@@ -237,15 +270,25 @@ class Model:
             "last_updated": self.last_updated,
             "status": self.status,
             "experimental": self.experimental,
-            "provider": self.provider,
+            "provider": _public_provider_block(self.provider),
             "cost": self.cost,
         }
         data.update({key: _mutable_json(value) for key, value in optional.items()})
         return {key: value for key, value in data.items() if value is not None}
 
 
-def _normalized_env(env: ResolvedEnv) -> ResolvedEnv:
-    """Normalize one provider environment rule for both instances."""
+def _public_provider_block(
+    value: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    """Return the model-level provider block without Toolang extensions."""
+
+    if value is None:
+        return None
+    return {key: item for key, item in value.items() if key != "_toolang"}
+
+
+def normalized_env(env: ResolvedEnv) -> ResolvedEnv:
+    """Normalize one provider environment rule into OR-of-AND form."""
 
     normalized: list[str | tuple[str, ...]] = []
     for alternative in env:
@@ -270,37 +313,25 @@ LOCAL_STATUS_OFFLINE = "offline"
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """One models.dev-compatible provider and its model catalog entries.
-
-    `npm` is the models.dev protocol signal. A catalog that is not a models.dev
-    record declares its protocol in `adapter` instead.
-    """
+    """One models.dev-compatible provider and its model catalog entries."""
 
     id: str
     name: str
-    env: ResolvedEnv
     models: Mapping[str, Model]
+    _toolang: ProviderToolang = ProviderToolang()
     npm: str | None = None
-    adapter: str | None = None
     api: str | None = None
     doc: str | None = None
+    env: tuple[str, ...] = ()
     extra: Mapping[str, object] = field(default_factory=dict)
-    local: bool = False
-    catalog: str | None = None
-    catalog_revision: str | None = None
-    ready: bool = False
-    resolved: Provider | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("provider id and name are required")
-        if not self.npm and not self.adapter:
-            raise ValueError("provider npm or adapter is required")
-        object.__setattr__(self, "env", _normalized_env(self.env))
         normalized = dict(self.models)
         if any(key != model.id for key, model in normalized.items()):
             raise ValueError(f"provider {self.id!r} model keys must match model ids")
-        if any(model.provider_id != self.id for model in normalized.values()):
+        if any(model._toolang.provider != self.id for model in normalized.values()):
             raise ValueError(f"provider {self.id!r} contains foreign models")
         object.__setattr__(self, "models", MappingProxyType(normalized))
         object.__setattr__(self, "extra", _immutable_mapping(self.extra))
@@ -366,7 +397,7 @@ class ModelCatalogSnapshot:
         models = tuple(self.models)
         if any(key != provider.id for key, provider in providers.items()):
             raise ValueError("catalog provider keys must match provider ids")
-        identities = [(model.provider_id, model.id) for model in models]
+        identities = [(model._toolang.provider, model.id) for model in models]
         if len(identities) != len(set(identities)):
             raise ValueError("catalog models must have unique provider/model identity")
         object.__setattr__(self, "providers", MappingProxyType(providers))
@@ -388,176 +419,18 @@ class ModelCatalogSnapshot:
         selected = self.models if models is None else models
         by_provider: dict[str, dict[str, Model]] = {}
         for model in selected:
-            if model.local:
+            provider = self.providers.get(model._toolang.provider)
+            if provider is not None and provider._toolang.local:
                 raise ValueError(
                     f"local-only model cannot be exported: {model.identity}"
                 )
-            by_provider.setdefault(model.provider_id, {})[model.id] = model
+            by_provider.setdefault(model._toolang.provider, {})[model.id] = model
         return {
             provider_id: self.providers[provider_id].to_data(
                 models=by_provider[provider_id]
             )
             for provider_id in sorted(by_provider)
         }
-
-
-@dataclass(frozen=True, slots=True)
-class ModelInfo:
-    """One provider-scoped model info entry."""
-
-    ref: str
-    provider: str
-    name: str
-    model: str
-    selectors: tuple[str, ...] = field(default_factory=tuple)
-    adapter: str = "default"
-    scope: str | None = None
-    tags: tuple[str, ...] = field(default_factory=tuple)
-    tools: bool = True
-    streaming: bool = True
-    context_window: int | None = None
-    max_output_tokens: int | None = None
-    input_price: float | None = None
-    output_price: float | None = None
-    details: str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "selectors", tuple(self.selectors))
-        object.__setattr__(self, "tags", tuple(self.tags))
-        object.__setattr__(
-            self,
-            "metadata",
-            cast(Mapping[str, Any], _immutable_mapping(self.metadata)),
-        )
-
-    @property
-    def primary_selector(self) -> str:
-        """Return the preferred selector for display surfaces."""
-
-        for selector in self.selectors:
-            text = selector.strip()
-            if text:
-                return text
-        return self.ref
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> Self:
-        """Build one model info from persisted protocol-neutral data."""
-
-        selectors = data.get("selectors", ())
-        tags = data.get("tags", ())
-        metadata = data.get("metadata", {})
-        if not isinstance(selectors, list | tuple):
-            raise TypeError("model selectors must be a list")
-        if not isinstance(tags, list | tuple):
-            raise TypeError("model tags must be a list")
-        if not isinstance(metadata, Mapping):
-            raise TypeError("model metadata must be an object")
-        return cls(
-            ref=str(data["ref"]),
-            provider=str(data["provider"]),
-            name=str(data["name"]),
-            model=str(data["model"]),
-            selectors=tuple(str(item) for item in selectors),
-            adapter=str(data.get("adapter") or "default"),
-            scope=str(data["scope"]) if data.get("scope") is not None else None,
-            tags=tuple(str(item) for item in tags),
-            tools=bool(data.get("tools", True)),
-            streaming=bool(data.get("streaming", True)),
-            context_window=_optional_int(data.get("context_window")),
-            max_output_tokens=_optional_int(data.get("max_output_tokens")),
-            input_price=_optional_float(data.get("input_price")),
-            output_price=_optional_float(data.get("output_price")),
-            details=str(data["details"]) if data.get("details") is not None else None,
-            metadata={str(key): value for key, value in metadata.items()},
-        )
-
-    def to_data(self) -> dict[str, object]:
-        """Return persisted protocol-neutral data for this model."""
-
-        return {
-            "ref": self.ref,
-            "provider": self.provider,
-            "name": self.name,
-            "model": self.model,
-            "selectors": list(self.selectors),
-            "adapter": self.adapter,
-            "scope": self.scope,
-            "tags": list(self.tags),
-            "tools": self.tools,
-            "streaming": self.streaming,
-            "context_window": self.context_window,
-            "max_output_tokens": self.max_output_tokens,
-            "input_price": self.input_price,
-            "output_price": self.output_price,
-            "details": self.details,
-            "metadata": _mutable_json(self.metadata),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class ModelAlias:
-    """One named local alias to a selectable model target."""
-
-    name: str
-    ref: str
-    provider: str
-    model: str | None = None
-    display_name: str | None = None
-    adapter: str | None = None
-    endpoint: str | None = None
-    key_env: str | None = None
-    scope: str | None = None
-    tags: tuple[str, ...] = field(default_factory=tuple)
-    tools: bool | None = None
-    streaming: bool | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    options: dict[str, Any] = field(default_factory=dict)
-    details: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ModelTarget:
-    """One fully resolved execution target for one runtime call."""
-
-    ref: str
-    provider: str
-    name: str
-    model: str
-    adapter: str
-    base_url: str | None = None
-    api_key: str | None = None
-    scope: str | None = None
-    tags: tuple[str, ...] = field(default_factory=tuple)
-    headers: Mapping[str, str] = field(default_factory=dict)
-    options: Mapping[str, Any] = field(default_factory=dict)
-    tools: bool = True
-    streaming: bool = True
-    structured_output: bool | None = None
-    catalog: str | None = None
-    catalog_revision: str | None = None
-    reasoning: Mapping[str, Any] = field(default_factory=dict)
-    max_output: int | None = None
-    mode: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "tags", tuple(self.tags))
-        object.__setattr__(
-            self,
-            "headers",
-            MappingProxyType(dict(self.headers)),
-        )
-        object.__setattr__(
-            self,
-            "options",
-            cast(Mapping[str, Any], _immutable_mapping(self.options)),
-        )
-        object.__setattr__(
-            self,
-            "reasoning",
-            cast(Mapping[str, Any], _immutable_mapping(self.reasoning)),
-        )
 
 
 def _optional_int(value: object) -> int | None:

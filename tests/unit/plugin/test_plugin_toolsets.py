@@ -9,8 +9,8 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import Tool, Toolset
-from toolang.base.types.model import ModelCatalogSnapshot, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelStreamHandler
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.adapters.loading import load_model_adapters
@@ -565,17 +565,26 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
 
         async def invoke(
             self,
-            target: ModelTarget,
+            route: ModelRoute,
+            model: Model,
             request: ModelCall,
+            *,
+            environ: Mapping[str, str],
         ) -> ModelCallResult:
-            del target, request
+            del route, model, request, environ
             return ModelCallResult()
 
         async def stream(
-            self, target: ModelTarget, request: ModelCall, *, on_event
+            self,
+            route: ModelRoute,
+            model: Model,
+            request: ModelCall,
+            *,
+            environ: Mapping[str, str],
+            on_event: ModelStreamHandler,
         ) -> ModelCallResult:
-            del on_event
-            return await self.invoke(target, request)
+            del route, model, request, environ, on_event
+            return ModelCallResult()
 
     def create_model_adapter(config: Mapping[str, Any]) -> ModelAdapter:
         adapter_configs.append(dict(config))

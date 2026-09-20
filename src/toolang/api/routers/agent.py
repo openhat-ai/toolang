@@ -2,12 +2,14 @@
 
 import re
 from decimal import Decimal
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
+from toolang.base.types.model import Model
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
@@ -18,7 +20,6 @@ from toolang.execution.runnables import (
 from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
-from toolang.execution.executor.resources import snapshot_model_selection
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
@@ -54,7 +55,6 @@ def models(
 ) -> dict[str, object]:
     try:
         setup = core.setup.current()
-        selection = snapshot_model_selection(setup)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
@@ -66,15 +66,14 @@ def models(
         "default": selected.effective_default(preferred),
         "items": [
             _model_item(
-                ref=ref,
-                target=target,
-                efforts=model_reasoning_efforts(selection, target),
-                effort_applicable=model_reasoning_effort_applicable(selection, target),
-                input_price=entry.info.input_price,
-                output_price=entry.info.output_price,
+                ref=model.ref,
+                model=model,
+                efforts=model_reasoning_efforts(model),
+                effort_applicable=model_reasoning_effort_applicable(model),
+                input_price=_model_token_price(model, "input"),
+                output_price=_model_token_price(model, "output"),
             )
-            for entry in selected.entries
-            for ref, target in ((entry.ref, entry.target),)
+            for model in selected.entries
         ],
     }
 
@@ -325,7 +324,7 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
 def _model_item(
     *,
     ref: str,
-    target: Any,
+    model: Model,
     efforts: tuple[str, ...],
     effort_applicable: bool,
     input_price: float | None,
@@ -333,8 +332,8 @@ def _model_item(
 ) -> dict[str, object]:
     return {
         "ref": ref,
-        "name": target.name,
-        "provider": target.provider,
+        "name": model.name,
+        "provider": model._toolang.provider,
         "parameters": {
             "reasoning": {
                 "effort": list(efforts),
@@ -350,6 +349,14 @@ def _model_item(
 
 def _price_per_million(value: float | None) -> Decimal | None:
     return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
+
+
+def _model_token_price(model: Model, name: str) -> float | None:
+    cost = model.cost
+    value = cost.get(name) if isinstance(cost, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        return None
+    return float(value) / 1_000_000
 
 
 def _runnable_defaults(

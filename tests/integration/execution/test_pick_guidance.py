@@ -364,15 +364,7 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
     entry = harness.setup.models.entries[0]
     harness.setup = replace(
         harness.setup,
-        models=ModelCollection(
-            (
-                replace(
-                    entry,
-                    info=replace(entry.info, tools=False),
-                    target=replace(entry.target, tools=False),
-                ),
-            )
-        ),
+        models=ModelCollection((replace(entry, tool_call=False),)),
     )
 
     async def scenario():

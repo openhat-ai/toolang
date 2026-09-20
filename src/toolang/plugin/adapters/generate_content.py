@@ -23,7 +23,8 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model, ModelRoute, Reasoning
+from toolang.plugin.models.provider_resolver import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -50,14 +51,17 @@ class GenerateContentModelAdapter(ModelAdapter):
 
     async def invoke(
         self,
-        target: ModelTarget,
+        route: ModelRoute,
+        model: Model,
         request: ModelCall,
+        *,
+        environ: Mapping[str, str],
     ) -> ModelCallResult:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                _generate_url(target, stream=False),
-                headers=_generate_headers(target),
-                json=generate_content_payload(target, request),
+                _generate_url(route, model=model, stream=False),
+                headers=_generate_headers(route, environ=environ),
+                json=generate_content_payload(route, model, request),
             )
             response.raise_for_status()
             result = parse_generate_content(_json_object(response.json()))
@@ -71,9 +75,11 @@ class GenerateContentModelAdapter(ModelAdapter):
 
     async def stream(
         self,
-        target: ModelTarget,
+        route: ModelRoute,
+        model: Model,
         request: ModelCall,
         *,
+        environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         text: list[str] = []
@@ -83,9 +89,9 @@ class GenerateContentModelAdapter(ModelAdapter):
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
-                _generate_url(target, stream=True),
-                headers=_generate_headers(target),
-                json=generate_content_payload(target, request),
+                _generate_url(route, model=model, stream=True),
+                headers=_generate_headers(route, environ=environ),
+                json=generate_content_payload(route, model, request),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -138,16 +144,17 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 
 
 def generate_content_payload(
-    target: ModelTarget,
+    route: ModelRoute,
+    model: Model,
     request: ModelCall,
 ) -> dict[str, object]:
     """Encode one canonical request for Gemini Generate Content."""
 
-    native_schema = request.output_schema if target.structured_output is True else None
+    native_schema = request.output_schema if model.structured_output is True else None
     if (
         native_schema is not None
         and request.tools
-        and not _supports_structured_output_with_tools(target.model)
+        and not _supports_structured_output_with_tools(model.id)
     ):
         native_schema = None
     instructions = (
@@ -158,7 +165,7 @@ def generate_content_payload(
         if request.output_schema is not None and native_schema is None
         else request.instructions
     )
-    options = dict(target.options)
+    options = dict(route.options)
     payload: dict[str, object] = {
         "contents": [
             _encode_message(
@@ -188,7 +195,7 @@ def generate_content_payload(
         if isinstance(generation, Mapping):
             payload["generationConfig"] = dict(generation)
         payload.update(options)
-    _apply_reasoning(payload, target.reasoning)
+    _apply_reasoning(payload, request.reasoning)
     _apply_structured_output(
         payload,
         request.output_schema,
@@ -431,22 +438,31 @@ def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], 
     return tuple(_json_object(part) for part in parts)
 
 
-def _generate_url(target: ModelTarget, *, stream: bool) -> str:
-    if target.base_url is None:
+def _generate_url(
+    route: ModelRoute,
+    *,
+    model: Model,
+    stream: bool,
+) -> str:
+    if route.api is None:
         raise ToolangError("Generate Content adapter requires a resolved API")
     action = "streamGenerateContent" if stream else "generateContent"
     suffix = "?alt=sse" if stream else ""
-    model = quote(target.model, safe="")
-    return f"{target.base_url.rstrip('/')}/models/{model}:{action}{suffix}"
+    return f"{route.api.rstrip('/')}/models/{quote(model.id, safe='')}:{action}{suffix}"
 
 
-def _generate_headers(target: ModelTarget) -> dict[str, str]:
-    if not target.api_key:
+def _generate_headers(
+    route: ModelRoute,
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    api_key = credential_value(route.env, environ=environ)
+    if not api_key:
         raise ToolangError("Generate Content adapter requires a resolved API key")
     return {
         "content-type": "application/json",
-        "x-goog-api-key": target.api_key,
-        **target.headers,
+        "x-goog-api-key": api_key,
+        **route.headers,
     }
 
 
@@ -547,9 +563,9 @@ def _supports_structured_output_with_tools(model: str) -> bool:
 
 def _apply_reasoning(
     payload: dict[str, object],
-    reasoning: Mapping[str, object],
+    reasoning: Reasoning | None,
 ) -> None:
-    if not reasoning:
+    if reasoning is None:
         return
     raw_generation = payload.get("generationConfig")
     generation = (
@@ -563,12 +579,10 @@ def _apply_reasoning(
         if isinstance(raw_thinking, Mapping)
         else {}
     )
-    unknown = set(reasoning) - {"effort", "budget_tokens"}
-    if unknown:
-        joined = ", ".join(sorted(unknown))
-        raise ToolangError(f"unknown Generate Content reasoning controls: {joined}")
-    effort = reasoning.get("effort")
-    budget = reasoning.get("budget_tokens")
+    effort = reasoning.effort
+    budget = reasoning.budget_tokens
+    if effort is None and budget is None:
+        return
     if effort == "none" and budget is not None:
         raise ToolangError(
             "disabled Generate Content reasoning conflicts with a token budget"

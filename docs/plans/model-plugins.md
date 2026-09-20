@@ -422,8 +422,9 @@ The cache is internal to the setup. Its contract is only:
    the setup applied configuration and policy to.
 2. Keep `Provider` on the setup. Inspection reads it from the setup instead of
    re-running resolution.
-3. Keep `api_key` on the model state in setup memory only; `to_data()` and the
-   durable record never contain it.
+3. No `api_key` field exists on any record. The setup supplies a trimmed
+   credential environment to the adapter, which selects the value from it;
+   `to_data()` and the durable record never contain a credential.
 4. Reasoning stays on the model as capability. The request carries the demand
    and the call carries the effective control. Nothing is moved off the model;
    only the effective control relocates, from the deleted `ModelTarget` to
@@ -449,8 +450,92 @@ The cache is internal to the setup. Its contract is only:
 12. `headers` and `options` are not catalog data but are request data: they are
     carried on the resolved instance under the same names, never exported, and
     never written to a durable record.
-13. `api_key` is never a record field. Credentials stay with the adapter, which
-    reads the environment names a provider declares.
+13. `api_key` is never a record field. The setup trims the process environment
+    to the names a provider declares and passes that mapping through the call
+    site; the adapter selects the credential from the mapping and never reads the
+    process environment. The same rule answers availability inspection.
+
+## Unused catalog fields
+
+A record of every catalog field we parse and export but never read, kept so a
+later review can judge whether the logic is incomplete. None of these is read by
+resolution, inspection, execution, or accounting today.
+
+| Field | Scope | Today | Note |
+| --- | --- | --- | --- |
+| `knowledge` | model | parsed, exported, never read | only appears in `parsing.py` and `Model.to_data()` |
+| `interleaved` | model | parsed, exported, never read | 1003 published models declare `{"field": "reasoning_content"}` |
+| `limit` keys other than `context`, `output` | model | only `context` and `output` are read | `setup/models.py`, `plugin/models/collections.py` |
+| `cost` keys other than `input`, `output`, `tiers` | model | `cache_read`, `cache_write`, `context_over_200k`, `reasoning`, `audio` parsed, never read | `execution/accounting.py` reads `input`/`output`/`tiers` |
+| `provider.body` (model-level override) | model | parsed raw, never read | 1 published model; no adapter reads it |
+| `provider.headers` (model-level override) | model | parsed raw, never read | models.dev schema allows it; 0 published today |
+| `doc` | provider | parsed, exported, never read | only `Provider.to_data()` |
+| unknown top-level fields | provider, model | kept verbatim in `extra`, exported | `Model.extra`, `Provider.extra` |
+
+Each row is either wired up in a later change or left as export-only; this list
+exists so the gap is visible rather than silent.
+
+## Durable record
+
+After the fold the durable model step keeps only what a replay cannot re-derive
+from the model ref:
+
+```text
+StoredModelStepGiven
+  model: str                 # the resolved model ref (provider/model identity)
+  call: ModelCallRefs
+    instructions: str        # reference into the prompt store
+    messages: {head, delta}  # incremental message templates
+    tools: str | None        # reference
+    output_schema: dict | None
+    cont: object | None
+    reasoning: Reasoning | None        # effective control (moved off ModelTarget)
+    max_output_tokens: int | None      # the allowance this call actually applied
+    version: int
+```
+
+Reasons this is the natural form:
+
+- it stores *which model* and *what it was asked*, plus the effective controls,
+  and nothing else;
+- `reasoning` moves from the deleted `ModelTarget.reasoning` onto the call, so a
+  replay reproduces the request without resolving a model for controls again;
+- the resolved route (`api`, `adapter`, `ready`), `headers`, `options`, and the
+  credential are never stored: replay re-resolves them from the model ref and the
+  environment, exactly as a first run does.
+
+## Adapter invocation
+
+The chain is `ModelRequest -> Model -> ModelCall -> adapter`. An adapter is
+invoked with the resolved `Model` and the assembled `ModelCall`; it must not read
+model selection, `headers`, `options`, or the credential from the call.
+
+`Model` (the resolved instance) carries the request facts an adapter needs under
+their catalog names: `adapter`, `api`, `headers`, `options`, `structured_output`.
+
+### Credential flow
+
+An adapter never reads the process environment. The credential reaches it as a
+plain mapping supplied per call:
+
+- the setup computes the environment names a provider declares (the resolved env
+  rule) and trims the process environment to exactly those names;
+- the call site passes that trimmed mapping to the adapter;
+- the adapter selects the credential from the mapping itself, using the
+  model/provider facts it is invoked with (the declared names and the
+  credential-suffix rule).
+
+The trimming/supplying rule is implemented once in the setup and shared with
+availability inspection: `too models`/`too providers` answer `ready` from the
+same declared names and the same trimmed environment, so inspection and execution
+agree on what "available" means. Nothing about the credential is stored on a
+record: no `api_key` field on `Model`, `Provider`, `ModelTarget` (deleted), or
+`ModelCall`, and nothing in `to_data()` or the durable record.
+
+The credential value is therefore never a `Model`/`Provider` field; only the
+declared *names* are catalog/provider data (`Provider.env`), and only the trimmed
+*values* are transient call input.
+
 
 ## Acceptance
 

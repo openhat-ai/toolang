@@ -13,7 +13,12 @@ from rich.text import Text
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import (
+    Model,
+    ModelCatalogSnapshot,
+    ModelToolang,
+    Provider,
+)
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
 from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
@@ -326,7 +331,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         ) + len(row_value)
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
-    assert "1 model from 1 catalog: models.dev 1" in stdout
+    assert "1 model" in stdout
 
 
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
@@ -379,9 +384,9 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     async def ollama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
-            provider_id="ollama",
             id="local",
             name="local",
+            _toolang=ModelToolang(provider="ollama", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
             cost={"input": 0, "output": 0},
         )
@@ -403,9 +408,9 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
-            provider_id="llama_cpp",
             id="offline",
             name="offline",
+            _toolang=ModelToolang(provider="llama_cpp", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
             cost={"input": 0, "output": 0},
         )
@@ -443,7 +448,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
     assert "llama_cpp/offline" in stdout
-    assert "4 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 1" in stdout
+    assert "4 models" in stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -473,10 +478,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
 
     assert providers_result.exit_code == 0, providers_result.stderr
-    assert (
-        "3 providers from 3 catalogs: models.dev 1, ollama 1, llama_cpp 1"
-        in providers_result.stdout
-    )
+    assert "3 providers" in providers_result.stdout
     assert captured_headers == (
         "PROVIDER",
         "AVAILABLE MODELS",
@@ -546,7 +548,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert "https://api.test/v1" in row
     assert "messages" in row
     assert "TEST_API_KEY, TEST_ALT_API_KEY" in row
-    assert "1 provider from 1 catalog: models.dev 1" in stdout
+    assert "1 provider" in stdout
 
     filtered = runner.invoke(
         cli.app,
@@ -761,11 +763,10 @@ def test_models_uses_agent_provider_config_and_environment(
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
     monkeypatch.delenv("TEST_AGENT_MODEL_KEY", raising=False)
     (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    data = _catalog_data()
+    cast(dict[str, object], data["test"])["env"] = ["TEST_AGENT_MODEL_KEY"]
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
     home = _resident_home(tmp_path, "alice")
-    (home / "config.toml").write_text(
-        '[models.providers.test]\nadapter = "messages"\n'
-        'key_env = "TEST_AGENT_MODEL_KEY"\n'
-    )
     (home / ".env").write_text("TEST_AGENT_MODEL_KEY=synthetic-agent-key\n")
     _resident_home(tmp_path, "bob")
 
@@ -787,9 +788,9 @@ def test_models_uses_agent_provider_config_and_environment(
                 *target,
                 "models",
                 "-q",
-                "test/one[adapter=messages;available=true]",
+                "test/one[adapter=chat_completions;available=true]",
                 "-q",
-                "test/two[adapter=messages;available=true]",
+                "test/two[adapter=chat_completions;available=true]",
                 *(["--json"] if json_output else []),
             ]
         )
@@ -865,7 +866,7 @@ def test_models_reports_agent_input_type_errors_without_a_traceback(
     home = _resident_home(tmp_path, "alice")
     if invalid_input == "config":
         (home / "config.toml").write_text("[models]\nproviders = []\n")
-        message = "models providers config must be a table"
+        message = "[models.providers.*] is not supported"
     else:
         (home / "catalog.json").write_text('{"test": 42}')
         message = "provider 'test' must be an object"

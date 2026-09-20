@@ -5,12 +5,12 @@ from decimal import Decimal
 
 import pytest
 
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
 from toolang.execution.executor.limits import _model_accounting
 from toolang.execution.records import run_limits_to_data
-from toolang.setup import ModelCollection, ModelEntry
+from toolang.setup import ModelCollection
 
 
 def test_run_limits_have_one_compact_stable_shape() -> None:
@@ -63,30 +63,17 @@ def test_run_limits_reject_invalid_values(
 
 
 def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
-    target = ModelTarget(
-        ref="test/model",
-        provider="test",
+    model = Model(
+        id="model",
         name="Model",
-        model="model",
-        adapter="chat_completions",
+        _toolang=ModelToolang(provider="test", ready=True),
+        cost={"input": 1, "output": 2},
     )
-    info = ModelInfo(
-        ref=target.ref,
-        provider=target.provider,
-        name=target.name,
-        model=target.model,
-        adapter=target.adapter,
-        input_price=0.000001,
-        output_price=0.000002,
-        metadata={"cost": {"input": 1, "output": 2}},
-    )
-    models = ModelCollection(
-        (ModelEntry(key=target.ref, ref=target.ref, target=target, info=info),)
-    )
+    models = ModelCollection((model,))
+    assert models.contains(model.ref)
 
     accounting = _model_accounting(
-        target,
-        models,
+        model,
         ModelUsage(
             input_tokens=10,
             output_tokens=5,

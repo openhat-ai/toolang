@@ -78,11 +78,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers=providers,
         adapters={},
-        models=build_model_collection(
-            providers=providers,
-            models=provider.list_models(environ={}),
-            envs={},
-        ),
+        models=build_model_collection(provider.list_models(environ={})),
         tools=ToolCollection.from_tools(tools),
         envs={},
     )

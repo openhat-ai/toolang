@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -20,9 +18,11 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.model import (
-    ModelInfo,
-    ModelTarget,
+    Model,
+    ModelRoute,
+    ModelToolang,
     Provider,
+    ProviderToolang,
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
@@ -69,53 +69,35 @@ from toolang.setup import (
     AgentEnvironment,
     AgentSetup,
     ModelCollection,
-    ModelEntry,
     ToolCollection,
 )
 
 
 def _provider() -> Provider:
-    provider = Provider(
+    return Provider(
         id="test",
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
         models={},
-    )
-    return replace(
-        provider,
-        resolved=replace(
-            provider,
-            adapter="test",
-            api="https://models.example/v1",
+        _toolang=ProviderToolang(
             env=(),
-            ready=True,
+            adapter="test",
+            local=False,
         ),
+        api="https://models.example/v1",
     )
 
 
 def _models() -> ModelCollection:
-    info = ModelInfo(
-        ref="test/model",
-        provider="test",
-        name="model",
-        model="model",
-        adapter="test",
-    )
     return ModelCollection(
         (
-            ModelEntry(
-                key=info.ref,
-                ref=info.ref,
-                target=ModelTarget(
-                    ref=info.ref,
-                    provider=info.provider,
-                    name=info.name,
-                    model=info.model,
-                    adapter="test",
-                    base_url="https://models.example/v1",
-                ),
-                info=info,
+            Model(
+                id="model",
+                name="model",
+                _toolang=ModelToolang(provider="test", ready=True),
+                tool_call=True,
+                structured_output=True,
             ),
         )
     )
@@ -132,14 +114,27 @@ class _Adapter:
 
     async def invoke(
         self,
-        target: ModelTarget,
+        route: ModelRoute,
+        model: Model,
         request: ModelCall,
+        *,
+        environ,
     ) -> ModelCallResult:
+        del route, model, environ
         self.requests.append(request)
         return ModelCallResult(message=self.response)
 
-    async def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
-        return await self.invoke(target, request)
+    async def stream(
+        self,
+        route: ModelRoute,
+        model: Model,
+        request: ModelCall,
+        *,
+        environ,
+        on_event,
+    ):
+        del on_event
+        return await self.invoke(route, model, request, environ=environ)
 
 
 class _Tool(Tool):

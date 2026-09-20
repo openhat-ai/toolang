@@ -1,60 +1,62 @@
-"""Resolve raw catalog providers once into immutable runtime facts."""
+"""Resolve catalog providers and models into effective Toolang facts."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from string import Template
+from typing import cast
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
-    LOCAL_STATUS_OFFLINE,
     Model,
     ModelCatalogSnapshot,
+    ModelRoute,
+    ModelToolang,
     Provider,
+    ProviderToolang,
     ResolvedEnv,
     env_names,
-    local_runtime_status,
+    normalized_env,
 )
-from toolang.plugin.models.config import ProviderConfig
+from toolang.common.errors import ToolangError
 
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
 
-
-@dataclass(frozen=True, slots=True)
-class _ProtocolRoute:
-    adapter: str
-    api: str | None = None
-
-
-_NPM_ROUTES = {
-    "@ai-sdk/anthropic": _ProtocolRoute("messages"),
-    "@ai-sdk/cerebras": _ProtocolRoute(
-        "chat_completions", "https://api.cerebras.ai/v1"
-    ),
-    "@ai-sdk/deepinfra": _ProtocolRoute(
-        "chat_completions", "https://api.deepinfra.com/v1/openai"
-    ),
-    "@ai-sdk/gateway": _ProtocolRoute(
-        "chat_completions", "https://ai-gateway.vercel.sh/v1"
-    ),
-    "@ai-sdk/google": _ProtocolRoute("generate_content"),
-    "@ai-sdk/groq": _ProtocolRoute(
-        "chat_completions", "https://api.groq.com/openai/v1"
-    ),
-    "@ai-sdk/mistral": _ProtocolRoute("chat_completions", "https://api.mistral.ai/v1"),
-    "@ai-sdk/openai": _ProtocolRoute("responses"),
-    "@ai-sdk/openai-compatible": _ProtocolRoute("chat_completions"),
-    "@ai-sdk/perplexity": _ProtocolRoute(
-        "chat_completions", "https://api.perplexity.ai"
-    ),
-    "@ai-sdk/togetherai": _ProtocolRoute(
-        "chat_completions", "https://api.together.xyz/v1"
-    ),
-    "@ai-sdk/xai": _ProtocolRoute("chat_completions", "https://api.x.ai/v1"),
-    "@openrouter/ai-sdk-provider": _ProtocolRoute("chat_completions"),
+# Toolang-owned provider conventions: agent-side data keyed by provider id.
+PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
+    "openrouter": {
+        "headers": {
+            "HTTP-Referer": "https://toolang.ai",
+            "X-OpenRouter-Title": "Toolang",
+            "X-OpenRouter-Categories": "cli-agent",
+        },
+    },
 }
-_SHAPE_ADAPTERS = {
+
+# npm package -> (adapter, protocol default api)
+_NPM_ROUTES: Mapping[str, tuple[str, str | None]] = {
+    "@ai-sdk/anthropic": ("messages", "https://api.anthropic.com/v1"),
+    "@ai-sdk/cerebras": ("chat_completions", "https://api.cerebras.ai/v1"),
+    "@ai-sdk/deepinfra": (
+        "chat_completions",
+        "https://api.deepinfra.com/v1/openai",
+    ),
+    "@ai-sdk/gateway": ("chat_completions", "https://ai-gateway.vercel.sh/v1"),
+    "@ai-sdk/google": (
+        "generate_content",
+        "https://generativelanguage.googleapis.com/v1beta",
+    ),
+    "@ai-sdk/groq": ("chat_completions", "https://api.groq.com/openai/v1"),
+    "@ai-sdk/mistral": ("chat_completions", "https://api.mistral.ai/v1"),
+    "@ai-sdk/openai": ("responses", "https://api.openai.com/v1"),
+    "@ai-sdk/openai-compatible": ("chat_completions", None),
+    "@ai-sdk/perplexity": ("chat_completions", "https://api.perplexity.ai"),
+    "@ai-sdk/togetherai": ("chat_completions", "https://api.together.xyz/v1"),
+    "@ai-sdk/xai": ("chat_completions", "https://api.x.ai/v1"),
+    "@openrouter/ai-sdk-provider": ("chat_completions", None),
+}
+_SHAPE_ADAPTERS: Mapping[str, str] = {
     "chat_completions": "chat_completions",
     "completions": "chat_completions",
     "generate_content": "generate_content",
@@ -69,31 +71,37 @@ _ENV_OVERRIDES: Mapping[str, ResolvedEnv] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _ProtocolRoute:
+    adapter: str
+    api: str | None = None
+
+
 def resolve_catalog_providers(
     snapshot: ModelCatalogSnapshot,
     *,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
-    configs: Mapping[str, ProviderConfig] | None = None,
 ) -> ModelCatalogSnapshot:
-    """Resolve every provider exactly once and return one frozen snapshot."""
+    """Resolve every provider once and return one frozen snapshot."""
 
     providers = {
         provider_id: resolve_provider(
             provider,
             adapters=adapters,
             environ=environ,
-            config=(configs or {}).get(provider_id),
         )
         for provider_id, provider in snapshot.providers.items()
     }
     return ModelCatalogSnapshot(
         providers=providers,
         models=tuple(
-            providers[model.provider_id].models[model.id] for model in snapshot.models
+            providers[model._toolang.provider].models[model.id]
+            for model in snapshot.models
         ),
         revision=snapshot.revision,
         source=snapshot.source,
+        local=snapshot.local,
     )
 
 
@@ -102,134 +110,240 @@ def resolve_provider(
     *,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
-    config: ProviderConfig | None = None,
 ) -> Provider:
-    """Attach one provider's adapter, API, env rule, and readiness."""
+    """Attach one provider's effective env rule, adapter, and readiness."""
 
-    provider_route = _NPM_ROUTES.get(provider.npm) if provider.npm is not None else None
-    adapter_name = (
-        _configured_adapter(config)
-        or provider.adapter
-        or (provider_route.adapter if provider_route is not None else None)
-    )
-    adapter = adapters.get(adapter_name) if adapter_name is not None else None
-    api = _resolve_api(
-        config.endpoint if config is not None and config.endpoint else provider.api,
-        environ=environ,
-        default=(
-            provider_route.api
-            if (config is None or config.adapter is None)
-            and provider_route is not None
-            and provider_route.api is not None
-            else adapter.default_api
-            if adapter is not None
-            else None
+    adapter_name = provider_adapter(provider)
+    env = _resolve_env(provider)
+    resolved = replace(
+        provider,
+        _toolang=ProviderToolang(
+            env=env,
+            adapter=adapter_name,
+            local=provider._toolang.local,
         ),
-    )
-    env = _resolve_env(
-        provider,
-        names=(config.key_env,)
-        if config is not None and config.key_env is not None
-        else env_names(provider.env),
-        provider_override=config is None or config.key_env is None,
-    )
-    ready = (
-        adapter is not None
-        and api is not None
-        and env_is_ready(env, environ=environ)
-        and not _local_provider_offline(provider)
-    )
-    resolved_provider = replace(
-        provider,
-        env=env,
-        adapter=adapter_name,
-        api=api,
-        ready=ready,
-        resolved=None,
     )
     models = {
         model_id: _resolve_model(
-            provider,
+            resolved,
             model,
-            default=resolved_provider,
             adapters=adapters,
             environ=environ,
-            config=config,
         )
         for model_id, model in provider.models.items()
     }
-    return replace(
-        provider,
-        models=models,
-        resolved=resolved_provider,
-    )
+    return replace(resolved, models=models)
+
+
+def provider_adapter(provider: Provider) -> str | None:
+    """Return the effective adapter name for one provider."""
+
+    declared = provider._toolang.adapter
+    if declared:
+        return declared
+    if provider.npm is None:
+        return None
+    route = _NPM_ROUTES.get(provider.npm)
+    return route[0] if route is not None else None
 
 
 def _resolve_model(
     provider: Provider,
     model: Model,
     *,
-    default: Provider,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
-    config: ProviderConfig | None,
 ) -> Model:
     override = model.provider or {}
     npm = _optional_text(override.get("npm"))
     shape = _normalized_shape(override.get("shape"))
-    route = _NPM_ROUTES.get(npm) if npm is not None else None
-    if _configured_adapter(config) is not None:
-        adapter_name = _configured_adapter(config)
-    elif shape is not None:
-        adapter_name = _SHAPE_ADAPTERS.get(shape)
+    provider_adapter_name = provider._toolang.adapter
+    if shape is not None:
+        model_adapter = _SHAPE_ADAPTERS.get(shape)
     elif npm is not None:
-        adapter_name = route.adapter if route is not None else None
+        mapped = _NPM_ROUTES.get(npm)
+        model_adapter = mapped[0] if mapped is not None else None
     else:
-        adapter_name = default.adapter
+        model_adapter = None
+    if model_adapter is None or model_adapter == provider_adapter_name:
+        adapter_name = provider_adapter_name
+        resolved_model = model
+    else:
+        adapter_name = model_adapter
+        resolved_model = replace(
+            model,
+            provider=_with_model_adapter(model.provider, model_adapter),
+        )
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
-    configured_api = config.endpoint if config is not None else None
-    api_value = configured_api or _optional_text(override.get("api")) or provider.api
-    route_api = (
-        route.api
-        if (config is None or config.adapter is None) and route is not None
-        else None
-    )
-    api = _resolve_api(
-        api_value,
-        environ=environ,
-        default=(route_api or (adapter.default_api if adapter is not None else None)),
-    )
+    api = model_api(provider, resolved_model, adapters=adapters, environ=environ)
     ready = (
         adapter is not None
         and api is not None
-        and env_is_ready(default.env, environ=environ)
+        and env_is_ready(provider._toolang.env, environ=environ)
         and not _local_provider_offline(provider)
     )
-    return model.with_resolution(
-        replace(
-            model,
-            adapter=adapter_name,
-            api=api,
-            ready=ready,
-            resolved=None,
-        )
+    return replace(
+        resolved_model,
+        _toolang=ModelToolang(ready=ready, provider=model._toolang.provider),
     )
 
 
-def _configured_adapter(config: ProviderConfig | None) -> str | None:
-    return config.adapter if config is not None else None
+def _with_model_adapter(
+    value: Mapping[str, object] | None,
+    adapter: str,
+) -> Mapping[str, object]:
+    block = dict(value or {})
+    block["_toolang"] = {"adapter": adapter}
+    return block
 
 
-def _normalized_shape(value: object) -> str | None:
-    text = _optional_text(value)
-    return text.lower().replace("-", "_").replace(" ", "_") if text else None
+def model_adapter(provider: Provider, model: Model) -> str | None:
+    """Return the effective adapter name for one model."""
+
+    override = model.provider or {}
+    block = override.get("_toolang")
+    if isinstance(block, Mapping):
+        declared = cast(Mapping[str, object], block).get("adapter")
+        if isinstance(declared, str) and declared:
+            return declared
+    return provider._toolang.adapter
 
 
-def _optional_text(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return text or None
+def model_route(
+    provider: Provider,
+    model: Model,
+    *,
+    adapters: Mapping[str, ModelAdapter],
+    environ: Mapping[str, str],
+) -> ModelRoute:
+    """Compute the effective connection one call must use."""
+
+    adapter_name = model_adapter(provider, model)
+    if adapter_name is None:
+        raise ToolangError(
+            f"model {model.identity} has no adapter for provider {provider.id!r}"
+        )
+    return ModelRoute(
+        provider=provider.id,
+        adapter=adapter_name,
+        api=model_api(provider, model, adapters=adapters, environ=environ),
+        env=provider._toolang.env,
+        headers=model_headers(provider, model),
+        options=model_options(provider, model),
+    )
+
+
+def model_api(
+    provider: Provider,
+    model: Model,
+    *,
+    adapters: Mapping[str, ModelAdapter],
+    environ: Mapping[str, str],
+) -> str | None:
+    """Return the effective API base for one model."""
+
+    override = model.provider or {}
+    adapter_name = model_adapter(provider, model)
+    adapter = adapters.get(adapter_name) if adapter_name is not None else None
+    return _resolve_api(
+        _optional_text(override.get("api")) or provider.api,
+        environ=environ,
+        default=adapter.default_api if adapter is not None else None,
+    )
+
+
+def model_headers(provider: Provider, model: Model) -> dict[str, str]:
+    """Return the effective request headers for one model."""
+
+    headers: dict[str, str] = {}
+    _merge_headers(headers, _convention_block(provider.id).get("headers"))
+    override = model.provider or {}
+    _merge_headers(headers, override.get("headers"))
+    for mode_block in _mode_provider_blocks(model):
+        _merge_headers(headers, mode_block.get("headers"))
+    return headers
+
+
+def model_options(provider: Provider, model: Model) -> dict[str, object]:
+    """Return the effective request body options for one model."""
+
+    options: dict[str, object] = {}
+    options.update(
+        cast(Mapping[str, object], _convention_block(provider.id)["options"])
+    )
+    override = model.provider or {}
+    body = override.get("body")
+    if isinstance(body, Mapping):
+        options.update(cast(Mapping[str, object], body))
+    for mode_block in _mode_provider_blocks(model):
+        body = mode_block.get("body")
+        if isinstance(body, Mapping):
+            options.update(cast(Mapping[str, object], body))
+    return options
+
+
+def model_mode(model: Model) -> str | None:
+    """Return the catalog mode that applies to one model, when declared."""
+
+    override = model.provider or {}
+    value = override.get("mode")
+    return _optional_text(value)
+
+
+def _convention_block(provider_id: str) -> Mapping[str, object]:
+    block = PROVIDER_CONVENTIONS.get(provider_id, {})
+    headers = block.get("headers")
+    options = block.get("options")
+    return {
+        "headers": headers if isinstance(headers, Mapping) else {},
+        "options": options if isinstance(options, Mapping) else {},
+    }
+
+
+def _mode_provider_blocks(model: Model) -> tuple[Mapping[str, object], ...]:
+    mode = model_mode(model)
+    if mode is None:
+        return ()
+    experimental = model.experimental
+    raw_modes = experimental.get("modes") if isinstance(experimental, Mapping) else None
+    modes = (
+        cast(Mapping[str, object], raw_modes)
+        if isinstance(raw_modes, Mapping)
+        else None
+    )
+    selected = modes.get(mode) if modes is not None else None
+    if not isinstance(selected, Mapping):
+        raise ToolangError(f"model {model.identity} does not advertise mode {mode!r}")
+    block = cast(Mapping[str, object], selected).get("provider")
+    return (cast(Mapping[str, object], block),) if isinstance(block, Mapping) else ()
+
+
+def _merge_headers(target: dict[str, str], value: object) -> None:
+    if not isinstance(value, Mapping):
+        return
+    lowered = {key.lower(): key for key in target}
+    for key, item in cast(Mapping[str, object], value).items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            continue
+        existing = lowered.get(key.lower())
+        if existing is not None and existing != key:
+            target.pop(existing, None)
+        target[key] = item
+        lowered[key.lower()] = key
+
+
+def trimmed_environ(
+    provider: Provider,
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    """Return the environment trimmed to the names one provider declares."""
+
+    return {
+        name: environ[name]
+        for name in env_names(provider._toolang.env)
+        if name in environ
+    }
 
 
 def env_is_ready(env: ResolvedEnv, *, environ: Mapping[str, str]) -> bool:
@@ -252,14 +366,31 @@ def selected_env_names(
 ) -> tuple[str, ...]:
     """Return the first satisfied resolved env alternative."""
 
-    resolved = provider.resolved
-    if resolved is None:
-        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
-    for alternative in resolved.env:
+    for alternative in provider._toolang.env:
         names = (alternative,) if isinstance(alternative, str) else alternative
         if all(_env_value(environ, name) for name in names):
             return names
     return ()
+
+
+def credential_value(
+    env: ResolvedEnv,
+    *,
+    environ: Mapping[str, str],
+) -> str | None:
+    """Select one opaque credential value from a satisfied env rule."""
+
+    names: tuple[str, ...] = ()
+    for alternative in env:
+        candidate = (alternative,) if isinstance(alternative, str) else alternative
+        if all(_env_value(environ, name) for name in candidate):
+            names = candidate
+            break
+    credential = next(
+        (name for name in names if name.endswith(_CREDENTIAL_SUFFIXES)),
+        names[-1] if names else None,
+    )
+    return environ.get(credential) if credential is not None else None
 
 
 def selected_credential_value(
@@ -277,28 +408,12 @@ def selected_credential_value(
     return environ.get(credential) if credential is not None else None
 
 
-def _resolve_env(
-    provider: Provider,
-    *,
-    names: tuple[str, ...],
-    provider_override: bool = True,
-) -> ResolvedEnv:
-    override = _ENV_OVERRIDES.get(provider.id) if provider_override else None
+def _resolve_env(provider: Provider) -> ResolvedEnv:
+    override = _ENV_OVERRIDES.get(provider.id)
     if override is not None:
         return override
-    credentials = tuple(name for name in names if name.endswith(_CREDENTIAL_SUFFIXES))
-    required = tuple(name for name in names if name not in credentials)
-    if credentials:
-        return tuple(
-            _compact_group((*required, credential)) for credential in credentials
-        )
-    if required:
-        return (_compact_group(required),)
-    return ()
-
-
-def _compact_group(names: tuple[str, ...]) -> str | tuple[str, ...]:
-    return names[0] if len(names) == 1 else names
+    declared = provider._toolang.env or tuple(provider.env)
+    return normalized_env(declared)
 
 
 def _resolve_api(
@@ -317,9 +432,27 @@ def _resolve_api(
     return api or None
 
 
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _normalized_shape(value: object) -> str | None:
+    text = _optional_text(value)
+    return text.lower().replace("-", "_").replace(" ", "_") if text else None
+
+
 def _env_value(environ: Mapping[str, str], name: str) -> bool:
     return bool(str(environ.get(name, "")).strip())
 
 
 def _local_provider_offline(provider: Provider) -> bool:
-    return provider.local and local_runtime_status(provider) == LOCAL_STATUS_OFFLINE
+    if not provider._toolang.local:
+        return False
+    runtime = provider.extra.get("runtime")
+    return (
+        isinstance(runtime, Mapping)
+        and cast(Mapping[str, object], runtime).get("status") == "offline"
+    )

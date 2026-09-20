@@ -109,11 +109,11 @@ def model_rows(
     models = setup.models.match(model_queries) if model_queries else setup.models
     return [
         (
-            entry.ref,
-            entry.target.provider,
-            model_target_profile(entry.target, models=(entry.info,)),
+            model.ref,
+            model._toolang.provider,
+            model_target_profile(model),
         )
-        for entry in models.entries
+        for model in models.entries
     ]
 
 

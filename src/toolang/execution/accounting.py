@@ -6,7 +6,10 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Literal, cast
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, ModelTarget
+from toolang.base.types.model import (
+    Model,
+    Reasoning,
+)
 from toolang.base.types.run import ModelUsage
 
 from .types import (
@@ -31,23 +34,21 @@ _LOCAL_API_TOKEN_RATE_NAMES = (
 
 
 def build_model_accounting(
-    target: ModelTarget,
+    model: Model,
     usage: ModelUsage | None,
-    catalog: ModelCatalogSnapshot | None,
     *,
-    info: ModelInfo | None = None,
+    requested: Reasoning | None = None,
+    local: bool = False,
 ) -> ModelAccounting | None:
-    """Build one versioned accounting value from observed usage and catalog rates."""
+    """Build one versioned accounting value from observed usage and catalog rates.
+
+    `catalog` provenance (source and revision) is supplied by the cache/snapshot
+    layer; `local` marks a model served by a local runtime, whose rates are zero.
+    """
 
     if usage is None:
         return None
-    model = catalog.find(target.provider, target.model) if catalog is not None else None
-    rates, plan, match = _selected_rates(
-        model,
-        info=info,
-        target=target,
-        usage=usage,
-    )
+    rates, plan, match = _selected_rates(model, usage=usage, local=local)
     estimate = (
         _estimate_cost(
             usage,
@@ -72,16 +73,13 @@ def build_model_accounting(
         output_tokens=usage.output_tokens,
         meters=_usage_meters(usage),
         reasoning=ModelReasoningAccounting(
-            requested=dict(target.reasoning) or None,
+            requested=(requested.to_data() or None) if requested is not None else None,
             selected=None,
         ),
         pricing=(
             ModelPricing(
-                source=target.catalog
-                or (model.catalog if model is not None else None)
-                or "unknown",
-                revision=target.catalog_revision
-                or (catalog.revision if catalog is not None else None),
+                source="unknown",
+                revision=None,
                 plan=plan,
                 match=match,
             )
@@ -173,25 +171,21 @@ def token_meter_quantity(
 
 
 def _selected_rates(
-    model: Model | None,
+    model: Model,
     *,
-    info: ModelInfo | None,
-    target: ModelTarget,
     usage: ModelUsage,
+    local: bool = False,
 ) -> tuple[Mapping[str, object] | None, str, dict[str, object]]:
     match: dict[str, object] = {}
     if usage.billing:
         match["billing"] = dict(sorted(usage.billing.items()))
-    metadata = info.metadata if info is not None else {}
-    raw_cost = model.cost if model is not None else metadata.get("cost")
+    raw_cost = model.cost
     if not isinstance(raw_cost, Mapping):
         return None, "standard", match
-    rates = cast(Mapping[str, object], raw_cost)
+    rates = raw_cost
     plan = "standard"
-    requested_mode = target.mode
-    experimental = (
-        model.experimental if model is not None else metadata.get("experimental")
-    )
+    requested_mode = _model_mode(model)
+    experimental = model.experimental
     if isinstance(requested_mode, str) and isinstance(experimental, Mapping):
         modes = experimental.get("modes")
         mode = (
@@ -229,13 +223,20 @@ def _selected_rates(
         rates = {**rates, **selected_tier}
         rates = {key: value for key, value in rates.items() if key != "tier"}
         match["tier"] = dict(cast(Mapping[str, object], selected_tier["tier"]))
-    local = model.local if model is not None else metadata.get("local") is True
     if local:
         rates = {
             **{name: 0 for name in _LOCAL_API_TOKEN_RATE_NAMES},
             **rates,
         }
     return rates, plan, match
+
+
+def _model_mode(model: Model) -> str | None:
+    """Return the catalog mode declared on one model's provider block."""
+
+    block = model.provider or {}
+    value = block.get("mode")
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _estimate_cost(

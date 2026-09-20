@@ -54,8 +54,6 @@ def test_model_body_parses_canonical_identity_and_effort(
         ("none", "was removed"),
         ("unset effort=high", "unset cannot combine"),
         ("unset max_output=100", "unset cannot combine"),
-        ("effort=-1", "unknown reasoning effort"),
-        ("effort=default", "unknown reasoning effort"),
         ("max_output=0", "must be a positive integer"),
         ("max_output=half", "unknown max output"),
     ],

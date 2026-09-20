@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
+from string import Template
 from typing import Annotated, cast
 
 from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
@@ -78,9 +80,13 @@ def models_command(
     selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
     selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
-        exportable = tuple(model for model in selected if not model.local)
+        exportable = tuple(
+            model for model in selected if not _model_is_local(model, snapshot)
+        )
         if len(exportable) != len(selected):
-            local = ", ".join(model.identity for model in selected if model.local)
+            local = ", ".join(
+                model.identity for model in selected if _model_is_local(model, snapshot)
+            )
             raise typer.BadParameter(
                 f"local-only models cannot be exported: {local}",
                 param_hint="--query",
@@ -118,14 +124,21 @@ def providers_command(
         for provider_id, provider in sorted(snapshot.providers.items())
         if provider_id != "custom"
     )
-    available = set(inspection.models.refs())
+    available = {model.ref for model in snapshot.models if model._toolang.ready}
     selected_views = catalog_provider_views(
         base_providers,
         available=available,
         adapters={
             provider.id: _provider_adapters(provider) for provider in base_providers
         },
-        apis={provider.id: _provider_api(provider) for provider in base_providers},
+        apis={
+            provider.id: _provider_api(
+                provider,
+                adapters=inspection.adapters,
+                environ=inspection.envs,
+            )
+            for provider in base_providers
+        },
         env_requirements={
             provider.id: provider_env_requirements(provider)
             for provider in base_providers
@@ -235,35 +248,54 @@ def _matching_inspection(
     )
 
 
+def _model_is_local(model: Model, snapshot: ModelCatalogSnapshot) -> bool:
+    provider = snapshot.providers.get(model._toolang.provider)
+    return provider is not None and provider._toolang.local
+
+
 def _catalog_summary(
     snapshot: ModelCatalogSnapshot,
     *,
     models: Sequence[Model],
 ) -> str:
-    catalogs = _catalog_names(snapshot)
-    parts = [
-        f"{catalog} {sum(model.catalog == catalog for model in models)}"
-        for catalog in catalogs
-    ]
+    del snapshot
     model_noun = "model" if len(models) == 1 else "models"
-    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
-    return f"{len(models)} {model_noun} from {len(parts)} {catalog_noun}: " + ", ".join(
-        parts
-    )
+    return f"{len(models)} {model_noun}"
 
 
-def _provider_api(provider: Provider) -> str | None:
-    return provider.resolved.api if provider.resolved is not None else None
+def _provider_api(
+    provider: Provider,
+    *,
+    adapters: Mapping[str, ModelAdapter],
+    environ: Mapping[str, str],
+) -> str | None:
+    """Return the effective provider base URL without model-level overrides."""
+
+    adapter_name = provider._toolang.adapter
+    adapter = adapters.get(adapter_name) if adapter_name is not None else None
+    template = provider.api.strip() if provider.api and provider.api.strip() else None
+    if template is None and adapter is not None:
+        template = adapter.default_api
+    if template is None:
+        return None
+    try:
+        api = Template(template).substitute(environ).strip()
+    except (KeyError, ValueError):
+        return None
+    return api or None
 
 
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
+    from toolang.plugin.models.provider_resolver import model_adapter
+
     adapters = {
-        model.resolved.adapter
+        adapter
         for model in provider.models.values()
-        if model.resolved is not None and model.resolved.adapter
+        for adapter in (model_adapter(provider, model),)
+        if adapter
     }
-    if not adapters and provider.resolved is not None and provider.resolved.adapter:
-        adapters.add(provider.resolved.adapter)
+    if not adapters and provider._toolang.adapter:
+        adapters.add(provider._toolang.adapter)
     return tuple(sorted(adapters))
 
 
@@ -312,25 +344,6 @@ def _provider_catalog_summary(
     *,
     providers: Sequence[Provider],
 ) -> str:
-    parts = [
-        f"{catalog} {sum(provider.catalog == catalog for provider in providers)}"
-        for catalog in _catalog_names(snapshot)
-    ]
+    del snapshot
     provider_noun = "provider" if len(providers) == 1 else "providers"
-    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
-    return (
-        f"{len(providers)} {provider_noun} from {len(parts)} {catalog_noun}: "
-        + ", ".join(parts)
-    )
-
-
-def _catalog_names(snapshot: ModelCatalogSnapshot) -> tuple[str, ...]:
-    names = tuple(
-        dict.fromkeys(
-            provider.catalog
-            for provider in snapshot.providers.values()
-            if provider.catalog is not None
-        )
-    )
-    priority = {"models.dev": 0, "ollama": 1, "llama_cpp": 2}
-    return tuple(sorted(names, key=lambda name: (priority.get(name, 3), name)))
+    return f"{len(providers)} {provider_noun}"

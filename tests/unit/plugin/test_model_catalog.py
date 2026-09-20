@@ -14,9 +14,10 @@ import toolang.plugin.catalogs.models_dev.path as catalog_path_module
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
     Model,
-    ModelAlias,
     ModelCatalogSnapshot,
+    ModelToolang,
     Provider,
+    ProviderToolang,
 )
 from toolang.common.json import dumps
 from toolang.common.layout import AgentLayout
@@ -31,13 +32,10 @@ from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_path,
 )
 from toolang.setup.catalog import MergedModelCatalog
-from toolang.setup.models import model_info_from_catalog
-from toolang.plugin.models.discovery import default_provider_base_url
-from toolang.plugin.models.provider_resolver import resolve_provider
-from toolang.plugin.models.resolution import (
-    ModelTargetResolver,
-    resolve_catalog_adapter,
-    resolve_unique_model_query,
+from toolang.plugin.models.provider_resolver import (
+    model_adapter,
+    provider_adapter,
+    resolve_provider,
 )
 
 
@@ -68,11 +66,9 @@ def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> No
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:
     model = Model(
-        provider_id="test",
         id="one",
         name="One",
-        catalog="models.dev",
-        catalog_revision="sha256:test",
+        _toolang=ModelToolang(provider="test", ready=True),
     )
     provider = Provider(
         id="test",
@@ -80,8 +76,6 @@ def test_merged_catalog_reuses_records_with_complete_origin() -> None:
         env=(),
         npm="@ai-sdk/openai-compatible",
         models={model.id: model},
-        catalog="models.dev",
-        catalog_revision="sha256:test",
     )
     snapshot = ModelCatalogSnapshot(
         providers={provider.id: provider},
@@ -110,10 +104,8 @@ def test_catalog_reader_attaches_origin_without_rematerializing_records(
     model = snapshot.find("test", "one")
 
     assert model is not None
-    assert model.catalog == "models.dev"
-    assert model.catalog_revision == snapshot.revision
-    assert snapshot.providers["test"].catalog == "models.dev"
-    assert snapshot.providers["test"].catalog_revision == snapshot.revision
+    assert model is snapshot.find("test", "one")
+    assert snapshot.providers["test"]._toolang.local is False
 
 
 def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
@@ -294,14 +286,10 @@ def test_filtered_export_round_trips_deterministically() -> None:
 
 
 def test_strict_export_rejects_local_only_models() -> None:
-    local = _model("local", local=True)
-    provider = Provider(
-        id="test",
-        name="Test",
-        env=(),
-        npm="@ai-sdk/openai-compatible",
-        models={"local": local},
-        local=True,
+    provider = _provider({"local": _model("local")})
+    provider = dataclasses.replace(
+        provider,
+        _toolang=ProviderToolang(env=(), adapter="chat_completions", local=True),
     )
     snapshot = _snapshot(provider)
 
@@ -312,13 +300,13 @@ def test_strict_export_rejects_local_only_models() -> None:
 def test_resolved_provider_adapter_ignores_model_protocol_hints() -> None:
     provider = _resolve(_provider({}), ChatCompletionsModelAdapter())
     model = Model(
-        provider_id="test",
         id="one",
         name="One",
+        _toolang=ModelToolang(provider="test", ready=True),
         provider={"npm": "@ai-sdk/anthropic"},
     )
 
-    assert resolve_catalog_adapter(provider, model=model) == "chat_completions"
+    assert model_adapter(provider, model) == "chat_completions"
 
 
 def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
@@ -334,67 +322,8 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
         environ={"ANTHROPIC_API_KEY": "secret"},
     )
 
-    assert resolve_catalog_adapter(provider) == "messages"
-    assert (
-        default_provider_base_url(provider, environ={})
-        == "https://api.anthropic.com/v1"
-    )
-
-
-def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -> None:
-    model = Model(
-        provider_id="test",
-        id="one",
-        name="One",
-        reasoning=True,
-        structured_output=True,
-        open_weights=False,
-        release_date="2026-01-01",
-        last_updated="2026-08-30",
-        reasoning_options=({"type": "effort", "values": ["low", "high"]},),
-        experimental={
-            "modes": {
-                "fast": {
-                    "cost": {"input": 2, "output": 4},
-                    "provider": {
-                        "body": {"service_tier": "priority"},
-                        "headers": {"X-Mode": "fast"},
-                    },
-                }
-            }
-        },
-    )
-    provider = _resolve(_provider({"one": model}), ChatCompletionsModelAdapter())
-    info = model_info_from_catalog(
-        model,
-        adapter="chat_completions",
-        revision="sha256:test",
-    )
-    resolver = ModelTargetResolver(
-        providers={"test": provider},
-        models=(info,),
-        model_aliases={
-            "fast-one": ModelAlias(
-                name="fast-one",
-                ref="test/one",
-                provider="test",
-                options={"mode": "fast", "reasoning": {"effort": "high"}},
-            )
-        },
-        default_models=(),
-        envs={"TEST_API_KEY": "secret"},
-    )
-
-    target = resolve_unique_model_query(resolver, query="*[alias=fast-one]")
-
-    assert info.metadata["open_weights"] is False
-    assert info.metadata["release_date"] == "2026-01-01"
-    assert info.metadata["last_updated"] == "2026-08-30"
-    assert target.mode == "fast"
-    assert target.reasoning == {"effort": "high"}
-    assert target.structured_output is True
-    assert target.options == {"service_tier": "priority"}
-    assert target.headers == {"X-Mode": "fast"}
+    assert provider_adapter(provider) == "messages"
+    assert provider.api is None
 
 
 def _catalog_data() -> dict[str, Any]:
@@ -431,18 +360,16 @@ def _model(
     family: str | None = None,
     reasoning: bool | None = None,
     temperature: bool | None = True,
-    local: bool = False,
 ) -> Model:
     return Model(
-        provider_id="test",
         id=model_id,
         name=model_id,
+        _toolang=ModelToolang(provider="test", ready=True),
         family=family,
         reasoning=reasoning,
         temperature=temperature,
         modalities={"input": ("text", "image"), "output": ("text",)},
         limit={"context": 1000},
-        local=local,
     )
 
 

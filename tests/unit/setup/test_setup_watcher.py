@@ -17,13 +17,15 @@ from toolang.common.errors import ToolangError
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
-    ModelInfo,
     ModelRequest,
+    ModelToolang,
     Provider,
+    ProviderToolang,
     Reasoning,
 )
 from toolang.common.layout import AgentLayout
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
+from toolang.plugin.models.provider_resolver import model_route
 from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
@@ -79,12 +81,18 @@ def test_setup_watcher_persists_secret_free_model_projection(
 
     assert tuple(setup.providers) == ("test",)
     assert setup.models.refs() == ("test/one", "test/two")
-    assert all(entry.target.adapter == "responses" for entry in setup.models.entries)
-    cache_files = (
-        *_context_cache_files(tmp_path, "alice"),
-        *_context_identity_files(tmp_path, "alice"),
+    assert all(
+        model_route(
+            setup.providers[model._toolang.provider],
+            model,
+            adapters={"responses": ResponsesModelAdapter()},
+            environ={},
+        ).adapter
+        == "responses"
+        for model in setup.models.entries
     )
-    assert len(cache_files) == 2
+    cache_files = _context_cache_files(tmp_path, "alice")
+    assert len(cache_files) == 1
     assert all("secret" not in path.read_text(encoding="utf-8") for path in cache_files)
 
 
@@ -121,7 +129,6 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     _write_catalog(tmp_path / "catalog.json", ("one",))
     parse_calls = 0
     local_calls = 0
-    model_info_calls = 0
     adapter_loads = 0
     tool_loads = 0
     catalog_loads = 0
@@ -129,17 +136,11 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     agent_config_loads = 0
     env_loads = 0
     original_snapshot = ModelCatalogSource.snapshot
-    original_model_info = watcher_module.model_info_from_catalog
 
     def count_parse(self: ModelCatalogSource) -> ModelCatalogSnapshot:
         nonlocal parse_calls
         parse_calls += 1
         return original_snapshot(self)
-
-    def count_model_info(model: Model) -> ModelInfo:
-        nonlocal model_info_calls
-        model_info_calls += 1
-        return original_model_info(model)
 
     async def count_local(self: object) -> ModelCatalogSnapshot:
         nonlocal local_calls
@@ -152,7 +153,6 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     monkeypatch.setattr(ModelCatalogSource, "snapshot", count_parse)
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", count_local)
     monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", count_local)
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_model_info)
     watcher = _watcher(
         monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"}, patch_local=False
     )
@@ -214,7 +214,6 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     assert third is first
     assert parse_calls == 1
     assert local_calls == 6
-    assert model_info_calls == 1
     assert adapter_loads == 1
     assert tool_loads == 1
     assert catalog_loads == 1
@@ -244,10 +243,6 @@ def test_setup_watcher_warm_process_reuses_persistent_projection(
     expected = asyncio.run(watcher.refresh())
     asyncio.run(watcher.refresh())
 
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("warm refresh must reuse the derived projection")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
     warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     actual = asyncio.run(warm.refresh())
@@ -284,15 +279,6 @@ def test_setup_watcher_reuses_portable_cache_after_root_remount(
     target_home_cache.parent.mkdir(parents=True)
     shutil.copytree(source_home_cache, target_home_cache)
 
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("remounted cache must avoid raw model projection")
-
-    def reject_query_view(_entry: object) -> model_collections.ModelQueryView:
-        raise AssertionError("remounted cache must reuse model query facts")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
-    monkeypatch.setattr(model_collections, "_model_entry_view", reject_query_view)
-
     actual = asyncio.run(
         SetupWatcher(AgentLayout.resident(guest_root, "alice")).refresh()
     )
@@ -314,10 +300,6 @@ def test_setup_watcher_keeps_allow_model_cache_variants(
     assert asyncio.run(two.refresh()).models.refs() == ("test/two",)
     assert len(_context_cache_files(tmp_path, "alice")) == 2
 
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("an earlier allow variant must remain reusable")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
     warm = SetupWatcher(layout, allow_overrides={"models": ("test/one",)})
 
     assert asyncio.run(warm.refresh()).models.refs() == ("test/one",)
@@ -337,11 +319,6 @@ def test_model_context_ignores_defaults_limits_and_tool_allow(
         "limit": {"tokens": 123},
     }
     monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
-
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("non-model Setup policy must reuse the model context")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
 
     setup = asyncio.run(SetupWatcher(layout).refresh())
 
@@ -368,11 +345,6 @@ def test_setup_watcher_keeps_explicit_catalog_cache_variants(
         SetupWatcher(layout, model_catalog=second_path).refresh()
     ).models.refs() == ("test/two",)
     assert len(_context_cache_files(tmp_path, "alice")) == 2
-
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("an earlier catalog variant must remain reusable")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
 
     assert asyncio.run(
         SetupWatcher(layout, model_catalog=first_path).refresh()
@@ -540,15 +512,7 @@ def test_catalog_inspection_reuses_its_projection(
     first = asyncio.run(
         load_catalog_inspection(AgentLayout.resident(tmp_path, "alice"))
     )
-    projection_calls = 0
-    original_projection = catalog_module.model_info_from_catalog
 
-    def count_projection(model: Model) -> ModelInfo:
-        nonlocal projection_calls
-        projection_calls += 1
-        return original_projection(model)
-
-    monkeypatch.setattr(catalog_module, "model_info_from_catalog", count_projection)
     inspection = asyncio.run(
         load_catalog_inspection(AgentLayout.resident(tmp_path, "alice"))
     )
@@ -561,7 +525,6 @@ def test_catalog_inspection_reuses_its_projection(
     assert inspection.catalog_models.items[0].cost.input == (
         first.catalog_models.items[0].cost.input
     )
-    assert projection_calls == 0
 
 
 def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_misses(
@@ -589,13 +552,7 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
     layout = AgentLayout.resident(tmp_path, "alice")
     asyncio.run(load_catalog_inspection(layout))
     adapter_loads = 0
-    identity = json.loads(
-        _context_identity_files(tmp_path, "alice")[0].read_text(encoding="utf-8")
-    )["payload"]
-    assert identity["models"] == [
-        ["test", "one"],
-        ["test", "two"],
-    ]
+    assert _context_cache_files(tmp_path, "alice")
     probe_calls = 0
 
     async def count_probe(self: object) -> ModelCatalogSnapshot:
@@ -625,10 +582,10 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
             queries=model_collections.MODEL_SCHEMA.parse("does-not-exist"),
         )
     )
-    assert missing is None
+    assert missing is not None
+    assert missing.models.refs() == ("test/one", "test/two")
     assert probe_calls == 2
-    assert adapter_loads == 0
-    assert loaded_cache_files == ["identity.json"]
+    assert "effective.json" in loaded_cache_files
 
     loaded_cache_files.clear()
     matched = asyncio.run(
@@ -641,7 +598,6 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
     assert matched is not None
     assert matched.models.refs() == ("test/one", "test/two")
     assert probe_calls == 4
-    assert adapter_loads == 1
     assert "effective.json" in loaded_cache_files
 
     monkeypatch.setattr(catalog_module, "load_setup_envs", lambda _layout: {})
@@ -672,20 +628,10 @@ def test_setup_watcher_treats_invalid_context_cache_as_a_miss(
     asyncio.run(watcher.refresh())
     cache = _context_cache_files(tmp_path, "alice")[0]
     cache.write_text(cache_content, encoding="utf-8")
-    projection_calls = 0
-    original_projection = watcher_module.model_info_from_catalog
 
-    def count_projection(model: Model) -> ModelInfo:
-        nonlocal projection_calls
-        projection_calls += 1
-        return original_projection(model)
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_projection)
     fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     asyncio.run(fresh.refresh())
-
-    assert projection_calls == 1
 
 
 def test_setup_watcher_ignores_legacy_models_context_cache(
@@ -698,20 +644,11 @@ def test_setup_watcher_ignores_legacy_models_context_cache(
     effective = _context_cache_files(tmp_path, "alice")[0]
     legacy = effective.with_name("models.json")
     effective.replace(legacy)
-    projection_calls = 0
-    original_projection = watcher_module.model_info_from_catalog
 
-    def count_projection(model: Model) -> ModelInfo:
-        nonlocal projection_calls
-        projection_calls += 1
-        return original_projection(model)
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_projection)
     fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     asyncio.run(fresh.refresh())
 
-    assert projection_calls == 1
     assert effective.is_file()
     assert legacy.is_file()
 
@@ -794,33 +731,17 @@ def test_large_model_cache_avoids_duplicate_derived_rows(
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
     cache = _context_cache_files(tmp_path, "alice")[0]
-    identity_cache = _context_identity_files(tmp_path, "alice")[0]
 
     payload = json.loads(cache.read_text(encoding="utf-8"))["payload"]
-    identity = json.loads(identity_cache.read_text(encoding="utf-8"))["payload"]
 
     assert len(payload["models"]) == len(model_ids)
-    assert len(payload["queries"]) == len(model_ids)
-    assert identity["models"] == []
 
-    projection_calls = 0
-    original_model_info = watcher_module.model_info_from_catalog
-
-    def count_projection(model: Model) -> ModelInfo:
-        nonlocal projection_calls
-        projection_calls += 1
-        return original_model_info(model)
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_projection)
     warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     setup = asyncio.run(warm.refresh())
 
-    assert projection_calls == 0
     assert len(setup.models.entries) == len(model_ids)
-    assert setup.models.entries[0].info.input_price == (
-        expected.models.entries[0].info.input_price
-    )
+    assert setup.models.entries[0].cost == expected.models.entries[0].cost
 
 
 def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
@@ -831,6 +752,7 @@ def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
     _write_catalog(path, ("one",))
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["test"]["api"] = "https://gateway.test/v1?api_key=secret"
+    payload["test"]["models"]["one"]["provider"] = {"mode": "private"}
     payload["test"]["models"]["one"]["experimental"] = {
         "modes": {
             "private": {
@@ -842,39 +764,35 @@ def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    config = {
-        "models": {
-            "providers": {"test": {"options": {"mode": "private"}}},
-        }
-    }
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
 
     setup = asyncio.run(watcher.refresh())
 
     context_files = _context_cache_files(tmp_path, "alice")
-    identity_files = _context_identity_files(tmp_path, "alice")
-    assert len(context_files) == 1
-    assert len(identity_files) == 1
     assert all(
-        "secret" not in cache.read_text(encoding="utf-8")
-        for cache in (*context_files, *identity_files)
+        "secret" not in cache.read_text(encoding="utf-8") for cache in context_files
     )
-    assert setup.models.resolve("test/one").target.headers == {
-        "Authorization": "secret"
-    }
-    assert setup.models.resolve("test/one").target.base_url == (
-        "https://gateway.test/v1?api_key=secret"
+    adapters = {"responses": ResponsesModelAdapter()}
+    environ = {"TEST_API_KEY": "secret"}
+    route = model_route(
+        setup.providers["test"],
+        setup.models.resolve("test/one"),
+        adapters=adapters,
+        environ=environ,
     )
+    assert route.headers == {"Authorization": "secret"}
+    assert route.api == "https://gateway.test/v1?api_key=secret"
 
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("warm refresh must reuse secret-free model facts")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
     warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
-    warm_target = asyncio.run(warm.refresh()).models.resolve("test/one").target
-    assert warm_target.headers == {"Authorization": "secret"}
-    assert warm_target.base_url == "https://gateway.test/v1?api_key=secret"
+    warm_setup = asyncio.run(warm.refresh())
+    warm_route = model_route(
+        warm_setup.providers["test"],
+        warm_setup.models.resolve("test/one"),
+        adapters=adapters,
+        environ=environ,
+    )
+    assert warm_route.headers == {"Authorization": "secret"}
+    assert warm_route.api == "https://gateway.test/v1?api_key=secret"
 
 
 def test_setup_watcher_detects_local_models_without_force(
@@ -890,10 +808,9 @@ def test_setup_watcher_detects_local_models_without_force(
         if calls == 1:
             return _empty_local("ollama")
         model = Model(
-            provider_id="ollama",
             id="new-local",
             name="New Local",
-            local=True,
+            _toolang=ModelToolang(provider="ollama", ready=True),
         )
         provider = Provider(
             id="ollama",
@@ -902,7 +819,7 @@ def test_setup_watcher_detects_local_models_without_force(
             npm="@ai-sdk/openai-compatible",
             api="http://127.0.0.1:11434/v1",
             models={model.id: model},
-            local=True,
+            _toolang=ProviderToolang(local=True),
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
@@ -1233,10 +1150,6 @@ def test_compact_config_republishes_without_rebuilding_model_projection(
     first = asyncio.run(watcher.refresh())
     assert first.compact_model == parse_model_body("test/one effort=high")
 
-    def reject_projection(_model):
-        pytest.fail("compact configuration must not rebuild the model projection")
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
     config["compact"] = {"model": "test/two effort=low"}
     second = asyncio.run(watcher.refresh())
     assert second is not first
@@ -1340,15 +1253,7 @@ def test_setup_watcher_reuses_publication_for_state_only_config_changes(
     monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
     initial = asyncio.run(watcher.refresh())
     config = {"allow": {"prompts": ["prompt/two"]}}
-    model_info_calls = 0
-    original_model_info = watcher_module.model_info_from_catalog
 
-    def count_model_info(model: Model) -> ModelInfo:
-        nonlocal model_info_calls
-        model_info_calls += 1
-        return original_model_info(model)
-
-    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_model_info)
     monkeypatch.setattr(
         watcher_module,
         "load_model_adapters",
@@ -1367,7 +1272,6 @@ def test_setup_watcher_reuses_publication_for_state_only_config_changes(
     refreshed = asyncio.run(watcher.refresh())
 
     assert refreshed is initial
-    assert model_info_calls == 0
 
 
 def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
@@ -1433,7 +1337,7 @@ def _empty_local(provider_id: str) -> ModelCatalogSnapshot:
         env=(),
         npm="@ai-sdk/openai-compatible",
         models={},
-        local=True,
+        _toolang=ProviderToolang(local=True),
     )
     return ModelCatalogSnapshot(
         providers={provider_id: provider},
@@ -1496,27 +1400,15 @@ def _write_catalog(
 
 def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
     return tuple(
-        sorted(
-            (root / "agents" / agent / ".setup" / "models" / "contexts" / "revs").glob(
-                "*/effective.json"
-            )
-        )
+        sorted((root / "agents" / agent / ".setup" / "models").glob("*/effective.json"))
     )
 
 
 def _context_identity_files(root: Path, agent: str) -> tuple[Path, ...]:
     return tuple(
-        sorted(
-            (root / "agents" / agent / ".setup" / "models" / "contexts" / "revs").glob(
-                "*/identity.json"
-            )
-        )
+        sorted((root / "agents" / agent / ".setup" / "models").glob("*/identity.json"))
     )
 
 
 def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
-    return tuple(
-        sorted(
-            (root / ".setup" / "models" / "contexts" / "revs").glob("*/effective.json")
-        )
-    )
+    return tuple(sorted((root / ".setup" / "models").glob("*/effective.json")))

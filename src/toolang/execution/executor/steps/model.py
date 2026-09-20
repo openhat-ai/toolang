@@ -59,6 +59,10 @@ from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 from . import tool as tool_step
 
+# Streaming is an execution decision, not model data.
+_MODEL_STREAMING = True
+
+
 if TYPE_CHECKING:
     from ..frame import _AgicFrame
     from ..runs.agic import _AgicState
@@ -150,12 +154,13 @@ def _candidate(
         messages=assembled,
         tools=(
             prompting.tools(prepared.tools)
-            if prepared.model.tools and not state.repairing_output
+            if prepared.model.tool_call and not state.repairing_output
             else ()
         ),
         output_schema=deepcopy(state.output_binding.output_schema),
         continuation=state.continuation,
         max_output_tokens=prepared.output_budget,
+        reasoning=prepared.reasoning,
     )
     return (
         prepared,
@@ -394,6 +399,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         raise interruption
     step_started = time.perf_counter()
     log_model_target(
+        prepared.route,
         prepared.model,
         thread_id=run.thread,
         run_id=run.run_id,
@@ -407,14 +413,21 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     try:
         state.before_call()
-        if prepared.model.streaming:
+        if _MODEL_STREAMING:
             current = await prepared.adapter.stream(
+                prepared.route,
                 prepared.model,
                 request,
+                environ=prepared.environ,
                 on_event=lambda event: _handle_event(state, stream, event),
             )
         else:
-            current = await prepared.adapter.invoke(prepared.model, request)
+            current = await prepared.adapter.invoke(
+                prepared.route,
+                prepared.model,
+                request,
+                environ=prepared.environ,
+            )
         _validate_stream_result(stream, current)
         output = await _emit_response_parts(state, stream, current)
         if prepared.input_budget is not None:

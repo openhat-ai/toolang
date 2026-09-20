@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import Model, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
 from toolang.execution.accounting import build_model_accounting, selected_usd_cost
 from toolang.execution.types import ModelAccounting
 from toolang.plugin.models.collections import ModelCollection
-from toolang.plugin.models.resolution import model_target_ref
 
 
 class _RunLimitExceeded(ToolangError):
@@ -83,16 +83,16 @@ class _RunLimitState:
 
     def require_pricing(
         self,
-        target: ModelTarget,
+        model: Model,
         models: ModelCollection,
     ) -> None:
         """Reject a priced run before invoking a model with unknown prices."""
 
-        del target, models
+        del model, models
 
     def record_model(
         self,
-        target: ModelTarget,
+        model: Model,
         accounting: _ModelAccounting,
     ) -> None:
         """Record one completed model call and enforce root-tree totals."""
@@ -102,7 +102,7 @@ class _RunLimitState:
         usage = accounting.usage
         if usage is None and self.limits.tokens is not None:
             raise ToolangError(
-                f"Model usage is required by run token or cost limits: {target.ref}"
+                f"Model usage is required by run token or cost limits: {model.ref}"
             )
         if usage is not None:
             self.input_tokens += usage.input_tokens
@@ -131,19 +131,14 @@ class _RunLimitState:
         self.error = f"Run time limit exceeded: {limit}s"
 
 
-def _model_info(target: ModelTarget, models: ModelCollection) -> ModelInfo | None:
-    ref = model_target_ref(target)
-    return models.resolve(ref).info if models.contains(ref) else None
-
-
 def _model_accounting(
-    target: ModelTarget,
-    models: ModelCollection,
+    model: Model,
     usage: ModelUsage | None,
+    *,
+    requested: Reasoning | None = None,
 ) -> _ModelAccounting:
-    info = _model_info(target, models)
-    durable = build_model_accounting(target, usage, None, info=info)
-    price = _accounting_price(durable) or _model_price(target, models)
+    durable = build_model_accounting(model, usage, requested=requested)
+    price = _accounting_price(durable) or _model_price(model)
     selected_cost = selected_usd_cost(durable)
     return _ModelAccounting(
         usage=usage,
@@ -169,21 +164,23 @@ def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
     return _TokenPrice(input=input_rate, output=output_rate)
 
 
-def _model_price(
-    target: ModelTarget,
-    models: ModelCollection,
-) -> _TokenPrice | None:
-    info = _model_info(target, models)
-    if info is None or (info.input_price is None and info.output_price is None):
-        return None
-    return _TokenPrice(
-        input=(
-            Decimal(str(info.input_price)) if info.input_price is not None else None
-        ),
-        output=(
-            Decimal(str(info.output_price)) if info.output_price is not None else None
-        ),
+def _model_price(model: Model) -> _TokenPrice | None:
+    rates = model.cost
+    input_price = _token_price(
+        rates.get("input") if isinstance(rates, Mapping) else None
     )
+    output_price = _token_price(
+        rates.get("output") if isinstance(rates, Mapping) else None
+    )
+    if input_price is None and output_price is None:
+        return None
+    return _TokenPrice(input=input_price, output=output_price)
+
+
+def _token_price(value: object) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        return None
+    return Decimal(str(value)) / Decimal(1_000_000)
 
 
 def _model_cost(

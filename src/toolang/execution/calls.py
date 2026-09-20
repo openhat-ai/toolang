@@ -25,7 +25,7 @@ from toolang.state.state import (
     AgentState,
     state_module_caps,
 )
-from toolang.plugin.models.resolution import apply_model_parameters
+from toolang.plugin.models.resolution import resolve_model_reasoning
 
 from .policy import (
     apply_session_setting,
@@ -291,12 +291,7 @@ def materialize_model_request(
 
     selection = snapshot_model_selection(setup)
     entry = selection.resolve(request.ref)
-    apply_model_parameters(
-        selection,
-        entry.target,
-        reasoning=request.reasoning,
-        max_output=request.max_output,
-    )
+    resolve_model_reasoning(entry, request.reasoning)
     return request
 
 
