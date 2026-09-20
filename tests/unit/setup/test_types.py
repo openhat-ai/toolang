@@ -46,6 +46,7 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
         "limits",
         "compact_model",
         "catalog_sources",
+        "adapter_sources",
         "_catalog_loader",
     )
 
@@ -66,6 +67,7 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     }
     adapters = {"responses": cast(Any, object())}
     environ = {"OPENAI_API_KEY": "secret"}
+    adapter_sources = {"responses": "built-in"}
 
     setup = AgentSetup(
         layout=AgentLayout.resident(Path("/toolang"), "alice"),
@@ -74,15 +76,20 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
         models=ModelCollection(),
         tools=ToolCollection(),
         envs=environ,
+        adapter_sources=adapter_sources,
     )
     providers.clear()
     adapters.clear()
     environ.clear()
+    adapter_sources.clear()
 
     assert tuple(setup.tools) == ()
     assert tuple(setup.providers) == ("openai",)
     assert tuple(setup.adapters) == ("responses",)
     assert setup.envs == {"OPENAI_API_KEY": "secret"}
+    assert setup.adapter_sources == {"responses": "built-in"}
+    with pytest.raises(TypeError):
+        cast(dict[str, str], setup.adapter_sources)["responses"] = "external"
     assert setup.defaults == RunDefaults()
     assert setup.limits == RunLimits()
     with pytest.raises(TypeError):

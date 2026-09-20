@@ -23,7 +23,6 @@ from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.plugin.loading import list_plugin_infos
 from toolang.common.json import dumps
 from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
@@ -202,11 +201,10 @@ def adapters_command(
     """List the protocol adapters this setup publishes."""
 
     setup = _setup(ctx)
-    sources = {
-        info.name: info.source
-        for info in list_plugin_infos(group="toolang.model_adapter")
-    }
-    rows = tuple((name, sources.get(name) or "-") for name in sorted(setup.adapters))
+    rows = tuple(
+        (name, setup.adapter_sources.get(name) or "-")
+        for name in sorted(setup.adapters)
+    )
     if json_:
         typer.echo(
             json.dumps(

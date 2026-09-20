@@ -1137,3 +1137,35 @@ def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, com
         assert set(models) == ({"one", "two"} if all_ else {"one"})
         if all_:
             assert models["two"]["provider"] == {"mode": "missing"}
+
+
+@pytest.mark.parametrize("json_output", [True, False])
+def test_adapters_uses_published_setup_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from toolang.plugin import loading
+
+    setup = SimpleNamespace(
+        adapters={"snapshot_adapter": object()},
+        adapter_sources={"snapshot_adapter": "external"},
+    )
+    monkeypatch.setattr(model_catalog_commands, "_setup", lambda _ctx: setup)
+
+    def unexpected_discovery(*args: object, **kwargs: object) -> None:
+        raise AssertionError("CLI must consume published adapter sources")
+
+    monkeypatch.setattr(loading, "entry_points", unexpected_discovery)
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path), "adapters", *(["--json"] if json_output else [])],
+    )
+    assert result.exit_code == 0, result.exception
+    if json_output:
+        assert json.loads(result.stdout) == [
+            {"id": "snapshot_adapter", "source": "external"}
+        ]
+    else:
+        assert "snapshot_adapter" in result.stdout
+        assert "external" in result.stdout

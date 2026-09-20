@@ -6,8 +6,9 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Annotated, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, model_validator
 
+from toolang.base.money import reject_boolean_cost
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunLimits, RunPolicy
@@ -271,7 +272,9 @@ class RunLimitsPayload(ApiRequest):
     agic_model_calls: NonNegativeInt | None = None
     agic_tool_calls: NonNegativeInt | None = None
     tokens: NonNegativeInt | None = None
-    cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cost: Annotated[float, BeforeValidator(reject_boolean_cost)] | None = Field(
+        default=None, ge=0, allow_inf_nan=False
+    )
     time: NonNegativeInt | None = None
 
     def to_limits(self, base: RunLimits) -> RunLimits:

@@ -424,7 +424,8 @@ toolset plugin  -> Toolset -> Tool[]                                            
 - `too models` renders the published models, with availability from
   `Model._toolang.ready`.
 - `too providers` renders the published providers plus readiness.
-- `too adapters` renders the published adapters plus their source.
+- `too adapters` renders published adapters with `AgentSetup.adapter_sources`,
+  an immutable mapping captured by setup alongside installed-plugin provenance.
 - No command scans entry points, re-resolves environment rules, or re-projects a
   catalog on its own. Inspection without a running agent builds the same setup
   object once and reads it.

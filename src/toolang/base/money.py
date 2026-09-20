@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
+from fractions import Fraction
 
 MICROS_PER_USD = 1_000_000
 MAX_COST = 999_999_999.999999
@@ -71,4 +73,27 @@ def add_cost(left: float, right: float) -> float:
     units = cost_units(left) + cost_units(right)
     if units > _MAX_MICROS:
         raise ValueError("cost exceeds 999999999.999999")
+    return units / MICROS_PER_USD
+
+
+def reject_boolean_cost(value: object) -> object:
+    """Reject booleans before a schema coerces numeric or legacy text inputs."""
+
+    if isinstance(value, bool):
+        raise ValueError("cost must be a number, not a boolean")
+    return value
+
+
+def cost_from_rates(terms: Iterable[tuple[int, float]], *, per: int = 1) -> float:
+    """Settle one call from decimal rates, without rounding individual lines."""
+
+    # Rational arithmetic is confined to settlement. Catalogs and public values
+    # remain floats; parse their shortest decimal form before multiplication.
+    total = sum(
+        (quantity * Fraction(str(rate)) for quantity, rate in terms), Fraction()
+    )
+    micros = total * MICROS_PER_USD / per
+    if micros < 0 or micros > _MAX_MICROS:
+        raise ValueError("cost must be non-negative and at most 999999999.999999")
+    units = (2 * micros.numerator + micros.denominator) // (2 * micros.denominator)
     return units / MICROS_PER_USD

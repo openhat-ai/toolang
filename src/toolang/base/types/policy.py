@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from pydantic import PlainSerializer
+from pydantic import BeforeValidator, PlainSerializer
 
-from toolang.base.money import cost_text, normalize_cost
+from toolang.base.money import cost_text, normalize_cost, reject_boolean_cost
 from toolang.base.types.model import ModelRequest
 
 
@@ -87,7 +87,11 @@ class RunLimits:
     agic_tool_calls: int | None = None
     tokens: int | None = None
     cost: (
-        Annotated[float, PlainSerializer(cost_text, return_type=str, when_used="json")]
+        Annotated[
+            float,
+            BeforeValidator(reject_boolean_cost),
+            PlainSerializer(cost_text, return_type=str, when_used="json"),
+        ]
         | None
     ) = None
     time: int | None = None

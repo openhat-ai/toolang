@@ -68,6 +68,7 @@ class AgentSetup:
     limits: RunLimits = RunLimits()
     compact_model: ModelOverride | None = None
     catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    adapter_sources: Mapping[str, str] = field(default_factory=dict)
     _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
         default=None, repr=False, compare=False
     )
@@ -115,4 +116,7 @@ class AgentSetup:
         )
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "adapters", MappingProxyType(adapters))
+        object.__setattr__(
+            self, "adapter_sources", MappingProxyType(dict(self.adapter_sources))
+        )
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))

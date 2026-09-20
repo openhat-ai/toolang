@@ -14,7 +14,7 @@ from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
-from toolang.plugin.loading import plugin_provenance
+from toolang.plugin.loading import list_plugin_infos, plugin_provenance
 from toolang.plugin.adapters.loading import load_model_adapters
 from toolang.plugin.catalogs.loading import load_model_catalogs
 from toolang.plugin.catalogs.models_dev.catalog import (
@@ -152,6 +152,10 @@ class SetupWatcher:
             for group in ("toolang.model_catalog", "toolang.model_adapter")
             for item in plugin_provenance(group=group)
         )
+        self._adapter_sources = {
+            info.name: info.source
+            for info in list_plugin_infos(group="toolang.model_adapter")
+        }
         self._setup: AgentSetup | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
@@ -313,6 +317,7 @@ class SetupWatcher:
                 for provider_id in snapshot.providers
             },
             adapters=adapters,
+            adapter_sources=self._adapter_sources,
             tools=tools,
             envs=inputs.envs,
             allow=allow,
@@ -560,6 +565,7 @@ def _build_setup(
     snapshot: ModelCatalogSnapshot,
     catalog_sources: Mapping[str, tuple[str, str]],
     adapters: dict[str, ModelAdapter],
+    adapter_sources: Mapping[str, str],
     tools: dict[str, Tool],
     envs: dict[str, str],
     allow: AgentCeiling,
@@ -610,6 +616,9 @@ def _build_setup(
         limits=limits,
         compact_model=compact_model,
         catalog_sources=catalog_sources,
+        adapter_sources={
+            name: adapter_sources[name] for name in adapters if name in adapter_sources
+        },
         _catalog_loader=catalog_loader(snapshot, revision=revision),
     )
 

@@ -15,9 +15,12 @@ accounting and budgets; retain the existing record wire formats.
 - Catalog numbers and accounting interfaces use finite floats instead of
   Decimal. Preserve intermediate per-token prices until the call is settled.
 - Settle each complete call to six fractional USD digits, rounding half up.
+  Interpret the shortest decimal rate text before multiplication and summation;
+  use transient rational arithmetic only at settlement to preserve half-micro ties.
   Accumulate settled amounts and compare budgets in integer micro-USD units.
   Monetary values range from zero through 999,999,999.999999 USD; reject
   non-finite, negative, or out-of-range amounts. Normalize budgets identically.
+  Reject boolean budgets before numeric coercion; accept legacy decimal strings.
 - Preserve record field names and decimal-text wire values, including reading
   existing records. Do not migrate records or introduce new persistence types.
 - Keep generic query support for unrelated Decimal values unchanged.

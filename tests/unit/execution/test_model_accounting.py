@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from toolang.base.types.model import (
     Model,
     ModelToolang,
@@ -448,3 +450,20 @@ def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
     cost = selected_usd_cost(accounting)
     assert cost is not None and cost_units(cost) == 1
     assert all(0 < float(line.amount) < 0.000001 for line in accounting.estimate.lines)
+
+
+@pytest.mark.parametrize(
+    ("rate", "expected"),
+    [(0.57999999, "0.000014"), (0.58, "0.000015"), (0.58000001, "0.000015")],
+)
+def test_call_settlement_preserves_decimal_half_micro_boundaries(
+    rate: float, expected: str
+) -> None:
+    accounting = build_model_accounting(
+        _model({"input": rate, "output": 0}),
+        ModelUsage(input_tokens=25, output_tokens=0),
+    )
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == expected
+    if rate == 0.58:
+        assert accounting.estimate.lines[0].amount == "0.0000145"

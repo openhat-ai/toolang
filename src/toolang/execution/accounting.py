@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import math
+from fractions import Fraction
 from collections.abc import Mapping
 from typing import Literal, cast
 
-from toolang.base.money import cost_text, normalize_cost, number_text
+from toolang.base.money import cost_from_rates, cost_text, normalize_cost, number_text
 from toolang.base.types.model import (
     Model,
     Reasoning,
@@ -319,7 +319,9 @@ def _estimate_cost(
         complete = False
     if not lines:
         return None
-    amount = math.fsum(float(line.amount) for line in lines)
+    amount = cost_from_rates(
+        ((int(line.quantity), float(line.rate)) for line in lines), per=_PER_MILLION
+    )
     return ModelCost(
         amount=cost_text(amount),
         currency="USD",
@@ -377,7 +379,7 @@ def _append_line(
 ) -> None:
     if rate is None:
         return
-    amount = float(quantity) * rate / _PER_MILLION
+    amount = float(quantity * Fraction(str(rate)) / _PER_MILLION)
     lines.append(
         ModelCostLine(
             meter=meter,

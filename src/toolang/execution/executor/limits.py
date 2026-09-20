@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 
-from toolang.base.money import add_cost, cost_units, normalize_cost
+from toolang.base.money import add_cost, cost_from_rates, cost_units
 from toolang.base.types.model import Model, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
@@ -160,7 +161,7 @@ def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
     input_rate: float | None = None
     output_rate: float | None = None
     for line in accounting.estimate.lines:
-        rate = float(line.rate) / float(line.per)
+        rate = float(Fraction(line.rate) / Fraction(line.per))
         if line.meter in {"input", "input.uncached"}:
             input_rate = rate
         if line.meter in {"output", "output.visible"}:
@@ -186,7 +187,7 @@ def _model_price(model: Model) -> _TokenPrice | None:
 def _token_price(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value) / 1_000_000.0
+    return float(Fraction(str(value)) / 1_000_000)
 
 
 def _model_cost(
@@ -195,6 +196,6 @@ def _model_cost(
 ) -> float | None:
     if usage is None or price is None or price.input is None or price.output is None:
         return None
-    return normalize_cost(
-        price.input * usage.input_tokens + price.output * usage.output_tokens
+    return cost_from_rates(
+        ((usage.input_tokens, price.input), (usage.output_tokens, price.output))
     )

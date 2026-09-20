@@ -114,3 +114,25 @@ def test_existing_decimal_text_budget_records_remain_readable() -> None:
     limits = run_limits_from_data({"cost": "1.2300000000"})
     assert limits.cost == 1.23
     assert run_limits_to_data(limits)["cost"] == "1.23"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_budget_records_reject_boolean_costs(value: bool) -> None:
+    from pydantic import ValidationError
+
+    from toolang.execution.records import run_limits_from_data
+
+    with pytest.raises(ValidationError):
+        run_limits_from_data({"cost": value})
+
+
+def test_fallback_cost_settles_decimal_token_prices_once() -> None:
+    from toolang.execution.executor.limits import _model_cost, _TokenPrice
+
+    assert (
+        _model_cost(
+            ModelUsage(input_tokens=25, output_tokens=0),
+            _TokenPrice(input=0.00000058, output=0),
+        )
+        == 0.000015
+    )

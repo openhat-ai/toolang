@@ -1335,3 +1335,26 @@ def test_setup_publishes_around_invalid_modes_and_recovers(
     assert fixed is not None and fixed._toolang.ready
     assert repaired.models.contains("test/two") is not excluded
     assert setup.model_catalog(all=True) == full
+
+
+def test_setup_publishes_installed_adapter_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.plugin.loading import PluginInfo
+
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    infos = [
+        PluginInfo("responses", "built-in"),
+        PluginInfo("chat_completions", "external"),
+        PluginInfo("not_loaded", "external"),
+    ]
+    monkeypatch.setattr(watcher_module, "list_plugin_infos", lambda **_kwargs: infos)
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    setup = asyncio.run(watcher.refresh())
+    infos.clear()
+
+    assert setup.adapter_sources == {
+        "responses": "built-in",
+        "chat_completions": "external",
+    }
+    assert asyncio.run(watcher.refresh()) is setup

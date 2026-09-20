@@ -5,6 +5,7 @@ import pytest
 from toolang.base.money import (
     MAX_COST,
     add_cost,
+    cost_from_rates,
     cost_text,
     cost_units,
     normalize_cost,
@@ -42,3 +43,12 @@ def test_repeated_costs_and_budget_boundaries_are_exact() -> None:
     assert cost_units(add_cost(0.3, 0.000001)) > cost_units(0.3)
     with pytest.raises(ValueError):
         add_cost(MAX_COST, 0.000001)
+
+
+def test_decimal_rate_settlement_retains_small_rates_and_cost_bounds() -> None:
+    assert cost_from_rates(((25, 0.58),), per=1_000_000) == 0.000015
+    assert cost_from_rates(((2, 0.2), (2, 0.2)), per=1_000_000) == 0.000001
+    assert cost_from_rates(((1_000_000, 0.0000005),)) == 0.5
+    assert cost_from_rates(((1, MAX_COST),)) == MAX_COST
+    with pytest.raises(ValueError):
+        cost_from_rates(((1, MAX_COST), (1, 0.000001)))

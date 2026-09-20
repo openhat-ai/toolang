@@ -240,3 +240,23 @@ def test_authored_run_schema_rejects_extra_or_lossy_values(
 
     with pytest.raises(ValidationError):
         AuthoredRunRequest.model_validate(source)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_partial_budget_payload_rejects_boolean_costs(value: bool) -> None:
+    from toolang.api.schemas import RunLimitsPayload
+
+    with pytest.raises(ValidationError):
+        RunLimitsPayload.model_validate({"cost": value})
+
+
+@pytest.mark.parametrize("value", [1, 1.23, "1.2300000000", None])
+def test_partial_budget_payload_keeps_numeric_and_legacy_costs(
+    value: object,
+) -> None:
+    from toolang.api.schemas import RunLimitsPayload
+
+    payload = RunLimitsPayload.model_validate({"cost": value})
+    assert payload.to_limits(RunLimits()).cost == (
+        None if value is None else float(str(value))
+    )
