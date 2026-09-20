@@ -1,18 +1,12 @@
-"""Catalog snapshot merging and the models.dev source read."""
+"""Catalog snapshot merging."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
-from toolang.common.layout import AgentLayout
-from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
-from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
-
-from .config import load_root_setup_envs, load_setup_envs
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,26 +45,4 @@ class MergedModelCatalog(ModelCatalog):
         )
 
 
-def load_models_dev_snapshot(
-    layout: AgentLayout,
-    *,
-    model_catalog: Path | None = None,
-    agent_context: bool = True,
-) -> ModelCatalogSnapshot:
-    """Read the selected models.dev source without merging or resolving.
-
-    This is the models.dev-compatible catalog itself, so an export needs no
-    local-only guard.
-    """
-
-    envs = load_setup_envs(layout) if agent_context else load_root_setup_envs(layout)
-    path = resolve_model_catalog_path(
-        layout,
-        explicit=model_catalog,
-        environ=envs,
-        include_agent=agent_context,
-    )
-    return read_model_catalog_snapshot(path)
-
-
-__all__ = ["MergedModelCatalog", "load_models_dev_snapshot"]
+__all__ = ["MergedModelCatalog"]

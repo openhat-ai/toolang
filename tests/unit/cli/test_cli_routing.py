@@ -347,7 +347,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         "inspect": "Inspect agent runs",
         "caps": "List available caps",
         "models": "List available models",
-        "providers": "List model providers",
+        "providers": "List available model providers",
         "tools": "List available tools",
         "catalogs": "List installed model catalogs",
         "adapters": "List installed model adapters",

@@ -12,8 +12,10 @@ revision.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
+import json
 from pathlib import Path
 import re
 from typing import cast
@@ -34,6 +36,7 @@ from toolang.common.cache import (
     require_fields,
     store_document,
 )
+from toolang.common.json import dumps
 
 _CATALOG_KIND = "catalog"
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -162,6 +165,25 @@ class ModelCatalogCache:
         )
 
 
+def catalog_loader(
+    snapshot: ModelCatalogSnapshot, *, revision: str
+) -> Callable[[], ModelCatalogSnapshot]:
+    """Pin serialized records without retaining a second set of typed indexes.
+
+    Per-source cache files can change or disappear after publication. Decoding
+    this private copy preserves the setup version without another source read.
+    """
+
+    payload = dumps(_snapshot_document(snapshot), indent=None)
+
+    def load() -> ModelCatalogSnapshot:
+        return _snapshot_from_data(
+            json.loads(payload, parse_float=Decimal), revision=revision
+        )
+
+    return load
+
+
 def _file_name(name: str) -> str:
     """Return the cache file stem for one catalog name."""
 
@@ -243,6 +265,12 @@ def _snapshot_from_document(
         ),
         label="model context",
     )
+    return _snapshot_from_data(document, revision=revision)
+
+
+def _snapshot_from_data(
+    document: Mapping[str, object], *, revision: str
+) -> ModelCatalogSnapshot:
     raw_providers = document["providers"]
     raw_models = document["models"]
     if not isinstance(raw_providers, Mapping) or not isinstance(raw_models, list):
@@ -493,6 +521,7 @@ def _optional_bool(data: Mapping[str, object], name: str) -> bool | None:
 __all__ = [
     "CachedCatalog",
     "ModelCatalogCache",
+    "catalog_loader",
     "environment_identity",
     "model_projection_key",
 ]

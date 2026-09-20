@@ -90,6 +90,8 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "--query-schema" not in models_help
     assert "too query" in models_help
     assert "models'" in models_help
+    assert "--all" in models_help
+    assert "--all" in strip_ansi(providers_result.stdout)
     assert "--json" in models_help
     assert "Write filtered models as JSON" in models_help
     assert "--output" not in models_help
@@ -116,6 +118,7 @@ def test_models_query_exports_a_valid_complete_catalog(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -159,6 +162,7 @@ def test_models_query_accepts_combined_models_dev_catalog(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -260,6 +264,7 @@ def test_models_accepts_month_precision_catalog_dates(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -287,6 +292,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -447,7 +453,22 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
     assert "llama_cpp/second" in stdout
-    assert "4 models" in stdout
+    assert "2 models" in stdout
+
+    exported = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--catalog",
+            str(catalog),
+            "--json",
+        ],
+    )
+    assert exported.exit_code == 0, exported.stderr
+    assert set(json.loads(exported.stdout)) == {"ollama", "llama_cpp"}
+    assert "_toolang" not in exported.stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -477,7 +498,7 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     )
 
     assert providers_result.exit_code == 0, providers_result.stderr
-    assert "3 providers" in providers_result.stdout
+    assert "2 providers" in providers_result.stdout
     assert captured_headers == (
         "PROVIDER",
         "AVAILABLE MODELS",
@@ -531,6 +552,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
         ],
@@ -555,6 +577,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -585,6 +608,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
         ],
@@ -617,6 +641,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
             "--json",
@@ -655,7 +680,14 @@ def test_provider_api_and_counts_use_independent_availability(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(tmp_path / "root"), "providers", "--catalog", str(catalog)],
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--all",
+            "--catalog",
+            str(catalog),
+        ],
     )
 
     assert result.exit_code == 0, result.stderr
@@ -673,16 +705,14 @@ def test_provider_api_and_counts_use_independent_availability(
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
 @pytest.mark.parametrize("colored", [False, True])
-def test_models_help_describes_optional_agent_without_loading(
-    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_help_describes_optional_agent_without_loading(
+    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool, command: str
 ) -> None:
     def unexpected_load(*args, **kwargs):
         pytest.fail("help must not load model catalogs")
 
     monkeypatch.setattr(model_catalog_commands, "load_setup", unexpected_load)
-    monkeypatch.setattr(
-        model_catalog_commands, "load_models_dev_snapshot", unexpected_load
-    )
     monkeypatch.setenv("TERM", "xterm-256color")
     if colored:
         monkeypatch.setenv("FORCE_COLOR", "1")
@@ -690,16 +720,17 @@ def test_models_help_describes_optional_agent_without_loading(
         monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
 
-    result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])
+    result = cli.main(["--root", str(tmp_path), *target, command, "--help"])
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
     assert result == 0
     assert ("\x1b[" in output.out) is colored
-    assert "[AGENT] models [OPTIONS]" in stdout
+    assert f"[AGENT] {command} [OPTIONS]" in stdout
     assert "Local agent name; omit for root configuration" in stdout
     assert "--catalog" in stdout
-    assert "--query" in stdout
+    assert ("--query" in stdout) is (command == "models")
+    assert "--all" in stdout
     assert "--json" in stdout
     assert not output.err
     assert not tuple(tmp_path.iterdir())
@@ -731,6 +762,7 @@ def test_models_uses_isolated_resident_catalogs(
                     str(tmp_path),
                     *target,
                     "models",
+                    "--all",
                     "-q",
                     f"test/{model}",
                     *(["--json"] if json_output else []),
@@ -830,7 +862,9 @@ def test_models_agent_catalog_override_precedence(
         (home / ".env").write_text(f"TOOLANG_MODEL_CATALOG={paths['environment']}\n")
     options = ["--catalog", str(paths["explicit"])] if source == "explicit" else []
 
-    result = cli.main(["--root", str(tmp_path), "alice", "models", *options, "--json"])
+    result = cli.main(
+        ["--root", str(tmp_path), "alice", "models", "--all", *options, "--json"]
+    )
     output = capsys.readouterr()
 
     assert result == 0, output.err
@@ -935,3 +969,77 @@ def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object
             },
         }
     }
+
+
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_commands_share_default_and_complete_views(
+    tmp_path: Path, monkeypatch, capsys, agent: bool, command: str
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    monkeypatch.delenv("MISSING_KEY", raising=False)
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    data["offline"] = {**provider, "id": "offline", "env": ["MISSING_KEY"]}
+    data["empty"] = {**provider, "id": "empty", "models": {}}
+    data["excluded"] = {**provider, "id": "excluded"}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    config_home = _resident_home(tmp_path, "alice") if agent else tmp_path
+    (config_home / "config.toml").write_text(
+        '[allow]\nmodels = ["test/one", "offline/*"]\n'
+    )
+    args = ["--root", str(tmp_path), *(["alice"] if agent else []), command]
+
+    def invoke(options: list[str]) -> str:
+        result = cli.main([*args, *options])
+        output = capsys.readouterr()
+        assert result == 0, output.err
+        return output.out
+
+    for all_ in (False, True):
+        options = ["--all"] if all_ else []
+        output = invoke([*options, "--json"])
+        exported = json.loads(output)
+        expected = {"test", "offline", "excluded"} if all_ else {"test"}
+        if command == "providers" and all_:
+            expected.add("empty")
+        assert set(exported) == expected
+        assert set(exported["test"]["models"]) == ({"one", "two"} if all_ else {"one"})
+        assert "_toolang" not in output
+        assert "synthetic-key" not in output
+        table = invoke(options)
+        assert ("offline" in table) is all_
+        assert ("excluded" in table) is all_
+        assert ("empty" in table) is (all_ and command == "providers")
+        if command == "models":
+            for query, expected_providers in (
+                ("*[available=false]", {"offline"} if all_ else set()),
+                ("test/two[available]", {"test"} if all_ else set()),
+            ):
+                queried = invoke([*options, "--query", query, "--json"])
+                assert set(json.loads(queried)) == expected_providers
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_models_json_uses_the_published_version_without_rereading_source(
+    tmp_path: Path, monkeypatch, all_: bool
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_catalog_data()))
+    original_setup = model_catalog_commands._setup
+
+    def setup_then_remove_source(*args, **kwargs):
+        setup = original_setup(*args, **kwargs)
+        path.unlink()
+        return setup
+
+    monkeypatch.setattr(model_catalog_commands, "_setup", setup_then_remove_source)
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path), "models", *(["--all"] if all_ else []), "--json"],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 import platform
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.types.model import ModelOverride, Provider
+from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.collections import ModelCollection
@@ -67,6 +67,20 @@ class AgentSetup:
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
     compact_model: ModelOverride | None = None
+    _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def model_catalog(self, *, all: bool = False) -> ModelCatalogSnapshot:
+        """Read the default view, or materialize this version's complete catalog."""
+
+        if all and self._catalog_loader is not None:
+            return self._catalog_loader()
+        return ModelCatalogSnapshot(
+            providers=self.providers,
+            models=self.models.entries,
+            revision=self.revision,
+        )
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)

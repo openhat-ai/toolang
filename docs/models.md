@@ -57,24 +57,27 @@ external `--catalog` source is mounted read-only and
 Use `too alice models` to inspect a resident agent's model context. It layers
 the agent's provider/plugin configuration and dotenv values over root inputs,
 and prefers its home catalog according to the precedence above. The agent
-does not need to be running. `--catalog`, `--query/-q`, and `--json` work in
+does not need to be running. `--catalog`, `--all`, `--query/-q`, and `--json` work in
 both root and resident forms:
 
 ```bash
 too models
-too alice models --query '*[available=true]'
+too alice providers --all
+too alice models --all --query '*[available=false]'
 too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
 ```
 
-The target goes before `models`; use `agent:<name>` when an agent name matches
-a command name. Both forms list catalog entries, including unavailable models,
-unless filtered by a query. They do not apply `allow.models` or display
-`default.model`/`compact.model`. Availability reflects the invoking process's
-configuration and environment, not a running agent's session or sandbox.
+The target goes before `models` or `providers`; use `agent:<name>` when a name matches
+a command name. Both forms default to ready models permitted by `allow.models`.
+`--all` includes both unready models and models excluded by `allow.models`.
+Queries narrow the selected view; `--json` changes only the output format.
+The commands do not display `default.model`/`compact.model`. Availability reflects
+the invoking process's configuration and environment, not a running agent's
+session or sandbox.
 
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top
-level, preserves unknown additive fields, parses prices as decimal values, and
+level, drops unmodelled additive fields, parses prices as decimal values, and
 rejects an invalid complete snapshot. Canonical model metadata from the
 combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
@@ -97,8 +100,8 @@ model = "openai/gpt-5 effort=low"
 Without `allow.models`, available providers are preferred in this order: alibaba,
 anthropic, deepseek, google, meta, minimax, mistral, moonshotai, openai, openrouter,
 xai, zai, zhipuai, then all remaining providers. Models within a provider retain
-catalog order. No models are excluded by this default. Explicit queries replace
-the ordering; `*` preserves catalog order, while `all` restores the default.
+catalog order. This preference order excludes no ready models. Explicit queries
+replace the ordering; `*` preserves catalog order, while `all` restores the default.
 
 Omit `compact.model` to select the first allowed, available model with both tool
 calls and structured output. Session/request model restrictions still apply.
@@ -150,6 +153,14 @@ plugin provenance, environment values, catalog revisions, and effective
 cache produced on the host stays reusable when the same root and home are mounted
 at different guest paths. Invalid, unsafe, or legacy cache entries are misses, and
 a cache write failure does not reject a valid in-memory Setup.
+
+Persistence retains all source records, independently of readiness or allow rules.
+The published setup indexes only ready, allowed models and their providers.
+`setup.model_catalog()` returns that default view; `setup.model_catalog(all=True)`
+materializes the complete resolved view from compact serialized records pinned to
+that setup version. Full reads do not retain another query index, re-read a source,
+or change the models available to a run. Old setup versions remain consistent
+after later refreshes or cache deletion.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 
@@ -333,14 +344,20 @@ passed into either catalog factory.
 The public resources are:
 
 ```text
-too models [--query QUERY] [--json]
-too providers [--json]
+too models [--all] [--query QUERY] [--json]
+too providers [--all] [--json]
 too catalogs
 too adapters [--json]
 ```
 
-`too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
-`too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
+`too models` shows ready, allowed models plus an `AVAILABLE` yes/no column.
+`too providers` lists only providers with at least one such model, and its nested
+model lists use the same scope. Add `--all` to either command to inspect the
+complete directory, including unready and allow-excluded entries; `providers
+--all` also includes empty providers. The `available` query field describes
+readiness independently of allow membership.
+
+`too providers --all` owns readiness diagnostics and shows `ADAPTERS`, `API`,
 and `ENV` from the resolved environment rule (`ProviderToolang.env`). Comma
 separates OR environment alternatives;
 ` + ` separates simultaneous requirements.
@@ -350,9 +367,11 @@ separates OR environment alternatives;
 merged catalog snapshot; use `too models` for that view.
 
 `too models --query ... --json` emits another complete, deterministic,
-models.dev-compatible catalog containing only selected models. Local-only
-models cannot be exported. Provider and model JSON never includes a Toolang-side
-fact or an unmodelled catalog field.
+models.dev-compatible catalog containing only selected models, including models
+from local catalogs. It exports the same setup version used for selection without
+re-reading the source. `too providers --json` follows the same default/`--all`
+scope and preserves empty providers in the full view. Provider and model JSON
+never includes a Toolang-side fact or an unmodelled catalog field.
 
 Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models
@@ -382,8 +401,9 @@ model = "gateway/chat effort=high"
 ```
 
 Provider configuration participates in the one-time provider resolution.
-`SetupWatcher` applies `allow.models` once and publishes the resulting
-`ModelCollection`; request and runnable policy can only narrow that base.
+`SetupWatcher` filters readiness and applies `allow.models` once, then publishes
+the resulting `ModelCollection`; request and runnable policy can only narrow
+that base.
 `default.model` uses the same model body as invocation, Chat, and run-input
 settings: an optional concrete ref followed by typed assignments. The current
 assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,

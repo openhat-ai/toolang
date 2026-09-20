@@ -36,6 +36,7 @@ from toolang.plugin.toolsets.loading import load_tools
 
 from .cache import (
     ModelCatalogCache,
+    catalog_loader,
     environment_identity,
     model_projection_key,
 )
@@ -569,7 +570,10 @@ def _build_setup(
         },
     )
     models = order_models(
-        ModelCollection(snapshot.models, query_views=dataset.items), allow.models
+        ModelCollection(snapshot.models, query_views=dataset.items).match(
+            "*[available]"
+        ),
+        allow.models,
     )
     if compact_model is not None and compact_model.identity != "unset":
         select_compact_model(models, compact_model)
@@ -611,6 +615,7 @@ def _build_setup(
         defaults=defaults,
         limits=limits,
         compact_model=compact_model,
+        _catalog_loader=catalog_loader(snapshot, revision=revision),
     )
 
 

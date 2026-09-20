@@ -42,13 +42,16 @@ from toolang.plugin.models.discovery import (
     required_provider_env_vars,
 )
 from toolang.setup import AgentSetup
-from toolang.setup.catalog import load_models_dev_snapshot
 from toolang.setup.watcher import load_setup
 
 
 def models_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Include unready and allow-excluded models"),
+    ] = False,
     query: Annotated[
         list[str] | None,
         typer.Option(
@@ -69,7 +72,7 @@ def models_command(
         setup = _setup(ctx, model_catalog=model_catalog)
     except TypeError as error:
         raise ClickException(str(error)) from error
-    snapshot = _effective_snapshot(setup)
+    snapshot = setup.model_catalog(all=all_)
     dataset = _model_dataset(snapshot)
     try:
         if query:
@@ -79,15 +82,7 @@ def models_command(
         raise ClickException(str(error)) from error
     selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
-        source = _source_snapshot(ctx, model_catalog=model_catalog)
-        selected_refs = {view.key for view in selected_views}
-        content = dumps(
-            source.to_data(
-                models=tuple(
-                    model for model in source.models if model.identity in selected_refs
-                )
-            )
-        )
+        content = dumps(snapshot.to_data(models=selected))
         typer.echo(content, nl=False)
         return
     headers, rows = dataset.table(selected_views)
@@ -106,6 +101,12 @@ def models_command(
 def providers_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
+    all_: Annotated[
+        bool,
+        typer.Option(
+            "--all", help="Include unready, allow-excluded, and empty providers"
+        ),
+    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write catalog providers as JSON"),
@@ -114,7 +115,7 @@ def providers_command(
     """List catalog providers and runtime availability."""
 
     setup = _setup(ctx, model_catalog=model_catalog)
-    snapshot = _effective_snapshot(setup)
+    snapshot = setup.model_catalog(all=all_)
     base_providers = tuple(
         snapshot.providers[provider_id] for provider_id in sorted(snapshot.providers)
     )
@@ -227,31 +228,6 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
             model_catalog=resolve_model_catalog_option(model_catalog),
             agent_context=agent_context,
         )
-    )
-
-
-def _source_snapshot(
-    ctx: typer.Context,
-    *,
-    model_catalog: Path | None = None,
-) -> ModelCatalogSnapshot:
-    """Read the models.dev source that an export must reproduce."""
-
-    layout, agent_context = _layout(ctx)
-    return load_models_dev_snapshot(
-        layout,
-        model_catalog=resolve_model_catalog_option(model_catalog),
-        agent_context=agent_context,
-    )
-
-
-def _effective_snapshot(setup: AgentSetup) -> ModelCatalogSnapshot:
-    """Project one published setup version back into one catalog snapshot."""
-
-    return ModelCatalogSnapshot(
-        providers=dict(setup.providers),
-        models=setup.models.entries,
-        revision=setup.revision,
     )
 
 

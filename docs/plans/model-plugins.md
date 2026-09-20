@@ -692,11 +692,10 @@ refresh, not plugin-owned cache.
 - A local catalog declares zero rates on `cost` for every meter a probe can
   report, so the `local` flag on `build_model_accounting` and its rate override
   are deleted and a local estimate stays complete.
-- Locality does not need to reach the setup. `--json` exports the models.dev
-  source snapshot, which is the models.dev-compatible catalog by definition, so
-  no provider index and no export guard is needed. The query row's `scope`
-  (`local`/`remote`) goes with it: it is not a query column, nothing displays it,
-  and the collection never populated it.
+- Locality does not need to reach the setup. `--json` exports catalog facts
+  from the selected setup view, including local models, without Toolang slots.
+  The query row's `scope` (`local`/`remote`) goes with it: it is not a query column,
+  nothing displays it, and the collection never populated it.
 - `Model.provider` is the corrected provider this model must use, not general
   catalog data, so resolution writes its own Toolang slot into that block
   (`_resolve_model` / `_with_model_adapter`). This is intentional.
@@ -784,7 +783,44 @@ load.
   keeps the setup revision stable;
 - touching the models.dev file advances the revision even when its payload is
   unchanged;
-- local models never appear in `--json`, which exports the models.dev source
-  snapshot;
+- JSON includes the selected models from all sources, including local catalogs;
 - inspection and runtime render the same providers and models for the same
   sources.
+
+### Default and complete catalog views (approved)
+
+Goal: runtime selection and CLI inspection default to the same usable resources,
+while setup retains a version-pinned complete catalog for explicit inspection.
+
+- Persist complete source catalogs regardless of readiness or `allow.models`.
+  Do not persist a second filtered catalog.
+- `AgentSetup.models` contains only ready models matching `allow.models`, in
+  configured preference order. `providers` contains only their providers, with
+  each provider's nested models filtered to exactly the same membership.
+- `setup.model_catalog()` projects the default view. `all=True` materializes the
+  complete resolved catalog on demand, including unready models, allow-excluded
+  models, and providers with no models. This never broadens runtime selection.
+- Pin the complete view as compact serialized catalog data using the existing
+  cache codec. Keep only default typed indexes resident; decode full records on
+  demand. No source re-read, re-probe, or mutable cache access may change an old
+  setup's full view. The full view carries the setup revision.
+- `too models` and `too providers` default to the same usable view. Both accept
+  `--all` to select the complete view. Model `--query` narrows the selected view;
+  `--json` changes only formatting and exports raw catalog facts from all sources.
+  `available` continues to mean readiness, independently of allow membership.
+  Both commands support an optional resident agent target before the command.
+- Existing validation of explicit default and compact models remains strict:
+  those choices must belong to the default view.
+
+Touchpoints: setup types, watcher publication and cache codec; catalog CLI
+commands; model documentation; setup and CLI acceptance tests.
+
+Acceptance: mixed ready/unready and allowed/excluded models prove both view
+memberships and nested provider consistency; empty providers appear only in the
+complete view; automatic default/compaction never selects unready models; source
+changes and cache deletion cannot change a pinned view; root and agent CLI,
+queries and JSON preserve the selected scope, including local models.
+
+Tradeoffs: each live setup retains serialized full records but no full query
+index. Explicit full reads incur decoding cost. Existing per-source persistence
+and strict setup validation remain unchanged. No open decisions.

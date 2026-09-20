@@ -1181,3 +1181,93 @@ def test_each_catalog_persists_one_file_without_unmodelled_fields(
     )
     for path in _context_cache_files(tmp_path, "alice"):
         assert "extra" not in path.read_text(encoding="utf-8")
+
+
+def test_setup_filters_readiness_and_allow_but_retains_complete_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one", "two"))
+    data = json.loads(path.read_text())
+    data["offline"] = {**data["test"], "id": "offline", "env": ["MISSING_KEY"]}
+    path.write_text(json.dumps(data))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_config",
+        lambda _layout: {"allow": {"models": "*/one"}},
+    )
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.models.refs() == ("test/one",)
+    assert len(setup.models._matcher.items) == 1
+    assert tuple(setup.providers) == ("test",)
+    assert tuple(setup.providers["test"].models) == ("one",)
+    assert setup.model_catalog().models == setup.models.entries
+    complete = setup.model_catalog(all=True)
+    assert complete.revision == setup.revision
+    assert {model.ref for model in complete.models} == {
+        "test/one",
+        "test/two",
+        "offline/one",
+        "offline/two",
+    }
+    assert set(complete.providers) == {"test", "offline", "ollama", "llama_cpp"}
+    excluded = complete.find("test", "two")
+    unready = complete.find("offline", "one")
+    assert excluded is not None and excluded._toolang.ready
+    assert unready is not None and not unready._toolang.ready
+    assert setup.models.refs() == ("test/one",)
+    persisted = json.loads(
+        next(
+            path
+            for path in _context_cache_files(tmp_path, "alice")
+            if path.stem == "models_dev"
+        ).read_text()
+    )
+    assert len(persisted["payload"]["models"]) == 4
+
+
+def test_complete_catalog_is_pinned_without_rereading_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one", "two"))
+    envs = {"TEST_API_KEY": "secret"}
+    watcher = _watcher(monkeypatch, tmp_path, envs=envs)
+    first = asyncio.run(watcher.refresh())
+    _write_catalog(path, ("three",))
+    envs.clear()
+    (tmp_path / ".env").write_text("# reload environment\n")
+    second = asyncio.run(watcher.refresh())
+    assert second.models.refs() == ()
+    assert not second.providers
+    path.unlink()
+    shutil.rmtree(tmp_path / "agents" / "alice" / ".setup")
+
+    old_catalog = first.model_catalog(all=True)
+    new_catalog = second.model_catalog(all=True)
+
+    assert tuple(model.ref for model in old_catalog.models) == ("test/one", "test/two")
+    assert all(model._toolang.ready for model in old_catalog.models)
+    assert tuple(model.ref for model in new_catalog.models) == ("test/three",)
+    assert not new_catalog.models[0]._toolang.ready
+    assert old_catalog.revision == first.revision != second.revision
+    assert new_catalog.revision == second.revision
+
+
+def test_automatic_compaction_ignores_unready_models(tmp_path, monkeypatch):
+    from toolang.setup.models import select_compact_model
+
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one",))
+    data = json.loads(path.read_text())
+    data["anthropic"] = {**data["test"], "id": "anthropic", "env": ["MISSING_KEY"]}
+    path.write_text(json.dumps(data))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.models.effective_default(None) == "test/one"
+    assert select_compact_model(setup.models, None).ref == "test/one"
