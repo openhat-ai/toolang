@@ -12,7 +12,7 @@ from toolang.base.utils.tools import (
     require_public_tool_name,
     require_toolset_name,
 )
-from toolang.plugin.loading import PluginSource
+from toolang.plugin.types import PluginSource
 
 
 @dataclass(frozen=True, slots=True)

@@ -32,7 +32,7 @@ from toolang.plugin.config import (
     merge_plugin_configs,
     resolve_sandbox_binding,
 )
-from toolang.plugin.sandboxes.loading import create_sandbox
+from toolang.plugin.loading import create_sandbox
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,

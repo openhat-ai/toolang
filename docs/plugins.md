@@ -176,15 +176,26 @@ and packaged guest bootstrap files inside `sandboxes/docker/`.
 
 Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
 `too channel list`, and `too sandboxes`) list entry-point identities and their
-built-in or external source. `too tools` lists leaf tools as `toolset/tool`;
-its tool count is distinct from its toolset count. Tool-call inspection shows
-the recorded plugin identity, independently of its Python module location.
-Model catalog provenance retains the display label `models.dev` for the
-`models_dev` plugin.
+built-in or external source. `too tools` lists installed leaf tools as
+`toolset/tool`, using the merged root/default-agent plugin configuration directly.
+It does not construct agent setup or filter the inventory by `allow.tools`.
+Agent-info and runtime views retain their effective-capability semantics.
 
-`toolang.plugin.loading` owns generic entry-point discovery. Family-specific
-loaders pass explicit configuration into factories and validate the returned
-protocol.
+`too tools` and `too toolsets` hide internal toolsets such as `_toolang` by
+default. Use `too tools --all` or `too toolsets --all` to include them; `me`
+remains visible in both modes. `--query` still filters the tool inventory,
+but an internal-only query needs `--all` to display matches. Tool and toolset
+counts describe the displayed rows. This visibility option grants no runtime
+access. Tool-call inspection shows the recorded plugin identity, independently
+of its Python module location.
+
+`toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
+and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.
+`toolang.plugin.types` owns shared plugin identity and provenance records.
+`toolang.plugin.toolsets.loading` adds toolset-specific identity validation,
+duplicate detection, leaf-tool wrapping, and selection. Loaders depend on base
+contracts, never concrete plugin implementations. Factory entry points remain
+the only mechanism for selecting built-in and external implementations.
 
 Naming reflects cardinality: `create_<singular>` returns one selected plugin,
 `load_<plural>` returns a collection, and `list_<plural>` discovers installed

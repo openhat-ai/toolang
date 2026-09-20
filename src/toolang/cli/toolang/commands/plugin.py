@@ -10,16 +10,19 @@ import typer
 from ...common.context import context_agent, context_root
 from ...common.output import echo_table
 from ...common.query import query_items
+from toolang.base.utils.tools import is_internal_toolset_name
 from toolang.common.layout import AgentLayout
 from toolang.common.query import QueryDataset
+from toolang.plugin.config import merge_plugin_configs
+from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
     ToolCollection,
     ToolQueryView,
     tool_dataset,
 )
+from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentSetup
-from toolang.setup.tools import load_setup_tools
-from toolang.plugin.loading import list_plugin_infos
+from toolang.setup.config import load_agent_config, load_setup_config
 
 channel_app = typer.Typer(
     help="List available channels",
@@ -42,9 +45,20 @@ def list_tools(
             help="Query tools. Repeat to add matches; see 'too query tools'",
         ),
     ] = None,
+    all_: Annotated[
+        bool, typer.Option("--all", help="Include internal toolsets and their tools")
+    ] = False,
 ) -> None:
-    dataset = _tool_dataset(load_setup_tools(_layout(ctx)))
-    selected = query_items(dataset, query)
+    layout = _layout(ctx)
+    configs = (load_setup_config(layout), load_agent_config(layout))
+    dataset = tool_dataset(
+        load_tools(toolset_config=merge_plugin_configs(configs, family="toolset"))
+    )
+    selected = tuple(
+        item
+        for item in query_items(dataset, query)
+        if all_ or not is_internal_toolset_name(item.toolset)
+    )
     if not selected:
         typer.echo("No tools matched query." if query else "No tools found.")
         return
@@ -75,11 +89,16 @@ def list_catalogs() -> None:
     )
 
 
-def list_toolsets() -> None:
+def list_toolsets(
+    all_: Annotated[
+        bool, typer.Option("--all", help="Include internal toolsets")
+    ] = False,
+) -> None:
     _list_plugins(
         group="toolang.toolset",
         header="TOOLSET",
         empty_message="No toolsets found.",
+        include_internal=all_,
     )
 
 
@@ -91,8 +110,16 @@ def list_sandboxes() -> None:
     )
 
 
-def _list_plugins(*, group: str, header: str, empty_message: str) -> None:
+def _list_plugins(
+    *,
+    group: str,
+    header: str,
+    empty_message: str,
+    include_internal: bool = True,
+) -> None:
     rows = plugin_info_rows(group)
+    if not include_internal:
+        rows = [row for row in rows if not is_internal_toolset_name(row[0])]
     if not rows:
         typer.echo(empty_message)
         return

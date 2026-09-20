@@ -13,12 +13,12 @@ from toolang.base.types.model import Model, ModelCatalogSnapshot
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelStreamHandler
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.plugin.adapters.loading import load_model_adapters
-from toolang.plugin.catalogs.loading import load_model_catalogs
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.plugin.toolsets.registry import ToolRef
+from toolang.plugin.types import PluginInfo
 from toolang.plugin.loading import (
-    PluginInfo,
+    load_model_adapters,
+    load_model_catalogs,
     list_plugin_infos,
     list_plugin_names,
     load_plugin_factory,

@@ -65,7 +65,7 @@ from toolang.plugin.models.views import _format_decimal_unit
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
-from toolang.plugin.adapters.loading import load_model_adapters
+from toolang.plugin.loading import load_model_adapters
 from toolang.plugin.adapters import chat_completions as chat_completions_models
 from toolang.plugin.adapters import messages as messages_models
 from toolang.plugin.adapters import responses as responses_models

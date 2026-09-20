@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
+from types import SimpleNamespace
 
 
 import pytest
@@ -2546,33 +2547,183 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
         reopened.close()
 
 
-def test_tools_uses_tool_only_snapshot(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "toolang"
-    layout = AgentLayout.resident(root, "default")
-    tool = _FakeTool()
-    tools = ToolCollection.from_tools({"shell__echo": tool})
+@pytest.fixture
+def plugin_inventory(monkeypatch: pytest.MonkeyPatch):
+    created: list[tuple[str, dict[str, object]]] = []
+
+    def entry(name: str, distribution: str):
+        def factory(config):
+            created.append((name, config))
+            tools = {"echo": _FakeTool()}
+            if name == "shell":
+                repeat = _FakeTool()
+                repeat.name = "repeat"
+                tools["repeat"] = repeat
+            return SimpleNamespace(name=name, tools=lambda: tools)
+
+        return SimpleNamespace(
+            name=name,
+            dist=SimpleNamespace(metadata={"Name": distribution}),
+            load=lambda: factory,
+        )
+
+    entries = [
+        entry("_toolang", "toolang"),
+        entry("me", "toolang"),
+        entry("shell", "toolang"),
+        entry("vendor", "external-package"),
+    ]
     monkeypatch.setattr(
-        plugin_commands,
-        "load_setup_tools",
-        lambda actual_layout: tools if actual_layout == layout else None,
-    )
-    monkeypatch.setattr(
-        plugin_commands,
-        "plugin_sources",
-        lambda _group: {"shell": "test"},
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: entries if group == "toolang.toolset" else [],
     )
 
-    result = _invoke(root, "tools")
+    def reject_setup(*args, **kwargs):
+        pytest.fail("plugin inventory must not compute agent setup or model discovery")
 
-    assert result.exit_code == 0
-    assert "shell/echo" in result.stdout
+    monkeypatch.setattr("toolang.setup.watcher.SetupWatcher.refresh", reject_setup)
+    monkeypatch.setattr("toolang.setup.watcher.AgentSetup", reject_setup)
+    monkeypatch.setattr("toolang.setup.watcher.load_model_catalogs", reject_setup)
+    monkeypatch.setattr("toolang.setup.watcher.load_model_adapters", reject_setup)
+    return created
+
+
+@pytest.mark.parametrize(
+    ("options", "visible"),
+    [
+        ((), ("me", "shell", "vendor")),
+        (("--all",), ("_toolang", "me", "shell", "vendor")),
+        (("--query", "_toolang/*"), ()),
+        (("--all", "--query", "_toolang/*"), ("_toolang",)),
+        (("--query", "shell/*"), ("shell",)),
+    ],
+)
+def test_tools_inventory_visibility_queries_and_counts(
+    tmp_path: Path, plugin_inventory, options: tuple[str, ...], visible: tuple[str, ...]
+) -> None:
+    result = _invoke(tmp_path / "toolang", "tools", *options)
+
+    assert result.exit_code == 0, result.stderr
+    assert len(plugin_inventory) == 4
+    assert {name for name, _config in plugin_inventory} == {
+        "_toolang",
+        "me",
+        "shell",
+        "vendor",
+    }
+    for name in ("_toolang", "me", "shell", "vendor"):
+        assert (f"{name}/echo" in result.stdout) == (name in visible)
+    if not visible:
+        assert result.stdout.strip() == "No tools matched query."
+        return
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
     assert header.split() == ["TOOL", "DESCRIPTION", "SOURCE"]
+    tool_count = len(visible) + int("shell" in visible)
+    toolset_count = len(visible)
+    tool_plural = "" if tool_count == 1 else "s"
+    toolset_plural = "" if toolset_count == 1 else "s"
+    assert result.stdout.strip().endswith(
+        f"{tool_count} tool{tool_plural}, {toolset_count} toolset{toolset_plural}"
+    )
     assert "Echo text." in result.stdout
+    if "vendor" in visible:
+        assert "external" in result.stdout
 
-    selected = _invoke(root, "tools", "--query", '"shell/echo"')
-    assert selected.exit_code == 0
-    assert selected.stdout == result.stdout
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_toolsets_inventory_does_not_construct_plugins(
+    tmp_path: Path, plugin_inventory, all_: bool
+) -> None:
+    result = _invoke(tmp_path / "toolang", "toolsets", *(("--all",) if all_ else ()))
+
+    assert result.exit_code == 0, result.stderr
+    assert ("_toolang" in result.stdout) == all_
+    assert all(name in result.stdout for name in ("me", "shell", "vendor"))
+    assert result.stdout.count("_toolang") == int(all_)
+    assert "external" in result.stdout
+    assert plugin_inventory == []
+
+
+def test_tools_inventory_merges_plugin_config_without_applying_agent_allow(
+    tmp_path: Path, plugin_inventory
+) -> None:
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "default")
+    layout.home.mkdir(parents=True)
+    layout.root_config.write_text(
+        "[allow]\ntools = []\n"
+        '[plugin.toolset.shell.options]\nroot = true\nchoice = "root"\n',
+        encoding="utf-8",
+    )
+    layout.config.write_text(
+        '[allow]\ntools = []\n[plugin.toolset.shell.options]\nchoice = "agent"\n',
+        encoding="utf-8",
+    )
+    result = _invoke(root, "tools")
+
+    assert result.exit_code == 0, result.stderr
+    assert "shell/echo" in result.stdout
+    assert "me/echo" in result.stdout
+    assert "vendor/echo" in result.stdout
+    assert result.stdout.strip().endswith("4 tools, 3 toolsets")
+    assert dict(plugin_inventory) == {
+        "_toolang": {},
+        "me": {},
+        "shell": {"options": {"root": True, "choice": "agent"}},
+        "vendor": {},
+    }
+    assert len(plugin_inventory) == 4
+
+
+@pytest.mark.parametrize("command", ["tools", "toolsets"])
+def test_plugin_inventory_help_explains_all(command: str, plugin_inventory) -> None:
+    result = runner.invoke(cli.app, [command, "--help"])
+    assert plugin_inventory == []
+
+    assert result.exit_code == 0, result.stderr
+    assert "--all" in strip_ansi(result.stdout)
+    assert "internal toolsets" in strip_ansi(result.stdout)
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_tools_inventory_retains_query_diagnostics(
+    tmp_path: Path, plugin_inventory, all_: bool
+) -> None:
+    result = _invoke(
+        tmp_path / "toolang",
+        "tools",
+        *(("--all",) if all_ else ()),
+        "--query",
+        "*[unknown=value]",
+    )
+
+    assert result.exit_code != 0
+    assert "unknown tools query field 'unknown'" in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize("command", ["tools", "toolsets"])
+def test_internal_only_inventory_has_an_empty_default_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    from toolang.plugin import loading
+
+    entries = tuple(loading.entry_points(group="toolang.toolset"))
+    monkeypatch.setattr(
+        loading,
+        "entry_points",
+        lambda *, group: (
+            [entry for entry in entries if entry.name == "_toolang"]
+            if group == "toolang.toolset"
+            else []
+        ),
+    )
+    result = _invoke(tmp_path / "toolang", command)
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip() == f"No {command} found."
+
+    expanded = _invoke(tmp_path / "toolang", command, "--all")
+    assert expanded.exit_code == 0, expanded.stderr
+    assert "_toolang" in expanded.stdout
 
 
 @pytest.mark.parametrize(

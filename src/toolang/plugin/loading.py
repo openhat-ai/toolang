@@ -1,51 +1,18 @@
-"""Generic Toolang plugin loading."""
+"""Installed plugin discovery and typed factory loading."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
 from importlib.metadata import entry_points
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, TypeVar, cast
 
-PluginSource = Literal["built-in", "external"]
+from toolang.base.protocols.channel import AgentChannel
+from toolang.base.protocols.model import ModelAdapter, ModelCatalog
+from toolang.base.protocols.sandbox import Sandbox
+from .types import LoadedPlugin, PluginInfo, PluginProvenance, PluginSource
+
 FactoryT = TypeVar("FactoryT", bound=Callable[..., object])
-
-
-@dataclass(frozen=True, slots=True)
-class PluginInfo:
-    """One discoverable plugin entry point."""
-
-    name: str
-    source: PluginSource
-
-
-@dataclass(frozen=True, slots=True)
-class LoadedPlugin:
-    """One loaded plugin instance with its authority source."""
-
-    entry_point_name: str
-    name: str
-    plugin: object
-    source: PluginSource
-
-
-@dataclass(frozen=True, slots=True)
-class PluginProvenance:
-    """Stable installed-code identity for one plugin entry point."""
-
-    name: str
-    value: str
-    distribution: str | None
-    version: str | None
-
-    def to_data(self) -> dict[str, str | None]:
-        return {
-            "name": self.name,
-            "value": self.value,
-            "distribution": self.distribution,
-            "version": self.version,
-        }
 
 
 def list_plugin_names(*, group: str) -> list[str]:
@@ -178,6 +145,66 @@ def load_plugins_with_sources(
             )
         )
     return tuple(plugins)
+
+
+def create_channel(
+    name: str,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> AgentChannel:
+    """Create one channel implementation by entry-point name."""
+
+    return cast(
+        AgentChannel,
+        create_plugin(name, group="toolang.channel", config=config),
+    )
+
+
+def create_sandbox(
+    name: str,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> Sandbox:
+    """Create one sandbox implementation by entry-point name."""
+
+    return cast(
+        Sandbox,
+        create_plugin(name, group="toolang.sandbox", config=config),
+    )
+
+
+def load_model_adapters(
+    config: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, ModelAdapter]:
+    """Load installed model adapters with their plugin-owned configuration."""
+
+    return cast(
+        dict[str, ModelAdapter],
+        load_plugins(group="toolang.model_adapter", config=config),
+    )
+
+
+def load_model_catalogs(
+    config: Mapping[str, Mapping[str, Any]],
+) -> dict[str, ModelCatalog]:
+    """Load installed model catalog plugins with explicit runtime inputs."""
+
+    catalogs: dict[str, ModelCatalog] = {}
+    for name, plugin_config in config.items():
+        try:
+            catalog = cast(
+                ModelCatalog,
+                create_plugin(
+                    name,
+                    group="toolang.model_catalog",
+                    config=plugin_config,
+                ),
+            )
+        except ModuleNotFoundError:
+            continue
+        catalog_name = catalog.name.strip() or name
+        catalogs.setdefault(catalog_name, catalog)
+    return catalogs
 
 
 def _plugin_name(plugin: object, *, fallback: str) -> str:

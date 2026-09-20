@@ -26,7 +26,7 @@ from toolang.plugin.sandboxes.docker import _cli as docker_cli
 from toolang.plugin.sandboxes.docker import _guest as docker_guest
 from toolang.plugin.sandboxes.docker import sandbox as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
-from toolang.plugin.sandboxes.loading import create_sandbox
+from toolang.plugin.loading import create_sandbox
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
