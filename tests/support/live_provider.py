@@ -12,6 +12,7 @@ from toolang.state.state import AgentState, agent_state_revision
 
 LIVE_PROVIDER_SOURCE = """
 agic smoke(_: Text) -> Text:
+  tools = none
   recall = none
   context: none
   instruct: Return the requested text exactly, without explanation.
@@ -50,6 +51,6 @@ async def create_live_agent(
     )
     setup = await SetupWatcher(
         AgentLayout.resident(root, "alice"),
-        default_overrides={"model": model},
+        default_overrides={"model": model, "runnable": "agic:smoke"},
     ).refresh()
     return setup, state

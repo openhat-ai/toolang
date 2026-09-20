@@ -3,7 +3,7 @@
 Run these tests explicitly, for example:
 
     uv run pytest -m live_provider --live-model \
-      'deepseek/deepseek-chat[deepseek]'
+      'deepseek/deepseek-chat'
 """
 
 from __future__ import annotations
@@ -89,13 +89,16 @@ class _LiveExecution:
             runnable_name,
             kind=runnable_kind,
         )
+        selected = self.setup.defaults.model
+        assert selected is not None
         record = await asyncio.wait_for(
             self.executor.run(
                 RunSpec(
                     setup=self.setup,
                     state=self.state,
                     thread=thread,
-                    bindings=RunBindings(runnable=runnable),
+                    bindings=RunBindings(runnable=runnable, model=selected.ref),
+                    model_request=selected,
                     limits=self.setup.limits,
                     input=resolve_runnable_input(
                         declaration,
