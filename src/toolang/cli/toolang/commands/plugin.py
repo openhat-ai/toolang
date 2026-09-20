@@ -68,12 +68,11 @@ def list_tools(
     headers = tuple(headers[index] for index in columns)
     rows = [tuple(row[index] for index in columns) for row in raw_rows]
     if all_:
-        headers = (headers[0], "STATUS", *headers[1:])
+        headers = (*headers, "STATUS")
         rows = [
             (
-                row[0],
+                *row,
                 inspection_status(allowed=item.model_name in setup.tools),
-                *row[1:],
             )
             for row, item in zip(rows, selected, strict=True)
         ]

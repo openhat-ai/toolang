@@ -83,22 +83,24 @@ Resource scope, policy, query semantics, and JSON catalog exports stay unchanged
 | Resource | Default view | Full view (`--all` / `-a`) |
 | --- | --- | --- |
 | Caps | Identity, description, scope, form, source | Add `STATUS` immediately after identity |
-| Tools | Identity and description; no `SOURCE` | Add `STATUS` immediately after identity |
-| Models | Identity, context/output sizes, modalities, capabilities, price | Add `STATUS` immediately after identity and route `REASON` last |
-| Providers | `MODELS` counts effective models | `MODELS (OK/ALL)` counts effective models over all models in scope |
+| Tools | Identity and description; no `SOURCE` | Add `STATUS` last |
+| Models | Identity, context/output sizes, modalities, capabilities, price | Add `STATUS` last, with unready reasons in parentheses |
+| Providers | `MODELS` counts effective models | `MODELS` shows `OK/ALL` counts; no REASON column in either view |
 | Plugin inventories | Identity and distribution source | Toolsets additionally include internal entries; no extra state column |
 
-`STATUS` is `ok`, `blocked`, `unready`, or `blocked, unready`. Policy and readiness
-remain independent: `ok` means ready AND allowed, not readiness alone. Tools and
+Model `STATUS` is `ok`, `blocked`, `unready (reason)`, or
+`blocked, unready (reason)`. Policy and readiness remain independent:
+`ok` means ready AND allowed, not readiness alone. Tools and
 caps have no independent readiness protocol, so their status is `ok` or `blocked`.
 Internal tools remain recognizable by their `_toolang` identity; do not add an
 `INTERNAL` label or column. Runtime-internal tools bypass user allow policy.
 Model query field `available` retains its readiness meaning; it is not rendered
 as a separate boolean table column. Provider OK counts read the effective setup
-collection; they must exclude ready-but-blocked models. Provider reasons include
-unready models even when other models are ready. Route reasons use `No adapter`,
-`No API URL`, and `Missing env`, in that order, joined with `; ` and deduplicated
-across provider models. Empty providers without route failures show `No models`.
+collection; they must exclude ready-but-blocked models. Models and providers
+have no separate REASON column. Model unready reasons use `No adapter`,
+`No API URL`, and `Missing env`, in that order, joined with `; ` inside STATUS
+parentheses. Provider MODELS cells keep the full-view fraction but use the
+same header as the default view.
 
 All resource and plugin inventory tables have an unindented summary. Tools use
 `N tools, M toolsets`, aggregate caps use `N caps, M kinds`, and models use

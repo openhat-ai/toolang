@@ -817,11 +817,14 @@ selected view. `me` is not internally hidden and follows normal tool allow polic
 `models --json` and `providers --json` export the same selected setup version as
 models.dev-compatible catalog data without Toolang metadata or resolved secrets.
 Models display identity, context/output sizes, modalities, capabilities, and
-prices. Full cap/tool/model tables add `STATUS` immediately after identity:
-`ok`, `blocked`, `unready`, or `blocked, unready`. `ok` means ready AND allowed;
-caps/tools have no independent readiness check. Model full views add REASON.
-Provider tables show `MODELS` for effective models, or `MODELS (OK/ALL)` with
-`--all`. Ready-but-blocked models do not count as OK. Tools omit SOURCE; plugin
+prices. Full cap tables add STATUS after identity (`ok` or `blocked`).
+Full tool tables put STATUS last (`ok` or `blocked`).
+Full model tables put STATUS last: `ok`, `blocked`, `unready (reason)`, or
+`blocked, unready (reason)`. `ok` means ready AND allowed; caps/tools have no
+independent readiness check. Unready reasons appear inside STATUS parentheses.
+Provider tables always show `MODELS`: effective counts by default, `OK/ALL`
+counts with `--all`. Models and providers have no separate REASON column.
+Ready-but-blocked models do not count as OK. Tools omit SOURCE; plugin
 inventories retain it. Internal names need no separate INTERNAL label.
 
 Every `--all` accepts `-a`. Lists always show displayed-row summaries; empty

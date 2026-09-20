@@ -84,19 +84,15 @@ def models_command(
     rows = [(row[0], *row[2:]) for row in raw_rows]
     justify = (None, "right", "right", None, None, "right")
     if all_:
-        headers = (headers[0], "STATUS", *headers[1:], "REASON")
+        headers = (*headers, "STATUS")
         rows = [
             (
-                row[0],
-                inspection_status(
-                    allowed=setup.model_allowed(model.ref), ready=model._toolang.ready
-                ),
-                *row[1:],
-                _route_reason(model._toolang.route),
+                *row,
+                _model_status(model, allowed=setup.model_allowed(model.ref)),
             )
             for row, model in zip(rows, selected, strict=True)
         ]
-        justify = (None, None, *justify[1:], None)
+        justify = (*justify, None)
     if rows:
         echo_table(headers, rows, justify=justify)
     echo_collection_summary(
@@ -163,11 +159,10 @@ def providers_command(
         return
     headers = (
         "PROVIDER",
-        "MODELS (OK/ALL)" if all_ else "MODELS",
+        "MODELS",
         "ADAPTERS",
         "DEFAULT API",
         "ENV",
-        "REASON",
     )
     rows = [
         (
@@ -181,7 +176,6 @@ def providers_command(
             _provider_adapters_cell(item),
             _provider_api_cell(item, by_provider[item.id]),
             _provider_env_cell(item),
-            _provider_reason(item.record, by_provider[item.id]),
         )
         for item in selected_views
     ]
@@ -230,24 +224,25 @@ def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
     return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
 
 
-def _route_reason(*routes: ModelRoute) -> str:
-    """Summarize missing prerequisites once each, in a stable display order."""
+def _model_status(model: Model, *, allowed: bool) -> str:
+    status = inspection_status(allowed=allowed, ready=model._toolang.ready)
+    if not model._toolang.ready and (reason := _route_reason(model._toolang.route)):
+        status += f" ({reason})"
+    return status
+
+
+def _route_reason(route: ModelRoute) -> str:
+    """Summarize missing prerequisites in a stable display order."""
 
     return "; ".join(
         reason
         for missing, reason in (
-            (any(route.adapter is None for route in routes), "No adapter"),
-            (any(route.api is None for route in routes), "No API URL"),
-            (any(route.env is None for route in routes), "Missing env"),
+            (route.adapter is None, "No adapter"),
+            (route.api is None, "No API URL"),
+            (route.env is None, "Missing env"),
         )
         if missing
     )
-
-
-def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
-    if not models:
-        return _route_reason(provider._toolang.route) or "No models"
-    return _route_reason(*(model._toolang.route for model in models))
 
 
 def _provider_adapters_cell(provider: CatalogProviderView) -> Text:

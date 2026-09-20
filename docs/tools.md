@@ -25,7 +25,7 @@ allow-filtered runtime collection; inspection does not expand runtime grants.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
 not guessed tools from an unloadable plugin. Full tables add one `STATUS` column
-immediately after the tool name: `ok` or `blocked`. Internal tools are identifiable
+at the end: `ok` or `blocked`. Internal tools are identifiable
 by their `_toolang` names without an extra label. Default tables show only name
 and description; SOURCE is omitted from both tool views but remains queryable.
 Summaries use `N tools, M toolsets`, with no toolset count for zero or one tool.

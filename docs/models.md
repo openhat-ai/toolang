@@ -384,15 +384,17 @@ complete directory, including unready and allow-excluded entries; `providers
 --all` also includes empty providers. The `available` query field describes
 readiness independently of allow membership.
 
-`too models --all` (or `-a`) adds `STATUS` immediately after identity: `ok`,
-`blocked`, `unready`, or `blocked, unready`. `ok` means ready AND allowed;
-readiness alone does not make a model usable. Default tables omit STATUS and
-REASON. The query field `available` continues to describe readiness alone.
-`too providers --all` uses `MODELS (OK/ALL)`: the numerator counts ready,
-allowed models, and the denominator counts all provider models in scope.
-Without `--all`, `MODELS` shows only the effective count; providers with none
-are hidden. No separate allow count is displayed. `--all` preserves scope,
-configuration, and catalog precedence and grants no runtime access.
+`too models --all` (or `-a`) adds `STATUS` as the last column: `ok`,
+`blocked`, `unready (reason)`, or `blocked, unready (reason)`. `ok` means ready
+AND allowed. Unready reasons are included in parentheses, with no separate
+REASON column. Default tables omit STATUS. The query field `available`
+continues to describe readiness alone.
+
+Provider tables always use the `MODELS` header and never show REASON. With
+`--all`, values are `OK/ALL`: ready, allowed models over all provider models in
+scope. Without `--all`, values are effective counts and providers with none
+are hidden. `--all` preserves scope, configuration, and catalog precedence and
+grants no runtime access.
 
 Model summaries use `N models, M providers`; omit the provider count for zero
 or one model. Provider summaries use `N providers`. Empty results print only
@@ -400,14 +402,12 @@ the zero count, without table headers. Summaries count displayed rows; JSON
 exports have no summary or presentation status. Prices independently right-align
 the input and output amounts across displayed rows so their `/` separators align.
 
-`too models --all` and `too providers --all` show coarse unavailability reasons
-from the route's missing fields: `No adapter`, `No API URL`, and `Missing env`.
-Multiple reasons are joined with `; ` in that order and appear only once in a
-provider's summary. An empty provider with no route failures shows `No models`.
+Model STATUS shows coarse unready reasons from missing route fields:
+`No adapter`, `No API URL`, and `Missing env`, joined with `; ` in that order.
 These labels do not identify individual missing credentials or distinguish
 unknown adapters from uninstalled ones.
 
-Providers show `ADAPTERS`, `DEFAULT API`, `ENV`, and `REASON`. Adapter names are
+Providers show `ADAPTERS`, `DEFAULT API`, and `ENV`. Adapter names are
 aggregated from the selected models; empty providers show their default adapter.
 The API column marks model endpoint overrides. ENV shows the satisfied rule, or
 catalog declarations when unavailable; its red styling indicates the overall

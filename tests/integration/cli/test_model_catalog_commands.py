@@ -67,9 +67,10 @@ def test_empty_model_allow_keeps_complete_diagnostic_view(
         assert "STATUS" in result.out
         for ref in ("test/one", "test/two"):
             row = next(line for line in result.out.splitlines() if ref in line)
-            assert row.split()[1] == "blocked"
+            assert row.split()[-1] == "blocked"
     else:
-        assert "MODELS (OK/ALL)" in result.out
+        assert "MODELS" in result.out
+        assert "REASON" not in result.out
         assert "2/2" not in result.out
         assert "0/2" in result.out
 
@@ -368,12 +369,12 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     )
     values = (
         "test/one",
-        "unready",
         "1_000_000",
         "100_000",
         "text,image",
         "tool_call,reasoning,temperature,structured_output",
         "$1.26 / $0.00",
+        "unready (Missing env)",
     )
     assert [row.index(value) for value in values] == sorted(
         row.index(value) for value in values
@@ -581,7 +582,6 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         "ADAPTERS",
         "DEFAULT API",
         "ENV",
-        "REASON",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
     ollama_available = by_provider["ollama"][1]
@@ -734,7 +734,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
-def test_catalog_reasons_are_concise_and_provider_causes_are_deduplicated(
+def test_catalog_reasons_only_appear_inside_model_status(
     tmp_path: Path, monkeypatch, command: str
 ) -> None:
     data = _catalog_data()
@@ -760,11 +760,12 @@ def test_catalog_reasons_are_concise_and_provider_causes_are_deduplicated(
     reasons = {row[0]: row[-1] for row in rows}
     if command == "models":
         assert reasons == {
-            "test/one": "No adapter; Missing env",
-            "test/two": "No adapter; No API URL; Missing env",
+            "test/one": "unready (No adapter; Missing env)",
+            "test/two": "unready (No adapter; No API URL; Missing env)",
         }
     else:
-        assert reasons == {"test": "No adapter; No API URL; Missing env"}
+        assert all(len(row) == 5 for row in rows)
+        assert all("No adapter" not in str(row) for row in rows)
 
 
 @pytest.mark.parametrize("available_models", [0, 1])
@@ -812,7 +813,7 @@ def test_provider_api_and_counts_use_independent_availability(
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY"
     assert not _is_red(env, 0)
-    assert rows[0][-1] == "No API URL"
+    assert len(rows[0]) == 5
 
     default_result = runner.invoke(
         cli.app,
@@ -820,7 +821,7 @@ def test_provider_api_and_counts_use_independent_availability(
     )
     assert default_result.exit_code == 0, default_result.stderr
     if available_models:
-        assert rows[-1][-1] == ""
+        assert len(rows[-1]) == 5
 
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
@@ -1254,7 +1255,10 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
     assert result.exit_code == 0, result.exception
     assert rows
-    assert all("Missing env" in str(row[-1]) for row in rows)
+    if command == "models":
+        assert all(row[-1] == "unready (Missing env)" for row in rows)
+    else:
+        assert all(len(row) == 5 for row in rows)
     assert all("No adapter" not in str(row[-1]) for row in rows)
     assert all("added-after-publication" not in str(row) for row in rows)
 
@@ -1355,19 +1359,23 @@ def test_model_status_columns_separate_readiness_and_allow(
         if all_:
             assert by_id["test/one"]["STATUS"] == "ok"
             assert by_id["test/two"]["STATUS"] == "blocked"
-            assert by_id["offline/one"]["STATUS"] == "unready"
-            assert by_id["offline/two"]["STATUS"] == "blocked, unready"
-            assert tuple(by_id["test/one"])[1] == "STATUS"
+            assert by_id["offline/one"]["STATUS"] == "unready (Missing env)"
+            assert by_id["offline/two"]["STATUS"] == "blocked, unready (Missing env)"
+            assert tuple(by_id["test/one"])[-1] == "STATUS"
             assert "AVAILABLE" not in by_id["test/one"]
-            assert by_id["offline/two"]["REASON"] != "-"
+            assert "REASON" not in by_id["offline/two"]
         else:
             assert "STATUS" not in by_id["test/one"]
     else:
         by_id = {str(row["PROVIDER"]): row for row in rows}
         assert set(by_id) == ({"test", "offline"} if all_ else {"test"})
+        assert all(
+            tuple(row) == ("PROVIDER", "MODELS", "ADAPTERS", "DEFAULT API", "ENV")
+            for row in by_id.values()
+        )
         if all_:
-            assert str(by_id["test"]["MODELS (OK/ALL)"]) == "1/2"
-            assert str(by_id["offline"]["MODELS (OK/ALL)"]) == "0/2"
+            assert str(by_id["test"]["MODELS"]) == "1/2"
+            assert str(by_id["offline"]["MODELS"]) == "0/2"
         else:
             assert str(by_id["test"]["MODELS"]) == "1"
             assert "MODELS (OK/ALL)" not in by_id["test"]

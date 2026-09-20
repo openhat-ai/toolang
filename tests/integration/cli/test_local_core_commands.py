@@ -2638,8 +2638,8 @@ def test_tools_visibility_queries_and_counts(
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
     assert header.split() == [
         "TOOL",
-        *(["STATUS"] if "--all" in options else []),
         "DESCRIPTION",
+        *(["STATUS"] if "--all" in options else []),
     ]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
@@ -2826,7 +2826,7 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
         assert by_tool["_toolang/echo"]["STATUS"] == "ok"
         assert "INTERNAL" not in by_tool["_toolang/echo"]
         assert "SOURCE" not in by_tool["shell/echo"]
-        assert tuple(by_tool["shell/echo"]) == ("TOOL", "STATUS", "DESCRIPTION")
+        assert tuple(by_tool["shell/echo"]) == ("TOOL", "DESCRIPTION", "STATUS")
     else:
         assert set(by_tool) == {"shell/echo"}
         assert "STATUS" not in by_tool["shell/echo"]

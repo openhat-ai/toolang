@@ -202,12 +202,14 @@ execution permissions. Queries and counts use the selected view. An
 internal-only tool query needs `--all`. Tool-call inspection shows the
 recorded plugin identity, independently of its Python module location.
 
-Full cap/tool/model tables group diagnostics into `STATUS` immediately after
-identity: `ok`, `blocked`, `unready`, or both failure states. `ok` means ready
-and allowed; caps/tools have only allow status. Internal names need no extra
-label. Full provider tables use `MODELS (OK/ALL)`; default provider tables use
-`MODELS` for the effective count. Tools omit SOURCE; plugin inventories retain
-it. All lists have summaries, including zero counts for empty results. Resource
+Full cap tables show `STATUS` immediately after identity (`ok` or `blocked`).
+Full tool tables put STATUS last (`ok` or `blocked`). Full model tables put
+STATUS last: `ok`, `blocked`, `unready (reason)`, or `blocked, unready (reason)`.
+`ok` means ready and allowed.
+Internal names need no extra label. Provider tables always use `MODELS`, with
+`OK/ALL` values in full views and effective counts by default, and omit REASON.
+Tools omit SOURCE; plugin inventories retain it. All lists have summaries,
+including zero counts for empty results. Resource
 summaries include group counts only when more than one row is displayed.
 Every `--all` option accepts `-a`. Plugin inventories have no agent allow policy.
 
