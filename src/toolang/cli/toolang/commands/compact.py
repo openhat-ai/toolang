@@ -1,4 +1,4 @@
-"""Run the built-in compact script against one agent's local history."""
+"""Compact or forget local history through a selected producer."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import replace
 import json
 import os
+from pathlib import Path
+from functools import lru_cache
 from typing import Annotated, cast
 
 import typer
@@ -16,18 +18,22 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.files import file_write_lock
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
+from toolang.execution.assembly import prompts
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.compact import compact_state, compact_tools, permit
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import FieldRef, RunRef, ThreadRef
 from toolang.lang.ast import AgicDecl
+from toolang.lang.types import Value
 from toolang.lang.input import (
     CallInput,
     RunnableInput,
     resolve_input_parts,
     resolve_runnable_input,
 )
+from toolang.state.builtin import prepare_builtin_state
+from toolang.state.state import AgentState
 from toolang.setup import SetupWatcher
 from toolang.setup.models import select_compact_model
 from toolang.setup.types import AgentSetup
@@ -51,13 +57,43 @@ from ...common.script_progress import ScriptRunPresenter
 from .script import await_script_run, collect_named_arguments
 
 
+@lru_cache(maxsize=1)
 def compact_runnable() -> AgicDecl:
-    """The public signature used by both argument collection and help."""
-    runnable = compact_state().modules["agent"].find_agic("compact")
-    assert runnable is not None
-    return replace(
-        runnable, params=tuple(p for p in runnable.params if p.name != "previous")
+    """Stable CLI inputs, independent of producer declarations."""
+    state = prepare_builtin_state(
+        "agic compact(thread: Text, before?: Text) -> Json:\n  user: {{thread}}\n"
     )
+    runnable = state.modules["agent"].find_agic("compact")
+    assert runnable is not None
+    return runnable
+
+
+def _program(algorithm: str) -> AgentState:
+    if algorithm == "DEFAULT":
+        return compact_state()
+    if algorithm == "FORGET":
+        return prepare_builtin_state(prompts.load("defaults/forget.too"))
+    path = Path(algorithm).expanduser().resolve()
+    if path.suffix != ".too":
+        raise ToolangError("compact algorithm must be DEFAULT, FORGET, or a .too file")
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ToolangError(f"cannot read compact algorithm {path}: {exc}") from exc
+    state = prepare_builtin_state(source)
+    runnable = state.modules["agent"].find_agic("compact")
+    expected = compact_state().modules["agent"].find_agic("compact")
+    assert expected is not None
+
+    def signature(item: AgicDecl) -> dict[str, tuple[str | None, bool]]:
+        return {p.name: (p.type_name, p.optional) for p in item.params}
+
+    if runnable is None or signature(runnable) != signature(expected):
+        raise ToolangError(
+            "compact algorithm requires agic compact(thread: Text, begin?: Text, "
+            "end?: Text, bare?: Boolean, previous?: Text)"
+        )
+    return state
 
 
 def compact_command(
@@ -70,6 +106,14 @@ def compact_command(
             hidden=True,
         ),
     ],
+    algorithm: Annotated[
+        str,
+        typer.Option(
+            "--algorithm",
+            metavar="DEFAULT|FORGET|FILE",
+            help="Compaction producer (FORGET makes no model calls)",
+        ),
+    ] = "DEFAULT",
     limit: LimitOptions = None,
     model: Annotated[
         str | None,
@@ -81,8 +125,7 @@ def compact_command(
     ] = None,
     model_catalog: ModelCatalogOption = None,
 ) -> None:
-    """Compact local history with thread=THREAD [begin=RUN] [end=RUN] [bare=true]."""
-    # The same declaration drives CLI input and execution; previous is supplied here.
+    """Compact history before a Run, keeping that Run and later history."""
     public = compact_runnable()
     authored, extra = collect_named_arguments(public, items=tuple(arguments))
     if extra:
@@ -95,6 +138,12 @@ def compact_command(
             for name, value in authored.items()
         },
     )
+    if algorithm == "FORGET":
+        if "before" not in input:
+            raise typer.BadParameter("FORGET requires before=RUN")
+        if model is not None:
+            raise typer.BadParameter("FORGET does not accept --model")
+    program = user_call(_program, algorithm)
     layout = context_layout(ctx)
     environ = load_runtime_environ(layout, base_environ=os.environ)
     allow = user_call(resolve_ceiling_overrides, environ)
@@ -105,7 +154,9 @@ def compact_command(
         allow_overrides={
             name: value for name, value in allow.items() if name == "models"
         },
-        compact_override=user_call(resolve_compact_override, environ, model),
+        compact_override=None
+        if algorithm == "FORGET"
+        else user_call(resolve_compact_override, environ, model),
         limit_overrides=user_call(resolve_limit_overrides, environ, limit),
     )
     try:
@@ -119,6 +170,8 @@ def compact_command(
                     input,
                     authored,
                     max_width=resolve_progress_max_width(environ),
+                    algorithm=algorithm,
+                    program=program,
                 )
             )
     except (OSError, ToolangError, KeyError, ValueError, RuntimeError) as exc:
@@ -131,7 +184,16 @@ def _prepare(
     setup: AgentSetup,
     input: RunnableInput,
     authored: CallInput[str],
+    *,
+    algorithm: str = "DEFAULT",
+    program: AgentState | None = None,
 ) -> tuple[RunSpec, tuple[str, ...]]:
+    if set(input) - {"thread", "before"}:
+        raise ToolangError("compact accepts only thread=THREAD and before=RUN")
+    forget = algorithm == "FORGET"
+    if forget and "before" not in input:
+        raise ToolangError("FORGET requires before=RUN")
+    program = program if program is not None else _program(algorithm)
     thread = str(ThreadRef.parse(cast(str, input["thread"])))
     if thread.startswith("compact_"):
         raise ToolangError("cannot compact a compact Thread")
@@ -143,41 +205,51 @@ def _prepare(
         raise ToolangError(
             "compact requires a nonempty prefix and a retained terminal root"
         )
-    end = cast(str, input.get("end", terminal[-1].id))
+    end = cast(str, input.get("before", terminal[-1].id))
     RunRef.parse(end)
     if end not in ids:
-        raise ToolangError("compact end must be a visible root")
+        raise ToolangError("compact before must identify a visible root")
     stop = ids.index(end)
-    previous = history.get_compaction(thread)
+    previous = None if forget else history.get_compaction(thread)
     old_end = str(previous.result.end) if previous is not None else None
-    begin = cast(str | None, input.get("begin"))
-    if begin is None:
-        begin = (
-            old_end if old_end is not None and ids.index(old_end) <= stop else ids[0]
-        )
-    RunRef.parse(begin)
-    if begin not in ids:
-        raise ToolangError("compact begin must be a visible root")
+    begin = old_end if old_end is not None and ids.index(old_end) <= stop else ids[0]
     start = ids.index(begin)
     if start >= stop:
-        raise ToolangError("nothing to compact: begin must precede end")
+        raise ToolangError("nothing to compact before the selected Run")
     if any(
         run.status in {"pending", "running"} for run in roots[start:stop]
     ) or not any(run.status not in {"pending", "running"} for run in roots[stop:]):
         raise ToolangError(
             "compact must exclude active roots and retain a terminal root"
         )
-    reuse = previous is not None and begin == old_end and not input.get("bare", False)
-    resolved = {"thread": thread, "begin": begin, "end": end, "bare": not reuse}
+    reuse = previous is not None and begin == old_end
+    resolved: dict[str, Value] = {
+        "thread": thread,
+        "begin": begin,
+        "end": end,
+        "bare": not reuse,
+    }
     if reuse:
         assert previous is not None
         resolved["previous"] = str(previous.ref)
-    request = select_compact_model(setup.models, setup.compact_model)
+    if forget:
+        resolved["_"] = {
+            "thread": thread,
+            "begin": begin,
+            "end": end,
+            "summary": "Earlier history was intentionally forgotten.",
+        }
+    request = (
+        None if forget else select_compact_model(setup.models, setup.compact_model)
+    )
     return RunSpec(
         setup=replace(setup, tools=compact_tools()),
-        state=compact_state(),
+        state=program,
         thread=f"compact_{thread}",
-        bindings=RunBindings(model=request.ref, runnable="agic:compact"),
+        bindings=RunBindings(
+            model=request.ref if request is not None else None,
+            runnable="flow:forget" if forget else "agic:compact",
+        ),
         model_request=request,
         limits=setup.limits,
         input=RunnableInput(resolved),
@@ -193,10 +265,26 @@ async def _run(
     authored: CallInput[str],
     *,
     max_width: int,
+    algorithm: str = "DEFAULT",
+    program: AgentState | None = None,
 ) -> dict[str, object]:
-    spec, prefix = _prepare(store, await watcher.refresh(), input, authored)
-    thread = cast(str, spec.input["thread"])
+    program = program if program is not None else _program(algorithm)
+    setup = await watcher.refresh()
     history = RunHistory(store)
+    # Freeze coverage and summary generation from the same durable snapshot.
+    # FORGET changes the latter without changing the target's root sequence.
+    with store.read_transaction():
+        spec, prefix = _prepare(
+            store,
+            setup,
+            input,
+            authored,
+            algorithm=algorithm,
+            program=program,
+        )
+        thread = cast(str, spec.input["thread"])
+        previous = history.get_compaction(thread)
+        summary_ref = previous.ref if previous is not None else None
 
     def check_range() -> tuple[RunRef, ...]:
         current = history.thread_view(thread, include_children=False).roots
@@ -207,6 +295,11 @@ async def _run(
     lock = store.db_path.with_name(f"{store.db_path.name}.{thread}.compact.lock")
     async with permit(lock):
         check_range()
+        current = history.get_compaction(thread)
+        if (current.ref if current is not None else None) != summary_ref:
+            raise ToolangError(
+                "compact summary changed while waiting; submit a new request"
+            )
         with file_write_lock(store.thread_lock_path):
             if store.get_thread(thread_id=spec.thread) is None:
                 store.create_thread(

@@ -116,7 +116,7 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(tmp_path, r
 
             try:
                 roots = [await run("note", text) for text in _FACTS]
-                inputs = {"thread": thread, "end": roots[8].id}
+                inputs = {"thread": thread, "before": roots[8].id}
                 result = await compact._run(
                     store,
                     ids,
