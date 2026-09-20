@@ -73,7 +73,6 @@ def test_control_description_is_an_attribute(
                 RunLimits(),
                 None,
                 "agic:chat",
-                "test/model",
                 CallInput({}),
             ),
         ),

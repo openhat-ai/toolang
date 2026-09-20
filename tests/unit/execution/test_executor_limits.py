@@ -7,7 +7,7 @@ import pytest
 from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
-from toolang.execution.executor.limits import _model_accounting
+from toolang.execution.accounting import build_model_accounting, selected_usd_cost
 from toolang.execution.records import run_limits_to_data
 from toolang.setup import ModelCollection
 
@@ -71,7 +71,7 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
     models = ModelCollection((model,))
     assert models.contains(model.ref)
 
-    accounting = _model_accounting(
+    accounting = build_model_accounting(
         model,
         ModelUsage(
             input_tokens=10,
@@ -81,28 +81,33 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
         ),
     )
 
-    assert accounting.cost == 2e-05
-    assert accounting.accounting is not None
-    assert accounting.accounting.selected == "estimated"
+    assert selected_usd_cost(accounting) == 2e-05
+    assert accounting is not None and accounting.selected == "estimated"
 
 
 def test_cost_budget_uses_settled_units_for_live_and_restored_totals() -> None:
     from toolang.execution.executor.limits import (
-        _ModelAccounting,
         _RunLimitExceeded,
         _RunLimitState,
     )
+
+    from toolang.execution.types import ModelAccounting, ModelCost
+
+    def recorded_cost(amount: float) -> ModelAccounting:
+        return ModelAccounting(
+            0, 0, reported=ModelCost(amount, "USD", True), selected="reported"
+        )
 
     model = Model("one", "One", ModelToolang(provider="test"))
     live = _RunLimitState(RunLimits(cost=0.3))
     restored = _RunLimitState(RunLimits(cost=0.3))
     for amount in (0.1, 0.2):
-        live.record_model(model, _ModelAccounting(usage=None, cost=amount))
+        live.record_model(model, recorded_cost(amount))
         restored.restore(input_tokens=None, output_tokens=None, cost=amount)
     restored.check_restored()
     assert live.cost == restored.cost == 0.3
     with pytest.raises(_RunLimitExceeded):
-        live.record_model(model, _ModelAccounting(usage=None, cost=0.000001))
+        live.record_model(model, recorded_cost(0.000001))
     restored.restore(input_tokens=None, output_tokens=None, cost=0.000001)
     with pytest.raises(_RunLimitExceeded):
         restored.check_restored()
@@ -126,13 +131,13 @@ def test_budget_records_reject_boolean_costs(value: bool) -> None:
         run_limits_from_data({"cost": value})
 
 
-def test_fallback_cost_settles_decimal_token_prices_once() -> None:
-    from toolang.execution.executor.limits import _model_cost, _TokenPrice
-
+def test_cost_settles_decimal_token_prices_once() -> None:
+    model = Model(
+        "one", "One", ModelToolang(provider="test"), cost={"input": 0.58, "output": 0}
+    )
     assert (
-        _model_cost(
-            ModelUsage(input_tokens=25, output_tokens=0),
-            _TokenPrice(input=0.00000058, output=0),
+        selected_usd_cost(
+            build_model_accounting(model, ModelUsage(input_tokens=25, output_tokens=0))
         )
         == 0.000015
     )

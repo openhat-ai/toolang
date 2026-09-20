@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from toolang.execution.types import ModelCost
+
+from toolang.execution.types import ModelAccounting
+
 import asyncio
 import re
 from io import StringIO
@@ -45,7 +49,6 @@ from toolang.execution.types import (
     Local,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
     StepRef,
     ToolStepGiven,
 )
@@ -63,6 +66,7 @@ def _parts(text: str) -> Output:
 
 def _model() -> ModelStepGiven:
     return ModelStepGiven(
+        setup="test-setup",
         model="deepseek/deepseek-chat",
         call=ModelCall(instructions="", messages=[]),
     )
@@ -118,8 +122,14 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 status="succeeded",
                 output=_parts("Use a shared reducer."),
                 noted=ModelStepNoted(
-                    tokens=ModelTokenCount(input=3400, output=86),
-                    cost="0.006",
+                    accounting=ModelAccounting(
+                        input_tokens=3400,
+                        output_tokens=86,
+                        estimate=ModelCost(
+                            amount=float("0.006"), currency="USD", complete=True
+                        ),
+                        selected="estimated",
+                    )
                 ),
                 finished_at="2026-01-01T00:00:01.800Z",
             ),

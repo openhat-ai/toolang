@@ -6,10 +6,9 @@ from fractions import Fraction
 from collections.abc import Mapping
 from typing import Literal, cast
 
-from toolang.base.money import cost_from_rates, cost_text, normalize_cost, number_text
+from toolang.base.money import cost_from_rates, normalize_cost
 from toolang.base.types.model import (
     Model,
-    Reasoning,
 )
 from toolang.base.types.run import ModelUsage
 
@@ -18,7 +17,6 @@ from .types import (
     ModelCost,
     ModelCostLine,
     ModelPricing,
-    ModelReasoningAccounting,
     ModelUsageMeter,
 )
 
@@ -28,16 +26,8 @@ _PER_MILLION = 1_000_000
 def build_model_accounting(
     model: Model,
     usage: ModelUsage | None,
-    *,
-    requested: Reasoning | None = None,
-    source: str = "unknown",
-    revision: str | None = None,
 ) -> ModelAccounting | None:
-    """Build one versioned accounting value from observed usage and catalog rates.
-
-    `catalog` provenance (source and revision) is supplied by the cache/snapshot
-    layer. A local catalog declares zero rates on the model's `cost`.
-    """
+    """Build durable accounting from observed usage and the applied model rates."""
 
     if usage is None:
         return None
@@ -53,7 +43,7 @@ def build_model_accounting(
     )
     reported = (
         ModelCost(
-            amount=cost_text(usage.reported_cost),
+            amount=normalize_cost(usage.reported_cost),
             currency=usage.reported_currency or "USD",
             complete=True,
         )
@@ -65,14 +55,8 @@ def build_model_accounting(
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
         meters=_usage_meters(usage),
-        reasoning=ModelReasoningAccounting(
-            requested=(requested.to_data() or None) if requested is not None else None,
-            selected=None,
-        ),
         pricing=(
             ModelPricing(
-                source=source,
-                revision=revision,
                 plan=plan,
                 match=match,
             )
@@ -90,6 +74,8 @@ def selected_usd_cost(accounting: ModelAccounting | None) -> float | None:
 
     if accounting is None:
         return None
+    if accounting.selected == "zero":
+        return 0.0
     selected = (
         accounting.reported
         if accounting.selected == "reported"
@@ -106,32 +92,29 @@ def _selected_cost_source(
     *,
     reported: ModelCost | None,
     estimate: ModelCost | None,
-) -> Literal["reported", "estimated", "none"]:
+) -> Literal["reported", "estimated", "zero", "unknown"]:
     if reported is not None and reported.currency.upper() == "USD":
         return "reported"
     if estimate is not None and estimate.currency.upper() == "USD":
+        if (
+            reported is None
+            and estimate.complete
+            and estimate.lines
+            and all(line.rate == 0 for line in estimate.lines)
+        ):
+            return "zero"
         return "estimated"
     if reported is not None:
         return "reported"
     if estimate is not None:
         return "estimated"
-    return "none"
+    return "unknown"
 
 
 def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
     """Return whether the selected cost needs an approximation marker."""
 
-    if accounting is None or accounting.selected == "reported":
-        return False
-    estimate = accounting.estimate
-    if accounting.selected != "estimated" or estimate is None:
-        return True
-    exact_zero = (
-        estimate.complete
-        and bool(estimate.lines)
-        and all(float(line.rate) == 0 for line in estimate.lines)
-    )
-    return not exact_zero
+    return accounting is not None and accounting.selected in {"estimated", "unknown"}
 
 
 def cache_hit_ratio(accounting: ModelAccounting | None) -> float | None:
@@ -237,8 +220,24 @@ def _estimate_cost(
     cache_read = usage.input_cache_read_tokens
     cache_write = usage.input_cache_write_tokens
     uncached = usage.input_uncached_tokens
-    if uncached is None and cache_read is not None:
-        uncached = max(usage.input_tokens - cache_read - (cache_write or 0), 0)
+    input_rate = _rate(rates, "input")
+    if uncached is None:
+        remaining = usage.input_tokens - (cache_read or 0) - (cache_write or 0)
+        if remaining > 0 and any(
+            quantity is None and _rate(rates, name) not in {None, input_rate}
+            for name, quantity in (
+                ("cache_read", cache_read),
+                ("cache_write", cache_write),
+            )
+        ):
+            complete = False
+        if cache_read is not None or cache_write is not None:
+            uncached = remaining
+    if (
+        uncached is not None
+        and uncached + (cache_read or 0) + (cache_write or 0) < usage.input_tokens
+    ):
+        complete = False
     input_audio = usage.input_audio_tokens
     if input_audio is not None and _rate(rates, "input_audio") is not None:
         _append_line(lines, "input.audio", input_audio, _rate(rates, "input_audio"))
@@ -254,7 +253,6 @@ def _estimate_cost(
         )
     elif cache_write not in {None, 0}:
         complete = False
-    input_rate = _rate(rates, "input")
     if input_rate is not None:
         if uncached is not None:
             _append_line(lines, "input.uncached", uncached, input_rate)
@@ -263,8 +261,6 @@ def _estimate_cost(
             if input_audio is not None and _rate(rates, "input_audio") is not None:
                 input_quantity = max(input_quantity - input_audio, 0)
             _append_line(lines, "input", input_quantity, input_rate)
-            if _rate(rates, "cache_read") is not None:
-                complete = False
     else:
         complete = False
 
@@ -272,6 +268,13 @@ def _estimate_cost(
     visible = usage.output_visible_tokens
     if visible is None and reasoning is not None:
         visible = max(usage.output_tokens - reasoning, 0)
+    if (
+        _rate(rates, "reasoning") is not None
+        and reasoning is not None
+        and visible is not None
+        and visible + reasoning < usage.output_tokens
+    ):
+        complete = False
     output_audio = usage.output_audio_tokens
     if output_audio is not None and _rate(rates, "output_audio") is not None:
         _append_line(lines, "output.audio", output_audio, _rate(rates, "output_audio"))
@@ -320,10 +323,10 @@ def _estimate_cost(
     if not lines:
         return None
     amount = cost_from_rates(
-        ((int(line.quantity), float(line.rate)) for line in lines), per=_PER_MILLION
+        ((int(line.quantity), line.rate) for line in lines), per=_PER_MILLION
     )
     return ModelCost(
-        amount=cost_text(amount),
+        amount=amount,
         currency="USD",
         complete=complete,
         lines=tuple(lines),
@@ -352,11 +355,11 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
         ("output.audio", usage.output_audio_tokens),
     ):
         if value is not None:
-            meters.append(ModelUsageMeter(name=name, quantity=str(value), unit="token"))
+            meters.append(ModelUsageMeter(name=name, quantity=value, unit="token"))
     meters.extend(
         ModelUsageMeter(
             name=meter.name,
-            quantity=number_text(meter.quantity),
+            quantity=meter.quantity,
             unit=meter.unit,
         )
         for meter in usage.meters
@@ -383,10 +386,10 @@ def _append_line(
     lines.append(
         ModelCostLine(
             meter=meter,
-            quantity=str(quantity),
+            quantity=quantity,
             unit="token",
-            rate=number_text(rate),
-            per=str(_PER_MILLION),
-            amount=number_text(amount),
+            rate=rate,
+            per=_PER_MILLION,
+            amount=amount,
         )
     )

@@ -119,7 +119,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 46
+_SCHEMA_VERSION = 47
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -326,7 +326,6 @@ class RunStore:
         limits: RunLimits,
         state: str | None,
         runnable: str,
-        model: str,
         model_request: ModelRequest | None = None,
         input: CallInput[Value | TypedRef],
         sandbox: str | None,
@@ -437,7 +436,6 @@ class RunStore:
                     limits=limits,
                     state=state,
                     runnable=runnable,
-                    model=model,
                     model_request=model_request,
                     input=input,
                     horizon=horizon,
@@ -949,9 +947,9 @@ class RunStore:
                 ):
                     raise ValueError(f"run preparation not found: {run_id}")
                 recorded_state = self._state_revision_for_ref_locked(run.state)
-                if (
-                    model_request is not None
-                    and model_request.ref != preparation_payload.model
+                if model_request is not None and (
+                    preparation_payload.model_request is None
+                    or model_request.ref != preparation_payload.model_request.ref
                 ):
                     raise ValueError(
                         "retry cannot replace the original model; use rerun"
@@ -2726,6 +2724,7 @@ class RunStore:
                 self.capture_model_call(
                     step=ref,
                     model=given.model,
+                    setup=given.setup,
                     call=given.call,
                     messages=given.messages,
                 )
@@ -2892,6 +2891,7 @@ class RunStore:
         *,
         step: StepRef,
         model: str,
+        setup: str,
         call: ModelCall,
         messages: ModelMessages | None = None,
     ) -> StoredModelStepGiven:
@@ -2971,11 +2971,13 @@ class RunStore:
 
         return StoredModelStepGiven(
             model=model,
+            setup=setup,
             call=ModelCallRefs(
                 instructions=instruction_ref,
                 messages=ModelMessages(messages.head, delta),
                 tools=toolset_ref,
                 max_output_tokens=call.max_output_tokens,
+                reasoning=call.reasoning,
                 output_schema=(
                     dict(call.output_schema) if call.output_schema is not None else None
                 ),
@@ -3152,6 +3154,7 @@ class RunStore:
                     messages=list(messages),
                     tools=toolsets[call.tools] if call.tools is not None else (),
                     max_output_tokens=call.max_output_tokens,
+                    reasoning=call.reasoning,
                     output_schema=dict(call.output_schema)
                     if call.output_schema is not None
                     else None,

@@ -1,5 +1,9 @@
 # Define Model Catalog and Cost Accounting
 
+Record and model-request wire details are superseded by the approved
+[model records contract](model-records.md).
+
+
 ## Status
 
 Approved for implementation on 2026-08-24.

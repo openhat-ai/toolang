@@ -306,7 +306,9 @@ def test_recall_preserves_target_revision_and_raw_content(
         kind="model",
         input=(),
         preceded_by=(control.ref, updated.ref),
-        given=ModelStepGiven("test", ModelCall(instructions="", messages=[])),
+        given=ModelStepGiven(
+            "test", ModelCall(instructions="", messages=[]), setup="test-setup"
+        ),
         started_at="2026-01-01T00:00:04Z",
     )
     assert control.status == updated.status == "applied"

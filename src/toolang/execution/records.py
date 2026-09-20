@@ -22,7 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     part_from_data,
 )
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelRequest, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data
@@ -55,11 +55,8 @@ from .types import (
     ModelCostLine,
     ModelMessages,
     ModelPricing,
-    ModelReasoningAccounting,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
-    ModelTokenPrice,
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
@@ -198,6 +195,7 @@ def _segment_from_data(data: object) -> str | Part | TypedRef | ContentRef:
 
 
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
+_REASONING_ADAPTER = TypeAdapter(Reasoning)
 
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
@@ -285,7 +283,6 @@ class RunControlPayload:
     limits: RunLimits
     state: str | None
     runnable: str
-    model: str
     input: Annotated[
         CallInput[Value | TypedRef],
         PlainSerializer(lambda value: call_input_to_data(value)),
@@ -303,7 +300,6 @@ class RunControlPayload:
         _validate_run_payload(
             self.state,
             self.runnable,
-            self.model,
             self.model_request,
             self.sandbox,
         )
@@ -553,10 +549,17 @@ class ModelCallRefs:
     continuation: ModelContinuation | None
     version: int = 1
     max_output_tokens: int | None = None
+    reasoning: Reasoning | None = None
 
     def __post_init__(self) -> None:
         if type(self.version) is not int or self.version != 1:
             raise ValueError(f"unsupported durable model call version: {self.version}")
+        if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
+            raise TypeError("stored model reasoning requires Reasoning")
+        if self.max_output_tokens is not None and (
+            type(self.max_output_tokens) is not int or self.max_output_tokens <= 0
+        ):
+            raise ValueError("stored model max_output_tokens must be positive")
         if not isinstance(self.instructions, str) or not self.instructions:
             raise ValueError("stored model instructions require a reference")
         if self.tools is not None and (
@@ -575,10 +578,13 @@ class StoredModelStepGiven:
 
     model: str
     call: ModelCallRefs
+    setup: str = field(kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
             raise ValueError("stored model given requires a model identity")
+        if not isinstance(self.setup, str) or not self.setup:
+            raise TypeError("stored model setup requires a revision string")
         if not isinstance(self.call, ModelCallRefs):
             raise TypeError("stored model given requires ModelCallRefs")
 
@@ -936,22 +942,14 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             )
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
-        model = _required_payload_text(payload, "model")
-        if "model_request" not in payload:
-            model_request = (
-                None
-                if model == "none" and model not in resources.models
-                else ModelRequest(model)
-            )
-        else:
-            raw_model_request = payload.get("model_request")
-            model_request = (
-                None
-                if raw_model_request is None
-                else _MODEL_REQUEST_ADAPTER.validate_python(raw_model_request)
-            )
-        if model_request is not None and model_request.ref != model:
-            raise ValueError("preparation model request must match model")
+        if "model" in payload or "model_request" not in payload:
+            raise ValueError("run payload requires model_request without a model field")
+        raw_model_request = payload["model_request"]
+        model_request = (
+            None
+            if raw_model_request is None
+            else _MODEL_REQUEST_ADAPTER.validate_python(raw_model_request)
+        )
         sandbox = _optional_payload_text(payload, "sandbox")
         input_value = call_input_from_data(payload.get("input"))
         authored_input = _authored_input_from_data(payload.get("authored_input"))
@@ -971,7 +969,6 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             limits=limits,
             state=state,
             runnable=runnable,
-            model=model,
             input=input_value,
             horizon=RunRef.parse(cast(str, payload["horizon"]))
             if payload.get("horizon") is not None
@@ -1183,11 +1180,17 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
     """Parse one typed Step-begin fact payload from durable data."""
 
     if kind == "model":
-        payload = _canonical_object(data, fields={"model", "call"}, label="model given")
+        payload = _canonical_object(
+            data, fields={"model", "setup", "call"}, label="model given"
+        )
         model = payload["model"]
         if not isinstance(model, str):
             raise ValueError("model given identity must be text")
-        return ModelStepGiven(model=model, call=model_call_from_data(payload["call"]))
+        return ModelStepGiven(
+            model=model,
+            setup=_required_text(payload["setup"], label="setup revision"),
+            call=model_call_from_data(payload["call"]),
+        )
     if kind == "tool":
         if not isinstance(data, Mapping) or set(data) not in {
             frozenset({"plugin", "call", "trigger"}),
@@ -1222,7 +1225,11 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
 
     validate_step_given(kind, given)
     if isinstance(given, ModelStepGiven):
-        return {"model": given.model, "call": model_call_to_data(given.call)}
+        return {
+            "model": given.model,
+            "setup": given.setup,
+            "call": model_call_to_data(given.call),
+        }
     if isinstance(given, ToolStepGiven):
         data: dict[str, object] = {
             "plugin": given.plugin,
@@ -1243,7 +1250,9 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
 
     if kind != "model":
         return cast(StoredStepGiven, step_given_from_data(kind, data))
-    payload = _canonical_object(data, fields={"model", "call"}, label="model given")
+    payload = _canonical_object(
+        data, fields={"model", "setup", "call"}, label="model given"
+    )
     model = payload["model"]
     if not isinstance(model, str) or not model:
         raise ValueError("stored model identity must be text")
@@ -1256,9 +1265,10 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         "output_schema",
         "tools",
         "max_output_tokens",
+        "reasoning",
     }:
         raise ValueError(
-            "stored model call requires: version, cont, instructions, messages, tools, output_schema, max_output_tokens"
+            "stored model call requires: version, cont, instructions, messages, tools, output_schema, max_output_tokens, reasoning"
         )
     call = cast(Mapping[str, object], raw_call)
     if type(call["version"]) is not int or call["version"] != 1:
@@ -1280,6 +1290,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model cont must be an object or null")
     return StoredModelStepGiven(
         model=model,
+        setup=_required_text(payload["setup"], label="setup revision"),
         call=ModelCallRefs(
             instructions=instructions,
             version=call["version"],
@@ -1289,6 +1300,9 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
             ),
             tools=raw_tools,
             max_output_tokens=cast(int | None, call["max_output_tokens"]),
+            reasoning=_REASONING_ADAPTER.validate_python(call["reasoning"])
+            if call["reasoning"] is not None
+            else None,
             output_schema=(
                 dict(cast(Mapping[str, object], raw_output_schema))
                 if isinstance(raw_output_schema, Mapping)
@@ -1314,6 +1328,7 @@ def stored_step_given_to_data(
             raise TypeError(f"{kind} Step cannot store model given facts")
         return {
             "model": given.model,
+            "setup": given.setup,
             "call": {
                 "version": given.call.version,
                 "instructions": given.call.instructions,
@@ -1323,6 +1338,9 @@ def stored_step_given_to_data(
                 },
                 "tools": given.call.tools,
                 "max_output_tokens": given.call.max_output_tokens,
+                "reasoning": given.call.reasoning.to_data()
+                if given.call.reasoning is not None
+                else None,
                 "output_schema": (
                     dict(given.call.output_schema)
                     if given.call.output_schema is not None
@@ -1387,76 +1405,17 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         )
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
-    if not isinstance(data, Mapping) or set(data) not in {
-        frozenset({"tokens", "price", "cost", "cont"}),
-        frozenset({"tokens", "price", "cost", "accounting", "cont"}),
-    }:
-        raise ValueError(
-            "model noted requires exactly: accounting, cont, cost, price, tokens"
-        )
-    legacy = "accounting" not in data
-    payload = dict(cast(Mapping[str, object], data))
-    payload.setdefault("accounting", None)
-    raw_tokens = payload["tokens"]
-    tokens = None
-    if raw_tokens is not None:
-        token_data = _canonical_object(
-            raw_tokens,
-            fields={"input", "output"},
-            label="model tokens",
-        )
-        tokens = ModelTokenCount(
-            input=_required_int(token_data["input"], label="input tokens"),
-            output=_required_int(token_data["output"], label="output tokens"),
-        )
-    raw_price = payload["price"]
-    price = None
-    if raw_price is not None:
-        price_data = _canonical_object(
-            raw_price,
-            fields={"input", "output"},
-            label="model price",
-        )
-        price = ModelTokenPrice(
-            input=_optional_text(price_data["input"], label="input price"),
-            output=_optional_text(price_data["output"], label="output price"),
-        )
+    payload = _canonical_object(
+        data, fields={"accounting", "cont"}, label="model noted"
+    )
     raw_cont = payload["cont"]
     if raw_cont is not None and not isinstance(raw_cont, Mapping):
         raise ValueError("model noted cont must be an object or null")
-    cost = _optional_text(payload["cost"], label="model cost")
-    accounting = _model_accounting_from_data(payload["accounting"])
-    if legacy:
-        accounting = _legacy_model_accounting(tokens=tokens, cost=cost)
     return ModelStepNoted(
-        tokens=tokens,
-        price=price,
-        cost=cost,
-        accounting=accounting,
-        continuation=(
-            dict(cast(Mapping[str, Any], raw_cont))
-            if isinstance(raw_cont, Mapping)
-            else None
-        ),
-    )
-
-
-def _legacy_model_accounting(
-    *,
-    tokens: ModelTokenCount | None,
-    cost: str | None,
-) -> ModelAccounting:
-    estimate = (
-        ModelCost(amount=cost, currency="USD", complete=False)
-        if cost is not None
-        else None
-    )
-    return ModelAccounting(
-        input_tokens=tokens.input if tokens is not None else 0,
-        output_tokens=tokens.output if tokens is not None else 0,
-        estimate=estimate,
-        selected="estimated" if estimate is not None else "none",
-        version=0,
+        accounting=_model_accounting_from_data(payload["accounting"]),
+        continuation=dict(cast(Mapping[str, Any], raw_cont))
+        if raw_cont is not None
+        else None,
     )
 
 
@@ -1482,17 +1441,6 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
             "total": noted.total,
         }
     return {
-        "tokens": (
-            {"input": noted.tokens.input, "output": noted.tokens.output}
-            if noted.tokens is not None
-            else None
-        ),
-        "price": (
-            {"input": noted.price.input, "output": noted.price.output}
-            if noted.price is not None
-            else None
-        ),
-        "cost": noted.cost,
         "accounting": _model_accounting_to_data(noted.accounting),
         "cont": (dict(noted.continuation) if noted.continuation is not None else None),
     }
@@ -1503,7 +1451,7 @@ def _model_accounting_from_data(value: object) -> ModelAccounting | None:
         return None
     payload = _canonical_object(
         value,
-        fields={"version", "usage", "reasoning", "pricing", "cost"},
+        fields={"version", "usage", "pricing", "cost"},
         label="model accounting",
     )
     version = _required_int(payload["version"], label="model accounting version")
@@ -1525,34 +1473,20 @@ def _model_accounting_from_data(value: object) -> ModelAccounting | None:
         meters.append(
             ModelUsageMeter(
                 name=_required_text(meter["name"], label="model meter name"),
-                quantity=_required_text(
+                quantity=_required_number(
                     meter["quantity"], label="model meter quantity"
                 ),
                 unit=_required_text(meter["unit"], label="model meter unit"),
             )
         )
-    reasoning_data = _canonical_object(
-        payload["reasoning"],
-        fields={"requested", "selected", "reported"},
-        label="model accounting reasoning",
-    )
-    reasoning = ModelReasoningAccounting(
-        requested=_optional_dict(
-            reasoning_data["requested"], label="requested reasoning"
-        ),
-        selected=_optional_dict(reasoning_data["selected"], label="selected reasoning"),
-        reported=_optional_dict(reasoning_data["reported"], label="reported reasoning"),
-    )
     pricing = None
     if payload["pricing"] is not None:
         pricing_data = _canonical_object(
             payload["pricing"],
-            fields={"source", "revision", "plan", "match"},
+            fields={"plan", "match"},
             label="model accounting pricing",
         )
         pricing = ModelPricing(
-            source=_required_text(pricing_data["source"], label="pricing source"),
-            revision=_optional_text(pricing_data["revision"], label="pricing revision"),
             plan=_required_text(pricing_data["plan"], label="pricing plan"),
             match=_required_dict(pricing_data["match"], label="pricing match"),
         )
@@ -1562,17 +1496,16 @@ def _model_accounting_from_data(value: object) -> ModelAccounting | None:
         label="model accounting cost",
     )
     selected = _required_text(cost_data["selected"], label="selected cost source")
-    if selected not in {"reported", "estimated", "none"}:
+    if selected not in {"reported", "estimated", "zero", "unknown"}:
         raise ValueError("selected cost source is invalid")
     return ModelAccounting(
         input_tokens=_required_int(usage["input"], label="accounting input tokens"),
         output_tokens=_required_int(usage["output"], label="accounting output tokens"),
         meters=tuple(meters),
-        reasoning=reasoning,
         pricing=pricing,
         reported=_model_cost_from_data(cost_data["reported"]),
         estimate=_model_cost_from_data(cost_data["estimate"]),
-        selected=cast(Literal["reported", "estimated", "none"], selected),
+        selected=cast(Literal["reported", "estimated", "zero", "unknown"], selected),
         version=version,
     )
 
@@ -1598,11 +1531,11 @@ def _model_cost_from_data(value: object) -> ModelCost | None:
         lines.append(
             ModelCostLine(
                 meter=_required_text(line["meter"], label="cost line meter"),
-                quantity=_required_text(line["quantity"], label="cost line quantity"),
+                quantity=_required_number(line["quantity"], label="cost line quantity"),
                 unit=_required_text(line["unit"], label="cost line unit"),
-                rate=_required_text(line["rate"], label="cost line rate"),
-                per=_required_text(line["per"], label="cost line per"),
-                amount=_required_text(line["amount"], label="cost line amount"),
+                rate=_required_number(line["rate"], label="cost line rate"),
+                per=_required_number(line["per"], label="cost line per"),
+                amount=_required_number(line["amount"], label="cost line amount"),
                 condition=_optional_dict(
                     line["condition"], label="cost line condition"
                 ),
@@ -1612,7 +1545,7 @@ def _model_cost_from_data(value: object) -> ModelCost | None:
     if not isinstance(complete, bool):
         raise ValueError("model cost complete must be a boolean")
     return ModelCost(
-        amount=_required_text(payload["amount"], label="model cost amount"),
+        amount=_required_number(payload["amount"], label="model cost amount"),
         currency=_required_text(payload["currency"], label="model cost currency"),
         complete=complete,
         lines=tuple(lines),
@@ -1632,15 +1565,8 @@ def _model_accounting_to_data(value: ModelAccounting | None) -> object:
                 for meter in value.meters
             ],
         },
-        "reasoning": {
-            "requested": value.reasoning.requested,
-            "selected": value.reasoning.selected,
-            "reported": value.reasoning.reported,
-        },
         "pricing": (
             {
-                "source": value.pricing.source,
-                "revision": value.pricing.revision,
                 "plan": value.pricing.plan,
                 "match": dict(value.pricing.match),
             }
@@ -1844,7 +1770,6 @@ def _run_payload_data(
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
         "runnable": payload.runnable,
-        "model": payload.model,
         "model_request": (
             _MODEL_REQUEST_ADAPTER.dump_python(payload.model_request, mode="json")
             if payload.model_request is not None
@@ -1977,7 +1902,6 @@ def _prompt_invocation_to_data(invocation: PromptInvocation) -> dict[str, object
 def _validate_run_payload(
     state: str | None,
     runnable: str,
-    model: str,
     model_request: ModelRequest | None,
     sandbox: str | None,
 ) -> None:
@@ -1985,12 +1909,8 @@ def _validate_run_payload(
         _validate_state_revision(state, label="preparation payload State")
     if not runnable:
         raise ValueError("preparation payload requires runnable")
-    if not model:
-        raise ValueError("preparation payload requires model")
     if model_request is not None and not isinstance(model_request, ModelRequest):
         raise TypeError("preparation model request must be ModelRequest or none")
-    if model_request is not None and model_request.ref != model:
-        raise ValueError("preparation model request must match model")
     if sandbox is not None and (
         not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip()
     ):
@@ -2050,3 +1970,9 @@ def _snapshot_control_input(
             for name, value in input.items()
         }
     )
+
+
+def _required_number(value: object, *, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{label} must be a number")
+    return float(value)

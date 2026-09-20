@@ -263,7 +263,7 @@ def test_model_call_usage_shows_known_reasoning_breakdown() -> None:
                 meters=(
                     ModelUsageMeter(
                         name="output.reasoning",
-                        quantity="1800",
+                        quantity=1800.0,
                         unit="token",
                     ),
                 ),

@@ -347,12 +347,7 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
         if reasoning is not None:
             accumulator.reasoning_known = 1
             accumulator.reasoning_tokens = reasoning
-    elif noted.tokens is not None:
-        accumulator.token_known = 1
-        accumulator.input_tokens = noted.tokens.input
-        accumulator.output_tokens = noted.tokens.output
-
-    cost: str | None = None
+    cost: float | None = None
     complete = False
     approximate = False
     if noted.accounting is not None:
@@ -361,17 +356,13 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
             noted.accounting.reported
             if selected == "reported"
             else noted.accounting.estimate
-            if selected == "estimated"
+            if selected in {"estimated", "zero"}
             else None
         )
         if selected_cost is not None and selected_cost.currency.upper() == "USD":
             cost = selected_cost.amount
             complete = selected_cost.complete
             approximate = selected == "estimated"
-    if cost is None and noted.cost is not None:
-        cost = noted.cost
-        complete = True
-        approximate = True
     if cost is not None:
         try:
             accumulator.cost_usd = normalize_cost(float(cost))

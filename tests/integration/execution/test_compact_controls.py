@@ -84,7 +84,7 @@ def test_initial_horizon_payload_roundtrip(tmp_path: Path) -> None:
             limits=payload.limits,
             state=payload.state,
             runnable=payload.runnable,
-            model=payload.model,
+            model_request=payload.model_request,
             input=payload.input,
             sandbox=payload.sandbox,
             horizon=horizon,
@@ -164,7 +164,9 @@ def test_compact_reference_survives_restart_before_and_after_adoption(
             input=(),
             preceded_by=(control.ref,),
             state=run.state,
-            given=ModelStepGiven("test", ModelCall(instructions="", messages=[])),
+            given=ModelStepGiven(
+                "test", ModelCall(instructions="", messages=[]), setup="test-setup"
+            ),
             started_at="2026-09-06T00:00:02Z",
         )
     finally:
@@ -264,7 +266,7 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
                     limits=payload.limits,
                     state=payload.state,
                     runnable=payload.runnable,
-                    model=payload.model,
+                    model_request=payload.model_request,
                     input=payload.input,
                     sandbox=payload.sandbox,
                     horizon=RunRef.parse(reference),

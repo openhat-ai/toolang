@@ -12,7 +12,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from toolang.base.errors import ToolangError
-from toolang.base.money import cost_text, number_text
 from toolang.base.types.message import (
     Part,
     PartType,
@@ -40,6 +39,7 @@ from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...recall import required_declarations
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
+    ModelAccounting,
     ControlRef,
     ErrorMessage,
     FieldRef,
@@ -47,8 +47,6 @@ from ...types import (
     ModelMessages,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
-    ModelTokenPrice,
     Output,
     RunRef,
     StepRef,
@@ -56,7 +54,6 @@ from ...types import (
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
-from ..limits import _ModelAccounting
 from . import tool as tool_step
 
 # Streaming is an execution decision, not model data.
@@ -298,6 +295,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             started_at=utc_now(),
             given=ModelStepGiven(
                 model=prepared.model.ref,
+                setup=prepared.run.setup.revision,
                 call=request,
                 messages=recorded,
             ),
@@ -859,31 +857,11 @@ def _partial_part(stream: _ModelStream, part_index: int) -> Part:
 
 
 def _model_step_noted(
-    accounting: _ModelAccounting,
+    accounting: ModelAccounting | None,
     *,
     continuation: ModelContinuation | None,
 ) -> ModelStepNoted:
-    usage = accounting.usage
-    price = accounting.price
     return ModelStepNoted(
-        tokens=(
-            ModelTokenCount(input=usage.input_tokens, output=usage.output_tokens)
-            if usage is not None
-            else None
-        ),
-        price=(
-            ModelTokenPrice(
-                input=_decimal_text(price.input),
-                output=_decimal_text(price.output),
-            )
-            if price is not None
-            else None
-        ),
-        cost=cost_text(accounting.cost) if accounting.cost is not None else None,
-        accounting=accounting.accounting,
+        accounting=accounting,
         continuation=(dict(continuation) if continuation is not None else None),
     )
-
-
-def _decimal_text(value: float | None) -> str | None:
-    return number_text(value) if value is not None else None

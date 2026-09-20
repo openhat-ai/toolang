@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.base.types.model import ModelRequest
+
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -37,8 +39,8 @@ from toolang.execution.types import (
     RunStatus,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
-    ModelTokenPrice,
+    ModelAccounting,
+    ModelCost,
     Occurrence,
     OccurrencePosition,
     StepGiven,
@@ -123,7 +125,7 @@ def accept_run(
         resources=resources if resources is not None else AgentResources(),
         limits=limits if limits is not None else RunLimits(),
         runnable=(resolved_bindings.runnable or "agic:test"),
-        model=resolved_bindings.model or "test",
+        model_request=ModelRequest(resolved_bindings.model or "test"),
         input=resolved_input,
         sandbox=sandbox if sandbox is not None else "host" if parent is None else None,
         occurrence=_occurrence_from_context(context),
@@ -189,7 +191,7 @@ def project_run_start(
         runnable=f"{runnable_kind}:{runnable_name}"
         if runnable_name is not None
         else f"{runnable_kind}:test",
-        model="test",
+        model_request=ModelRequest("test"),
         input=CallInput({"_": Array("Part[]", tuple(input.parts))}),
         sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
@@ -332,6 +334,7 @@ def _step_given(
             else str(model or "test")
         )
         return ModelStepGiven(
+            setup="test-setup",
             model=identity,
             call=ModelCall(instructions="", messages=[]),
         )
@@ -373,28 +376,20 @@ def _step_noted(
         return None
     facts = detail or {}
     raw_tokens = facts.get("tokens")
-    tokens = (
-        ModelTokenCount(
-            input=int(raw_tokens.get("input", 0)),
-            output=int(raw_tokens.get("output", 0)),
+    raw_cost = facts.get("cost")
+    accounting = None
+    if isinstance(raw_tokens, Mapping):
+        accounting = ModelAccounting(
+            input_tokens=int(raw_tokens.get("input", 0)),
+            output_tokens=int(raw_tokens.get("output", 0)),
+            estimate=ModelCost(float(raw_cost), "USD", True)
+            if raw_cost is not None
+            else None,
+            selected="estimated" if raw_cost is not None else "unknown",
         )
-        if isinstance(raw_tokens, Mapping)
-        else None
-    )
-    raw_price = facts.get("price")
-    price = (
-        ModelTokenPrice(
-            input=_optional_text(raw_price.get("input")),
-            output=_optional_text(raw_price.get("output")),
-        )
-        if isinstance(raw_price, Mapping)
-        else None
-    )
     raw_cont = facts.get("cont")
     return ModelStepNoted(
-        tokens=tokens,
-        price=price,
-        cost=_optional_text(facts.get("cost")),
+        accounting=accounting,
         continuation=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
     )
 

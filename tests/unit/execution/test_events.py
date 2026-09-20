@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import ModelAccounting
+
 from typing import get_args
 
 import pytest
@@ -35,7 +37,6 @@ from toolang.execution.types import (
     LoopStepNoted,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
     Occurrence,
     OccurrencePosition,
     RunRef,
@@ -59,7 +60,9 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepRef.parse("run_root.0"),
         kind="model",
         state=ControlRef.for_run("run_root", 0),
-        given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
+        given=ModelStepGiven(
+            setup="test-setup", model="test/model", call=ModelCall("", [])
+        ),
         input=(
             FieldRef.from_path(
                 ControlRef.for_run("run_root", 0), "payload", "input", "_"
@@ -107,7 +110,9 @@ _EVENTS: tuple[RunEvent, ...] = (
         kind="model",
         status="succeeded",
         output=Output(Local.typed("Part[]", (TextPart("hello"),), 0), "_"),
-        noted=ModelStepNoted(tokens=ModelTokenCount(input=4, output=2)),
+        noted=ModelStepNoted(
+            accounting=ModelAccounting(input_tokens=4, output_tokens=2)
+        ),
         finished_at="2026-01-01T00:00:02Z",
     ),
     RunEnd(
@@ -175,7 +180,9 @@ def test_step_events_reject_mismatched_typed_facts() -> None:
         StepBegin(
             step=StepRef.parse("run_root.0"),
             kind="value",
-            given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
+            given=ModelStepGiven(
+                setup="test-setup", model="test/model", call=ModelCall("", [])
+            ),
         )
     with pytest.raises(TypeError, match="tool Step noted requires ToolStepNoted"):
         StepEnd(

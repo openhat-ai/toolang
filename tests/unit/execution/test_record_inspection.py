@@ -318,7 +318,7 @@ def test_flat_input_references_survive_reordering_and_reopening(tmp_path: Path) 
             limits=RunLimits(),
             state="0" * 64,
             runnable="flow:demo",
-            model="none",
+            model_request=None,
             input=CallInput(dict(reversed(tuple(input.items())))),
             sandbox="host",
             occurrence=None,
@@ -373,9 +373,6 @@ def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> 
         noted = record_to_data(step)["noted"]
 
         assert noted == {
-            "tokens": None,
-            "price": None,
-            "cost": None,
             "accounting": None,
             "cont": {"cursor": "next"},
         }
@@ -594,7 +591,6 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 limits,
                 revision,
                 "agic:test",
-                "test/model",
                 CallInput({"_": {"locals": {"input": "unchanged"}}}),
             ),
             {
@@ -602,7 +598,6 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "limits",
                 "state",
                 "runnable",
-                "model",
                 "model_request",
                 "input",
                 "horizon",

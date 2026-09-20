@@ -95,7 +95,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 46
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 47
         finally:
             connection.close()
     finally:
@@ -1333,7 +1333,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 kind="model",
                 input=(),
                 occurrence=None,
-                given=ModelStepGiven(model="test/model", call=call),
+                given=ModelStepGiven(setup="test-setup", model="test/model", call=call),
                 state=ControlRef.for_run("run_atomic_model", 0),
                 started_at="2026-01-01T00:00:00Z",
             )

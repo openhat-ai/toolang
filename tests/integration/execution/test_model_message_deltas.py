@@ -657,6 +657,7 @@ def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(
                         "test/model",
                         ModelCall("", list(buffer.messages)),
                         buffer.take_delta(StepRef.from_local("run_ab12", (index,))),
+                        setup="test-setup",
                     ),
                 )
             )
@@ -712,6 +713,7 @@ def test_delta_cannot_exceed_the_assembled_call(
                         StepRef.parse("run_ab12.0"),
                         (MessageTemplate("assistant", (missing,)),),
                     ),
+                    setup="test-setup",
                 ),
             )
     finally:
@@ -726,7 +728,7 @@ def _record(store, index, call, messages=None):
         input=(),
         state=ControlRef.for_run(ref.run_id, 0),
         started_at="now",
-        given=ModelStepGiven("test/model", call, messages),
+        given=ModelStepGiven("test/model", call, messages, setup="test-setup"),
     )
 
 

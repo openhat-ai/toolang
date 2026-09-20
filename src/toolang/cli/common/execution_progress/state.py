@@ -245,16 +245,12 @@ class Metrics:
                     self.cost = add_cost(self.cost, selected)
                     self.cost_known = True
                 self.cost_approximate = (
-                    self.cost_approximate or selected_cost_is_approximate(accounting)
+                    self.cost_approximate
+                    or selected is None
+                    or selected_cost_is_approximate(accounting)
                 )
-            elif noted is not None:
-                if noted.tokens:
-                    self.input_tokens += noted.tokens.input
-                    self.output_tokens += noted.tokens.output
+            else:
                 self.cache_unknown_calls += 1
-                if noted.cost:
-                    self.cost = add_cost(self.cost, float(noted.cost))
-                    self.cost_known = True
                 self.cost_approximate = True
         elif event.kind == "tool":
             self.tool_calls += 1

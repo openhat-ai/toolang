@@ -229,10 +229,7 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                     "ref": "agic:chat",
                     "input": {"_": "hello", "tone": "brief"},
                 },
-                "model": {
-                    "ref": "openai/gpt-5",
-                    "parameters": {"reasoning": None, "max_output": None},
-                },
+                "model": {"ref": "openai/gpt-5", "reasoning": None, "max_output": None},
                 "policy": {
                     "allow": [
                         {
@@ -333,7 +330,8 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         else:
             expected_payload["model"] = {
                 "ref": "openai/gpt-5",
-                "parameters": {"reasoning": {"effort": "high"}, "max_output": None},
+                "reasoning": {"effort": "high"},
+                "max_output": None,
             }
         assert handle.run_id == detail.id == accepted_id
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]

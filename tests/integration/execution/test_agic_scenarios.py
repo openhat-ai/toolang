@@ -69,8 +69,6 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     ModelStepNoted,
-    ModelTokenCount,
-    ModelTokenPrice,
     StepRef,
     ThreadPrefix,
     ToolStepNoted,
@@ -448,7 +446,9 @@ agic reply(_: Part[]) -> Part[]:
                 step = harness.store.list_steps(run_id=run.id)[0]
                 assert isinstance(step.noted, ModelStepNoted)
                 assert step.noted.accounting is not None
-                assert step.noted.accounting.reasoning.requested == expected
+                call = harness.store.rebuild_model_call(step)
+                assert call.reasoning is not None
+                assert call.reasoning.to_data() == expected
 
             before = harness.store.list_runs(thread_id=thread, limit=None)
             unsupported = replace(
@@ -1722,7 +1722,7 @@ agic reply(_: Text) -> Text:
             ] == [("model", "succeeded")]
             model_step = harness.store.list_steps(run_id=record.id)[0]
             assert isinstance(model_step.noted, ModelStepNoted)
-            assert model_step.noted.tokens == ModelTokenCount(input=6, output=5)
+
             assert model_step.noted.accounting is not None
             assert model_step.noted.accounting.input_tokens == 6
             assert model_step.noted.accounting.output_tokens == 5
@@ -1792,11 +1792,7 @@ agic reply(_: Text) -> Text:
             assert record.error == (ErrorMessage(error) if error is not None else None)
             model_step = harness.store.list_steps(run_id=record.id)[0]
             assert isinstance(model_step.noted, ModelStepNoted)
-            assert model_step.noted.tokens == ModelTokenCount(input=1, output=1)
-            assert model_step.noted.price == ModelTokenPrice(
-                input="0.01", output="0.02"
-            )
-            assert model_step.noted.cost == "0.03"
+
             assert model_step.noted.accounting is not None
 
     asyncio.run(scenario())
@@ -2072,7 +2068,7 @@ agic chat(_: Text):
     asyncio.run(scenario())
 
 
-def test_accounting_keeps_the_run_catalog_revision_after_setup_refresh(tmp_path):
+def test_model_step_keeps_the_setup_revision_after_refresh(tmp_path):
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
@@ -2091,7 +2087,7 @@ def test_accounting_keeps_the_run_catalog_revision_after_setup_refresh(tmp_path)
             )
         ],
     )
-    harness.setup = replace(harness.setup, catalog_sources={"test": ("custom", "v1")})
+    harness.setup = replace(harness.setup, revision="setup-v1")
     harness.executor._setup = lambda: harness.setup
 
     async def scenario():
@@ -2105,16 +2101,17 @@ def test_accounting_keeps_the_run_catalog_revision_after_setup_refresh(tmp_path)
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
-            harness.setup = replace(
-                harness.setup, catalog_sources={"test": ("custom", "v2")}
-            )
+            harness.setup = replace(harness.setup, revision="setup-v2")
             gate.release()
             record = await run
             assert record.status == "succeeded"
             noted = harness.store.list_steps(run_id=record.id)[0].noted
             assert isinstance(noted, ModelStepNoted)
             assert noted.accounting is not None and noted.accounting.pricing is not None
-            assert noted.accounting.pricing.source == "custom"
-            assert noted.accounting.pricing.revision == "v1"
+            from toolang.execution.records import StoredModelStepGiven
+
+            given = harness.store.list_steps(run_id=record.id)[0].given
+            assert isinstance(given, StoredModelStepGiven)
+            assert given.setup == "setup-v1"
 
     asyncio.run(scenario())

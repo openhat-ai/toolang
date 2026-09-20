@@ -1282,8 +1282,6 @@ def _model_usage_fact(noted: ModelStepNoted) -> str:
                 "output.reasoning",
             ),
         )
-    if noted.tokens is not None:
-        return _token_fact(noted.tokens.input, noted.tokens.output)
     return ""
 
 

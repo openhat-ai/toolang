@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import ModelAccounting
+
 from io import StringIO
 import re
 from typing import Literal
@@ -28,7 +30,6 @@ from toolang.execution.types import (
     Local,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
     Occurrence,
     OccurrencePosition,
     StepRef,
@@ -49,6 +50,7 @@ def _run_stmt(runnable: str = "agic:summarize") -> RunStmt:
 
 def _model_given() -> ModelStepGiven:
     return ModelStepGiven(
+        setup="test-setup",
         model="test/scripted",
         call=ModelCall(instructions="", messages=[]),
     )
@@ -178,6 +180,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             step=child_model,
             kind="model",
             given=ModelStepGiven(
+                setup="test-setup",
                 model="test/scripted",
                 call=ModelCall(instructions="", messages=[]),
             ),
@@ -190,7 +193,9 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             kind="model",
             status="succeeded",
             output=Output(Local.typed("Part[]", (TextPart("summary"),), 0), "_"),
-            noted=ModelStepNoted(tokens=ModelTokenCount(input=4, output=2)),
+            noted=ModelStepNoted(
+                accounting=ModelAccounting(input_tokens=4, output_tokens=2)
+            ),
             finished_at="2026-01-01T00:00:01Z",
         )
     )

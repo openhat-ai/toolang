@@ -118,7 +118,6 @@ from toolang.execution.types import (
     ModelOverride,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
@@ -197,7 +196,9 @@ def _output(step: StepRef) -> Output:
 
 
 def _model_given(model: str = "test/model") -> ModelStepGiven:
-    return ModelStepGiven(model=model, call=ModelCall(instructions="", messages=[]))
+    return ModelStepGiven(
+        setup="test-setup", model=model, call=ModelCall(instructions="", messages=[])
+    )
 
 
 def _tool_given(name: str = "shell__execute") -> ToolStepGiven:
@@ -372,7 +373,9 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
                     input={"command": "echo ok"},
                 )
             ),
-            noted=ModelStepNoted(tokens=ModelTokenCount(input=12, output=3)),
+            noted=ModelStepNoted(
+                accounting=ModelAccounting(input_tokens=12, output_tokens=3)
+            ),
         ),
         app,
     )
@@ -687,45 +690,89 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
                     input_tokens=3800,
                     output_tokens=120,
                     estimate=ModelCost(
-                        amount="0",
+                        amount=0.0,
                         currency="USD",
                         complete=True,
                         lines=(
                             ModelCostLine(
                                 meter="input",
-                                quantity="3800",
+                                quantity=3800.0,
                                 unit="token",
-                                rate="0",
-                                per="1000000",
-                                amount="0",
+                                rate=0.0,
+                                per=1000000.0,
+                                amount=0.0,
                             ),
                             ModelCostLine(
                                 meter="output",
-                                quantity="120",
+                                quantity=120.0,
                                 unit="token",
-                                rate="0",
-                                per="1000000",
-                                amount="0",
+                                rate=0.0,
+                                per=1000000.0,
+                                amount=0.0,
                             ),
                         ),
                     ),
                     meters=(
                         ModelUsageMeter(
                             name="output.reasoning",
-                            quantity="0",
+                            quantity=0.0,
                             unit="token",
                         ),
                     ),
-                    selected="estimated",
+                    selected="zero",
                 )
             ),
         )
     )
 
+    assert metrics.cost_known is True
+    assert metrics.cost_approximate is False
     assert metrics.facts(include_runs=False) == [
         "1 model",
         "↑3.8k ↓120(0)",
     ]
+
+
+@pytest.mark.parametrize(
+    "accounting",
+    [
+        None,
+        ModelAccounting(input_tokens=10, output_tokens=5),
+        ModelAccounting(
+            input_tokens=10,
+            output_tokens=5,
+            reported=ModelCost(amount=1.0, currency="EUR", complete=True),
+            selected="reported",
+        ),
+    ],
+)
+def test_progress_marks_incomplete_usd_totals_as_approximate(
+    accounting: ModelAccounting | None,
+) -> None:
+    metrics = Metrics()
+    for index, item in enumerate(
+        (
+            ModelAccounting(
+                input_tokens=10,
+                output_tokens=5,
+                reported=ModelCost(amount=0.03, currency="USD", complete=True),
+                selected="reported",
+            ),
+            accounting,
+        )
+    ):
+        metrics.record_step(
+            StepEnd(
+                step=StepRef.parse(f"run_1.{index}"),
+                kind="model",
+                status="succeeded",
+                noted=ModelStepNoted(accounting=item),
+            )
+        )
+
+    assert metrics.cost == 0.03
+    assert metrics.cost_approximate is True
+    assert "≈$0.03" in " ".join(metrics.facts())
 
 
 @pytest.mark.parametrize(
@@ -764,7 +811,7 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
             meters=(
                 ModelUsageMeter(
                     name="output.reasoning",
-                    quantity="150",
+                    quantity=150.0,
                     unit="token",
                 ),
             ),
@@ -3030,10 +3077,7 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
                 "name": "GPT-5",
                 "provider": "openai",
                 "parameters": {
-                    "reasoning": {
-                        "effort": ["low", "high"],
-                        "applicable": True,
-                    }
+                    "reasoning": {"effort": ["low", "high"], "applicable": True}
                 },
             },
             {
@@ -5422,7 +5466,9 @@ def _model_step_end(
         kind="model",
         status="succeeded",
         output=_parts(TextPart(text=output)),
-        noted=ModelStepNoted(tokens=ModelTokenCount(input=1, output=1)),
+        noted=ModelStepNoted(
+            accounting=ModelAccounting(input_tokens=1, output_tokens=1)
+        ),
         finished_at=finished_at,
     )
 
