@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import Model, ModelToolang, Provider, ProviderToolang
 from toolang.plugin.adapters.chat_completions import (
@@ -11,6 +13,7 @@ from toolang.plugin.adapters.generate_content import (
 from toolang.plugin.adapters.messages import MessagesModelAdapter
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.provider_resolver import (
+    credential_value,
     env_is_ready,
     model_adapter,
     model_api,
@@ -96,7 +99,7 @@ def test_resolver_models_env_as_or_of_and_without_storing_secrets() -> None:
     provider = _provider(
         "cloud",
         npm="@ai-sdk/openai-compatible",
-        env=("CLOUD_API_KEY", "CLOUD_TOKEN"),
+        env=("CLOUD_ACCOUNT", "CLOUD_API_KEY", "CLOUD_TOKEN"),
         api="https://${CLOUD_ACCOUNT}.example/v1",
     )
     environ = {"CLOUD_ACCOUNT": "team", "CLOUD_TOKEN": "secret"}
@@ -114,10 +117,36 @@ def test_resolver_models_env_as_or_of_and_without_storing_secrets() -> None:
         model_api(resolved_provider, model, adapters=adapters, environ=environ)
         == "https://team.example/v1"
     )
-    assert resolved == ("CLOUD_API_KEY", "CLOUD_TOKEN")
+    assert resolved == (
+        ("CLOUD_ACCOUNT", "CLOUD_API_KEY"),
+        ("CLOUD_ACCOUNT", "CLOUD_TOKEN"),
+    )
     assert env_is_ready(resolved, environ=environ)
     assert selected_credential_value(resolved_provider, environ=environ) == "secret"
+    assert credential_value(resolved, environ=environ) == "secret"
     assert "secret" not in repr(resolved_provider)
+
+    missing_key = resolve_provider(
+        provider, adapters=adapters, environ={"CLOUD_ACCOUNT": "team"}
+    )
+    assert missing_key.models["model"]._toolang.ready is False
+    assert (
+        credential_value(missing_key._toolang.env, environ={"CLOUD_ACCOUNT": "team"})
+        is None
+    )
+
+
+def test_resolver_preserves_explicit_plugin_env_alternatives() -> None:
+    provider = replace(
+        _provider("cloud", npm="@ai-sdk/openai", env=("IGNORED_API_KEY",)),
+        _toolang=ProviderToolang(env=(("ACCOUNT", "TOKEN"), "FALLBACK")),
+    )
+    resolved = resolve_provider(
+        provider, adapters=_adapters(), environ={"FALLBACK": "credential"}
+    )
+
+    assert resolved._toolang.env == (("ACCOUNT", "TOKEN"), "FALLBACK")
+    assert resolved.models["model"]._toolang.ready is True
 
 
 def test_resolver_applies_explicit_bedrock_env_alternatives() -> None:

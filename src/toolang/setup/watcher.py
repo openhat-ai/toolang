@@ -25,11 +25,12 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 )
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
-from toolang.plugin.models.provider_resolver import resolve_catalog_providers
-from toolang.plugin.models.resolution import (
-    resolve_model_reasoning,
-    build_model_collection,
+from toolang.plugin.models.collections import ModelCollection, catalog_model_dataset
+from toolang.plugin.models.provider_resolver import (
+    model_adapter,
+    resolve_catalog_providers,
 )
+from toolang.plugin.models.resolution import resolve_model_reasoning
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
@@ -275,7 +276,7 @@ class SetupWatcher:
         )
         projection_key = _projection_key(
             source_revisions=source_revisions,
-            environment=environment_identity(resolved_catalog, inputs.envs),
+            environment=environment_identity(inputs.envs),
             setup_inputs={
                 "catalogs": catalog_configs,
                 "config": tuple(
@@ -329,6 +330,7 @@ class SetupWatcher:
         if self._inputs is not None and self._inputs.fingerprints == fingerprints:
             return self._inputs
         previous = self._inputs
+        env_start = 2 if self._agent_context else 1
         return _LoadedInputs(
             fingerprints=fingerprints,
             root_config=(
@@ -349,7 +351,7 @@ class SetupWatcher:
             envs=(
                 previous.envs
                 if previous is not None
-                and previous.fingerprints[2:] == fingerprints[2:]
+                and previous.fingerprints[env_start:] == fingerprints[env_start:]
                 else (
                     load_setup_envs(self.layout)
                     if self._agent_context
@@ -554,7 +556,21 @@ def _build_setup(
     limits: RunLimits,
     compact_model: ModelOverride | None = None,
 ) -> AgentSetup:
-    models = order_models(build_model_collection(snapshot.models), allow.models)
+    dataset = catalog_model_dataset(
+        snapshot,
+        available={model.ref for model in snapshot.models if model._toolang.ready},
+        adapters={
+            model.ref: adapter
+            for model in snapshot.models
+            for adapter in (
+                model_adapter(snapshot.providers[model._toolang.provider], model),
+            )
+            if adapter is not None
+        },
+    )
+    models = order_models(
+        ModelCollection(snapshot.models, query_views=dataset.items), allow.models
+    )
     if compact_model is not None and compact_model.identity != "unset":
         select_compact_model(models, compact_model)
     tool_collection = ToolCollection.from_tools(tools)

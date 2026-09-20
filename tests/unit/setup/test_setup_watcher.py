@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 import json
 import os
@@ -583,6 +584,113 @@ def test_setup_watcher_rebuilds_when_environment_changes(
 
     assert first is not second
     assert second.envs["TEST_API_KEY"] == "second"
+
+
+@pytest.mark.parametrize("agent_context", [True, False])
+def test_setup_watcher_publishes_tool_environment_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_context: bool,
+) -> None:
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    envs = {"TEST_API_KEY": "secret", "SERVICE_TOKEN": "first"}
+    _watcher(monkeypatch, tmp_path, envs=envs)
+    monkeypatch.setattr(
+        watcher_module, "load_root_setup_envs", lambda _layout: dict(envs)
+    )
+    watcher = SetupWatcher(
+        AgentLayout.resident(tmp_path, "alice"), agent_context=agent_context
+    )
+    first = asyncio.run(watcher.refresh())
+
+    envs["SERVICE_TOKEN"] = "second"
+    watcher.layout.root_env.write_text("# changed\n", encoding="utf-8")
+    second = asyncio.run(watcher.refresh())
+
+    assert second is not first
+    assert second.revision != first.revision
+    assert first.envs["SERVICE_TOKEN"] == "first"
+    assert second.envs["SERVICE_TOKEN"] == "second"
+    assert asyncio.run(watcher.refresh()) is second
+
+
+def test_setup_watcher_queries_effective_adapters_before_applying_allow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one", "two"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["test"]["models"]["two"]["provider"] = {
+        "shape": "chat_completions",
+        "api": "https://models.example/v1",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.models.match("*[adapter=responses]").refs() == ("test/one",)
+    assert setup.models.match("*[route.adapter=chat_completions]").refs() == (
+        "test/two",
+    )
+    allowed = asyncio.run(
+        SetupWatcher(
+            watcher.layout, allow_overrides={"models": ("*[adapter=responses]",)}
+        ).refresh()
+    )
+    assert allowed.models.refs() == ("test/one",)
+
+
+def test_setup_watcher_warm_cache_avoids_source_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    first = asyncio.run(watcher.refresh())
+
+    def reject_parse(_self: ModelCatalogSource) -> ModelCatalogSnapshot:
+        raise AssertionError("an unchanged cached catalog must not be parsed again")
+
+    monkeypatch.setattr(ModelCatalogSource, "snapshot", reject_parse)
+    warm = SetupWatcher(watcher.layout)
+    loaded = asyncio.run(warm.refresh())
+
+    assert loaded.models == first.models
+    assert loaded.revision == first.revision
+    assert asyncio.run(warm.refresh()) is loaded
+    assert warm.diagnostics() == ()
+
+
+def test_setup_watcher_keeps_probe_changes_when_cache_write_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    first = asyncio.run(watcher.refresh())
+    model = Model(
+        id="new-local", name="Local", _toolang=ModelToolang(provider="ollama")
+    )
+    provider = Provider(
+        id="ollama",
+        name="Ollama",
+        npm="@ai-sdk/openai-compatible",
+        api="http://localhost/v1?api_key=test-placeholder",
+        models={model.id: model},
+    )
+    probe = replace(
+        _empty_local("ollama"), providers={provider.id: provider}, models=(model,)
+    )
+
+    async def changed_probe(_self: object) -> ModelCatalogSnapshot:
+        return probe
+
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", changed_probe)
+    second = asyncio.run(watcher.refresh())
+
+    assert second is not first
+    assert second.models.contains("ollama/new-local")
+    assert asyncio.run(watcher.refresh()) is second
+    assert watcher.diagnostics() == ()
 
 
 def test_setup_watcher_failed_refresh_keeps_last_snapshot(

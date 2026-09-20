@@ -200,6 +200,30 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     ]
 
 
+def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
+    path = tmp_path / "models.json"
+    payload = _catalog_data()
+    payload["test"]["models"]["one"]["reasoning_options"] = [
+        {"type": "effort", "values": ["low", "high"], "exhaustive": True}
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    model = read_model_catalog_snapshot(path).models[0]
+    assert model.reasoning_options is not None
+    option = cast(dict[str, Any], model.reasoning_options[0])
+
+    with pytest.raises(TypeError):
+        option["exhaustive"] = False
+    with pytest.raises(TypeError):
+        option["values"][0] = "injected"
+    resolved = dataclasses.replace(
+        model, _toolang=ModelToolang(provider="test", ready=True)
+    )
+    assert resolved.reasoning_options is model.reasoning_options
+    assert model.to_data()["reasoning_options"] == [
+        {"type": "effort", "values": ["low", "high"], "exhaustive": True}
+    ]
+
+
 def test_catalog_rejects_inconsistent_identity_as_a_complete_snapshot() -> None:
     payload = _catalog_data()
     payload["test"]["models"]["one"]["id"] = "other"

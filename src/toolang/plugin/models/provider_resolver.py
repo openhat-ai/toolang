@@ -407,8 +407,17 @@ def _resolve_env(provider: Provider) -> ResolvedEnv:
     override = _ENV_OVERRIDES.get(provider.id)
     if override is not None:
         return override
-    declared = provider._toolang.env or tuple(provider.env)
-    return normalized_env(declared)
+    if provider._toolang.env:
+        return normalized_env(provider._toolang.env)
+    credentials = tuple(
+        name for name in provider.env if name.endswith(_CREDENTIAL_SUFFIXES)
+    )
+    required = tuple(
+        name for name in provider.env if not name.endswith(_CREDENTIAL_SUFFIXES)
+    )
+    if credentials:
+        return normalized_env(tuple((*required, name) for name in credentials))
+    return normalized_env((required,)) if required else ()
 
 
 def _resolve_api(

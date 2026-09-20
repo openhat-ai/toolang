@@ -209,8 +209,12 @@ class Model:
             )
         if not isinstance(self.limit, MappingProxyType):
             object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
-        if self.reasoning_options is not None and not isinstance(
-            self.reasoning_options, tuple
+        if self.reasoning_options is not None and not (
+            isinstance(self.reasoning_options, tuple)
+            and all(
+                isinstance(option, MappingProxyType)
+                for option in self.reasoning_options
+            )
         ):
             object.__setattr__(
                 self,

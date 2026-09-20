@@ -15,7 +15,7 @@ from pydantic_core import from_json
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.json import dumps
 
-CACHE_SCHEMA = 5
+CACHE_SCHEMA = 6
 _MAX_CACHE_BYTES = 128 * 1024 * 1024
 _REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 _SENSITIVE_HEADER_NAME_RE = re.compile(
@@ -61,8 +61,8 @@ def store_document(
     kind: str,
     key: str,
     document: Mapping[str, object],
-) -> None:
-    """Write one canonical cache document, skipping unsafe or oversized payloads."""
+) -> bool:
+    """Write a canonical document; return False for unsafe or oversized payloads."""
 
     payload = {
         "schema": CACHE_SCHEMA,
@@ -74,11 +74,12 @@ def store_document(
     checksum = text_digest(payload_content)
     content = f'{{"digest":"{checksum}","payload":{payload_content}}}'
     if len(content.encode("utf-8")) > _MAX_CACHE_BYTES:
-        return
+        return False
     if _serialized_data_is_unsafe(content, payload):
-        return
+        return False
     with file_write_lock(path.with_name(f".{path.name}.lock")):
         atomic_write_text(path, content)
+    return True
 
 
 def load_document(

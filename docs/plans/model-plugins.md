@@ -84,8 +84,11 @@ a stable `FileObservation` plus a `ModelCatalogSource` holding the payload bytes
 and the portable `sha256:` revision, and `ModelCatalogSource.snapshot()`
 validates those same bytes.
 
-`CACHE_SCHEMA` and the `model_projection_key` formula are unchanged, so existing
-`.setup` caches keep hitting.
+`CACHE_SCHEMA` is 6. Older `.setup` catalog caches are rebuilt so raw source
+`_toolang` mappings cannot become trusted adapter declarations through decoding.
+Cache reads preserve Decimal prices and both boolean and object `interleaved`
+values. A skipped probe write uses a content revision instead of the old file's
+stamp.
 
 ### Entry points
 
@@ -429,7 +432,7 @@ The cache is internal to the setup. Its contract is only:
   only the fields it models (see *Setup-owned catalog pipeline*);
 - the key covers exactly the inputs that change the result: the per-source
   revision list, the projected setup configuration, plugin provenance, the
-  declared environment names and their value digests, the effective allow set,
+  published environment names and their exact value digests, the effective allow set,
   and the schema version.
 
 ### Data decisions
@@ -741,8 +744,9 @@ The key covers exactly the inputs that change the result:
   `detected:` stamp);
 - the projected setup configuration and plugin provenance;
 - the effective allow set;
-- every declared environment name **and its value digest**, not presence alone,
-  because an api template is substituted with environment values;
+- every environment name published in `AgentSetup.envs` **and its exact value
+  digest**, because tools and API templates also read names not declared by model
+  providers;
 - the schema version.
 
 An unchanged key means no new setup version; a source's cached file removes the

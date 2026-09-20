@@ -25,7 +25,6 @@ from toolang.base.types.model import (
     Provider,
     ProviderToolang,
     ResolvedEnv,
-    env_names,
 )
 from toolang.common.cache import (
     CACHE_SCHEMA,
@@ -122,7 +121,8 @@ class ModelCatalogCache:
         previous = self._read(name)
         if previous is not None and previous.get("content") == content:
             return _detected_revision(path)
-        self._write(name, {**document, "content": content})
+        if not self._write(name, {**document, "content": content}):
+            return f"probe:{content}"
         return _detected_revision(path)
 
     def content_revision(self, snapshot: ModelCatalogSnapshot) -> str:
@@ -148,14 +148,13 @@ class ModelCatalogCache:
                 path,
                 kind=_CATALOG_KIND,
                 key=_file_name(name),
-                fast_json=True,
             )
         except Exception:
             return None
 
-    def _write(self, name: str, document: Mapping[str, object]) -> None:
+    def _write(self, name: str, document: Mapping[str, object]) -> bool:
         self._directory.mkdir(parents=True, exist_ok=True)
-        store_document(
+        return store_document(
             self._path(name),
             kind=_CATALOG_KIND,
             key=_file_name(name),
@@ -203,20 +202,15 @@ def model_projection_key(
 
 
 def environment_identity(
-    snapshot: ModelCatalogSnapshot,
     environ: Mapping[str, str],
 ) -> dict[str, str]:
-    """Return one digest per declared environment name.
+    """Digest the complete environment published in a setup version.
 
-    An api template is substituted with environment values, so the digest — not
-    presence alone — belongs in the revision.
+    Tools and API templates may read names not declared by model providers.
+    Preserve exact values so a version always identifies the environment it holds.
     """
 
-    identity: dict[str, str] = {}
-    for provider in snapshot.providers.values():
-        for name in env_names(provider._toolang.env):
-            identity[name] = digest(str(environ.get(name, "")).strip())
-    return identity
+    return {name: digest(value) for name, value in environ.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -244,7 +238,9 @@ def _snapshot_from_document(
 ) -> ModelCatalogSnapshot:
     require_fields(
         document,
-        frozenset({"providers", "models"}),
+        frozenset(
+            {"schema", "kind", "key", "revision", "providers", "models", "local"}
+        ),
         label="model context",
     )
     raw_providers = document["providers"]
@@ -357,6 +353,7 @@ def _model_to_data(model: Model) -> dict[str, object]:
                 else item
             )
             for key, item in model.provider.items()
+            if key != "_toolang" or isinstance(item, ProviderToolang)
         }
     data["_toolang"] = {
         "ready": model._toolang.ready,
@@ -368,6 +365,7 @@ def _model_to_data(model: Model) -> dict[str, object]:
 def _model_from_data(data: Mapping[str, object]) -> Model:
     toolang = _mapping(data, "_toolang")
     provider = _model_provider_from_data(data.get("provider"))
+    interleaved = data.get("interleaved")
     return Model(
         id=_text(data, "id"),
         name=_text(data, "name"),
@@ -381,7 +379,11 @@ def _model_from_data(data: Mapping[str, object]) -> Model:
         reasoning=_optional_bool(data, "reasoning"),
         reasoning_options=_optional_mappings(data.get("reasoning_options")),
         tool_call=_optional_bool(data, "tool_call"),
-        interleaved=_optional_mapping(data.get("interleaved")),
+        interleaved=(
+            interleaved
+            if isinstance(interleaved, bool)
+            else _optional_mapping(interleaved)
+        ),
         structured_output=_optional_bool(data, "structured_output"),
         temperature=_optional_bool(data, "temperature"),
         knowledge=_optional_text(data, "knowledge"),
