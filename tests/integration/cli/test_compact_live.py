@@ -197,3 +197,146 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(
                 await executor.stop()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["auto", "FORGET"])
+def test_live_compaction_owns_terminal_replies_by_root(tmp_path, request, mode):
+    from dataclasses import replace
+
+    from toolang.base.types.message import Message
+    from toolang.execution.records import CompactControlPayload
+    from toolang.plugin.models.collections import ModelCollection
+
+    model = request.config.getoption("--live-model")
+    if not model:
+        pytest.skip("pass --live-model with a concrete tool-capable model")
+
+    async def scenario():
+        layout = AgentLayout.resident(tmp_path, "boundary")
+        watcher = SetupWatcher(
+            layout,
+            default_overrides={"model": model},
+            compact_override=replace(parse_model_body(model), max_output=4096),
+            limit_overrides={"time": 240, "tokens": 500000, "cost": 0.5},
+        )
+        setup = await watcher.refresh()
+        selected = setup.defaults.model
+        assert selected is not None
+        catalog_model = setup.models.resolve(selected.ref)
+        maximum = catalog_model.limit.get("output", 0)
+        if maximum < 32000:
+            pytest.skip("live boundary probe needs a large inclusive output allowance")
+        state = prepare_builtin_state("""agic note(_: Text) -> Text:
+  tools = none
+  context: none
+  instruct: Reply with exactly the acknowledgment requested in the current message.
+  {{_}}
+
+agic check(_: Text) -> Json:
+  tools = none
+  context: none
+  instruct: Use the supplied history. Return null for unknown values.
+  {{_}}
+""")
+        with closing(RunStore(layout.run_store)) as store:
+            ids = IdIssuer(layout.id_state)
+            executor = RunExecutor(store, ids)
+            thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.TERM)
+
+            async def run(name, text):
+                record = await executor.run(
+                    RunSpec(
+                        setup=setup,
+                        state=state,
+                        thread=thread,
+                        bindings=RunBindings(
+                            runnable=f"agic:{name}", model=selected.ref
+                        ),
+                        model_request=selected,
+                        limits=setup.limits,
+                        input=RunnableInput({"_": text}),
+                    )
+                )
+                assert record.status == "succeeded", (
+                    store.resolve_error(record.error) if record.error else record.status
+                )
+                return record
+
+            try:
+                old = await run(
+                    "note",
+                    "Project code is HF42. The following routine logs are irrelevant. "
+                    + "Routine archived status; no new decisions. " * 3000
+                    + " Reply exactly: COVERED_TERMINAL_731.",
+                )
+                retained = await run(
+                    "note",
+                    "Recent marker is RED9. Reply exactly: RETAINED_TERMINAL_927.",
+                )
+                old_reply = store.run_output_text(run_id=old.id)
+                retained_reply = store.run_output_text(run_id=retained.id)
+                assert "COVERED_TERMINAL_731" in old_reply
+                assert "RETAINED_TERMINAL_927" in retained_reply
+                if mode == "FORGET":
+                    inputs = {"thread": thread, "before": retained.id}
+                    await compact._run(
+                        store,
+                        ids,
+                        watcher,
+                        RunnableInput(inputs),
+                        CallInput(inputs),
+                        max_width=100,
+                        algorithm="FORGET",
+                    )
+                else:
+                    # Reserve the normal model's output, leaving about 16k input.
+                    # The compactor reserves only 4096 and can read the full range.
+                    context = (maximum + 16000) * 100 // 95
+                    assert context < catalog_model.limit["context"]
+                    setup = replace(
+                        setup,
+                        models=ModelCollection(
+                            tuple(
+                                replace(m, limit={**m.limit, "context": context})
+                                if m.ref == selected.ref
+                                else m
+                                for m in setup.models.entries
+                            )
+                        ),
+                    )
+                current = await run(
+                    "check", "Return JSON with project_code and recent_marker."
+                )
+                answer = json.loads(store.run_output_text(run_id=current.id))
+                assert answer == {
+                    "project_code": "HF42" if mode == "auto" else None,
+                    "recent_marker": "RED9",
+                }
+                history = RunHistory(store)
+                result = history.get_compaction(thread)
+                assert result is not None and result.result.end == retained.id
+                models = [
+                    s
+                    for s in store.list_steps(run_id=current.id)
+                    if isinstance(s.given, StoredModelStepGiven)
+                ]
+                assert len(models) == 1
+                call = history.get_model_call(models[0].ref)
+                assert len(call.messages) == 4
+                assert call.messages[0] == Message.user(result.result.summary)
+                assert Message.assistant(old_reply) not in call.messages
+                assert call.messages[2] == Message.assistant(retained_reply)
+                controls = [
+                    c
+                    for c in store.list_run_controls(run_id=current.id)
+                    if isinstance(c.payload, CompactControlPayload)
+                ]
+                assert len(controls) == (1 if mode == "auto" else 0)
+                if controls:
+                    assert controls[0].ref in models[0].preceded_by
+                with closing(RunStore(layout.run_store, read_only=True)) as reopened:
+                    assert RunHistory(reopened).get_model_call(models[0].ref) == call
+            finally:
+                await executor.stop()
+
+    asyncio.run(scenario())

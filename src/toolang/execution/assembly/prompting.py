@@ -129,8 +129,6 @@ def messages(
     context, initial, _invocations = inputs.rendered_input
     if not current.started:
         current.initialize(initial)
-        if history is not None and "near" in recall:
-            current.prepend(*history.tail)
     elif context:
         current.append(Message.user(context))
     for control in controls:

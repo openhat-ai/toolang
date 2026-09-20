@@ -215,7 +215,7 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
             assert [len(given.call.messages.delta) for given in givens] == [1, 3, 5]
             assert [
                 sum(m.source is None for m in g.call.messages.delta) for g in givens
-            ] == [1, 2, 2]
+            ] == [1, 1, 1]
             assert isinstance(givens[1].call.messages.delta[0].content[0], ContentRef)
             assert (
                 givens[1].call.messages.delta[0].content
@@ -278,8 +278,8 @@ flow job(_: Part[]) -> Part[]:
                 without_route_snapshots(harness.adapter.invocations[-1].call.messages)
                 == expected
             )
-            # Recorded tails stay in this delta; the following Run adds only
-            # the latest reply and input, without duplicating the Flow outputs.
+            # Each Flow contributes its public exchange once, even when an
+            # earlier model call has already imported those messages.
             following = await _run(harness, thread, "continue", tracer, horizon=horizon)
             assert following.status == "succeeded", following.error
             assert without_route_snapshots(
@@ -389,7 +389,6 @@ agic next() -> Part[]:
                 assert harness.store.run_horizon(run.id) == horizon
                 expected = [
                     Message.user("Earlier facts."),
-                    Message.assistant("first reply"),
                     Message.user("second"),
                     Message.assistant("second reply"),
                     Message.user("Next task."),
@@ -540,9 +539,7 @@ def test_each_call_records_context_without_rerendering_history(
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             assert reads == [(first.id, second.id)]
-            assert (
-                len(renderings) == 3
-            )  # two historical deltas and one newly consumed tail
+            assert len(renderings) == 2  # two complete historical roots
             before, after, final = [
                 without_route_snapshots(item.call.messages)
                 for item in harness.adapter.invocations[-3:]
@@ -784,8 +781,9 @@ def test_reload_captures_recall_without_reading_state_during_replay(
                 Message.assistant("first reply"),
                 Message.user("current"),
             ]
-            # The late tail was first recorded in this Run; reload preserves now.
-            assert after[:2] == before[1:]
+            # Disabling recall removes all historical messages, including tails.
+            assert after[0] == before[-1]
+            assert Message.assistant("first reply") not in after
             givens = [
                 s.given
                 for s in harness.store.list_steps(run_id=run.id)
@@ -959,7 +957,6 @@ def test_initial_horizon_and_recall_selection(
                 *([Message.user("Earlier facts.")] if "far" in selected else []),
                 *(
                     [
-                        Message.assistant("reply 0"),
                         Message.user("second"),
                         Message.assistant("reply 1"),
                     ]
@@ -1033,8 +1030,8 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
                 for item in harness.adapter.invocations[-2:]
             ]
             assert before[0] == Message.user("first")
-            assert after[:5] == [Message.user("Earlier facts."), *before[1:]]
-            assert [message.role for message in after[5:]] == ["assistant", "tool"]
+            assert after[:4] == [Message.user("Earlier facts."), *before[2:]]
+            assert [message.role for message in after[4:]] == ["assistant", "tool"]
             models = [
                 s
                 for s in harness.store.list_steps(run_id=run.id)
@@ -1158,3 +1155,106 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
+
+
+@pytest.mark.parametrize(
+    "summary", ["Earlier facts.", "Earlier history was intentionally forgotten."]
+)
+def test_compaction_excludes_the_covered_roots_terminal_reply(tmp_path, summary):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[
+            ModelCallResult(message=Message.assistant(text))
+            for text in ("covered reply", "retained reply", "done")
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            await _run(harness, thread, "covered input", tracer)
+            retained = await _run(harness, thread, "retained input", tracer)
+            horizon = _summary(harness, thread, retained.id, summary=summary)
+            current = await _run(
+                harness, thread, "current input", tracer, horizon=horizon
+            )
+            assert current.status == "succeeded", current.error
+            assert without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            ) == [
+                Message.user(summary),
+                Message.user("retained input"),
+                Message.assistant("retained reply"),
+                Message.user("current input"),
+            ]
+        assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
+    from toolang.base.types.message import ToolCallPart, ToolResultPart
+    from toolang.base.types.policy import RunLimits
+
+    tool = RecordingTool("lookup__item", output={"fact": "result"})
+    calls = [ToolCall(name, name, tool.name, {}) for name in ("covered", "retained")]
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            *(ModelCallResult(tool_calls=(call,)) for call in calls),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            roots = []
+            for text in ("covered", "retained"):
+                root = await harness.executor.run(
+                    harness.run_spec(
+                        thread=thread,
+                        runnable="chat",
+                        primary=(TextPart(text),),
+                        limits=RunLimits(agic_model_calls=1),
+                    ),
+                    tracer=tracer,
+                )
+                assert root.status == "failed"
+                assert [s.kind for s in harness.store.list_steps(run_id=root.id)] == [
+                    "model",
+                    "tool",
+                ]
+                roots.append(root)
+            horizon = _summary(harness, thread, roots[1].id)
+            current = await _run(harness, thread, "current", tracer, horizon=horizon)
+            assert current.status == "succeeded", current.error
+            messages = without_route_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )
+            assert [m.role for m in messages] == [
+                "user",
+                "user",
+                "assistant",
+                "tool",
+                "user",
+            ]
+            assert messages[:2] == [
+                Message.user("Earlier facts."),
+                Message.user("retained"),
+            ]
+            parts = [
+                p
+                for m in messages
+                for p in m.parts
+                if isinstance(p, (ToolCallPart, ToolResultPart))
+            ]
+            assert [p.tool_call_id for p in parts] == ["retained", "retained"]
+        assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())

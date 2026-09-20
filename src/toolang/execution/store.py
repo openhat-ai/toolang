@@ -119,7 +119,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 45
+_SCHEMA_VERSION = 46
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -2999,9 +2999,7 @@ class RunStore:
             if root is None:
                 raise ValueError(f"run not found: {run_id}")
             roots = self._thread_projection().before(root)
-        facts: dict[
-            RunRef, tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]]
-        ] = {}
+        by_ref = {RunRef(run.id): run for run in roots}
 
         def load(
             selected_roots: Sequence[RunRef],
@@ -3026,18 +3024,8 @@ class RunStore:
                         if head is not None and step_ref.indices >= head.indices
                         for message in messages.delta
                         if message.source is None
-                    )
-                    facts[ref] = selected, related
+                    ) + tail_delta(by_ref[ref], selected, related, self.resolve_value)
                 return deltas
-
-        by_ref = {RunRef(run.id): run for run in roots}
-
-        def tail(pending: Sequence[RunRef]) -> tuple[MessageTemplate, ...]:
-            return tuple(
-                message
-                for ref in pending
-                for message in tail_delta(by_ref[ref], *facts[ref], self.resolve_value)
-            )
 
         from .inspection.history import RunHistory
 
@@ -3045,7 +3033,6 @@ class RunStore:
             str(root.thread),
             tuple(RunRef(run.id) for run in roots),
             load,
-            tail,
             self.resolve_value,
             lambda ref: (
                 RunHistory(self)

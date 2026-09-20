@@ -302,7 +302,6 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
         "thread",
         (RunRef("run_prior"), root),
         lambda roots: {r: literal_delta(near) for r in roots},
-        lambda _: (),
         resolve,
         lambda _: CompactionResult(
             "thread", "run_prior", str(root), "Summary {{literal}}"

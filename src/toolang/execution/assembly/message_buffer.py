@@ -74,16 +74,6 @@ class MessageBuffer:
         )
         self.append_template(template, lambda _ref: content)
 
-    def prepend(
-        self, delta: Sequence[MessageTemplate], messages: Sequence[Message]
-    ) -> None:
-        """Record a newly consumed terminal exchange before this Run's input."""
-
-        self.pending[:0] = delta
-        self.templates[:0] = delta
-        self.messages[:0] = messages
-        self.recalls = recall_revisions(self.templates)
-
     def append_ref(self, role: MessageRole, ref: FieldRef, value: Local) -> None:
         self.append_template(
             MessageTemplate(role, (TypedRef(ref, value.type),)),

@@ -509,10 +509,10 @@ def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversiz
         source=SOURCE,
         responses=[
             reply("old output"),
+            reply("middle output"),
             reply(
-                "large " * 15000 if oversized == "required_near" else "middle output"
+                "large " * 15000 if oversized == "required_near" else "recent output"
             ),
-            reply("recent output"),
         ],
     )
 
@@ -848,6 +848,8 @@ def test_parallel_children_share_compact_output_but_adopt_separately(tmp_path):
 
 def test_oversized_completed_summary_fails_without_repeating_the_range(tmp_path):
     harness = seeded_harness(tmp_path)
+    # Force the initial compaction to retain only the last complete root.
+    harness.adapter._responses[1] = reply("middle " * 8000)
 
     async def scenario():
         async with harness:
@@ -956,7 +958,7 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
             history = RunHistory(harness.store)
             previous = history.get_compaction(thread)
             assert previous is not None
-            # Record the large terminal reply, then add a small retained root.
+            # Add two small roots after the large terminal reply.
             constrain(harness, context=1_000_000)
             harness.adapter._responses.extend(
                 [reply("small"), reply("small retained output")]
@@ -979,7 +981,7 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
             latest = history.get_compaction(thread)
             assert latest is not None and latest.ref != previous.ref
             assert latest.result.begin == previous.result.begin
-            assert str(latest.result.end) == retained.id
+            assert str(latest.result.end) == intermediate.id
             control = harness.store.get_run_control(
                 run_id=history.thread_view(f"compact_{thread}").roots[-1].id, index=0
             )
