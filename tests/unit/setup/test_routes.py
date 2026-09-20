@@ -21,6 +21,8 @@ from toolang.setup.routes import (
     resolve_catalog_providers,
 )
 
+from toolang.base.types.model import ModelProvider
+
 
 def _adapters() -> dict[str, ModelAdapter]:
     return {
@@ -212,10 +214,9 @@ def test_model_provider_override_resolves_its_own_protocol_route() -> None:
         id="claude",
         name="Claude",
         _toolang=ModelToolang(provider="router"),
-        provider={
-            "npm": "@ai-sdk/anthropic",
-            "api": "https://router.example/anthropic/v1",
-        },
+        provider=ModelProvider(
+            npm="@ai-sdk/anthropic", api="https://router.example/anthropic/v1"
+        ),
     )
     provider = _catalog(
         Provider(
@@ -273,17 +274,33 @@ def test_resolver_reuses_frozen_model_catalog_fields() -> None:
 
 
 def test_raw_toolang_extension_is_ignored_as_runtime_config() -> None:
-    model = Model(
-        id="model",
-        name="Model",
-        _toolang=ModelToolang(provider="openai"),
-        provider={
-            "_toolang": {
-                "adapter": "messages",
-                "endpoint": "https://attacker.example/v1",
-            }
-        },
+    from toolang.plugin.catalogs.models_dev.parsing import (
+        model_catalog_snapshot_from_data,
     )
+
+    raw = {
+        "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "env": ["OPENAI_API_KEY"],
+            "npm": "@ai-sdk/openai",
+            "models": {
+                "model": {
+                    "id": "model",
+                    "name": "Model",
+                    "modalities": {},
+                    "limit": {},
+                    "provider": {
+                        "_toolang": {
+                            "adapter": "messages",
+                            "endpoint": "https://attacker.example/v1",
+                        }
+                    },
+                }
+            },
+        }
+    }
+    model = model_catalog_snapshot_from_data(raw, revision="test").models[0]
     provider = _catalog(
         Provider(
             id="openai",
@@ -408,7 +425,9 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
         env=("ACCOUNT", "TEST_API_KEY"),
         api="https://${ACCOUNT}.example/v1",
     )
-    model = replace(_model_for(provider, "model"), provider={"shape": "messages"})
+    model = replace(
+        _model_for(provider, "model"), provider=ModelProvider(shape="messages")
+    )
     provider = _replace_catalog(provider, models={"model": model})
     original = _provider_data(provider)
     for environ, adapters, expected in (
@@ -436,7 +455,7 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
         assert (
             _provider_for(resolved)._toolang.env == _provider_for(provider)._toolang.env
         )
-        assert model.provider is not None and "_toolang" not in model.provider
+        assert model.provider is not None and model.provider._toolang is None
 
     ready = resolve_catalog_providers(
         provider,
@@ -463,7 +482,10 @@ def test_resolver_uses_npm_service_endpoints_for_provider_and_model_routes():
         == _provider_for(resolved)._toolang.route.api
     )
 
-    model = replace(_model_for(provider, "model"), provider={"npm": "@ai-sdk/mistral"})
+    model = replace(
+        _model_for(provider, "model"),
+        provider=ModelProvider(npm="@ai-sdk/mistral"),
+    )
     provider = _replace_catalog(provider, models={"model": model})
     resolved = resolve_catalog_providers(provider, adapters=_adapters(), environ={})
     assert (
@@ -477,7 +499,8 @@ def test_resolver_uses_npm_service_endpoints_for_provider_and_model_routes():
     )
     assert _model_for(explicit, "model")._toolang.route.api == "https://catalog.test/v1"
     model = replace(
-        model, provider={"npm": "@ai-sdk/mistral", "api": "https://model.test/v1"}
+        model,
+        provider=ModelProvider(npm="@ai-sdk/mistral", api="https://model.test/v1"),
     )
     explicit = resolve_catalog_providers(
         _replace_catalog(
@@ -503,7 +526,7 @@ def test_resolver_does_not_apply_npm_endpoints_to_explicit_adapter_declarations(
     ):
         model = replace(
             _model_for(provider, "model"),
-            provider={"npm": "@ai-sdk/mistral", **declaration},
+            provider=replace(ModelProvider(npm="@ai-sdk/mistral"), **declaration),
         )
         resolved = resolve_catalog_providers(
             _replace_catalog(provider, models={"model": model}),
@@ -524,11 +547,9 @@ def test_invalid_modes_only_disable_the_affected_model():
     ):
         invalid = replace(
             _model("test", "invalid", "Invalid"),
-            provider={
-                "mode": "fast",
-                "headers": {"X-Test": "raw"},
-                "body": {"temperature": 0},
-            },
+            provider=ModelProvider(
+                mode="fast", headers={"X-Test": "raw"}, body={"temperature": 0}
+            ),
             experimental=experimental,
         )
         source = _replace_catalog(
@@ -559,11 +580,9 @@ def test_valid_modes_merge_request_data_and_allow_empty_definitions():
     ):
         model = replace(
             _model_for(provider, "model"),
-            provider={
-                "mode": "fast",
-                "headers": {"X-Test": "raw"},
-                "body": {"temperature": 0},
-            },
+            provider=ModelProvider(
+                mode="fast", headers={"X-Test": "raw"}, body={"temperature": 0}
+            ),
             experimental={"modes": {"fast": selected}},
         )
         resolved = resolve_catalog_providers(

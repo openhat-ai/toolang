@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
-from decimal import Decimal
 import json
 from types import SimpleNamespace
 from typing import Any, cast
@@ -403,22 +402,22 @@ def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> N
         meters=(
             ModelUsageMeter(
                 name="anthropic.cache_write.5m",
-                quantity=Decimal(8),
+                quantity=8.0,
                 unit="token",
             ),
             ModelUsageMeter(
                 name="anthropic.cache_write.1h",
-                quantity=Decimal(2),
+                quantity=2.0,
                 unit="token",
             ),
             ModelUsageMeter(
                 name="anthropic.server_tool.web_search",
-                quantity=Decimal(1),
+                quantity=1.0,
                 unit="request",
             ),
             ModelUsageMeter(
                 name="anthropic.server_tool.web_fetch",
-                quantity=Decimal(2),
+                quantity=2.0,
                 unit="request",
             ),
         ),
@@ -527,7 +526,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
         meters=(
             ModelUsageMeter(
                 name="google.tool_use_prompt",
-                quantity=Decimal(20),
+                quantity=20.0,
                 unit="token",
             ),
         ),
@@ -584,7 +583,7 @@ def test_chat_usage_normalizes_cache_aliases_writes_and_reported_cost() -> None:
         output_visible_tokens=10,
         output_reasoning_tokens=30,
         output_audio_tokens=2,
-        reported_cost=Decimal("0.03"),
+        reported_cost=0.03,
         reported_currency="USD",
         billing={"service_tier": "priority"},
     )
@@ -622,7 +621,7 @@ def test_responses_usage_normalizes_optional_components_and_cost() -> None:
         output_visible_tokens=10,
         output_reasoning_tokens=30,
         output_audio_tokens=2,
-        reported_cost=Decimal("0.02"),
+        reported_cost=0.02,
         reported_currency="USD",
         billing={"service_tier": "flex"},
     )
@@ -1531,15 +1530,15 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
 ):
     import httpx
 
-    from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
     from toolang.base.types.model import ModelCatalogSnapshot
+    from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
     from toolang.setup.cache import ModelCatalogCache
 
     raw = json.loads(
         '{"test":{"id":"test","name":"Test","npm":"@ai-sdk/openai","env":[],"models":{"one":'
         '{"id":"one","name":"One","modalities":{},"limit":{},"cost":{"input":0.123456789012345678901},'
         '"provider":{"body":{"temperature":0.7,"custom":{"values":[0.25]}}}}}}}',
-        parse_float=Decimal,
+        parse_float=float,
     )
     providers, models = parse_model_catalog_data(raw)
     provider = providers["test"]
@@ -1561,7 +1560,7 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
     model = model.with_route(
         _route(
             adapter=adapter,
-            options=dict(cast(Mapping[str, object], model.provider["body"])),
+            options=dict(cast(Mapping[str, object], model.provider.body)),
         )
     )
     request = ModelCall("", [Message.user("hello")], max_output_tokens=128)
@@ -1578,8 +1577,8 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
     )
     assert wire["temperature"] == 0.7
     assert wire["custom"]["values"] == [0.25]
-    assert model._toolang.route.options["temperature"] == Decimal("0.7")
-    assert model.cost == {"input": Decimal("0.123456789012345678901")}
+    assert model._toolang.route.options["temperature"] == 0.7
+    assert model.cost == {"input": 0.12345678901234568}
 
 
 @pytest.mark.parametrize(

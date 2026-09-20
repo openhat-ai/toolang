@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 import threading
 from typing import Any, cast
@@ -81,7 +80,7 @@ class LocalChatSession:
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout
@@ -587,14 +586,14 @@ def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.close()
 
 
-def _price_per_million(value: float | None) -> Decimal | None:
-    return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
+def _price_per_million(value: float | None) -> float | None:
+    return None if value is None else value * 1_000_000
 
 
 def _model_token_price(model: Model, name: str) -> float | None:
     cost = model.cost
     value = cost.get(name) if isinstance(cost, Mapping) else None
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) / 1_000_000
 

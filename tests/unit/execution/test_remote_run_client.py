@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 import json
 
 import httpx
@@ -41,7 +40,6 @@ from toolang.execution.schemas import (
 from toolang.execution.types import ControlRef, RunCommand, StepRef
 from toolang.lang.types import Array
 from toolang.lang.input import CallInput
-
 
 _DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _CONTROL_ADAPTER = TypeAdapter(ControlInfo)
@@ -92,7 +90,7 @@ def _request() -> RunRequest:
         model=ModelRequest("openai/gpt-5"),
         policy=RunPolicy(
             allow=(AgentCeiling(models=("openai/*",)),),
-            limits=RunLimits(cost=Decimal("2.50")),
+            limits=RunLimits(cost=2.5),
         ),
     )
 
@@ -250,7 +248,7 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                         "agic_model_calls": 200,
                         "agic_tool_calls": None,
                         "tokens": None,
-                        "cost": "2.50",
+                        "cost": "2.5",
                         "time": None,
                     },
                 },
@@ -294,7 +292,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         request = (
             RetryRequest(
                 source="run_source",
-                commands=(RunCommand("limit", "cost", Decimal("2.50")),),
+                commands=(RunCommand("limit", "cost", 2.5),),
                 request_id="retry_request",
                 anchor=StepRef.from_local("run_source", (1, 2)),
             )
@@ -326,7 +324,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
                 {
                     "group": "limit",
                     "field": "cost" if operation == "retry" else "time",
-                    "value": "2.50" if operation == "retry" else 30,
+                    "value": "2.5" if operation == "retry" else 30,
                 }
             ],
         }

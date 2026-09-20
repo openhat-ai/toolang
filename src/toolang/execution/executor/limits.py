@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import Decimal
 
+from toolang.base.money import add_cost, cost_units, normalize_cost
 from toolang.base.types.model import Model, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
@@ -23,8 +23,8 @@ class _RunLimitExceeded(ToolangError):
 class _TokenPrice:
     """Captured USD price per input and output token."""
 
-    input: Decimal | None = None
-    output: Decimal | None = None
+    input: float | None = None
+    output: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +33,7 @@ class _ModelAccounting:
 
     usage: ModelUsage | None
     price: _TokenPrice | None = None
-    cost: Decimal | None = None
+    cost: float | None = None
     accounting: ModelAccounting | None = None
 
 
@@ -44,7 +44,7 @@ class _RunLimitState:
     limits: RunLimits
     input_tokens: int = 0
     output_tokens: int = 0
-    cost: Decimal = Decimal(0)
+    cost: float = 0.0
     error: str | None = None
 
     def restore(
@@ -52,7 +52,7 @@ class _RunLimitState:
         *,
         input_tokens: int | None,
         output_tokens: int | None,
-        cost: Decimal | None,
+        cost: float | None,
     ) -> None:
         """Restore one effective committed model call into root totals."""
 
@@ -64,7 +64,7 @@ class _RunLimitState:
             self.output_tokens += output_tokens
         if self.limits.cost is not None:
             if cost is not None:
-                self.cost += cost
+                self.cost = add_cost(self.cost, cost)
 
     def check_restored(self) -> None:
         """Validate restored effective totals before resumed execution."""
@@ -76,7 +76,9 @@ class _RunLimitState:
             raise _RunLimitExceeded(
                 f"Run token limit exceeded: {tokens} > {self.limits.tokens}"
             )
-        if self.limits.cost is not None and self.cost > self.limits.cost:
+        if self.limits.cost is not None and cost_units(self.cost) > cost_units(
+            self.limits.cost
+        ):
             raise _RunLimitExceeded(
                 f"Run cost limit exceeded: {self.cost} > {self.limits.cost} USD"
             )
@@ -116,8 +118,8 @@ class _RunLimitState:
             return
         if accounting.cost is None:
             return
-        self.cost += accounting.cost
-        if self.cost > self.limits.cost:
+        self.cost = add_cost(self.cost, accounting.cost)
+        if cost_units(self.cost) > cost_units(self.limits.cost):
             raise _RunLimitExceeded(
                 f"Run cost limit exceeded: {self.cost} > {self.limits.cost} USD"
             )
@@ -155,10 +157,10 @@ def _model_accounting(
 def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
     if accounting is None or accounting.estimate is None:
         return None
-    input_rate: Decimal | None = None
-    output_rate: Decimal | None = None
+    input_rate: float | None = None
+    output_rate: float | None = None
     for line in accounting.estimate.lines:
-        rate = Decimal(line.rate) / Decimal(line.per)
+        rate = float(line.rate) / float(line.per)
         if line.meter in {"input", "input.uncached"}:
             input_rate = rate
         if line.meter in {"output", "output.visible"}:
@@ -181,16 +183,18 @@ def _model_price(model: Model) -> _TokenPrice | None:
     return _TokenPrice(input=input_price, output=output_price)
 
 
-def _token_price(value: object) -> Decimal | None:
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+def _token_price(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return Decimal(str(value)) / Decimal(1_000_000)
+    return float(value) / 1_000_000.0
 
 
 def _model_cost(
     usage: ModelUsage | None,
     price: _TokenPrice | None,
-) -> Decimal | None:
+) -> float | None:
     if usage is None or price is None or price.input is None or price.output is None:
         return None
-    return price.input * usage.input_tokens + price.output * usage.output_tokens
+    return normalize_cost(
+        price.input * usage.input_tokens + price.output * usage.output_tokens
+    )

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
-from decimal import Decimal
 from pathlib import Path
 from typing import cast
+
+import msgspec
 
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
+    ModelProvider,
     ModelToolang,
     Provider,
 )
@@ -187,7 +190,7 @@ def _parse_model(
         experimental=_optional_mapping(
             data.get("experimental"), label=f"{label} experimental"
         ),
-        provider=_optional_mapping(data.get("provider"), label=f"{label} provider"),
+        provider=_model_provider(data.get("provider"), label=f"{label} provider"),
         cost=cost,
     )
 
@@ -275,7 +278,11 @@ def _reasoning_options(
 
 
 def _validate_json(value: object, *, label: str) -> None:
-    if value is None or isinstance(value, str | bool | int | Decimal):
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{label} numbers must be finite")
+        return
+    if value is None or isinstance(value, str | bool | int):
         return
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
@@ -293,7 +300,7 @@ def _validate_json(value: object, *, label: str) -> None:
 def _validate_non_negative_numbers(value: object, *, label: str) -> None:
     if isinstance(value, bool) or value is None or isinstance(value, str):
         return
-    if isinstance(value, int | Decimal):
+    if isinstance(value, int | float):
         if value < 0:
             raise ValueError(f"{label} must not contain negative numbers")
         return
@@ -304,3 +311,12 @@ def _validate_non_negative_numbers(value: object, *, label: str) -> None:
     if isinstance(value, list | tuple):
         for item in value:
             _validate_non_negative_numbers(item, label=label)
+
+
+def _model_provider(value: object, *, label: str) -> ModelProvider | None:
+    block = _optional_mapping(value, label=label)
+    if block is None:
+        return None
+    # External catalog JSON cannot declare trusted Toolang routing metadata.
+    block.pop("_toolang", None)
+    return msgspec.convert(block, type=ModelProvider)

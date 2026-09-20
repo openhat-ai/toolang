@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from decimal import Decimal
-from hashlib import sha256
-import json
-from pathlib import Path
 import re
+from collections.abc import Mapping, Sequence
+from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
-from pydantic_core import from_json
+import msgspec
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.json import dumps
 
-CACHE_SCHEMA = 9
+CACHE_SCHEMA = 10
 _MAX_CACHE_BYTES = 128 * 1024 * 1024
 _REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 _SENSITIVE_HEADER_NAME_RE = re.compile(
@@ -96,15 +94,8 @@ def load_document(
     content = path.read_text(encoding="utf-8")
     if _serialized_data_is_unsafe(content):
         raise ValueError("model cache entry contains unsafe data")
-    raw = (
-        from_json(content, allow_inf_nan=False, cache_strings="keys")
-        if fast_json
-        else json.loads(
-            content,
-            parse_float=Decimal,
-            parse_constant=_reject_cache_constant,
-        )
-    )
+    del fast_json  # All cache readers now use the same native decoder.
+    raw = msgspec.json.decode(content)
     if not isinstance(raw, Mapping):
         raise TypeError("model cache entry must be an object")
     require_fields(raw, frozenset({"digest", "payload"}), label="cache envelope")
@@ -161,8 +152,6 @@ def canonical_value(value: object) -> object:
         return [canonical_value(item) for item in value]
     if isinstance(value, Path):
         return str(value)
-    if isinstance(value, Decimal):
-        return value
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return repr(value)
@@ -181,10 +170,6 @@ def require_fields(
         raise ValueError(f"{label} fields do not match schema")
 
 
-def _reject_cache_constant(value: str) -> None:
-    raise ValueError(f"invalid model cache numeric constant: {value}")
-
-
 def _serialized_data_is_unsafe(
     content: str,
     parsed: object | None = None,
@@ -198,11 +183,7 @@ def _serialized_data_is_unsafe(
         return False
     value = parsed
     if value is None:
-        value = json.loads(
-            content,
-            parse_float=Decimal,
-            parse_constant=_reject_cache_constant,
-        )
+        value = msgspec.json.decode(content)
     return _contains_unsafe_headers(value)
 
 

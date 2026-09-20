@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from decimal import Decimal
 import json
 
 import httpx
@@ -42,7 +41,6 @@ from toolang.execution.types import (
     RunOverride,
 )
 from toolang.lang.input import CallInput
-
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -389,7 +387,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             RunOverride(
                 model=ModelOverride(identity="test/model"),
                 allow=(AllowOverride("models", ("test/*",)),),
-                limits=(LimitOverride("cost", Decimal("2.50")),),
+                limits=(LimitOverride("cost", 2.5),),
             ),
         )
         assert session.get_result("run_remote", thread_id=None).output == (
@@ -400,7 +398,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         )
         assert setting.model is not None and setting.model.ref == "test/model"
         assert setting.allow.models == ("test/*",)
-        assert setting.limits.cost == Decimal("2.50")
+        assert setting.limits.cost == 2.5
     finally:
         session.close()
 

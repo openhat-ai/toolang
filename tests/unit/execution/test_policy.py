@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -40,7 +39,7 @@ def _setup() -> AgentSetup:
         tools=ToolCollection(),
         envs={},
         defaults=RunDefaults(model=ModelRequest("root/model"), runnable="agic:chat"),
-        limits=RunLimits(tokens=100, cost=Decimal("5"), time=60),
+        limits=RunLimits(tokens=100, cost=5.0, time=60),
     )
 
 
@@ -72,7 +71,7 @@ def _setup() -> AgentSetup:
             RunOverride(
                 limits=(
                     LimitOverride("tokens", 200),
-                    LimitOverride("cost", Decimal("1.25")),
+                    LimitOverride("cost", 1.25),
                     LimitOverride("time", None),
                 )
             ),
@@ -301,4 +300,4 @@ def test_retained_execution_commands_still_resolve_without_input_changes() -> No
 
     assert ceilings == (AgentCeiling(models=("session/*",)),)
     assert bindings == RunBindings(model="session/model", runnable="flow:surface")
-    assert limits == RunLimits(tokens=80, cost=Decimal("5"), time=None)
+    assert limits == RunLimits(tokens=80, cost=5.0, time=None)

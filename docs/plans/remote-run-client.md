@@ -329,7 +329,7 @@ from their owning modules.
 ## Acceptance Tests
 
 1. Round-trip every `RunRequest` field, all policy value kinds including
-   `Decimal`, primary/named input, and ordered fallbacks through the strict wire
+   float cost budgets with decimal-text wire values, primary/named input, and ordered fallbacks through the strict wire
    conversion; reject extra, malformed, duplicate, and lossy values.
 2. Prove local and API paths call the shared resolver with one setup/state pair
    and preserve fallback, session/run policy precedence, prompts, named input,

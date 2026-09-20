@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
 
+from toolang.base.money import add_cost
 from toolang.base.types.message import Part
 from toolang.execution.accounting import (
     selected_cost_is_approximate,
@@ -188,7 +188,7 @@ class Metrics:
     cache_unknown_calls: int = 0
     reasoning_tokens: int = 0
     reasoning_known_calls: int = 0
-    cost: Decimal = Decimal("0")
+    cost: float = 0.0
     cost_known: bool = False
     cost_approximate: bool = False
 
@@ -219,7 +219,7 @@ class Metrics:
         self.cache_unknown_calls += other.cache_unknown_calls
         self.reasoning_tokens += other.reasoning_tokens
         self.reasoning_known_calls += other.reasoning_known_calls
-        self.cost += other.cost
+        self.cost = add_cost(self.cost, other.cost)
         self.cost_known = self.cost_known or other.cost_known
         self.cost_approximate = self.cost_approximate or other.cost_approximate
 
@@ -242,7 +242,7 @@ class Metrics:
                     self.reasoning_known_calls += 1
                 selected = selected_usd_cost(accounting)
                 if selected is not None:
-                    self.cost += selected
+                    self.cost = add_cost(self.cost, selected)
                     self.cost_known = True
                 self.cost_approximate = (
                     self.cost_approximate or selected_cost_is_approximate(accounting)
@@ -253,7 +253,7 @@ class Metrics:
                     self.output_tokens += noted.tokens.output
                 self.cache_unknown_calls += 1
                 if noted.cost:
-                    self.cost += Decimal(noted.cost)
+                    self.cost = add_cost(self.cost, float(noted.cost))
                     self.cost_known = True
                 self.cost_approximate = True
         elif event.kind == "tool":

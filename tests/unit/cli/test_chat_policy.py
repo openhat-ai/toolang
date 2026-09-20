@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 
 import pytest
 
@@ -30,7 +29,7 @@ def _surface() -> SessionSetting:
     return SessionSetting(
         model=ModelRequest("openai/gpt-4.1"),
         runnable="agic:chat",
-        limits=RunLimits(cost=Decimal("1.50"), time=30),
+        limits=RunLimits(cost=1.5, time=30),
     )
 
 
@@ -42,7 +41,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
         ),
         runnable="agic:chat",
         allow=AgentCeiling(models=("openai/*",)),
-        limits=RunLimits(cost=Decimal("1.50"), time=60),
+        limits=RunLimits(cost=1.5, time=60),
     )
 
     request = build_run_request(
@@ -72,7 +71,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
                 AgentCeiling(models=("openai/*",)),
                 AgentCeiling(tools=("shell/*",)),
             ),
-            limits=RunLimits(tokens=2000, cost=Decimal("1.50"), time=60),
+            limits=RunLimits(tokens=2000, cost=1.5, time=60),
         ),
     )
 

@@ -12,17 +12,16 @@ revision.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from decimal import Decimal
-import json
-from pathlib import Path
 import re
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import cast
+
+import msgspec
 
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
-    ModelToolang,
     ModelRoute,
     Provider,
     ProviderToolang,
@@ -38,37 +37,10 @@ from toolang.common.cache import (
 )
 from toolang.common.json import dumps
 
+_SNAPSHOT_DECODER = msgspec.json.Decoder(ModelCatalogSnapshot)
+
 _CATALOG_KIND = "catalog"
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-
-_PROVIDER_FIELDS = frozenset({"id", "name", "npm", "api", "doc", "env", "_toolang"})
-_MODEL_FIELDS = frozenset(
-    {
-        "id",
-        "name",
-        "description",
-        "family",
-        "attachment",
-        "reasoning",
-        "reasoning_options",
-        "tool_call",
-        "interleaved",
-        "structured_output",
-        "temperature",
-        "knowledge",
-        "release_date",
-        "last_updated",
-        "modalities",
-        "open_weights",
-        "limit",
-        "status",
-        "experimental",
-        "provider",
-        "cost",
-        "extra",
-        "_toolang",
-    }
-)
 
 
 class ModelCatalogCache:
@@ -163,12 +135,13 @@ def catalog_loader(
     this private copy preserves the setup version without another source read.
     """
 
-    payload = dumps(_snapshot_document(snapshot, resolved=True), indent=None)
+    payload = dumps(
+        {**_snapshot_document(snapshot, resolved=True), "revision": revision},
+        indent=None,
+    )
 
     def load() -> ModelCatalogSnapshot:
-        return _snapshot_from_data(
-            json.loads(payload, parse_float=Decimal), revision=revision, resolved=True
-        )
+        return _SNAPSHOT_DECODER.decode(payload)
 
     return load
 
@@ -264,30 +237,47 @@ def _snapshot_from_document(
 def _snapshot_from_data(
     document: Mapping[str, object], *, revision: str, resolved: bool = False
 ) -> ModelCatalogSnapshot:
-    raw_providers = document["providers"]
+    raw_providers = _mapping(document, "providers")
     raw_models = document["models"]
-    if not isinstance(raw_providers, Mapping) or not isinstance(raw_models, list):
-        raise TypeError("model context payload must hold providers and models")
-    providers = {
-        str(provider_id): _provider_from_data(
-            str(provider_id),
-            cast(Mapping[str, object], raw_provider),
-            resolved=resolved,
+    if not isinstance(raw_models, list):
+        raise TypeError("model context models must be an array")
+    if resolved:
+        return msgspec.convert(
+            {**document, "revision": revision}, type=ModelCatalogSnapshot
         )
-        for provider_id, raw_provider in cast(
-            Mapping[object, object], raw_providers
-        ).items()
+    # Disk snapshots carry source declarations, never effective setup routes.
+    providers = {
+        provider_id: _source_provider(cast(Mapping[str, object], raw))
+        for provider_id, raw in raw_providers.items()
     }
-    models = tuple(
-        _model_from_data(cast(Mapping[str, object], raw_model), resolved=resolved)
-        for raw_model in raw_models
+    models = []
+    for raw in raw_models:
+        model = dict(cast(Mapping[str, object], raw))
+        toolang = _mapping(model, "_toolang")
+        model["_toolang"] = {"provider": toolang["provider"]}
+        if model.get("provider") is not None:
+            model["provider"] = _source_provider(
+                cast(Mapping[str, object], model["provider"])
+            )
+        models.append(model)
+    return msgspec.convert(
+        {
+            "providers": providers,
+            "models": models,
+            "revision": revision,
+            "local": document.get("local", False),
+        },
+        type=ModelCatalogSnapshot,
     )
-    return ModelCatalogSnapshot(
-        providers=providers,
-        models=models,
-        revision=revision,
-        local=bool(document.get("local", False)),
-    )
+
+
+def _source_provider(data: Mapping[str, object]) -> dict[str, object]:
+    source = dict(data)
+    if source.get("_toolang") is not None:
+        declared = dict(_mapping(source, "_toolang"))
+        declared.pop("route", None)
+        source["_toolang"] = declared
+    return source
 
 
 def _provider_to_data(provider: Provider, *, resolved: bool) -> dict[str, object]:
@@ -302,24 +292,6 @@ def _provider_to_data(provider: Provider, *, resolved: bool) -> dict[str, object
     }
 
 
-def _provider_from_data(
-    provider_id: str,
-    data: Mapping[str, object],
-    *,
-    resolved: bool,
-) -> Provider:
-    toolang = _mapping(data, "_toolang")
-    return Provider(
-        id=provider_id,
-        name=_text(data, "name"),
-        _toolang=_provider_toolang_from_data(toolang, resolved=resolved),
-        npm=_optional_text(data, "npm"),
-        api=_optional_text(data, "api"),
-        doc=_optional_text(data, "doc"),
-        env=_string_list(data.get("env")),
-    )
-
-
 def _provider_toolang_to_data(
     value: ProviderToolang, *, resolved: bool = False
 ) -> dict[str, object]:
@@ -330,46 +302,12 @@ def _provider_toolang_to_data(
     }
 
 
-def _provider_toolang_from_data(
-    value: object, *, resolved: bool = False
-) -> ProviderToolang:
-    raw: Mapping[str, object] = (
-        cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
-    )
-    return ProviderToolang(
-        env=_env_from_data(raw.get("env")),
-        adapter=_optional_text(raw, "adapter"),
-        route=_route_from_data(raw.get("route")) if resolved else ModelRoute(),
-    )
-
-
-def _model_provider_from_data(value: object) -> Mapping[str, object] | None:
-    """Rebuild one model-level corrected provider block."""
-
-    block = _optional_mapping(value)
-    if block is None:
-        return None
-    return {
-        str(key): (
-            _provider_toolang_from_data(item)
-            if key == "_toolang" and isinstance(item, Mapping)
-            else item
-        )
-        for key, item in block.items()
-    }
-
-
 def _model_to_data(model: Model, *, resolved: bool) -> dict[str, object]:
     data = model.to_data()
-    if model.provider is not None:
+    if model.provider is not None and model.provider._toolang is not None:
         data["provider"] = {
-            str(key): (
-                _provider_toolang_to_data(item)
-                if isinstance(item, ProviderToolang)
-                else item
-            )
-            for key, item in model.provider.items()
-            if key != "_toolang" or isinstance(item, ProviderToolang)
+            **model.provider.to_data(),
+            "_toolang": _provider_toolang_to_data(model.provider._toolang),
         }
     data["_toolang"] = {
         "provider": model._toolang.provider,
@@ -385,44 +323,6 @@ def _model_to_data(model: Model, *, resolved: bool) -> dict[str, object]:
     return data
 
 
-def _model_from_data(data: Mapping[str, object], *, resolved: bool) -> Model:
-    toolang = _mapping(data, "_toolang")
-    provider = _model_provider_from_data(data.get("provider"))
-    interleaved = data.get("interleaved")
-    return Model(
-        id=_text(data, "id"),
-        name=_text(data, "name"),
-        _toolang=ModelToolang(
-            ready=bool(toolang.get("ready", False)) if resolved else False,
-            provider=_text(toolang, "provider"),
-            route=_route_from_data(toolang.get("route")) if resolved else ModelRoute(),
-        ),
-        description=_optional_text(data, "description"),
-        family=_optional_text(data, "family"),
-        attachment=_optional_bool(data, "attachment"),
-        reasoning=_optional_bool(data, "reasoning"),
-        reasoning_options=_optional_mappings(data.get("reasoning_options")),
-        tool_call=_optional_bool(data, "tool_call"),
-        interleaved=(
-            interleaved
-            if isinstance(interleaved, bool)
-            else _optional_mapping(interleaved)
-        ),
-        structured_output=_optional_bool(data, "structured_output"),
-        temperature=_optional_bool(data, "temperature"),
-        knowledge=_optional_text(data, "knowledge"),
-        release_date=_optional_text(data, "release_date"),
-        last_updated=_optional_text(data, "last_updated"),
-        modalities=_modalities(data.get("modalities")),
-        open_weights=_optional_bool(data, "open_weights"),
-        limit=_int_mapping(data.get("limit")),
-        status=_optional_text(data, "status"),
-        experimental=_optional_mapping(data.get("experimental")),
-        provider=provider,
-        cost=_optional_mapping(data.get("cost")),
-    )
-
-
 def _route_to_data(route: ModelRoute) -> dict[str, object]:
     return {
         "adapter": route.adapter,
@@ -433,20 +333,6 @@ def _route_to_data(route: ModelRoute) -> dict[str, object]:
     }
 
 
-def _route_from_data(value: object) -> ModelRoute:
-    if not isinstance(value, Mapping):
-        return ModelRoute()
-    raw = cast(Mapping[str, object], value)
-    headers = _optional_mapping(raw.get("headers")) or {}
-    return ModelRoute(
-        adapter=_optional_text(raw, "adapter"),
-        api=_optional_text(raw, "api"),
-        env=None if raw.get("env") is None else _env_from_data(raw["env"]),
-        headers={key: str(item) for key, item in headers.items()},
-        options=_optional_mapping(raw.get("options")) or {},
-    )
-
-
 def _env_to_data(env: ResolvedEnv) -> list[object]:
     return [
         alternative if isinstance(alternative, str) else list(alternative)
@@ -454,88 +340,11 @@ def _env_to_data(env: ResolvedEnv) -> list[object]:
     ]
 
 
-def _env_from_data(value: object) -> ResolvedEnv:
-    if not isinstance(value, list | tuple):
-        return ()
-    alternatives: list[str | tuple[str, ...]] = []
-    for item in value:
-        if isinstance(item, str):
-            alternatives.append(item)
-        elif isinstance(item, list | tuple):
-            alternatives.append(tuple(str(name) for name in item))
-    return tuple(alternatives)
-
-
 def _mapping(data: Mapping[str, object], name: str) -> Mapping[str, object]:
     value = data.get(name)
     if not isinstance(value, Mapping):
         raise TypeError(f"model context {name} must be an object")
     return cast(Mapping[str, object], value)
-
-
-def _optional_mapping(value: object) -> dict[str, object] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise TypeError("model context field must be an object")
-    return {
-        str(key): item for key, item in cast(Mapping[object, object], value).items()
-    }
-
-
-def _optional_mappings(value: object) -> tuple[Mapping[str, object], ...] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list | tuple):
-        raise TypeError("model context field must be an array")
-    return tuple(_optional_mapping(item) or {} for item in value)
-
-
-def _modalities(value: object) -> dict[str, tuple[str, ...]]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise TypeError("model modalities must be an object")
-    return {
-        str(key): tuple(str(item) for item in items)
-        for key, items in cast(Mapping[object, object], value).items()
-        if isinstance(items, list | tuple)
-    }
-
-
-def _int_mapping(value: object) -> dict[str, int]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise TypeError("model limit must be an object")
-    return {
-        str(key): int(item)
-        for key, item in cast(Mapping[object, object], value).items()
-        if isinstance(item, int) and not isinstance(item, bool)
-    }
-
-
-def _string_list(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list | tuple):
-        return ()
-    return tuple(str(item) for item in value)
-
-
-def _text(data: Mapping[str, object], name: str) -> str:
-    value = data.get(name)
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"model context {name} must be text")
-    return value
-
-
-def _optional_text(data: Mapping[str, object], name: str) -> str | None:
-    value = data.get(name)
-    return value if isinstance(value, str) and value else None
-
-
-def _optional_bool(data: Mapping[str, object], name: str) -> bool | None:
-    value = data.get(name)
-    return value if isinstance(value, bool) else None
 
 
 __all__ = [

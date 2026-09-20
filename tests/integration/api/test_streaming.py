@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from dataclasses import replace
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -417,7 +416,7 @@ agic answer(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        limits=RunLimits(tokens=100, cost=Decimal("5")),
+        limits=RunLimits(tokens=100, cost=5.0),
     )
     harness.store.close()
     core = AgentCore(setup.layout)

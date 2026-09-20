@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 
 from toolang.base.types.model import Model
 
@@ -27,12 +26,12 @@ def model_target_profile(model: Model) -> str:
     return ", ".join(parts)
 
 
-def _optional_price(value: object) -> Decimal | None:
+def _optional_price(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
-    if not isinstance(value, int | float | Decimal):
+    if not isinstance(value, int | float):
         return None
-    return Decimal(str(value))
+    return float(value)
 
 
 def _format_k(value: int) -> str:
@@ -49,5 +48,5 @@ def _format_decimal_unit(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
-def _format_price(value: Decimal) -> str:
+def _format_price(value: float) -> str:
     return f"{value:g}"

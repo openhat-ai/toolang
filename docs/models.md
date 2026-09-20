@@ -10,6 +10,7 @@ the setup resolver joins those facts once for the current process.
 | --- | --- |
 | `Provider` | One models.dev-compatible provider record |
 | `Model` | One model record linked by `_toolang.provider` |
+| `ModelProvider` | Typed per-model connection overrides, including optional `ProviderToolang` declarations |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
 | `ModelRequest` | One run's concrete model demand |
@@ -77,7 +78,7 @@ session or sandbox.
 
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top
-level, drops unmodelled additive fields, parses prices as decimal values, and
+level, drops unmodelled additive fields, parses prices as finite floats, and
 rejects an invalid complete snapshot. Canonical model metadata from the
 combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
@@ -474,3 +475,9 @@ retry, and session data. This PR does not change the durable record schema.
 Persisting effective call reasoning is deferred; current call records do not
 store that field. Pricing source and revision continue to populate existing
 accounting fields from the run's pinned `setup.catalog_sources` mapping.
+
+Call totals settle to six fractional USD digits, rounding half up after all
+components are calculated. Accumulation and budget comparison use integer
+micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
+Per-token prices are not rounded before multiplication. Existing accounting
+records retain decimal-text fields and remain readable.

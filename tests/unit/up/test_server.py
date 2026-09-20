@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,7 +62,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         limit_overrides={
             "agic_model_calls": 25,
             "tokens": 1000,
-            "cost": Decimal("1.5"),
+            "cost": 1.5,
             "time": None,
         },
         log_spec="toolang.up=debug",

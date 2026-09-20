@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -1736,7 +1735,7 @@ agic reply(_: Text) -> Text:
     [
         (None, "succeeded", None),
         (
-            Decimal("0.02"),
+            0.02,
             "failed",
             "Run cost limit exceeded: 0.03 > 0.02 USD",
         ),
@@ -1744,7 +1743,7 @@ agic reply(_: Text) -> Text:
 )
 def test_model_step_records_cost_and_enforces_run_cost_limit(
     tmp_path: Path,
-    cost_limit: Decimal | None,
+    cost_limit: float | None,
     status: str,
     error: str | None,
 ) -> None:
@@ -1826,7 +1825,7 @@ agic reply(_: Text) -> Text:
                     thread=thread,
                     runnable="reply",
                     primary=resolve_input_parts("hello"),
-                    limits=RunLimits(cost=Decimal("1")),
+                    limits=RunLimits(cost=1.0),
                 ),
             )
 

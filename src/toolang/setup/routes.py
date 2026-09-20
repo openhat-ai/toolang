@@ -18,6 +18,8 @@ from toolang.base.types.model import (
     normalized_env,
 )
 
+from toolang.base.types.model import ModelProvider
+
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
 
 # Toolang-owned provider conventions: agent-side data keyed by provider id.
@@ -140,14 +142,14 @@ def resolve_model(
 
     name = model_adapter(provider, model)
     implementation = adapters.get(name) if name is not None else None
-    override = model.provider or {}
+    override = model.provider or ModelProvider()
     mode_blocks = _mode_provider_blocks(model)
     route = ModelRoute(
         adapter=name
         if implementation is not None and mode_blocks is not None
         else None,
         api=_resolve_api(
-            _optional_text(override.get("api")) or provider.api,
+            _optional_text(override.api) or provider.api,
             environ=environ,
             default=_default_api(implementation, npm=_model_npm(provider, model)),
         ),
@@ -172,13 +174,13 @@ def _default_api(adapter: ModelAdapter | None, *, npm: str | None) -> str | None
 def _model_npm(provider: Provider, model: Model) -> str | None:
     """Use npm defaults only when npm selects the model's adapter."""
 
-    override = model.provider or {}
-    declared = override.get("_toolang")
+    override = model.provider or ModelProvider()
+    declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return None
-    if _normalized_shape(override.get("shape")) is not None:
+    if _normalized_shape(override.shape) is not None:
         return None
-    npm = _optional_text(override.get("npm"))
+    npm = _optional_text(override.npm)
     if npm is not None:
         return npm
     return provider.npm if not provider._toolang.adapter else None
@@ -194,14 +196,14 @@ def provider_adapter(provider: Provider) -> str | None:
 
 def model_adapter(provider: Provider, model: Model) -> str | None:
     """Resolve catalog declarations; only setup calls this function."""
-    override = model.provider or {}
-    declared = override.get("_toolang")
+    override = model.provider or ModelProvider()
+    declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return declared.adapter
-    shape = _normalized_shape(override.get("shape"))
+    shape = _normalized_shape(override.shape)
     if shape is not None:
         return _SHAPE_ADAPTERS.get(shape)
-    npm = _optional_text(override.get("npm"))
+    npm = _optional_text(override.npm)
     if npm is not None:
         mapped = _NPM_ROUTES.get(npm)
         return mapped[0] if mapped is not None else None
@@ -215,8 +217,8 @@ def model_headers(
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
-    override = model.provider or {}
-    _merge_headers(headers, override.get("headers"))
+    override = model.provider or ModelProvider()
+    _merge_headers(headers, override.headers)
     for mode_block in mode_blocks:
         _merge_headers(headers, mode_block.get("headers"))
     return headers
@@ -231,10 +233,10 @@ def model_options(
     options.update(
         cast(Mapping[str, object], _convention_block(provider.id)["options"])
     )
-    override = model.provider or {}
-    body = override.get("body")
+    override = model.provider or ModelProvider()
+    body = override.body
     if isinstance(body, Mapping):
-        options.update(cast(Mapping[str, object], body))
+        options.update(body)
     for mode_block in mode_blocks:
         body = mode_block.get("body")
         if isinstance(body, Mapping):
@@ -245,8 +247,8 @@ def model_options(
 def model_mode(model: Model) -> str | None:
     """Return the catalog mode that applies to one model, when declared."""
 
-    override = model.provider or {}
-    value = override.get("mode")
+    override = model.provider or ModelProvider()
+    value = override.mode
     return _optional_text(value)
 
 

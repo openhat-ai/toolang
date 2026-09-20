@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from dataclasses import dataclass
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -36,6 +35,8 @@ from toolang.setup.routes import (
     provider_adapter,
     resolve_provider,
 )
+
+from toolang.base.types.model import ModelProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +107,7 @@ def test_catalog_reader_attaches_origin_without_rematerializing_records(
     assert snapshot.local is False
 
 
-def test_catalog_import_drops_unknown_fields_and_keeps_decimal_prices(
+def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "models.json"
@@ -119,7 +120,7 @@ def test_catalog_import_drops_unknown_fields_and_keeps_decimal_prices(
     model = snapshot.find("test", "one")
 
     assert model is not None
-    assert model.cost == {"input": Decimal("1.25"), "output": 2}
+    assert model.cost == {"input": 1.25, "output": 2}
     exported = cast(dict[str, Any], snapshot.to_data())
     assert "future_provider_field" not in exported["test"]
     assert "future_model_field" not in exported["test"]["models"]["one"]
@@ -296,7 +297,7 @@ def test_filtered_export_round_trips_deterministically() -> None:
 
     first = dumps(snapshot.to_data(models=selected))
     second = dumps(snapshot.to_data(models=selected))
-    imported, models = parse_model_catalog_data(json.loads(first, parse_float=Decimal))
+    imported, models = parse_model_catalog_data(json.loads(first, parse_float=float))
 
     assert first == second
     assert tuple(imported) == ("test",)
@@ -318,7 +319,7 @@ def test_model_protocol_hints_override_the_provider_default() -> None:
         id="one",
         name="One",
         _toolang=ModelToolang(provider="test", ready=True),
-        provider={"npm": "@ai-sdk/anthropic"},
+        provider=ModelProvider(npm="@ai-sdk/anthropic"),
     )
 
     assert model_adapter(provider, model) == "messages"

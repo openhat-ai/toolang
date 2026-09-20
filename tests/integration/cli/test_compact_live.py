@@ -6,7 +6,6 @@ uv run pytest -s tests/integration/cli/test_compact_live.py \
 
 import asyncio
 from contextlib import closing
-from decimal import Decimal
 import json
 from typing import cast
 
@@ -86,7 +85,7 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(tmp_path, r
             layout,
             default_overrides={"model": model},
             compact_override=parse_model_body(model),
-            limit_overrides={"time": 240, "tokens": 500000, "cost": Decimal("0.5")},
+            limit_overrides={"time": 240, "tokens": 500000, "cost": 0.5},
         )
         setup = await watcher.refresh()
         selected = setup.defaults.model

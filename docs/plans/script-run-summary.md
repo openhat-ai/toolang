@@ -252,7 +252,7 @@ Known zero is 0; partial known zero is 0+.
 
 ### Cost
 
-Cost uses exact Decimal addition and a $ prefix:
+Cost uses integer micro-USD addition and a $ prefix:
 
 - at least one cent rounds half-up to two fractional digits;
 - positive sub-cent values retain four significant digits;

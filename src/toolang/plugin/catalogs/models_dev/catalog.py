@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import Decimal
 from hashlib import sha256
-import json
 from pathlib import Path
+
+import msgspec
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot
@@ -137,19 +137,11 @@ def _model_catalog_snapshot_from_bytes(
     """Validate one complete models.dev payload and rebuild its snapshot."""
 
     try:
-        payload = json.loads(
-            payload_bytes,
-            parse_float=Decimal,
-            parse_constant=_reject_json_constant,
-        )
-    except json.JSONDecodeError as exc:
+        payload = msgspec.json.decode(payload_bytes)
+    except msgspec.DecodeError as exc:
         raise ValueError(f"invalid model catalog JSON: {source}: {exc}") from exc
     return model_catalog_snapshot_from_data(
         payload,
         revision=revision,
         source=source,
     )
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"invalid JSON numeric constant: {value}")

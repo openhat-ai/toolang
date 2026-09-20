@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter, ValidationInfo
 
+from toolang.base.money import cost_text
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
@@ -25,34 +25,35 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
-from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
+from toolang.lang.ast import FlowStmt, flow_stmt_from_data
+from toolang.lang.ast import to_data as ast_to_data
 from toolang.lang.input import (
-    PromptInvocation,
     CallInput,
+    PromptInvocation,
     parse_input,
     validate_runnable_input_names,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
+
 from .types import (
-    ModelMessages,
-    ContentRef,
-    MessageTemplate,
+    AgentResources,
     CollectionStepNoted,
-    ControlRef,
-    RecallTarget,
+    ContentRef,
     ControlKind,
+    ControlRef,
     ControlStatus,
     ControlTiming,
-    AgentResources,
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    IterationOccurrence,
     Local,
-    Output,
     LoopStepNoted,
+    MessageTemplate,
     ModelAccounting,
     ModelCost,
     ModelCostLine,
+    ModelMessages,
     ModelPricing,
     ModelReasoningAccounting,
     ModelStepGiven,
@@ -62,11 +63,13 @@ from .types import (
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
-    IterationOccurrence,
-    RunStatus,
+    Output,
+    RecallTarget,
+    RunCommand,
     RunRef,
-    StepKind,
+    RunStatus,
     StepGiven,
+    StepKind,
     StepNoted,
     StepRef,
     StepStatus,
@@ -75,14 +78,13 @@ from .types import (
     ToolStepGiven,
     ToolStepNoted,
     TypedRef,
-    RunCommand,
-    validate_occurrence,
-    validate_runtime_value,
-    value_for_type,
     valid_run_id,
     valid_thread_id,
+    validate_occurrence,
+    validate_runtime_value,
     validate_step_given,
     validate_step_noted,
+    value_for_type,
 )
 
 
@@ -1896,7 +1898,7 @@ def _run_commands_from_data(value: object, *, label: str) -> tuple[RunCommand, .
         if group == "allow" and isinstance(raw, list):
             raw = tuple(raw)
         elif group == "limit" and field == "cost" and isinstance(raw, str):
-            raw = Decimal(raw)
+            raw = float(raw)
         result.append(RunCommand(cast(Any, group), cast(Any, field), cast(Any, raw)))
     return tuple(result)
 
@@ -1905,8 +1907,8 @@ def _run_command_to_data(command: RunCommand) -> dict[str, object]:
     value = command.value
     if isinstance(value, tuple):
         encoded: object = list(value)
-    elif isinstance(value, Decimal):
-        encoded = str(value)
+    elif command.group == "limit" and command.field == "cost" and value is not None:
+        encoded = cost_text(cast(float, value))
     else:
         encoded = value
     return {"group": command.group, "field": command.field, "value": encoded}

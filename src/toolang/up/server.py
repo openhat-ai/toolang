@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from decimal import Decimal
 import logging
 import os
 from pathlib import Path
@@ -68,7 +67,7 @@ class ServeSpec:
     default_overrides: Mapping[str, ModelOverride | str | None] = field(
         default_factory=dict
     )
-    limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
+    limit_overrides: Mapping[str, int | float | None] = field(default_factory=dict)
     compact_override: ModelOverride | None = None
     log_spec: str | None = None
 
@@ -102,7 +101,7 @@ def resolve_serve(
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-    limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+    limit_overrides: Mapping[str, int | float | None] | None = None,
     compact_override: ModelOverride | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,

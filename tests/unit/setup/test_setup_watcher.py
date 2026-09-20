@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
-from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -235,7 +234,7 @@ def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
     assert expected_cost is not None
     assert actual_cost is not None
     assert actual_cost["input"] == expected_cost["input"]
-    assert isinstance(actual_cost["input"], Decimal)
+    assert isinstance(actual_cost["input"], float)
 
 
 def test_setup_watcher_warm_projection_preserves_empty_providers(
@@ -814,7 +813,7 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
     assert setup.defaults.model == ModelRequest("test/one")
     assert setup.defaults.runnable == "agic:chat"
     assert setup.limits.tokens == 300
-    assert setup.limits.cost == Decimal("1.5")
+    assert setup.limits.cost == 1.5
     assert not hasattr(setup, "allow")
     assert not hasattr(setup, "catalog")
     assert not hasattr(setup, "ceiling")
@@ -1321,7 +1320,7 @@ def test_setup_publishes_around_invalid_modes_and_recovers(
     invalid = full.find("test", "two")
     assert invalid is not None and not invalid._toolang.ready
     assert invalid._toolang.route.adapter is None
-    assert invalid.provider == {"mode": "fast"}
+    assert invalid.provider is not None and invalid.provider.mode == "fast"
     warm = asyncio.run(SetupWatcher(watcher.layout).refresh())
     assert warm.model_catalog(all=True) == full
     if previous is not None:

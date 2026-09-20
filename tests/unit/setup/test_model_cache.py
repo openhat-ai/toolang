@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -20,6 +19,8 @@ from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.setup.routes import model_adapter, resolve_provider, resolve_model
 from toolang.setup.cache import ModelCatalogCache
 
+from toolang.base.types.model import ModelProvider
+
 
 @pytest.mark.parametrize(
     "interleaved", [None, True, False, {"field": "reasoning_content"}]
@@ -32,7 +33,7 @@ def test_source_cache_round_trip_preserves_catalog_facts(
         name="One",
         _toolang=ModelToolang(provider="test"),
         interleaved=interleaved,
-        cost={"input": Decimal("0.123456789012345678901")},
+        cost={"input": 0.12345678901234568},
         reasoning_options=({"type": "effort", "values": ["low", "high"]},),
     )
     snapshot = ModelCatalogSnapshot(
@@ -92,13 +93,9 @@ def test_source_cache_preserves_provider_adapter_trust(
         id="one",
         name="One",
         _toolang=ModelToolang(provider="test"),
-        provider={
-            "_toolang": (
-                ProviderToolang(adapter="messages")
-                if typed
-                else {"adapter": "messages"}
-            )
-        },
+        provider=ModelProvider(
+            _toolang=ProviderToolang(adapter="messages") if typed else None
+        ),
     )
     provider = Provider(id="test", name="Test", npm="@ai-sdk/openai")
     snapshot = ModelCatalogSnapshot(
@@ -117,6 +114,7 @@ def test_source_cache_preserves_provider_adapter_trust(
 
 def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
     from types import MappingProxyType
+
     from toolang.setup.cache import catalog_loader
 
     cost = {"input": 1}
@@ -153,7 +151,7 @@ def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
         id="one",
         name="One",
         _toolang=ModelToolang(provider="test"),
-        provider={"api": "https://${ACCOUNT}.example/v1"},
+        provider=ModelProvider(api="https://${ACCOUNT}.example/v1"),
     )
     provider = Provider(
         id="test",
@@ -174,7 +172,7 @@ def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
     published_model = resolved_model.with_route(
         replace(
             resolved_model._toolang.route,
-            options={"nested": {"values": [Decimal("0.1234567890123456789")]}},
+            options={"nested": {"values": [0.12345678901234568]}},
         )
     )
     snapshot = ModelCatalogSnapshot(
@@ -204,6 +202,7 @@ def test_source_cache_omits_effective_routes_but_full_view_pins_them(tmp_path):
 
 def test_route_detaches_nested_plugin_data():
     from types import MappingProxyType
+
     from toolang.base.types.model import ModelRoute
 
     headers = {"X-Test": "original"}
@@ -244,3 +243,60 @@ def test_flat_cache_rejects_unknown_model_ownership(tmp_path):
     assert (
         ModelCatalogCache(tmp_path).load_source("models_dev", revision="source") is None
     )
+
+
+def test_typed_full_snapshot_preserves_nested_provider_and_routes() -> None:
+    from toolang.base.types.model import ModelRoute
+    from toolang.setup.cache import catalog_loader
+
+    options = {"nested": {"temperature": 0.25}}
+    model = Model(
+        id="one",
+        name="One",
+        _toolang=ModelToolang(provider="test"),
+        provider=ModelProvider(
+            api="https://model.test/v1",
+            body=options,
+            _toolang=ProviderToolang(adapter="messages"),
+        ),
+    ).with_route(ModelRoute(adapter="messages", api="https://model.test/v1", env=()))
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider("test", "Test")},
+        models=(model,),
+        revision="source",
+    )
+    load = catalog_loader(snapshot, revision="published")
+    options["nested"]["temperature"] = 0.75
+    decoded = load()
+    assert decoded.revision == "published"
+    restored = decoded.models[0]
+    assert restored == model
+    assert isinstance(restored.provider, ModelProvider)
+    assert isinstance(restored.provider._toolang, ProviderToolang)
+    assert restored._toolang.ready and restored._toolang.route.env == ()
+    assert restored.provider.body == {"nested": {"temperature": 0.25}}
+    assert load() == decoded
+
+
+def test_source_cache_never_restores_persisted_effective_routes(tmp_path: Path) -> None:
+    from toolang.base.types.model import ModelRoute
+    from toolang.common.cache import store_document
+    from toolang.setup.cache import _snapshot_document
+
+    route = ModelRoute(adapter="messages", api="https://old.test/v1", env=())
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider("test", "Test", ProviderToolang(route=route))},
+        models=(Model("one", "One", ModelToolang(provider="test")).with_route(route),),
+        revision="source",
+    )
+    assert store_document(
+        tmp_path / "models_dev.json",
+        kind="catalog",
+        key="models_dev",
+        document={**_snapshot_document(snapshot, resolved=True), "revision": "source"},
+    )
+    loaded = ModelCatalogCache(tmp_path).load_source("models_dev", revision="source")
+    assert loaded is not None
+    assert loaded.providers["test"]._toolang.route == ModelRoute()
+    assert loaded.models[0]._toolang.ready is False
+    assert loaded.models[0]._toolang.route == ModelRoute()

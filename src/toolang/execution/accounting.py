@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
-from decimal import Decimal
 from typing import Literal, cast
 
+from toolang.base.money import cost_text, normalize_cost, number_text
 from toolang.base.types.model import (
     Model,
     Reasoning,
@@ -21,7 +22,7 @@ from .types import (
     ModelUsageMeter,
 )
 
-_PER_MILLION = Decimal(1_000_000)
+_PER_MILLION = 1_000_000
 
 
 def build_model_accounting(
@@ -52,7 +53,7 @@ def build_model_accounting(
     )
     reported = (
         ModelCost(
-            amount=_decimal_text(usage.reported_cost),
+            amount=cost_text(usage.reported_cost),
             currency=usage.reported_currency or "USD",
             complete=True,
         )
@@ -84,7 +85,7 @@ def build_model_accounting(
     )
 
 
-def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
+def selected_usd_cost(accounting: ModelAccounting | None) -> float | None:
     """Return the selected USD amount for limits and summary projections."""
 
     if accounting is None:
@@ -98,7 +99,7 @@ def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
     )
     if selected is None or selected.currency.upper() != "USD":
         return None
-    return Decimal(selected.amount)
+    return normalize_cost(float(selected.amount))
 
 
 def _selected_cost_source(
@@ -128,20 +129,20 @@ def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
     exact_zero = (
         estimate.complete
         and bool(estimate.lines)
-        and all(Decimal(line.rate) == 0 for line in estimate.lines)
+        and all(float(line.rate) == 0 for line in estimate.lines)
     )
     return not exact_zero
 
 
-def cache_hit_ratio(accounting: ModelAccounting | None) -> Decimal | None:
-    """Return an exact cache-read ratio when both numerator and total are known."""
+def cache_hit_ratio(accounting: ModelAccounting | None) -> float | None:
+    """Return the cache-read ratio when both numerator and total are known."""
 
     if accounting is None or accounting.input_tokens <= 0:
         return None
     quantity = token_meter_quantity(accounting, "input.cache_read")
     if quantity is None:
         return None
-    return Decimal(quantity) / Decimal(accounting.input_tokens)
+    return float(quantity) / float(accounting.input_tokens)
 
 
 def token_meter_quantity(
@@ -156,8 +157,8 @@ def token_meter_quantity(
     if len(meters) != 1:
         return None
     meter = meters[0]
-    quantity = Decimal(meter.quantity)
-    if meter.unit != "token" or quantity != quantity.to_integral_value():
+    quantity = float(meter.quantity)
+    if meter.unit != "token" or not quantity.is_integer():
         return None
     return int(quantity)
 
@@ -220,8 +221,7 @@ def _selected_rates(
 def _model_mode(model: Model) -> str | None:
     """Return the catalog mode declared on one model's provider block."""
 
-    block = model.provider or {}
-    value = block.get("mode")
+    value = model.provider.mode if model.provider is not None else None
     return value if isinstance(value, str) and value.strip() else None
 
 
@@ -319,9 +319,9 @@ def _estimate_cost(
         complete = False
     if not lines:
         return None
-    amount = sum((Decimal(line.amount) for line in lines), Decimal(0))
+    amount = math.fsum(float(line.amount) for line in lines)
     return ModelCost(
-        amount=_decimal_text(amount),
+        amount=cost_text(amount),
         currency="USD",
         complete=complete,
         lines=tuple(lines),
@@ -354,7 +354,7 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
     meters.extend(
         ModelUsageMeter(
             name=meter.name,
-            quantity=_decimal_text(meter.quantity),
+            quantity=number_text(meter.quantity),
             unit=meter.unit,
         )
         for meter in usage.meters
@@ -362,33 +362,29 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
     return tuple(meters)
 
 
-def _rate(rates: Mapping[str, object], name: str) -> Decimal | None:
+def _rate(rates: Mapping[str, object], name: str) -> float | None:
     value = rates.get(name)
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return Decimal(str(value))
+    return float(value)
 
 
 def _append_line(
     lines: list[ModelCostLine],
     meter: str,
     quantity: int,
-    rate: Decimal | None,
+    rate: float | None,
 ) -> None:
     if rate is None:
         return
-    amount = Decimal(quantity) * rate / _PER_MILLION
+    amount = float(quantity) * rate / _PER_MILLION
     lines.append(
         ModelCostLine(
             meter=meter,
             quantity=str(quantity),
             unit="token",
-            rate=_decimal_text(rate),
+            rate=number_text(rate),
             per=str(_PER_MILLION),
-            amount=_decimal_text(amount),
+            amount=number_text(amount),
         )
     )
-
-
-def _decimal_text(value: Decimal) -> str:
-    return format(value, "f")

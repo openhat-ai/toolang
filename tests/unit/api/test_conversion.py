@@ -1,7 +1,5 @@
 """Strict authored-run HTTP conversion."""
 
-from decimal import Decimal
-
 from fastapi import HTTPException
 import pytest
 from pydantic import ValidationError
@@ -80,7 +78,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
                     prompts=("summary",),
                 ),
             ),
-            limits=RunLimits(tokens=4000, cost=Decimal("2.50")),
+            limits=RunLimits(tokens=4000, cost=2.5),
         ),
     )
 
@@ -158,7 +156,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
 
     assert parse_authored_retry("run_source", retry_payload) == RetryRequest(
         source="run_source",
-        commands=(RunCommand("limit", "cost", Decimal("2.50")),),
+        commands=(RunCommand("limit", "cost", 2.5),),
         request_id="retry_request",
         anchor=StepRef.from_local("run_source", (1, 2)),
     )

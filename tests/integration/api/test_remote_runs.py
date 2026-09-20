@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
@@ -515,7 +514,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         )
         assert fallback_control is not None
         assert isinstance(fallback_control.payload, RunControlPayload)
-        assert fallback_control.payload.limits.cost == Decimal("2.50")
+        assert fallback_control.payload.limits.cost == 2.5
         assert fallback_control.payload.sandbox == "host"
         assert fallback_control.payload.authored_input == CallInput(
             {"_": "$review focus=security -\n@note.txt", "tone": "brief"}

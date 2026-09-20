@@ -1,24 +1,27 @@
 """Convert public HTTP schemas into core runtime values."""
 
+import math
 from collections.abc import Mapping
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter
 
+from toolang.base.money import normalize_cost
 from toolang.base.types.message import Message, Part
 from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
 from toolang.execution.types import RunCommand
+
 from .schemas import (
-    AuthoredRunRequest,
     AuthoredRerunRequest,
     AuthoredRetryRequest,
+    AuthoredRunRequest,
     InputMessagePayload,
     InputPart,
+)
+from .schemas import (
     RunOverridePayload as RunCommandPayload,
 )
-
 
 _INPUT_PART_ADAPTER = TypeAdapter(InputPart)
 
@@ -129,12 +132,18 @@ def _parse_run_command(payload: RunCommandPayload) -> RunCommand:
         if not isinstance(value, str):
             raise TypeError("limit cost policy value must be decimal text or none")
         try:
-            parsed = Decimal(value)
-        except InvalidOperation as exc:
+            parsed = float(value)
+        except ValueError as exc:
             raise ValueError("limit cost expects decimal text or none") from exc
-        if not parsed.is_finite() or parsed < 0 or str(parsed) != value:
+        if (
+            not math.isfinite(parsed)
+            or parsed < 0
+            or value != value.strip()
+            or value.startswith("+")
+            or "_" in value
+        ):
             raise ValueError("limit cost expects canonical non-negative decimal text")
-        return RunCommand("limit", payload.field, parsed)
+        return RunCommand("limit", payload.field, normalize_cost(parsed))
     if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
         raise TypeError("integer run limit value must be an integer or none")
     if isinstance(value, int) and value < 0:

@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 import logging
-from decimal import Decimal, InvalidOperation
 import threading
 import time
 from typing import Any, Literal, cast
@@ -1667,8 +1666,8 @@ class _Execution:
                 cost = selected_usd_cost(noted.accounting)
             else:
                 try:
-                    cost = Decimal(str(raw_cost)) if raw_cost is not None else None
-                except InvalidOperation:
+                    cost = float(str(raw_cost)) if raw_cost is not None else None
+                except ValueError:
                     cost = None
             self._limits.restore(
                 input_tokens=input_tokens,

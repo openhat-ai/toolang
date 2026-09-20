@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass, field
-from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Self, TypeAlias, cast
@@ -27,6 +27,8 @@ def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
 
 
 def _immutable_json(value: object) -> object:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("catalog numbers must be finite")
     if isinstance(value, Mapping):
         return MappingProxyType(
             {str(key): _immutable_json(item) for key, item in value.items()}
@@ -260,6 +262,36 @@ class ModelToolang:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelProvider:
+    """Catalog connection overrides for a model's owning provider."""
+
+    npm: str | None = None
+    api: str | None = None
+    shape: str | None = None
+    mode: str | None = None
+    headers: Mapping[str, str] | None = None
+    body: Mapping[str, object] | None = None
+    _toolang: ProviderToolang | None = None
+
+    def __post_init__(self) -> None:
+        if self._toolang is not None and not isinstance(self._toolang, ProviderToolang):
+            raise TypeError("model provider _toolang must be ProviderToolang")
+        if self.headers is not None:
+            object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+        if self.body is not None:
+            object.__setattr__(self, "body", _immutable_mapping(self.body))
+
+    def to_data(self) -> dict[str, object]:
+        """Return public catalog declarations without trusted Toolang metadata."""
+
+        return {
+            name: _mutable_json(value)
+            for name in ("npm", "api", "shape", "mode", "headers", "body")
+            if (value := getattr(self, name)) is not None
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Model:
     """One models.dev-compatible model record within a provider."""
 
@@ -285,12 +317,14 @@ class Model:
     experimental: Mapping[str, object] | None = None
     # The corrected provider this model must use, not the owning provider;
     # `_toolang.provider` carries the association.
-    provider: Mapping[str, object] | None = None
+    provider: ModelProvider | None = None
     cost: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("model id and name are required")
+        if self.provider is not None and not isinstance(self.provider, ModelProvider):
+            raise TypeError("model provider must be ModelProvider")
         if not self._toolang.provider:
             raise ValueError("model requires its provider id")
         # A read-only view may still wrap a dictionary owned by a plugin.
@@ -309,7 +343,7 @@ class Model:
                 "reasoning_options",
                 tuple(_immutable_mapping(option) for option in self.reasoning_options),
             )
-        for name in ("experimental", "provider", "cost"):
+        for name in ("experimental", "cost"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, _immutable_mapping(value))
@@ -373,21 +407,11 @@ class Model:
             "last_updated": self.last_updated,
             "status": self.status,
             "experimental": self.experimental,
-            "provider": _public_provider_block(self.provider),
+            "provider": self.provider.to_data() if self.provider is not None else None,
             "cost": self.cost,
         }
         data.update({key: _mutable_json(value) for key, value in optional.items()})
         return {key: value for key, value in data.items() if value is not None}
-
-
-def _public_provider_block(
-    value: Mapping[str, object] | None,
-) -> Mapping[str, object] | None:
-    """Return the model-level provider block without Toolang extensions."""
-
-    if value is None:
-        return None
-    return {key: item for key, item in value.items() if key != "_toolang"}
 
 
 def normalized_env(env: ResolvedEnv) -> ResolvedEnv:
@@ -521,6 +545,4 @@ def _mutable_json(value: object) -> object:
         return {str(key): _mutable_json(item) for key, item in value.items()}
     if isinstance(value, tuple | list):
         return [_mutable_json(item) for item in value]
-    if isinstance(value, Decimal):
-        return value
     return value

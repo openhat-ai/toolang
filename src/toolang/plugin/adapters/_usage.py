@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
-from decimal import Decimal, InvalidOperation
 from typing import cast
 
 from toolang.plugin import values
@@ -31,23 +31,23 @@ def optional_text(value: object, name: str) -> str | None:
     return values.optional_text(field(value, name))
 
 
-def optional_decimal(value: object, name: str) -> Decimal | None:
+def optional_float(value: object, name: str) -> float | None:
     """Read one finite non-negative decimal field."""
 
     raw = field(value, name)
     if raw is None or isinstance(raw, bool):
         return None
     try:
-        parsed = Decimal(str(raw))
-    except (InvalidOperation, ValueError):
+        parsed = float(str(raw))
+    except ValueError:
         return None
-    return parsed if parsed.is_finite() and parsed >= 0 else None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
 
 
-def reported_cost(value: object) -> tuple[Decimal | None, str | None]:
+def reported_cost(value: object) -> tuple[float | None, str | None]:
     """Normalize a provider-reported cost and its currency."""
 
-    amount = optional_decimal(value, "cost")
+    amount = optional_float(value, "cost")
     if amount is None:
         return None, None
     currency = (optional_text(value, "currency") or "USD").upper()

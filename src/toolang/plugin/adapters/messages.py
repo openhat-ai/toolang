@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from decimal import Decimal
 import json
 from typing import Any, cast
 
@@ -314,7 +313,7 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
         quantity = _int(cache_creation.get(field))
         if quantity is not None and quantity > 0:
             meters.append(
-                ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="token")
+                ModelUsageMeter(name=name, quantity=float(quantity), unit="token")
             )
     server_tools = _json_object(value.get("server_tool_use"))
     for field, name in (
@@ -324,7 +323,7 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
         quantity = _int(server_tools.get(field))
         if quantity is not None and quantity > 0:
             meters.append(
-                ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="request")
+                ModelUsageMeter(name=name, quantity=float(quantity), unit="request")
             )
     billing = {
         name: item

@@ -31,7 +31,7 @@ src/toolang/
 ├── common/
 │   ├── cache.py                    # cache document envelope, digest, canonical value, secret scan
 │   ├── files.py                    # atomic writes and file locks
-│   └── json.py                     # deterministic Decimal-safe JSON dumps
+│   └── json.py                     # deterministic msgspec JSON dumps
 ├── plugin/
 │   ├── adapters/                   # one module per adapter plugin
 │   │   ├── loading.py              # load_model_adapters
@@ -80,19 +80,20 @@ entry point, and it does not import `plugin/adapters` or `plugin/catalogs`.
 | Per-catalog model cache | `toolang/setup/cache.py` |
 | Local catalog state (`ollama`, `llama_cpp`) | `toolang/setup/cache.py`, with its own detection stamp |
 | Cache document envelope and primitives | `toolang/common/cache.py` |
-| Deterministic Decimal-safe JSON | `toolang/common/json.py` |
+| Deterministic msgspec JSON | `toolang/common/json.py` |
 
 Setup persists one complete file per catalog. The models.dev source is captured
 once per changed file observation, then decoded from a matching source cache or
 parsed from the captured bytes. There is no separate persisted filtered view.
 
-`CACHE_SCHEMA` is 9. Older source caches are rebuilt; source documents retain
+`CACHE_SCHEMA` is 10. Older source caches are rebuilt; source documents retain
 catalog declarations and ownership, never effective routes or readiness.
 Imported flat `env` lists are resolved by setup rather than treated as explicit
 plugin OR alternatives.
-The schema also preserves the boundary between raw `_toolang` mappings and
-trusted adapter declarations.
-Cache reads preserve Decimal prices and both boolean and object `interleaved`
+`Model.provider` is a fixed `ModelProvider` declaration with typed
+`ProviderToolang` metadata. Imported raw `_toolang` objects are discarded; plugins
+can construct trusted declarations. msgspec reuses these dataclasses directly.
+Cache reads use finite float prices and both boolean and object `interleaved`
 values. A skipped probe write uses a content revision instead of the old file's
 stamp.
 

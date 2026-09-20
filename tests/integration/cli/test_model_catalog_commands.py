@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import cast
@@ -25,7 +24,6 @@ from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 from toolang.plugin.catalogs.ollama import OllamaModelCatalog
-
 
 runner = CliRunner()
 
@@ -129,7 +127,7 @@ def test_models_query_exports_a_valid_complete_catalog(
     )
 
     assert result.exit_code == 0, result.stderr
-    data = json.loads(result.stdout, parse_float=Decimal)
+    data = json.loads(result.stdout, parse_float=float)
     providers, models = parse_model_catalog_data(data)
     assert tuple(providers) == ("test",)
     assert tuple(model.id for model in models if model._toolang.provider == "test") == (
@@ -176,7 +174,7 @@ def test_models_query_accepts_combined_models_dev_catalog(
 
     assert result.exit_code == 0, result.stderr
     providers, models = parse_model_catalog_data(
-        json.loads(result.stdout, parse_float=Decimal)
+        json.loads(result.stdout, parse_float=float)
     )
     assert tuple(providers) == ("test",)
     assert tuple(model.id for model in models if model._toolang.provider == "test") == (
@@ -778,7 +776,7 @@ def test_models_uses_isolated_resident_catalogs(
             assert not output.err
             if json_output:
                 providers, models = parse_model_catalog_data(
-                    json.loads(output.out, parse_float=Decimal)
+                    json.loads(output.out, parse_float=float)
                 )
                 actual = (
                     tuple(
@@ -842,7 +840,7 @@ def test_models_uses_agent_provider_config_and_environment(
         assert "synthetic-agent-key" not in output.out
         if json_output:
             providers, models = parse_model_catalog_data(
-                json.loads(output.out, parse_float=Decimal)
+                json.loads(output.out, parse_float=float)
             )
             assert tuple(providers) == (("test",) if available else ())
             if available:
@@ -1083,9 +1081,10 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
     command,
 ):
     import asyncio
+
     from toolang.common.layout import AgentLayout
-    from toolang.setup.watcher import load_setup
     from toolang.setup import routes
+    from toolang.setup.watcher import load_setup
 
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TEST_API_KEY", raising=False)

@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
-from decimal import Decimal
 from pathlib import Path
 import threading
 import time
@@ -100,7 +99,7 @@ async def resolve_launch(
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-    limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+    limit_overrides: Mapping[str, int | float | None] | None = None,
     compact_override: ModelOverride | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,

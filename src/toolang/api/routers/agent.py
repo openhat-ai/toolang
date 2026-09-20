@@ -1,7 +1,6 @@
 """Formal agent inspection routes."""
 
 import re
-from decimal import Decimal
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -27,7 +26,6 @@ from toolang.plugin.models.resolution import (
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
-
 
 router = APIRouter(tags=["agent"])
 
@@ -347,14 +345,14 @@ def _model_item(
     }
 
 
-def _price_per_million(value: float | None) -> Decimal | None:
-    return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
+def _price_per_million(value: float | None) -> float | None:
+    return None if value is None else value * 1_000_000
 
 
 def _model_token_price(model: Model, name: str) -> float | None:
     cost = model.cost
     value = cost.get(name) if isinstance(cost, Mapping) else None
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) / 1_000_000
 

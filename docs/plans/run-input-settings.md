@@ -352,8 +352,9 @@ Run within tighter limits.
 ```
 
 `agic_model_calls`, `agic_tool_calls`, `tokens`, and `time` require non-negative
-integers. `cost` requires a finite non-negative decimal. `none` disables that
-field's limit.
+integers. `cost` requires a finite non-negative amount no greater than
+999,999,999.999999 USD, settled to six fractional digits (half up). `none`
+disables that field's limit.
 
 Each field may appear at most once in a complete submission. A slash update
 replaces authored session fields and retains absent fields. A colon value

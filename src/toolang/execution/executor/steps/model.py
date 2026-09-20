@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
-from copy import deepcopy
-from dataclasses import dataclass, field, replace
-from decimal import Decimal
 import json
 import logging
 import time
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from toolang.base.errors import ToolangError
+from toolang.base.money import cost_text, number_text
 from toolang.base.types.message import (
     Part,
     PartType,
@@ -23,36 +24,35 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import (
     ModelCall,
-    ModelContinuation,
     ModelCallResult,
+    ModelContinuation,
     ModelPartDelta,
     ModelPartEnd,
     ModelPartStart,
     ToolCall,
 )
-from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
-from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...assembly import prompting
+from ...assembly.message_buffer import MessageBuffer
+from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...recall import required_declarations
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
-    Local,
-    Output,
-    ModelStepGiven,
-    ModelMessages,
-    ModelStepNoted,
-    ModelTokenCount,
-    ModelTokenPrice,
     ControlRef,
     ErrorMessage,
     FieldRef,
-    StepRef,
+    Local,
+    ModelMessages,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    Output,
     RunRef,
+    StepRef,
 )
-from ...assembly.message_buffer import MessageBuffer
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
@@ -894,11 +894,11 @@ def _model_step_noted(
             if price is not None
             else None
         ),
-        cost=_decimal_text(accounting.cost),
+        cost=cost_text(accounting.cost) if accounting.cost is not None else None,
         accounting=accounting.accounting,
         continuation=(dict(continuation) if continuation is not None else None),
     )
 
 
-def _decimal_text(value: Decimal | None) -> str | None:
-    return format(value, "f") if value is not None else None
+def _decimal_text(value: float | None) -> str | None:
+    return number_text(value) if value is not None else None

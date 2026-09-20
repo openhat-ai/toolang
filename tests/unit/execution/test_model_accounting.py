@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 
 from dataclasses import replace
 
@@ -21,6 +20,8 @@ from toolang.execution.records import step_noted_from_data, step_noted_to_data
 from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 
+from toolang.base.types.model import ModelProvider
+
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
     accounting = _accounting(
@@ -35,10 +36,10 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         ),
         _catalog(
             {
-                "input": Decimal("2"),
-                "output": Decimal("10"),
-                "cache_read": Decimal("0.2"),
-                "reasoning": Decimal("10"),
+                "input": 2.0,
+                "output": 10.0,
+                "cache_read": 0.2,
+                "reasoning": 10.0,
             }
         ),
     )
@@ -52,7 +53,7 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         "output.reasoning",
         "output.visible",
     ]
-    assert cache_hit_ratio(accounting) == Decimal("0.65")
+    assert cache_hit_ratio(accounting) == 0.65
     assert token_meter_quantity(accounting, "output.reasoning") == 150
 
 
@@ -106,10 +107,10 @@ def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
         ),
         _catalog(
             {
-                "input": Decimal("2"),
-                "output": Decimal("10"),
-                "cache_read": Decimal("0.2"),
-                "cache_write": Decimal("2.5"),
+                "input": 2.0,
+                "output": 10.0,
+                "cache_read": 0.2,
+                "cache_write": 2.5,
             }
         ),
     )
@@ -157,7 +158,7 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
         ModelUsage(
             input_tokens=10,
             output_tokens=5,
-            reported_cost=Decimal("0.03"),
+            reported_cost=0.03,
             reported_currency="USD",
         ),
         _catalog({"input": 1, "output": 2}),
@@ -167,7 +168,7 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
     assert accounting.selected == "reported"
     assert accounting.reported is not None
     assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == Decimal("0.03")
+    assert selected_usd_cost(accounting) == 0.03
 
 
 def test_zero_prices_produce_a_complete_zero_cost() -> None:
@@ -181,7 +182,7 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
     assert accounting.estimate.amount == "0"
     assert accounting.estimate.complete is True
     assert [line.rate for line in accounting.estimate.lines] == ["0", "0"]
-    assert selected_usd_cost(accounting) == Decimal("0")
+    assert selected_usd_cost(accounting) == 0.0
 
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
@@ -208,7 +209,7 @@ def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
         ModelUsage(
             input_tokens=10,
             output_tokens=5,
-            reported_cost=Decimal("2"),
+            reported_cost=2.0,
             reported_currency="EUR",
         ),
         _catalog({"input": 1, "output": 2}),
@@ -219,7 +220,7 @@ def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
     assert accounting.reported.amount == "2"
     assert accounting.reported.currency == "EUR"
     assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == Decimal("0.00002")
+    assert selected_usd_cost(accounting) == 2e-05
     assert selected_cost_is_approximate(accounting) is True
 
 
@@ -227,7 +228,7 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
     accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=100, output_tokens=10),
-        _catalog({"input": 1, "output": 2, "cache_read": Decimal("0.1")}),
+        _catalog({"input": 1, "output": 2, "cache_read": 0.1}),
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -238,7 +239,7 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
 def test_accounting_selects_advertised_mode_price() -> None:
     model = _model(
         {"input": 1, "output": 2},
-        provider={"mode": "fast"},
+        provider=ModelProvider(mode="fast"),
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
     )
     accounting = build_model_accounting(
@@ -296,7 +297,7 @@ def test_accounting_preserves_billing_context_without_catalog_price() -> None:
         ModelUsage(
             input_tokens=100,
             output_tokens=20,
-            reported_cost=Decimal("0.03"),
+            reported_cost=0.03,
             reported_currency="USD",
             billing={"service_tier": "priority"},
         ),
@@ -403,7 +404,7 @@ def _target() -> Model:
 def _model(
     cost: dict[str, object] | None = None,
     *,
-    provider: dict[str, object] | None = None,
+    provider: ModelProvider | None = None,
     experimental: dict[str, object] | None = None,
 ) -> Model:
     return Model(
@@ -432,3 +433,18 @@ def _accounting(
 ) -> ModelAccounting | None:
     resolved = replace(model, cost=cost) if cost is not None else model
     return build_model_accounting(resolved, usage, requested=requested)
+
+
+def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
+    from toolang.base.money import cost_units
+
+    # Both components cost 0.4 micro-USD; round the combined call, not each line.
+    accounting = build_model_accounting(
+        _model({"input": 0.2, "output": 0.2}),
+        ModelUsage(input_tokens=2, output_tokens=2),
+    )
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == "0.000001"
+    cost = selected_usd_cost(accounting)
+    assert cost is not None and cost_units(cost) == 1
+    assert all(0 < float(line.amount) < 0.000001 for line in accounting.estimate.lines)

@@ -5,7 +5,6 @@ import threading
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -748,7 +747,7 @@ def test_progress_cost_uses_adaptive_precision(
     expected: str,
 ) -> None:
     metrics = Metrics(
-        cost=Decimal(amount),
+        cost=float(amount),
         cost_known=True,
         cost_approximate=approximate,
     )
@@ -797,7 +796,7 @@ def test_progress_groups_tokens_and_cost_in_one_fact(include_cost: bool) -> None
         cache_read_tokens=11248,
         reasoning_tokens=25,
         reasoning_known_calls=2,
-        cost=Decimal("0.0003"),
+        cost=0.0003,
         cost_known=True,
         cost_approximate=True,
     )

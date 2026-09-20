@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
-from decimal import Decimal, InvalidOperation
 
 from toolang.base.model_settings import compose_model_overrides, parse_model_body
+from toolang.base.money import normalize_cost
 from toolang.base.types.model import ModelOverride
 from toolang.common.errors import ToolangError
 from toolang.common.query import resolve_query_sentinels
@@ -103,10 +104,10 @@ def resolve_compact_override(
 def resolve_limit_overrides(
     environ: Mapping[str, str],
     options: Sequence[str] | None = None,
-) -> dict[str, int | Decimal | None]:
+) -> dict[str, int | float | None]:
     """Resolve frozen environment and CLI run-limit overrides."""
 
-    resolved: dict[str, int | Decimal | None] = {}
+    resolved: dict[str, int | float | None] = {}
     for name in _LIMIT_FIELDS:
         raw = environ.get(f"TOOLANG_LIMIT_{name.upper()}")
         if raw is not None:
@@ -150,8 +151,8 @@ def _parse_default_options(values: Sequence[str]) -> dict[str, str | None]:
 
 def _parse_limit_options(
     values: Sequence[str],
-) -> dict[str, int | Decimal | None]:
-    parsed: dict[str, int | Decimal | None] = {}
+) -> dict[str, int | float | None]:
+    parsed: dict[str, int | float | None] = {}
     for source in values:
         name, raw_value = _assignment(source, option="--limit")
         if name not in _LIMIT_FIELDS:
@@ -200,7 +201,7 @@ def _parse_limit_value(
     value: str,
     *,
     source: str,
-) -> int | Decimal | None:
+) -> int | float | None:
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{source} limit {name} must not be empty")
@@ -208,14 +209,14 @@ def _parse_limit_value(
         return None
     if name == "cost":
         try:
-            parsed = Decimal(normalized)
-        except InvalidOperation as exc:
+            parsed = float(normalized)
+        except ValueError as exc:
             raise ValueError(f"{source} limit cost expects a decimal or none") from exc
-        if not parsed.is_finite() or parsed < 0:
+        if not math.isfinite(parsed) or parsed < 0:
             raise ValueError(
                 f"{source} limit cost expects a non-negative decimal or none"
             )
-        return parsed
+        return normalize_cost(parsed)
     try:
         parsed = int(normalized)
     except ValueError as exc:

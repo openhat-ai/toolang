@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
 
 from toolang.base.types.model import ModelOverride
 from toolang.common.ids import IdIssuer
@@ -37,7 +36,7 @@ class AgentCore:
         sandbox: str = "host",
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout

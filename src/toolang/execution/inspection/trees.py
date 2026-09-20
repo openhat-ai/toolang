@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import Literal
 
+from toolang.base.money import add_cost, cost_text, normalize_cost
+
 from ..accounting import token_meter_quantity
-from .types import ExecutionSnapshot, step_operation
 from ..records import (
     ControlRecord,
     RunRecord,
@@ -25,6 +25,7 @@ from ..types import (
     StepKind,
     StepRef,
 )
+from .types import ExecutionSnapshot, step_operation
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +112,7 @@ class _MetricAccumulator:
     reasoning_tokens: int = 0
     cost_known: int = 0
     cost_complete: int = 0
-    cost_usd: Decimal = Decimal(0)
+    cost_usd: float = 0.0
     cost_approximate: bool = False
 
     def add(self, other: _MetricAccumulator) -> None:
@@ -125,7 +126,7 @@ class _MetricAccumulator:
         self.reasoning_tokens += other.reasoning_tokens
         self.cost_known += other.cost_known
         self.cost_complete += other.cost_complete
-        self.cost_usd += other.cost_usd
+        self.cost_usd = add_cost(self.cost_usd, other.cost_usd)
         self.cost_approximate = self.cost_approximate or other.cost_approximate
 
 
@@ -373,8 +374,8 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
         approximate = True
     if cost is not None:
         try:
-            accumulator.cost_usd = Decimal(cost)
-        except InvalidOperation as exc:  # pragma: no cover - record validation
+            accumulator.cost_usd = normalize_cost(float(cost))
+        except ValueError as exc:  # pragma: no cover - record validation
             raise ValueError(f"invalid model cost for {record.ref}: {cost}") from exc
         accumulator.cost_known = 1
         accumulator.cost_complete = int(complete)
@@ -416,7 +417,7 @@ def _node_from_record(
             reasoning_tokens=(accumulator.reasoning_tokens if reasoning else None),
             usage_complete=accumulator.token_known == model_calls,
             reasoning_complete=accumulator.reasoning_known == model_calls,
-            cost_usd=_decimal_text(accumulator.cost_usd) if cost else None,
+            cost_usd=cost_text(accumulator.cost_usd) if cost else None,
             cost_complete=accumulator.cost_complete == model_calls,
             cost_approximate=accumulator.cost_approximate,
         ),
@@ -431,10 +432,3 @@ def _record_pointer(record: Record) -> str:
     if isinstance(record, ControlRecord):
         return record.id
     return record.id
-
-
-def _decimal_text(value: Decimal) -> str:
-    rendered = format(value, "f")
-    if "." in rendered:
-        rendered = rendered.rstrip("0").rstrip(".")
-    return rendered or "0"

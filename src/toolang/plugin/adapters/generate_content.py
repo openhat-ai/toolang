@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from decimal import Decimal
 import json
 from typing import Any, cast
 from urllib.parse import quote
@@ -264,7 +263,7 @@ def generate_content_usage(value: Mapping[str, object]) -> ModelUsage | None:
         meters.append(
             ModelUsageMeter(
                 name="google.tool_use_prompt",
-                quantity=Decimal(tool_prompt),
+                quantity=float(tool_prompt),
                 unit="token",
             )
         )
@@ -338,7 +337,7 @@ def _modality_meters(
             name = f"google.{direction}.{modality}"
             quantities[name] = quantities.get(name, 0) + count
     return tuple(
-        ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="token")
+        ModelUsageMeter(name=name, quantity=float(quantity), unit="token")
         for name, quantity in sorted(quantities.items())
         if quantity > 0
     )

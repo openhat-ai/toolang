@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 import asyncio
 from dataclasses import replace
-from decimal import Decimal
 import logging
 from pathlib import Path
 import tomllib
@@ -1029,7 +1028,7 @@ def test_protocol_usage_normalizes_cache_reasoning_audio_and_reported_cost() -> 
         output_visible_tokens=10,
         output_reasoning_tokens=30,
         output_audio_tokens=5,
-        reported_cost=Decimal("0.03"),
+        reported_cost=0.03,
         reported_currency="USD",
     )
     assert responses == ModelUsage(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from decimal import Decimal
 from typing import Annotated, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -20,7 +19,6 @@ from toolang.execution.schemas import (
 )
 from toolang.execution.types import StepRef
 from toolang.lang.types import parse_public_runnable_ref
-
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
 StrictInt = Annotated[int, Field(strict=True)]
@@ -273,7 +271,7 @@ class RunLimitsPayload(ApiRequest):
     agic_model_calls: NonNegativeInt | None = None
     agic_tool_calls: NonNegativeInt | None = None
     tokens: NonNegativeInt | None = None
-    cost: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     time: NonNegativeInt | None = None
 
     def to_limits(self, base: RunLimits) -> RunLimits:

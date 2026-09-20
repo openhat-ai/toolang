@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from decimal import Decimal
 import logging
 from pathlib import Path
 
@@ -122,7 +121,7 @@ class SetupWatcher:
         model_catalog: Path | None = None,
         allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
         agent_context: bool = True,
         validate_defaults: bool = True,

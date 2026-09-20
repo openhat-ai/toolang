@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from decimal import Decimal
-from enum import StrEnum
 import math
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, Field, WrapSerializer
 from pydantic_core import core_schema
 
+from toolang.base.money import normalize_cost
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
@@ -37,18 +37,19 @@ from toolang.lang.ast import (
     LetStmt,
     MapStmt,
     Node,
-    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
+    SortStmt,
     StormStmt,
     flow_stmt_from_data,
+)
+from toolang.lang.ast import (
     to_data as ast_to_data,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
-
 
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -69,9 +70,9 @@ LIMIT_FIELDS = frozenset(
 AllowField = Literal["models", "tools", "psyches", "skills", "services", "prompts"]
 LimitField = Literal["agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"]
 AllowValue: TypeAlias = tuple[str, ...] | None
-LimitValue: TypeAlias = int | Decimal | None
+LimitValue: TypeAlias = int | float | None
 PolicyGroup = Literal["allow", "default", "limit"]
-PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
+PolicyValue: TypeAlias = tuple[str, ...] | str | int | float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +107,10 @@ class RunCommand:
                 raise TypeError("default command value must be a string or none")
             return
         if self.field == "cost":
-            if self.value is not None and not isinstance(self.value, Decimal):
-                raise TypeError("limit cost command value must be a decimal or none")
+            if self.value is not None:
+                object.__setattr__(
+                    self, "value", normalize_cost(cast(float, self.value))
+                )
         elif self.value is not None and (
             isinstance(self.value, bool) or not isinstance(self.value, int)
         ):
@@ -144,14 +147,8 @@ class LimitOverride:
         if self.field not in LIMIT_FIELDS:
             raise ValueError(f"unknown run limit: {self.field}")
         if self.field == "cost":
-            if self.value is not None and not isinstance(self.value, Decimal):
-                raise TypeError("run limit cost override must be a decimal or none")
-            if isinstance(self.value, Decimal) and (
-                not self.value.is_finite() or self.value < 0
-            ):
-                raise ValueError(
-                    "run limit cost override must be finite and non-negative"
-                )
+            if self.value is not None:
+                object.__setattr__(self, "value", normalize_cost(self.value))
             return
         if self.value is not None and (
             isinstance(self.value, bool) or not isinstance(self.value, int)
@@ -1887,10 +1884,10 @@ def _validate_decimal_text(value: str | None, *, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be non-empty decimal text")
     try:
-        parsed = Decimal(value)
+        parsed = float(value)
     except Exception as exc:
         raise ValueError(f"{label} must be decimal text") from exc
-    if not parsed.is_finite() or parsed < 0:
+    if not math.isfinite(parsed) or parsed < 0:
         raise ValueError(f"{label} must be finite and non-negative")
 
 

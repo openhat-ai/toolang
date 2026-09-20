@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
-from decimal import Decimal
 from types import MappingProxyType
 from typing import cast
 
@@ -46,8 +45,8 @@ class ModelLimitView:
 class ModelCostView:
     """Queryable model per-million-token costs."""
 
-    input: Decimal | None
-    output: Decimal | None
+    input: float | None
+    output: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,8 +436,8 @@ def _catalog_model_view(
             output=model.limit.get("output"),
         ),
         cost=ModelCostView(
-            input=_optional_decimal((model.cost or {}).get("input")),
-            output=_optional_decimal((model.cost or {}).get("output")),
+            input=_optional_float((model.cost or {}).get("input")),
+            output=_optional_float((model.cost or {}).get("output")),
         ),
         parameters=ModelParametersView(
             reasoning=ModelReasoningParametersView(
@@ -457,12 +456,12 @@ def parse_model_query_date(value: str | None) -> date | None:
     return date.fromisoformat(normalized)
 
 
-def _optional_decimal(value: object) -> Decimal | None:
+def _optional_float(value: object) -> float | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, Decimal | int | float):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return Decimal(str(value))
+    return float(value)
 
 
 def _metadata_text(metadata: Mapping[str, object], name: str) -> str | None:
