@@ -1403,7 +1403,7 @@ def _format_currency(value: ScalarValue) -> str:
         return "-"
     if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
         raise ToolangError(f"currency table value must be numeric, got {value!r}")
-    return f"${value:.2f}"
+    return f"{value:.2f}"
 
 
 def _glob_matches(value: str, pattern: str) -> bool:

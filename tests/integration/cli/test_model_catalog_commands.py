@@ -373,7 +373,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         "100_000",
         "text,image",
         "tool_call,reasoning,temperature,structured_output",
-        "$1.26 / $0.00",
+        "1.26 / 0.00",
         "unready (Missing env)",
     )
     assert [row.index(value) for value in values] == sorted(
@@ -382,7 +382,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     for header_value, row_value in (
         ("CONTEXT", "1_000_000"),
         ("OUTPUT", "100_000"),
-        ("PRICE ($/1M)", "$1.26 / $0.00"),
+        ("PRICE ($/1M)", "1.26 / 0.00"),
     ):
         assert header.index(header_value) + len(header_value) == row.index(
             row_value
@@ -412,8 +412,8 @@ def test_models_render_aligned_prices_and_group_summary(
     assert result.exit_code == 0, result.stderr
     lines = [line for line in result.stdout.splitlines() if "test/" in line]
     assert len(lines) == 2
-    assert "$0.43 /  $0.87" in lines[0]
-    assert "$1.25 / $10.00" in lines[1]
+    assert "0.43 /  0.87" in lines[0]
+    assert "1.25 / 10.00" in lines[1]
     assert lines[0].rindex("/") == lines[1].rindex("/")
     assert ("STATUS" in result.stdout) == bool(all_option)
     assert "AVAILABLE" not in result.stdout

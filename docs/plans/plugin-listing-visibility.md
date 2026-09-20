@@ -113,7 +113,8 @@ print only `0 <items>` without headers or an additional empty-result message.
 JSON exports include neither summaries nor presentation states.
 
 Format prices as `INPUT / OUTPUT`, with each amount right-aligned independently
-to the widest formatted value among displayed rows. Align `/` and both numeric
+to the widest formatted value among displayed rows. Amounts omit `$`; the
+`PRICE ($/1M)` header supplies the unit. Align `/` and both numeric
 columns, including zero and missing (`-`) values; filtering recomputes widths.
 Cap preparation progress identifies root and agent-home layers separately.
 
