@@ -104,7 +104,7 @@ def _candidate(
         _ = history.tail
     if state.execution is not None:
         resident = (
-            state.prepared.declarations
+            state.model_frame.declarations
             if state.messages.started
             else prepared.declarations
         )
@@ -145,8 +145,8 @@ def _candidate(
         history=history,
         recall=prepared.recall,
         reset=(
-            prepared.run.horizon != state.prepared.run.horizon
-            or prepared.recall != state.prepared.recall
+            prepared.run.horizon != state.model_frame.run.horizon
+            or prepared.recall != state.model_frame.recall
         ),
     )
     request = ModelCall(
@@ -158,7 +158,11 @@ def _candidate(
             else ()
         ),
         output_schema=deepcopy(state.output_binding.output_schema),
-        continuation=state.continuation,
+        continuation=(
+            state.continuation
+            if _estimate_binding(prepared) == _estimate_binding(state.model_frame)
+            else None
+        ),
         max_output_tokens=prepared.output_budget,
         reasoning=prepared.reasoning,
     )
@@ -166,37 +170,15 @@ def _candidate(
         prepared,
         messages,
         preceding,
-        _clip_output(state, prepared, request),
+        request,
         recorded,
     )
-
-
-def _clip_output(
-    state: _AgicState,
-    prepared: _AgicFrame,
-    request: ModelCall,
-) -> ModelCall:
-    """Trim an explicit output allowance to the provider's remaining window.
-
-    The runtime clips only from a calibrated input count. Without one it sends
-    the request unchanged and lets the provider enforce its own context limit.
-    """
-
-    capacity = prepared.context_capacity
-    if capacity is None or request.max_output_tokens is None:
-        return request
-    used = state.estimate.reliable_count(request, _estimate_binding(prepared))
-    if used is None:
-        return request
-    room = capacity - used
-    if room >= request.max_output_tokens:
-        return request
-    return replace(request, max_output_tokens=max(1, room))
 
 
 def _estimate_binding(prepared: _AgicFrame) -> object:
     return (
         prepared.model,
+        prepared.reasoning,
         prepared.run.state.revision,
         prepared.run.horizon,
         prepared.recall,
@@ -209,7 +191,10 @@ def _boundary(
     budget = prepared.input_budget
     if (
         budget is None
-        or state.estimate.count(request, _estimate_binding(prepared)) <= budget
+        or state.estimate.count(
+            request, _estimate_binding(prepared), prepared.input_overhead
+        )
+        <= budget
     ):
         return None
     execution = state.execution
@@ -236,7 +221,7 @@ def _boundary(
         messages=[*roots[-1][1], *request.messages[history_size:]],
     )
     # This lower bound excludes summary and any uncommitted historical tail.
-    if InputEstimate().count(required, None) > budget:
+    if InputEstimate().count(required, None, prepared.input_overhead) > budget:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
@@ -323,6 +308,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
     def adopt_begin() -> None:
         state.prepared = prepared
+        state.model_frame = prepared
+        state.continuation = request.continuation if request is not None else None
         state.messages = next_messages
         state.visible_recalls = {
             item.target: item.revision for item in prepared.declarations
@@ -432,6 +419,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 request,
                 _estimate_binding(prepared),
                 current.usage.input_tokens if current.usage else None,
+                prepared.input_overhead,
             )
     except asyncio.CancelledError:
         await _end_incomplete(state, stream)

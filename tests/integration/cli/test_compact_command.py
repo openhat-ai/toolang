@@ -134,7 +134,7 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
     result = json.loads(captured_output.out)
     assert result["output"] == {
         "thread": "term_a",
-        "begin": None,
+        "begin": "run_0",
         "end": "run_8",
         "summary": "Facts zero through seven.",
     }
@@ -146,7 +146,12 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
     assert captured["limit_overrides"]
     control = h.store.get_run_control(run_id=result["run"], index=0)
     assert control is not None and isinstance(control.payload, RunControlPayload)
-    assert control.payload.input == {"thread": "term_a", "end": "run_8", "bare": True}
+    assert control.payload.input == {
+        "thread": "term_a",
+        "begin": "run_0",
+        "end": "run_8",
+        "bare": True,
+    }
     assert control.payload.authored_input == {"thread": "term_a", "end": "run_8"}
 
     async def next_run():
@@ -178,8 +183,8 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
         ({"begin": "run_3"}, "run_3", False),
         ({"begin": "run_5"}, "run_5", True),
         ({"begin": "run_6"}, "run_6", False),
-        ({"end": "run_3"}, None, False),
-        ({"begin": "run_0"}, None, False),
+        ({"end": "run_3"}, "run_0", False),
+        ({"begin": "run_0"}, "run_0", False),
     ],
 )
 def test_range_defaults_freeze_previous_reference(
@@ -361,3 +366,60 @@ def test_cancel_waiter_or_script_releases_permit(harness, after_admission):
             pass
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "invalid", ["missing", "cycle", "gap", "bare", "missing_bound", "other_thread"]
+)
+def test_invalid_previous_chain_cannot_replace_a_valid_summary(harness, invalid):
+    from tests.support.execution_fixtures import accept_run
+    from toolang.execution.types import FieldRef, Local, Output, RunRef, ThreadRef
+
+    h = harness
+    responses(h, end="run_3")
+    first = asyncio.run(run(h, end="run_3"))
+    request = {
+        "thread": "term_a",
+        "begin": "run_3",
+        "end": "run_8",
+        "previous": first["horizon"],
+    }
+    output = {
+        "thread": "term_a",
+        "begin": None,
+        "end": "run_8",
+        "summary": "Forged prefix",
+    }
+    if invalid == "missing":
+        request["previous"] = "run_missing/output"
+    elif invalid == "cycle":
+        request["previous"] = "run_forged/output"
+    elif invalid == "gap":
+        request["begin"] = "run_4"
+    elif invalid == "bare":
+        request["bare"] = True
+    elif invalid == "missing_bound":
+        del output["begin"]
+    else:
+        output["thread"] = "term_other"
+    accept_run(
+        h.store,
+        run_id="run_forged",
+        parent=None,
+        thread="compact_term_a",
+        input=RunnableInput(request),
+        context={},
+        request_id=None,
+        created_at="2026-09-20T00:00:00Z",
+    )
+    project_run_end(h.store, run_id="run_forged", output=Output(Local(output), None))
+    history = RunHistory(h.store)
+    assert horizon(history) == first["horizon"]
+    with pytest.raises((ValueError, KeyError)):
+        history.read_compaction(
+            FieldRef.parse("run_forged/output"),
+            ThreadRef("term_a"),
+            tuple(RunRef(f"run_{i}") for i in range(10)),
+        )
+    with closing(RunStore(h.store.db_path, read_only=True)) as reopened:
+        assert horizon(RunHistory(reopened)) == first["horizon"]

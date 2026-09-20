@@ -20,6 +20,8 @@ from toolang.execution.assembly.history import MessageHistory
 from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.assembly.utils import literal_delta, render_delta
 from toolang.execution.types import (
+    CompactionResult,
+    ThreadRef,
     FieldRef,
     ModelMessages,
     RunRef,
@@ -299,10 +301,13 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
 
     history = MessageHistory(
         "thread",
-        (root,),
+        (RunRef("run_prior"), root),
         lambda roots: {r: literal_delta(near) for r in roots},
         lambda _: (),
         resolve,
+        lambda _: CompactionResult(
+            ThreadRef("thread"), RunRef("run_prior"), root, "Summary {{literal}}"
+        ),
     )
     head = StepRef.parse("run_ef56.0")
     current = (Message.user("Current {{literal}}"),)

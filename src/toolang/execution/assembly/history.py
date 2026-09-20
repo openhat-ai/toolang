@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import cast
 
 from toolang.base.types.message import (
     Message,
@@ -29,6 +28,8 @@ from ..records import (
     StoredModelStepGiven,
 )
 from ..types import (
+    CompactionResult,
+    ThreadRef,
     ControlRef,
     FieldRef,
     Local,
@@ -84,12 +85,14 @@ class MessageHistory:
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageTemplate]]],
         tail: Callable[[Sequence[RunRef]], tuple[MessageTemplate, ...]],
         resolve: Callable[[TypedRef | ContentRef], object],
+        compaction: Callable[[FieldRef], CompactionResult],
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
         self._load = load
         self._load_tail = tail
         self._resolve = resolve
+        self._compaction = compaction
         self._roots: dict[RunRef, _RootMessages] = {}
         self._selections: dict[FieldRef | None, HistorySelection] = {}
         self._tails: dict[
@@ -101,29 +104,12 @@ class MessageHistory:
             summary = ""
             begin = 0
             if horizon is not None:
-                output = self._resolve(
-                    TypedRef(horizon.select("local", "value"), "Json")
-                )
-                if not isinstance(output, Mapping):
-                    raise ValueError("compact output must be an object")
-                value = cast(Mapping[str, object], output)
-                if value.get("thread") != self.thread:
-                    raise ValueError("compact output targets another Thread")
-                if not self.roots or value.get("begin") not in {
-                    None,
-                    str(self.roots[0]),
-                }:
+                result = self._compaction(horizon)
+                result.validate_coverage(ThreadRef.parse(self.thread), self.roots)
+                if result.begin != self.roots[0]:
                     raise ValueError("compact output must cover the complete prefix")
-                end = value.get("end")
-                root_ids = tuple(str(root) for root in self.roots)
-                if not isinstance(end, str) or end not in root_ids:
-                    raise ValueError(
-                        "compact end must retain a historical root in near"
-                    )
-                begin = root_ids.index(end)
-                summary = value.get("summary")
-                if not isinstance(summary, str):
-                    raise ValueError("compact summary must be text")
+                begin = self.roots.index(result.end)
+                summary = result.summary
             selected = self.roots[begin:]
             missing = tuple(root for root in selected if root not in self._roots)
             if missing:

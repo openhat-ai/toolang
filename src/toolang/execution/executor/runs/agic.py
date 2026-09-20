@@ -67,6 +67,7 @@ class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
 
     prepared: _AgicFrame
+    model_frame: _AgicFrame = field(init=False)
     layout: AgentLayout
     emit: EventEmitter
     pending_inputs: Callable[[], tuple[ControlRecord, ...]]
@@ -103,6 +104,10 @@ class _AgicState:
         | None
     ) = None
     refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
+
+    def __post_init__(self) -> None:
+        # Tools may refresh prepared without changing the last dispatched call.
+        self.model_frame = self.prepared
 
     def check_model_call_limit(self) -> None:
         """Check the next call without counting an uncommitted preparation."""

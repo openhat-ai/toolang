@@ -2079,3 +2079,39 @@ def _validate_json_pointer(value: str, *, source: str) -> None:
 
 def _pointer_suffix(path: Sequence[str | int]) -> str:
     return "/".join(str(item).replace("~", "~0").replace("/", "~1") for item in path)
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionResult:
+    """Concrete half-open root coverage and its summary, independent of source types."""
+
+    thread: ThreadRef
+    begin: RunRef
+    end: RunRef
+    summary: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.thread, ThreadRef):
+            raise TypeError("compact thread must be a ThreadRef")
+        if not isinstance(self.begin, RunRef) or not isinstance(self.end, RunRef):
+            raise TypeError("compact bounds must be RunRefs")
+        if self.begin == self.end:
+            raise ValueError("compact range must be nonempty")
+        if not isinstance(self.summary, str) or not self.summary.strip():
+            raise ValueError("compact summary must contain nonempty text")
+
+    def validate_coverage(self, thread: ThreadRef, roots: Sequence[RunRef]) -> None:
+        if self.thread != thread:
+            raise ValueError("compact output targets another Thread")
+        if self.begin not in roots or self.end not in roots:
+            raise ValueError("compact bounds must be visible historical roots")
+        if roots.index(self.begin) >= roots.index(self.end):
+            raise ValueError("compact must cover a nonempty range and retain a root")
+
+    def to_data(self) -> dict[str, str]:
+        return {
+            "thread": str(self.thread),
+            "begin": str(self.begin),
+            "end": str(self.end),
+            "summary": self.summary,
+        }

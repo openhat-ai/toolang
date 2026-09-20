@@ -17,7 +17,7 @@ from tests.support.execution_assertions import (
     without_route_snapshots,
     route_snapshots,
 )
-from tests.support.execution_fixtures import project_run_start, project_run_end
+from tests.support.execution_fixtures import accept_run, project_run_end
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -26,6 +26,8 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.policy import AgentCeiling
+from toolang.common.time import utc_now
+from toolang.lang.input import RunnableInput
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, StepBegin, StepEnd
@@ -923,13 +925,20 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             retained = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat"), tracer=tracer
             )
-            summary = project_run_start(
+            harness.store.create_thread(
+                thread_id=f"summary_{thread}", origin="test", created_at=utc_now()
+            )
+            summary, _ = accept_run(
                 harness.store,
                 run_id=harness.ids.issue_run(),
-                # Exercise explicit control adoption, not automatic discovery.
-                thread_id=f"summary_{thread}",
-                origin="test",
-                input=Message.user("compact"),
+                parent=None,
+                thread=f"summary_{thread}",
+                input=RunnableInput(
+                    {"thread": thread, "begin": first.id, "end": retained.id}
+                ),
+                context={},
+                request_id=None,
+                created_at=utc_now(),
             )
             project_run_end(
                 harness.store,

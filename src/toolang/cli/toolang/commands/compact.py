@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from dataclasses import replace
 import json
 import os
@@ -21,7 +20,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.compact import compact_state, compact_tools, permit
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.types import FieldRef, RunRef, ThreadRef, local_to_protocol_data
+from toolang.execution.types import FieldRef, RunRef, ThreadRef
 from toolang.lang.ast import AgicDecl
 from toolang.lang.input import (
     CallInput,
@@ -150,12 +149,7 @@ def _prepare(
         raise ToolangError("compact end must be a visible root")
     stop = ids.index(end)
     previous = history.get_compaction(thread)
-    old = (
-        cast(Mapping[str, object], previous.output.local.value)
-        if previous is not None
-        else {}
-    )
-    old_end = cast(str | None, old.get("end"))
+    old_end = str(previous.result.end) if previous is not None else None
     begin = cast(str | None, input.get("begin"))
     if begin is None:
         begin = (
@@ -174,9 +168,7 @@ def _prepare(
             "compact must exclude active roots and retain a terminal root"
         )
     reuse = previous is not None and begin == old_end and not input.get("bare", False)
-    resolved = {"thread": thread, "end": end, "bare": not reuse}
-    if start:
-        resolved["begin"] = begin
+    resolved = {"thread": thread, "begin": begin, "end": end, "bare": not reuse}
     if reuse:
         assert previous is not None
         resolved["previous"] = str(previous.ref)
@@ -239,25 +231,20 @@ async def _run(
             )
             raise ToolangError(f"compact Run {result.id}: {error}")
         check_range()
-        output = history.get_output(result.id)
-        raw = output.local.value if output is not None else None
-        value = cast(Mapping[str, object], raw) if isinstance(raw, Mapping) else {}
-        begin = None if spec.input.get("previous") else spec.input.get("begin")
-        if (
-            value.get("thread") != thread
-            or value.get("begin") != begin
-            or value.get("end") != spec.input["end"]
-            or not isinstance(value.get("summary"), str)
-            or not cast(str, value["summary"]).strip()
-        ):
-            raise ToolangError(
-                f"compact Run {result.id}: output must match its coverage and contain a nonempty summary"
+        try:
+            output = history.read_compaction(
+                FieldRef.from_path(RunRef(result.id), "output"),
+                ThreadRef.parse(thread),
+                tuple(RunRef(ref) for ref in prefix),
             )
-        assert output is not None
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ToolangError(
+                f"compact Run {result.id}: output must match its coverage and contain a nonempty summary: {exc}"
+            ) from exc
         return {
             "run": result.id,
-            "horizon": str(FieldRef.from_path(RunRef(result.id), "output"))
-            if begin is None
+            "horizon": str(output.ref)
+            if str(output.result.begin) == prefix[0]
             else None,
-            "output": local_to_protocol_data(output.local)["value"],
+            "output": output.result.to_data(),
         }

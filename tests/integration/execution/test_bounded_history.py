@@ -611,6 +611,8 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
 ) -> None:
     start(store)
     start(store, "run_b")
+    project_run_end(store, run_id="run_a")
+    project_run_end(store, run_id="run_b")
     history = RunHistory(store)
     assert history.get_compaction("term_a") is None
     start(store, "run_old", thread="compact_term_a")
@@ -651,7 +653,13 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     found = history.get_compaction("term_a")
     assert found is not None
     assert found.ref == FieldRef.from_path(RunRef("run_compact"), "output")
-    assert found.output == output
+    assert found.result.to_data() == {
+        "thread": "term_a",
+        "begin": "run_a",
+        "end": "run_b",
+        "summary": "earlier facts",
+    }
+    assert history.get_output("run_compact") == output
     with pytest.raises(KeyError):
         history.get_compaction("term_missing")
 

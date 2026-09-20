@@ -11,6 +11,8 @@ from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.recall import canonical_recall, recall_revisions
 from toolang.execution.records import ControlRecord, RecallControlPayload
 from toolang.execution.types import (
+    CompactionResult,
+    ThreadRef,
     ControlRef,
     FieldRef,
     StepRef,
@@ -39,7 +41,8 @@ def test_history_selection_shares_root_and_tail_caches_across_horizons():
         (first, second),
         load,
         tail,
-        lambda _: {"thread": "thread", "end": str(second), "summary": "earlier"},
+        lambda _: "earlier",
+        lambda _: CompactionResult(ThreadRef("thread"), first, second, "earlier"),
     )
     selected = history.select(None)
     compacted = history.select(horizon)
@@ -169,6 +172,12 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         load,
         lambda _: (),
         resolve,
+        lambda _: CompactionResult(
+            ThreadRef("term_test"),
+            roots[0],
+            roots[1],
+            '<skill ref="skill/testing">far is not recall</skill>',
+        ),
     )
     assert history.select(None).recalls == {
         first.payload.target: first.payload.revision,

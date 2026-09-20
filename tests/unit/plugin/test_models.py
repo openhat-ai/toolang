@@ -2154,6 +2154,7 @@ def _prepared_agic(
     state = SimpleNamespace(
         program=Program(span=Span(1)),
         fingerprint="live-1",
+        revision="live-1",
         workspaces={},
     )
     from toolang.execution.runnables import AgicRoutes
