@@ -39,7 +39,10 @@ No public interval or forced-fresh mode is included.
 
 Resolve bounds and previous reuse before execution; freeze the request and
 source, acquire the existing per-thread lock, and recheck coverage before and
-at completion. Preserve existing active-root, range, and incremental checks.
+at completion. Freeze the latest applicable summary reference in the same read
+snapshot as the range, and reject requests if it changes while waiting for the
+lock (including a first summary appearing). Preserve active-root, range, and
+incremental checks.
 Store each successful result in `compact_<thread>` and return the existing
 `{run, horizon, output}` envelope. All output fields remain concrete.
 

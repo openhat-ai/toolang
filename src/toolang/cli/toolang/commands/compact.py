@@ -269,16 +269,22 @@ async def _run(
     program: AgentState | None = None,
 ) -> dict[str, object]:
     program = program if program is not None else _program(algorithm)
-    spec, prefix = _prepare(
-        store,
-        await watcher.refresh(),
-        input,
-        authored,
-        algorithm=algorithm,
-        program=program,
-    )
-    thread = cast(str, spec.input["thread"])
+    setup = await watcher.refresh()
     history = RunHistory(store)
+    # Freeze coverage and summary generation from the same durable snapshot.
+    # FORGET changes the latter without changing the target's root sequence.
+    with store.read_transaction():
+        spec, prefix = _prepare(
+            store,
+            setup,
+            input,
+            authored,
+            algorithm=algorithm,
+            program=program,
+        )
+        thread = cast(str, spec.input["thread"])
+        previous = history.get_compaction(thread)
+        summary_ref = previous.ref if previous is not None else None
 
     def check_range() -> tuple[RunRef, ...]:
         current = history.thread_view(thread, include_children=False).roots
@@ -289,6 +295,11 @@ async def _run(
     lock = store.db_path.with_name(f"{store.db_path.name}.{thread}.compact.lock")
     async with permit(lock):
         check_range()
+        current = history.get_compaction(thread)
+        if (current.ref if current is not None else None) != summary_ref:
+            raise ToolangError(
+                "compact summary changed while waiting; submit a new request"
+            )
         with file_write_lock(store.thread_lock_path):
             if store.get_thread(thread_id=spec.thread) is None:
                 store.create_thread(

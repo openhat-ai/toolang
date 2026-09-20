@@ -633,3 +633,53 @@ def test_forget_rejects_active_covered_root(harness):
     with pytest.raises(ToolangError, match="exclude active"):
         asyncio.run(run(h, algorithm="FORGET", before="run_tail"))
     assert h.store.get_thread(thread_id="compact_term_a") is None
+
+
+@pytest.mark.parametrize("existing_summary", [False, True])
+def test_waiting_compact_rejects_a_summary_replaced_by_forget(
+    harness, monkeypatch, existing_summary
+):
+    from contextlib import asynccontextmanager
+
+    h = harness
+
+    async def scenario():
+        if existing_summary:
+            responses(h, end="run_5", summary="Old private detail.")
+            await run(h, before="run_5")
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = compact.permit
+        first_wait = True
+
+        @asynccontextmanager
+        async def delayed(path):
+            nonlocal first_wait
+            if first_wait:
+                first_wait = False
+                entered.set()
+                await release.wait()
+            async with original(path):
+                yield
+
+        monkeypatch.setattr(compact, "permit", delayed)
+        responses(h, end="run_9", summary="Old private detail plus recent facts.")
+        pending = asyncio.create_task(run(h, before="run_9"))
+        await asyncio.wait_for(entered.wait(), 2)
+        try:
+            forgotten = await run(h, algorithm="FORGET", before="run_8")
+        finally:
+            release.set()
+        calls = len(h.adapter.invocations)
+        runs = len(RunHistory(h.store).thread_view("compact_term_a").roots)
+        with pytest.raises(ToolangError, match="summary changed"):
+            await pending
+        assert len(h.adapter.invocations) == calls
+        assert len(RunHistory(h.store).thread_view("compact_term_a").roots) == runs
+        assert horizon(RunHistory(h.store)) == forgotten["horizon"]
+        # A fresh request resolves the new marker and starts after forgotten roots.
+        spec, _ = prepare(h, before="run_9")
+        assert spec.input["previous"] == forgotten["horizon"]
+        assert spec.input["begin"] == "run_8"
+
+    asyncio.run(scenario())
