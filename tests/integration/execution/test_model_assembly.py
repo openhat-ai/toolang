@@ -21,7 +21,9 @@ from tests.support.execution_harness import (
     RecordingTool,
 )
 from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.model import Model, ModelRoute, ModelToolang
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.plugin.adapters.responses import response_payload
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.assembly import history as execution_history
@@ -1102,7 +1104,12 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
                     ToolCall(f"lookup{i}", f"lookup{i}", tool.name, {})
                     for i in range(2)
                 ),
-                continuation={"previous_response_id": "uncompacted"},
+                continuation={
+                    "previous_response_id": "uncompacted",
+                    "reasoning": {
+                        "lookup0": [{"id": "rs_0", "type": "reasoning", "summary": []}],
+                    },
+                },
             ),
             ModelCallResult(message=Message.assistant("done")),
         ],
@@ -1136,7 +1143,33 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             run = await _run(harness, thread, "current", tracer)
             assert run.status == "succeeded", run.error
             request = harness.adapter.invocations[-1].call
-            assert request.continuation is None
+            payload = response_payload(
+                Model(
+                    id="model",
+                    name="model",
+                    _toolang=ModelToolang(
+                        provider="openai",
+                        ready=True,
+                        route=ModelRoute(adapter="responses"),
+                    ),
+                ),
+                request,
+                stateful=True,
+            )
+            assert "previous_response_id" not in payload
+            assert [
+                item["call_id"]
+                for item in payload["input"]
+                if item["type"] == "function_call_output"
+            ] == ["lookup0", "lookup1"]
+            assert [
+                item["call_id"]
+                for item in payload["input"]
+                if item["type"] == "function_call"
+            ] == ["lookup0", "lookup1"]
+            assert [
+                item["id"] for item in payload["input"] if item["type"] == "reasoning"
+            ] == ["rs_0"]
             assert request.messages[0] == Message.user("Earlier facts.")
             assert "old input" not in str(request.messages)
             assert len(tool.calls) == 2

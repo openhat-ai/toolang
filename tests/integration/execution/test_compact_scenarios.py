@@ -273,7 +273,7 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             after = history.get_model_call(last.ref)
             assert before == harness.adapter.invocations[3].call
             assert after == harness.adapter.invocations[-1].call
-            assert after.continuation is None
+            assert after.continuation == {"previous_response_id": "old-context"}
             assert after.max_output_tokens == before.max_output_tokens == 512
             assert "old old" in str([m.to_data() for m in before.messages])
             text = str([m.to_data() for m in after.messages])

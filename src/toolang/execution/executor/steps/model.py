@@ -160,7 +160,11 @@ def _candidate(
         output_schema=deepcopy(state.output_binding.output_schema),
         continuation=(
             state.continuation
-            if _estimate_binding(prepared) == _estimate_binding(state.model_frame)
+            # History changes invalidate calibration, but adapters still need
+            # opaque reasoning/signatures to replay retained tool exchanges.
+            # Stateful adapters validate the actual prefix before reusing it.
+            if prepared.model == state.model_frame.model
+            and prepared.reasoning == state.model_frame.reasoning
             else None
         ),
         max_output_tokens=prepared.output_budget,
