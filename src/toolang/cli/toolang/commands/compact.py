@@ -19,18 +19,16 @@ from toolang.common.files import file_write_lock
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.compact import (
+from toolang.execution.compaction import (
     compact_state,
     compact_tools,
     permit,
-    algorithm_input,
-    result_spec,
-    result_state,
+    execute_algorithm,
 )
 from toolang.execution.compaction import assemble_compaction
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.types import FieldRef, RunRef, ThreadRef
+from toolang.execution.types import RunRef, ThreadRef
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import Value
 from toolang.lang.input import (
@@ -61,7 +59,7 @@ from ...common.policy import (
     resolve_limit_overrides,
 )
 from ...common.script_progress import ScriptRunPresenter
-from .script import await_script_run, collect_named_arguments
+from .script import collect_named_arguments
 
 
 @lru_cache(maxsize=1)
@@ -75,11 +73,11 @@ def compact_runnable() -> AgicDecl:
     return runnable
 
 
-def _program(algorithm: str) -> AgentState:
+def _program(algorithm: str) -> AgentState | None:
     if algorithm == "DEFAULT":
         return compact_state()
     if algorithm == "FORGET":
-        return result_state()
+        return None
     path = Path(algorithm).expanduser().resolve()
     if path.suffix != ".too":
         raise ToolangError("compact algorithm must be DEFAULT, FORGET, or a .too file")
@@ -238,28 +236,20 @@ def _prepare(
         "thread": thread,
         "begin": begin,
         "end": end,
-        "bare": not reuse,
+        "previous_summary": previous.result.summary
+        if reuse and previous is not None
+        else "",
     }
-    if reuse:
-        assert previous is not None
-        resolved["previous"] = str(previous.ref)
-    if forget:
-        resolved["_"] = assemble_compaction(
-            "Earlier history was intentionally forgotten.",
-            thread=ThreadRef.parse(thread),
-            roots=tuple(RunRef(ref) for ref in ids),
-            request=resolved,
-        ).to_data()
     request = (
         None if forget else select_compact_model(setup.models, setup.compact_model)
     )
     return RunSpec(
         setup=replace(setup, tools=compact_tools()),
-        state=program,
+        state=program if program is not None else compact_state(),
         thread=f"compact_{thread}",
         bindings=RunBindings(
             model=request.ref if request is not None else None,
-            runnable="flow:result" if forget else "agic:compact",
+            runnable="agic:compact",
         ),
         model_request=request,
         limits=setup.limits,
@@ -316,77 +306,42 @@ async def _run(
                 store.create_thread(
                     thread_id=spec.thread, origin="script", created_at=utc_now()
                 )
+        prior = (
+            previous.result
+            if algorithm != "FORGET"
+            and previous is not None
+            and spec.input["begin"] == previous.result.end
+            else None
+        )
+        if algorithm == "FORGET":
+            result = assemble_compaction(
+                "Earlier history was intentionally forgotten.",
+                thread=ThreadRef.parse(thread),
+                roots=check_range(),
+                begin=RunRef(str(spec.input["begin"])),
+                end=RunRef(str(spec.input["end"])),
+                previous=None,
+            )
+            ref = store.publish_compaction(result, roots=check_range())
+            return {"horizon": str(ref), "output": result.to_data()}
         executor = RunExecutor(store, ids)
         tracer = ScriptRunPresenter(
             run_id=None, operation="compact", max_width=max_width
         )
         executor.start()
         try:
-            if algorithm == "FORGET":
-                result = await await_script_run(executor.run(spec, tracer=tracer))
-            else:
-                prior = (
-                    previous.result
-                    if previous is not None and spec.input.get("previous")
-                    else None
-                )
-                producer = await await_script_run(
-                    executor.run(
-                        replace(spec, input=algorithm_input(spec.input, prior)),
-                        tracer=tracer,
-                    )
-                )
-                if producer.status != "succeeded":
-                    error = (
-                        store.resolve_error(producer.error)
-                        if producer.error is not None
-                        else producer.status
-                    )
-                    raise ToolangError(f"compact Run {producer.id}: {error}")
-                roots = check_range()
-                raw = history.get_output(producer.id)
-                try:
-                    assembled = assemble_compaction(
-                        raw.local.value if raw is not None else None,
-                        thread=ThreadRef.parse(thread),
-                        roots=roots,
-                        request=spec.input,
-                        previous=prior,
-                    )
-                except (ValueError, TypeError) as exc:
-                    raise ToolangError(
-                        f"compact Run {producer.id}: invalid summary: {exc}"
-                    ) from exc
-                result = await await_script_run(
-                    executor.run(result_spec(spec, assembled, RunRef(producer.id)))
-                )
+            producer, output = await execute_algorithm(
+                executor, spec, roots=check_range(), previous=prior, tracer=tracer
+            )
+        except (ValueError, TypeError) as exc:
+            raise ToolangError(f"invalid summary: {exc}") from exc
         finally:
             try:
                 await executor.stop()
             finally:
                 tracer.close()
-        if result.status != "succeeded":
-            error = (
-                store.resolve_error(result.error)
-                if result.error is not None
-                else result.status
-            )
-            raise ToolangError(f"compact Run {result.id}: {error}")
-        roots = check_range()
-        try:
-            output = history.read_compaction(
-                FieldRef.from_path(RunRef(result.id), "output"),
-                ThreadRef.parse(thread),
-                roots,
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            raise ToolangError(
-                f"compact Run {result.id}: output must match its coverage and contain a nonempty summary: {exc}"
-            ) from exc
         return {
-            "run": result.id,
-            "horizon": str(output.ref)
-            if str(output.result.begin) == prefix[0]
-            else None,
+            "run": producer,
+            "horizon": str(output.ref),
             "output": output.result.to_data(),
         }

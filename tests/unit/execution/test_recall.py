@@ -5,14 +5,13 @@ from hashlib import sha256
 
 import pytest
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.execution.assembly.history import MessageHistory
 from toolang.execution.assembly.utils import control_message
 from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.recall import canonical_recall, recall_revisions
 from toolang.execution.records import ControlRecord, RecallControlPayload
 from toolang.execution.types import (
-    CompactionResult,
-    ThreadRef,
     ControlRef,
     FieldRef,
     StepRef,
@@ -25,7 +24,9 @@ from toolang.execution.types import (
 
 def test_history_selection_shares_root_and_tail_caches_across_horizons():
     first, second = RunRef("run_ab12"), RunRef("run_cd34")
-    horizon = FieldRef.from_path(RunRef("run_ef56"), "output")
+    horizon = FieldRef.from_path(
+        ControlRef.for_thread("compact_thread", 1), "payload", "result"
+    )
     loaded, tails = [], []
 
     def load(roots):
@@ -42,7 +43,7 @@ def test_history_selection_shares_root_and_tail_caches_across_horizons():
         load,
         tail,
         lambda _: "earlier",
-        lambda _: CompactionResult(ThreadRef("thread"), first, second, "earlier"),
+        lambda _: CompactionResult("thread", str(first), str(second), "earlier"),
     )
     selected = history.select(None)
     compacted = history.select(horizon)
@@ -148,7 +149,9 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
     roots = (RunRef("run_one"), RunRef("run_two"), RunRef("run_three"))
     first, second = _control(1), _control(2, ServiceRecallTarget("service"), "2")
     controls = {c.ref: c for c in (first, second)}
-    horizon = FieldRef.from_path(RunRef("run_compact"), "output")
+    horizon = FieldRef.from_path(
+        ControlRef.for_thread("compact_term_test", 1), "payload", "result"
+    )
     reads = []
 
     def load(selected):
@@ -173,9 +176,9 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         lambda _: (),
         resolve,
         lambda _: CompactionResult(
-            ThreadRef("term_test"),
-            roots[0],
-            roots[1],
+            "term_test",
+            str(roots[0]),
+            str(roots[1]),
             '<skill ref="skill/testing">far is not recall</skill>',
         ),
     )

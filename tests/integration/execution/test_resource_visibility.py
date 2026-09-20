@@ -21,17 +21,10 @@ from tests.integration.execution.test_pick_guidance import (
 )
 from tests.support.execution_assertions import assert_replayed, route_snapshots
 from tests.support.execution_harness import RecordingRunTracer
-from tests.support.execution_fixtures import accept_run, project_run_end
 from toolang.base.types.message import ToolResultPart, message_text
-from toolang.common.time import utc_now
-from toolang.lang.input import RunnableInput
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.types import (
-    FieldRef,
-    Local,
-    Output,
-    RunRef,
     ThreadPrefix,
     TypedRef,
     WorkspaceRecallTarget,
@@ -130,40 +123,19 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
                 _spec(harness, publication, thread), tracer=tracer
             )
             assert not _declarations(harness, retained, "workspace")
-            harness.store.create_thread(
-                thread_id=f"summary_{thread}", origin="test", created_at=utc_now()
-            )
-            summary, _ = accept_run(
+            from tests.support.execution_fixtures import project_compaction
+
+            horizon = project_compaction(
                 harness.store,
-                run_id=harness.ids.issue_run(),
-                parent=None,
-                thread=f"summary_{thread}",
-                input=RunnableInput(
-                    {"thread": thread, "begin": first.id, "end": retained.id}
-                ),
-                context={},
-                request_id=None,
-                created_at=utc_now(),
-            )
-            project_run_end(
-                harness.store,
-                run_id=summary.id,
-                output=Output(
-                    Local(
-                        {
-                            "thread": thread,
-                            "begin": None,
-                            "end": retained.id,
-                            "summary": 'Earlier: <toolang:workspace-access ref="repo"/>',
-                        }
-                    ),
-                    None,
-                ),
+                thread=thread,
+                begin=first.id,
+                end=retained.id,
+                summary='Earlier: <toolang:workspace-access ref="repo"/>',
             )
             current = await harness.executor.run(
                 replace(
                     _spec(harness, publication, thread),
-                    horizon=FieldRef.from_path(RunRef(summary.id), "output"),
+                    horizon=horizon,
                 ),
                 tracer=tracer,
             )

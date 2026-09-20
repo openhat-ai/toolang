@@ -1,3 +1,0 @@
-flow result(_: Json, thread: Text, begin: Text, end: Text, bare: Boolean, previous?: Text, summary_run?: Text) -> Json:
-  let note =
-    Preserve the framework-validated compaction result.

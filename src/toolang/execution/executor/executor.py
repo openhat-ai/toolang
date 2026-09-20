@@ -117,7 +117,7 @@ from .common import (
     value_parts,
     value_text,
 )
-from .compact import available_horizon
+from ..compaction import available_horizon
 from .resources import (
     apply_agent_ceiling,
     resource_caps,

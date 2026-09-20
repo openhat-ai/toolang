@@ -1,6 +1,7 @@
 # Compact CLI execution modes
 
-Status: approved for implementation, including the simplified CLI inputs.
+Status: implemented. Algorithm execution and persistence follow
+[Text-only algorithms](compact-summary-algorithm.md).
 
 ## Goal and interface
 
@@ -43,33 +44,32 @@ at completion. Freeze the latest applicable summary reference in the same read
 snapshot as the range, and reject requests if it changes while waiting for the
 lock (including a first summary appearing). Preserve active-root, range, and
 incremental checks.
-Store each successful result in `compact_<thread>` and return the existing
-`{run, horizon, output}` envelope. All output fields remain concrete.
+Store each successful result as an immutable compaction record in
+`compact_<thread>`. Return `{horizon, output}` and include the producer `run`
+only for algorithm modes. All result fields remain concrete.
 
-Forget produces `CompactionResult` with the fixed nonempty summary
-`Earlier history was intentionally forgotten.` It keeps the existing type and
-validator unchanged. Persist it through a shared model-free internal result flow
-and the normal Run lifecycle, with explicit thread/begin/end/bare inputs;
-do not fabricate successful Run records directly. Original records remain
+Forget uses the marker `Earlier history was intentionally forgotten.` and the
+same validation/publication path, without running a model or a result flow.
+Original records remain
 inspectable. New model calls adopting this horizon see only the marker and
 retained history; existing calls are not rewritten. Subsequent incremental
 compaction may reuse the marker but must not reread the forgotten prefix.
 
 ## Scope and implementation touchpoints
 
-CLI modes only; automatic compaction continues using the bundled producer.
-Do not change the existing bundled `compact.too` prompt or result schema.
+CLI mode selection applies only to explicit requests; automatic compaction uses
+the bundled producer. Both paths share text-only execution and publication.
 
 - `cli/toolang/commands/compact.py`, `cli/toolang/main.py`: stable help,
   producer selection, input validation, and shared execution orchestration.
 - `state/source.py` / `state/builtin.py`: reuse source parsing and isolated
   state preparation; keep file resolution in CLI orchestration.
-- A package-owned model-free forget flow under `execution/assembly/prompts/`.
+- Shared framework execution/publication under `execution/compaction.py`.
 - Existing compact CLI and model assembly integration tests; CLI documentation.
 
 ## Acceptance and risks
 
-- Default producer behavior remains compatible; custom source is executed and
+- Default producer behavior retains the same CLI usage; custom source is executed and
   malformed signatures/outputs fail without publishing an eligible horizon.
 - Forget works without a configured model or credentials, makes zero provider
   calls, and persists a valid horizon across restart/replay.

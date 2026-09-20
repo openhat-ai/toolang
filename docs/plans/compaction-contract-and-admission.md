@@ -7,27 +7,24 @@ Status: implemented. Producer details are superseded by
 
 Define a fixed framework result and safe model-call assembly/admission for
 CLI and automatic compaction. The original scope left `compact.too` unchanged.
-Current consumers independently read dictionaries; input admission does not
-reserve output, and uncalibrated calls skip output clipping.
+The implemented admission path reserves output and validates rebuilt calls.
 
 ## Result contract
 
 ```text
-CompactionResult(thread: ThreadRef, begin: RunRef, end: RunRef, summary: str)
+CompactionResult(thread: str, begin: str, end: str, summary: str)
 ```
 
 - Every field is required and non-null; summary must contain non-whitespace text.
   Coverage is `[begin, end)` over the target thread's roots. Require a nonempty
   range and a retained terminal root. Only `begin == first_root` is usable as far.
-- One execution-owned decoder validates results for CLI, discovery, and assembly.
-  `CompactionOutput` carries its durable reference and this concrete result.
-  Resolve omitted CLI bounds at the entry point; freeze coverage and previous
-  reference, then recheck after lock acquisition and completion.
-- Adapt existing script `begin=null` only when recorded inputs and validated
-  previous coverage prove a full prefix. Incremental coverage must be contiguous.
-  Reject missing fields and contradictory bounds. Preserve raw Run outputs and
-  summary references; framework results, including CLI `output`, are concrete.
-  Keep the existing CLI envelope and its optional `horizon`.
+- The shared value lives in `base/types/compaction.py`; execution validates
+  references and coverage. `CompactionOutput` carries the durable reference and
+  value. Callers resolve bounds and previous summaries before execution.
+- Algorithms return Text; the framework assembles and directly publishes an
+  immutable compaction record. Incremental coverage must be contiguous. No
+  old Run-output or null-field compatibility is supported. See the text-only
+  algorithm plan for current persistence and entry-point ownership.
 - Invalid explicit horizons fail; discovery skips invalid or interval results
   and may use an older valid result. The authored type cannot change this contract.
 
@@ -56,24 +53,25 @@ CompactionResult(thread: ThreadRef, begin: RunRef, end: RunRef, summary: str)
    first and rebuilt calls still undergo admission.
 5. On overflow, compact eligible history while retaining the required last root.
    Rebuild summary, near, and current exchanges once, preserving declarations
-   and tool pairs. Clear incompatible estimates and continuation when history
-   or model binding changes, then recheck the complete request.
+   and tool pairs. Invalidate incompatible estimates when history changes. Preserve same-binding
+   continuation needed to replay tool/reasoning exchanges; adapters validate
+   reusable server context. Recheck the complete request.
 6. Require compaction to advance; fail locally if required content still cannot
    fit. Compact runs obey admission but cannot recursively compact themselves.
    Persist the exact admitted call for streaming, non-streaming, and replay.
 
 ## Touchpoints and acceptance
 
-Types/validation: `execution/types.py`, `execution/schemas.py` and a shared decoder.
-Consumers: executor compact, inspection history, CLI compact, and assembly.
+Types/validation: `base/types/compaction.py`, `execution/schemas.py`, and execution
+compaction validation. Consumers: compact tool, inspection, CLI, and assembly.
 Budgeting: `plugin/models/budget.py`, executor budget/frame/model steps/agic, and
 only affected adapters. Extend existing tests for these paths.
 
 Offline acceptance:
 
 - Concrete CLI/automatic bounds; malformed and cross-thread results rejected;
-  legacy/incremental results survive restart; intervals never become far history.
-- Unchanged `compact.too` works through the decoder; stale or forged coverage
+  published/incremental results survive restart; intervals never become far history.
+- Text-only `compact.too` uses framework-owned coverage; stale or forged coverage
   cannot be adopted. Assembly contains no duplicated history; replay is exact.
 - `665128 + 384000 > 1048576` triggers compaction/error before dispatch, including
   first calls and horizon/model changes. Exact-budget requests fit; +1 fails.
@@ -91,4 +89,4 @@ cannot guarantee provider token counts; automatic context-error retries are out
 of scope. Concrete CLI bounds supersede the null convention in `compact-command.md`.
 The reported run has not been inspected; its numbers are a regression fixture.
 
-Contract, compatibility, and budget policy approved by the human for implementation.
+Contract and budget policy approved by the human for implementation.

@@ -185,14 +185,8 @@ def test_live_compact_preserves_constraints_across_unrelated_updates(
                 assert "HF42" in str(merged["summary"])
                 assert "amber-kite-731" in str(merged["summary"])
                 assert "Q9:violet/27|NORTH" not in str(merged["summary"])
-                publication = store.get_run_control(
-                    run_id=cast(str, incremental["run"]), index=0
-                )
-                assert publication is not None and isinstance(
-                    publication.payload, RunControlPayload
-                )
                 producer = store.get_run_control(
-                    run_id=cast(str, publication.payload.input["summary_run"]), index=0
+                    run_id=cast(str, incremental["run"]), index=0
                 )
                 assert producer is not None and isinstance(
                     producer.payload, RunControlPayload

@@ -197,20 +197,22 @@ It runs with the selected agent's model settings and isolated history tools.
 The algorithm receives concrete read bounds and the validated previous summary
 text (empty on the first call). It returns only nonempty summary text; it never
 discovers previous summaries or chooses the final coverage. The framework
-constructs `{thread, begin, end, summary}` and persists it through a separate
-model-free result Run linked to the producer by `summary_run`. The horizon
-points to this full object; the producer's original text output is preserved. `--model`, `--catalog`, and `--limit` retain their
+constructs `{thread, begin, end, summary}` and directly publishes an immutable
+`compaction` record in `compact_<thread>`. The horizon selects its
+`payload/result`; the algorithm Run keeps its original Text output. No extra
+result Run is created. `--model`, `--catalog`, and `--limit` retain their
 existing selection and override semantics for both script modes. A compact
 model requires tool calls; native structured output is no longer required.
 
 `FORGET` requires an explicit boundary, rejects `--model`, and makes no model
-calls. It replaces the earlier prefix and any previous summary with
+calls or Runs. Its response contains `horizon` and `output`; algorithm modes
+also include the producer `run`. It replaces the earlier prefix and any previous summary with
 `Earlier history was intentionally forgotten.` Original records remain
 inspectable; future incremental compaction starts at the retained boundary.
 
 All modes require a nonempty range without active roots inside it and at least
-one retained terminal root. They persist ordinary Runs in `compact_<thread>`,
-print progress to stderr, and return `{run, horizon, output}` JSON on stdout.
+one retained terminal root. Results are recorded in `compact_<thread>`.
+Algorithm modes print progress to stderr; all modes return JSON on stdout.
 The concrete result retains the internal name `end` for its exclusive bound.
 New Runs may adopt the horizon; existing model calls are never rewritten.
 

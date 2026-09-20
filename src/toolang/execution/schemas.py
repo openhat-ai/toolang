@@ -21,6 +21,7 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
@@ -41,7 +42,6 @@ from .records import (
     step_message_role,
 )
 from .types import (
-    CompactionResult,
     ControlRef,
     ControlTiming,
     ControlKind,

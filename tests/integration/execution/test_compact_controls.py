@@ -25,7 +25,7 @@ from toolang.execution.schemas import record_to_data
 from toolang.execution.types import FieldRef, Local, ModelStepGiven, StepRef, Output
 
 
-def _compact_output(store: RunStore, *, indirect: bool = False) -> FieldRef:
+def _compact_output(store: RunStore) -> FieldRef:
     for run_id in ("run_earlier", "run_near"):
         project_run_start(
             store,
@@ -35,51 +35,21 @@ def _compact_output(store: RunStore, *, indirect: bool = False) -> FieldRef:
             input=Message.user(run_id),
         )
         project_run_end(store, run_id=run_id)
-    source = project_run_start(
+    from tests.support.execution_fixtures import project_compaction
+
+    return project_compaction(
         store,
-        run_id="run_summary",
-        thread_id="compact_term_target",
-        origin="test",
-        input=Message.user("compact"),
+        thread="term_target",
+        begin="run_earlier",
+        end="run_near",
+        summary="Earlier facts.",
     )
-    output = Output(
-        Local(
-            {
-                "thread": "term_target",
-                "begin": None,
-                "end": "run_near",
-                "summary": "Earlier facts.",
-            }
-        ),
-        None,
-    )
-    if indirect:
-        step = project_step(
-            store,
-            run_id=source.id,
-            step_index=0,
-            kind="value",
-            status="succeeded",
-            input=(),
-            output=output,
-            started_at="2026-09-06T00:00:00Z",
-            finished_at="2026-09-06T00:00:01Z",
-        )
-        output = Output(
-            Local.typed(
-                "Json", FieldRef.from_path(step.ref, "output", "local", "value")
-            ),
-            None,
-        )
-    project_run_end(store, run_id=source.id, output=output)
-    return FieldRef.parse("run_summary/output")
 
 
-@pytest.mark.parametrize("indirect", (False, True))
-def test_initial_horizon_payload_roundtrip(tmp_path: Path, indirect: bool) -> None:
+def test_initial_horizon_payload_roundtrip(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        horizon = _compact_output(store, indirect=indirect)
+        horizon = _compact_output(store)
         run = project_run_start(
             store,
             run_id="run_target",
@@ -92,7 +62,7 @@ def test_initial_horizon_payload_roundtrip(tmp_path: Path, indirect: bool) -> No
         assert control.payload.horizon is None
         payload = replace(control.payload, horizon=horizon)
         encoded = control_payload_to_data(payload)
-        assert encoded["horizon"] == "run_summary/output"
+        assert encoded["horizon"] == str(horizon)
         assert control_payload_from_data("run", encoded) == payload
         assert (
             control_payload_from_data("run", control_payload_to_data(control.payload))
@@ -137,7 +107,7 @@ def test_compact_reference_survives_restart_before_and_after_adoption(
 ) -> None:
     path = tmp_path / "runs.db"
     store = RunStore(path)
-    horizon = _compact_output(store, indirect=triggered)
+    horizon = _compact_output(store)
     run = project_run_start(
         store,
         run_id="run_target",

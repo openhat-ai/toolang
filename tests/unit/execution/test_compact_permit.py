@@ -3,7 +3,7 @@
 import asyncio
 import sys
 
-from toolang.execution.executor.compact import permit
+from toolang.execution.compaction import permit
 
 
 def test_permit_excludes_another_process_and_releases_after_cancellation(tmp_path):

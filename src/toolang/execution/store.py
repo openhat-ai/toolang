@@ -12,6 +12,7 @@ import sqlite3
 import threading
 from typing import Any, Literal, cast
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import (
     Message,
     Part,
@@ -48,6 +49,7 @@ from .inspection import (
 )
 from .records import (
     CompactControlPayload,
+    CompactionControlPayload,
     CreateControlPayload,
     ControlPayload,
     ExecuteControlPayload,
@@ -91,6 +93,7 @@ from .types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    validate_compaction_coverage,
     ControlTiming,
     RunStatus,
     StepKind,
@@ -197,6 +200,61 @@ class RunStore:
         """Return the shared lock that serializes thread history mutations."""
 
         return self.db_path.with_name(f"{self.db_path.name}.threads.lock")
+
+    def publish_compaction(
+        self, result: CompactionResult, *, roots: Sequence[RunRef]
+    ) -> FieldRef:
+        """Atomically validate and append a complete result to its compact Thread."""
+        target = ThreadRef.parse(result.thread)
+        compact_thread = ThreadRef.parse(f"compact_{target}")
+        with self.write_transaction():
+            if self.get_thread(thread_id=str(compact_thread)) is None:
+                raise ValueError("compaction Thread does not exist")
+            _, _, members = self.history_thread_members(str(target))
+            current = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+            stop = roots.index(RunRef(result.end)) + 1
+            if current[:stop] != tuple(roots[:stop]):
+                raise ValueError("compact range changed; submit a new request")
+            roots = current
+            validate_compaction_coverage(result, target, roots)
+            start, stop = (
+                roots.index(RunRef(result.begin)),
+                roots.index(RunRef(result.end)),
+            )
+            records = [self.get_run(run_id=str(root)) for root in roots]
+            if any(
+                r is None or r.status in {"pending", "running"}
+                for r in records[start:stop]
+            ) or not any(
+                r is not None and r.status not in {"pending", "running"}
+                for r in records[stop:]
+            ):
+                raise ValueError(
+                    "compact must exclude active roots and retain a terminal root"
+                )
+            index = self._conn.execute(
+                'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
+                (str(compact_thread),),
+            ).fetchone()[0]
+            ref = ControlRef(compact_thread, index)
+            now = utc_now()
+            self._insert_control(
+                ref=ref,
+                kind="compaction",
+                timing="immediate",
+                payload=CompactionControlPayload(result),
+                request=None,
+                status="applied",
+                error=None,
+                created_at=now,
+                finished_at=now,
+                claimed=True,
+            )
+            self._conn.execute(
+                "UPDATE threads SET updated_at = ? WHERE id = ?",
+                (now, str(compact_thread)),
+            )
+            return FieldRef.from_path(ref, "payload", "result")
 
     def put_content(self, value: bytes) -> ContentRef:
         """Store raw content once and return its verified content reference."""
@@ -698,17 +756,11 @@ class RunStore:
     def _validate_horizon(self, horizon: FieldRef, *, thread: str) -> None:
         """Check a new reference inside its write transaction, never on record reads."""
 
-        if not isinstance(horizon.record, RunRef) or horizon.tokens != ("output",):
-            raise ValueError("horizon must reference a Run output")
-        source = self.get_run(run_id=str(horizon.record))
-        if source is None or source.output is None:
-            raise ValueError(f"horizon output is not available: {horizon}")
-        output = self.resolve_local(source.output.local).value
-        if (
-            not isinstance(output, Mapping)
-            or cast(Mapping[str, object], output).get("thread") != thread
-        ):
-            raise ValueError(f"horizon output must target Thread {thread}: {horizon}")
+        from .inspection.history import RunHistory
+
+        _, _, members = self.history_thread_members(thread)
+        roots = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+        RunHistory(self).read_compaction(horizon, ThreadRef.parse(thread), roots)
 
     def accept_run_control(
         self,

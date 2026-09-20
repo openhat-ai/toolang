@@ -1,44 +1,45 @@
 # Text-only compaction algorithms
 
-Status: approved for implementation in conversation.
+Status: revised design approved in conversation; no compatibility required.
 
-## Contract
+## Contract and ownership
 
-- The bundled and external `agic compact(thread: Text, begin: Text, end: Text,
-  previous_summary: Text) -> Text` read only the explicit half-open range and
-  return summary text. All inputs are concrete; absent previous summary is `""`.
-- The bundled source uses implicit user prose, no `instruct` or `user:` block.
-  Keep isolated history tools, `recall = none`, and `context: none`.
-- Callers choose coverage and validate previous results. Pass previous summary
-  content directly; remove discovery, bare, null bounds, and identifier echoing
-  from the model's responsibilities.
-- Framework assembly constructs `CompactionResult` with the previous result's
-  begin (or requested begin), requested end/thread, and nonempty returned text.
-  Model output cannot select coverage. FORGET uses the same construction.
+- `base/types/compaction.py` defines `CompactionResult(thread, begin, end,
+  summary)`. Every field is required nonempty text; coverage is `[begin, end)`.
+  Execution parses references and validates coverage against visible history.
+- Bundled and external `agic compact(thread: Text, begin: Text, end: Text,
+  previous_summary: Text) -> Text` only read history and return a summary.
+  An absent previous summary is `""`. The bundled prompt uses implicit user
+  prose, read-only history tools, `recall = none`, and `context: none`.
+- Model-call preflight owns automatic admission and boundary selection. The
+  compact tool implementation lives beside other execution tools. CLI owns
+  argument resolution and external source loading; its usage stays unchanged.
+- Execution shares algorithm invocation, cancellation, result assembly and
+  publication. Callers adopt results. Algorithms never update runtime state.
 
-## Durable results
+## Persistence
 
-Preserve existing complete result objects and horizon summary field references.
-Keep the producer's text output untouched. After successful generation and
-validation, persist the complete result through a separate model-free result
-flow in the same compact thread, linking its producer Run in recorded input.
-Only this complete result is eligible for discovery/adoption. Both phases stay
-inside the existing permit and cancellation lifecycle. Failed/empty generation
-must never publish a result. Old structured results remain readable unchanged.
+Store complete results directly as immutable `compaction` records in the
+existing compact Thread control log. A horizon selects the record's
+`payload/result`; assembly selects its summary. This reuses durable reference
+resolution without introducing a new record namespace or synthetic Run.
+The algorithm Run keeps its original Text output. FORGET publishes a result
+without any Run or model call; its CLI response omits `run`.
 
-## Touchpoints and acceptance
+Publication validates current coverage and terminal roots inside its write
+transaction. Keep the compaction permit across generation and publication;
+queued CLI requests reject changed roots or summary generations. Empty, failed,
+or canceled generation never publishes a result. Each published result is
+self-contained; remove legacy null normalization and producer-chain decoding.
 
-Shared assembly and result-flow preparation belong to execution; CLI owns file
-selection. Update automatic and CLI callers, the external algorithm signature,
-model eligibility (tool support remains required, structured output does not),
-and stale contract documentation. Keep CLI usage and budgets unchanged.
+## Acceptance and risks
 
-Offline tests cover concrete/full/incremental coverage, special-character text,
-legacy result loading, invalid/empty output, durable result references, FORGET,
-restart/replay, cancellation, history traversal, and stale queued requests.
-Run all default verification. Run the opt-in real-provider compaction test with
-an available configured model; report actual outcomes and any limits.
+Update execution types/records/store, history assembly, preflight integration,
+compact tool, CLI, and affected documentation/tests. Verify DEFAULT, external
+algorithms, FORGET, incremental coverage, invalid output, cancellation,
+concurrency, restart/replay, and post-compaction reasoning/output budgets.
+Run default offline checks and opt-in real-provider tests.
 
-Risks: compaction now has separate producer/result Runs; persist their linkage
-and distinguish them in inspection/tests. External algorithms must adopt the
-new required text-only signature. Summary quality remains model-dependent.
+Old Run-output horizons and old algorithm signatures are unsupported. Summary
+quality remains model-dependent. Full results remain immutable even when
+rewinding history makes their coverage ineligible.

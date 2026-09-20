@@ -10,9 +10,9 @@ from pydantic import TypeAdapter
 from toolang.lang.types import Value
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
-from ..compaction import decode_compaction
 from ..records import (
     RunControlPayload,
+    CompactionControlPayload,
     ControlRecord,
     RunRecord,
     StepRecord,
@@ -36,6 +36,7 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    validate_compaction_coverage,
     Local,
     Output,
     Pointer,
@@ -284,7 +285,7 @@ class RunHistory:
     def read_compaction(
         self, ref: FieldRef, thread: ThreadRef, roots: Sequence[RunRef]
     ) -> CompactionOutput:
-        """Validate durable producer output and its entire previous-summary chain."""
+        """Validate a published result against the current visible history."""
         with self._store.read_transaction():
             _, _, members = self._store.history_thread_members(str(thread))
             visible = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
@@ -292,49 +293,25 @@ class RunHistory:
                 raise ValueError(
                     "compact range changed; historical prefix is no longer visible"
                 )
-            chain: list[tuple[Output, Mapping[str, object]]] = []
-            seen: set[FieldRef] = set()
-            cursor = ref
-            while True:
-                if cursor in seen:
-                    raise ValueError("cyclic compact previous references")
-                seen.add(cursor)
-                if not isinstance(
-                    cursor.record, RunRef
-                ) or cursor != FieldRef.from_path(cursor.record, "output"):
-                    raise ValueError("compact horizon must reference a Run output")
-                run = self._require_run(str(cursor.record))
-                if run.parent is not None or run.status != "succeeded":
-                    raise ValueError(
-                        "compact horizon must reference a successful root Run"
-                    )
-                output = self.get_output(run.id)
-                control = self._store.get_run_control(run_id=run.id, index=0)
-                if (
-                    output is None
-                    or control is None
-                    or not isinstance(control.payload, RunControlPayload)
-                ):
-                    raise ValueError("compact Run has no output or recorded request")
-                request = control.payload.input
-                chain.append((output, request))
-                previous = request.get("previous")
-                if previous is None:
-                    break
-                if not isinstance(previous, str):
-                    raise ValueError("compact previous must be an output reference")
-                cursor = FieldRef.parse(previous)
-            result = None
-            for output, request in reversed(chain):
-                result = decode_compaction(
-                    output.local.value,
-                    thread=thread,
-                    roots=roots,
-                    request=request,
-                    previous=result,
-                )
-            assert result is not None
-            start, stop = roots.index(result.begin), roots.index(result.end)
+            if not isinstance(ref.record, ControlRef) or ref != FieldRef.from_path(
+                ref.record, "payload", "result"
+            ):
+                raise ValueError("compact horizon must reference a compaction record")
+            control = self._store.get_control(
+                target=str(ref.record.target), index=ref.record.index
+            )
+            if (
+                control is None
+                or control.status != "applied"
+                or not isinstance(control.payload, CompactionControlPayload)
+            ):
+                raise ValueError("compact horizon must reference a published result")
+            result = control.payload.result
+            validate_compaction_coverage(result, thread, roots)
+            start, stop = (
+                roots.index(RunRef(result.begin)),
+                roots.index(RunRef(result.end)),
+            )
             records = [self._require_run(str(root)) for root in roots]
             if any(
                 r.status in {"pending", "running"} for r in records[start:stop]
@@ -361,17 +338,20 @@ class RunHistory:
             )
             if len(roots) < 2:
                 return None
-            _, _, members = self._store.history_thread_members(compact_id)
-            for run_id, root_id in reversed(members.items()):
-                if run_id != root_id:
+            for control in reversed(
+                self._store.list_thread_controls(thread_id=compact_id)
+            ):
+                if not isinstance(control.payload, CompactionControlPayload):
                     continue
                 try:
                     output = self.read_compaction(
-                        FieldRef.from_path(RunRef(run_id), "output"), target, roots
+                        FieldRef.from_path(control.ref, "payload", "result"),
+                        target,
+                        roots,
                     )
                 except (KeyError, ValueError, TypeError):
                     continue
-                if output.result.begin == roots[0]:
+                if output.result.begin == str(roots[0]):
                     return output
             return None
 

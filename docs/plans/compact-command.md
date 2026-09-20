@@ -13,7 +13,7 @@ and exposed begin/end/bare inputs. Those designs are superseded:
   injected previous summary, text-only producer output, and framework-owned
   result assembly/persistence.
 - [Compaction contract](compaction-contract-and-admission.md): typed non-null
-  coverage, legacy result validation, and model input/output admission.
+  coverage, result validation, and model input/output admission.
 
 Current CLI usage and external algorithm requirements are in
 [the API reference](../api.md#compact-local-history).

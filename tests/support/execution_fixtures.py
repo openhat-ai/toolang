@@ -480,3 +480,35 @@ def project_run_end(
     if run is None:
         raise AssertionError(f"run was not projected: {run_id}")
     return run
+
+
+def project_compaction(
+    store: RunStore, *, thread: str, begin: str, end: str, summary: str
+) -> FieldRef:
+    """Record an explicit result without enabling automatic discovery."""
+    from toolang.base.types.compaction import CompactionResult
+    from toolang.execution.records import CompactionControlPayload
+
+    owner = f"summary_{thread}"
+    if store.get_thread(thread_id=owner) is None:
+        store.create_thread(thread_id=owner, origin="test", created_at=utc_now())
+    with store.write_transaction():
+        ref = ControlRef.for_thread(
+            owner, len(store.list_thread_controls(thread_id=owner))
+        )
+        now = utc_now()
+        store._insert_control(
+            ref=ref,
+            kind="compaction",
+            timing="immediate",
+            payload=CompactionControlPayload(
+                CompactionResult(thread, begin, end, summary)
+            ),
+            request=None,
+            status="applied",
+            error=None,
+            created_at=now,
+            finished_at=now,
+            claimed=True,
+        )
+    return FieldRef.from_path(ref, "payload", "result")

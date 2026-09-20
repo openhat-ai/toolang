@@ -21,7 +21,7 @@ from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.executor.compact import permit
+from toolang.execution.compaction import permit
 from toolang.execution.executor.budget import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
@@ -148,7 +148,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             roots = history.thread_view(
                 f"compact_{thread}", include_children=False
             ).roots
-            assert len(roots) == 2 and all(root.parent is None for root in roots)
+            assert len(roots) == 1 and all(root.parent is None for root in roots)
             compact_steps = [
                 s
                 for member in history.thread_view(f"compact_{thread}").members
@@ -344,7 +344,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
 def test_compact_reads_history_pages_with_supplied_previous_summary(tmp_path):
     from toolang.base.types.policy import RunBindings
     from toolang.common.time import utc_now
-    from toolang.execution.executor.compact import compact_state, compact_tools
+    from toolang.execution.compaction import compact_state, compact_tools
     from toolang.execution.executor.executor import RunSpec
     from toolang.execution.executor.tool_history import _ToolHistory
     from toolang.lang.input import RunnableInput
@@ -768,7 +768,7 @@ def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action
                 assert RunHistory(harness.store).get_compaction(thread) is None
             else:
                 assert current.status == "succeeded", current.error
-                assert len(compact.roots) == 3
+                assert len(compact.roots) == 2
                 first, retried, model = harness.store.list_steps(run_id=current.id)
                 assert first.status == "canceled" and first.aborted_by == steer.ref
                 assert retried.status == "succeeded" and retried.kind == "tool"
@@ -822,7 +822,7 @@ def test_parallel_children_share_compact_output_but_adopt_separately(tmp_path):
             assert root.status == "succeeded", root.error
             history = RunHistory(harness.store)
             compact = history.thread_view(f"compact_{thread}")
-            assert len(compact.roots) == 2
+            assert len(compact.roots) == 1
             children = [
                 r
                 for r in history.thread_view(thread).members
@@ -870,7 +870,7 @@ def test_oversized_completed_summary_fails_without_repeating_the_range(tmp_path)
             ]
             assert (
                 len(RunHistory(harness.store).thread_view(f"compact_{thread}").roots)
-                == 2
+                == 1
             )
 
     asyncio.run(scenario())
@@ -928,7 +928,7 @@ def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypat
             ]
             assert (
                 len(RunHistory(harness.store).thread_view(f"compact_{thread}").roots)
-                == 2
+                == 1
             )
 
     asyncio.run(scenario())
@@ -976,12 +976,11 @@ def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
             assert latest.result.begin == previous.result.begin
             assert str(latest.result.end) == retained.id
             control = harness.store.get_run_control(
-                run_id=str(latest.ref.record), index=0
+                run_id=history.thread_view(f"compact_{thread}").roots[-1].id, index=0
             )
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.input["previous"] == str(previous.ref)
+            assert control.payload.input["previous_summary"] == previous.result.summary
             assert control.payload.input["begin"] == str(previous.result.end)
-            assert control.payload.input["bare"] is False
             text = str(harness.adapter.invocations[-1].call.messages)
             assert "Combined prefix." in text and "large output" not in text
 

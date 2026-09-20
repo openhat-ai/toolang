@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 
+from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import (
     Message,
     MessageRole,
@@ -28,15 +29,15 @@ from ..records import (
     StoredModelStepGiven,
 )
 from ..types import (
-    CompactionResult,
     ThreadRef,
-    ControlRef,
     FieldRef,
+    validate_compaction_coverage,
     Local,
     ContentRef,
     MessageTemplate,
     RecallTarget,
     RunRef,
+    ControlRef,
     ToolStepGiven,
     TypedRef,
 )
@@ -105,10 +106,12 @@ class MessageHistory:
             begin = 0
             if horizon is not None:
                 result = self._compaction(horizon)
-                result.validate_coverage(ThreadRef.parse(self.thread), self.roots)
-                if result.begin != self.roots[0]:
+                validate_compaction_coverage(
+                    result, ThreadRef.parse(self.thread), self.roots
+                )
+                if result.begin != str(self.roots[0]):
                     raise ValueError("compact output must cover the complete prefix")
-                begin = self.roots.index(result.end)
+                begin = self.roots.index(RunRef(result.end))
                 summary = result.summary
             selected = self.roots[begin:]
             missing = tuple(root for root in selected if root not in self._roots)
@@ -125,11 +128,11 @@ class MessageHistory:
                 revisions.update(root.recalls)
             far_template = None
             if summary:
-                if horizon is None or not isinstance(horizon.record, RunRef):
-                    raise ValueError("far summary requires a durable Run output")
+                if horizon is None or not isinstance(horizon.record, ControlRef):
+                    raise ValueError("far summary requires a durable compaction record")
                 far_template = MessageTemplate(
                     "user",
-                    (TypedRef(horizon.select("local", "value", "summary"), "Text"),),
+                    (TypedRef(horizon.select("summary"), "Text"),),
                     source=horizon.record,
                 )
             start = max(

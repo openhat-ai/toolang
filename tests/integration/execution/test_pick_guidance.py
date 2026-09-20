@@ -17,7 +17,6 @@ from tests.support.execution_assertions import (
     without_route_snapshots,
     route_snapshots,
 )
-from tests.support.execution_fixtures import accept_run, project_run_end
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -26,17 +25,11 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.policy import AgentCeiling
-from toolang.common.time import utc_now
-from toolang.lang.input import RunnableInput
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, StepBegin, StepEnd
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.types import (
-    Output,
-    FieldRef,
-    Local,
-    RunRef,
     SkillRecallTarget,
     ServiceRecallTarget,
     ThreadPrefix,
@@ -925,37 +918,15 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             retained = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat"), tracer=tracer
             )
-            harness.store.create_thread(
-                thread_id=f"summary_{thread}", origin="test", created_at=utc_now()
-            )
-            summary, _ = accept_run(
+            from tests.support.execution_fixtures import project_compaction
+
+            horizon = project_compaction(
                 harness.store,
-                run_id=harness.ids.issue_run(),
-                parent=None,
-                thread=f"summary_{thread}",
-                input=RunnableInput(
-                    {"thread": thread, "begin": first.id, "end": retained.id}
-                ),
-                context={},
-                request_id=None,
-                created_at=utc_now(),
+                thread=thread,
+                begin=first.id,
+                end=retained.id,
+                summary=f"Earlier guidance: {GUIDANCE}",
             )
-            project_run_end(
-                harness.store,
-                run_id=summary.id,
-                output=Output(
-                    Local(
-                        {
-                            "thread": thread,
-                            "begin": None,
-                            "end": retained.id,
-                            "summary": f"Earlier guidance: {GUIDANCE}",
-                        }
-                    ),
-                    None,
-                ),
-            )
-            horizon = FieldRef.from_path(RunRef(summary.id), "output")
             current = await harness.executor.run(
                 replace(
                     harness.run_spec(thread=thread, runnable="chat"),

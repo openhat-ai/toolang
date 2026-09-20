@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 import pytest
 
 from toolang.execution.assembly import prompts
-from toolang.execution.executor.compact import compact_state
+from toolang.execution.compaction import compact_state
 from toolang.execution.recall import recall_revisions
 from toolang.execution.types import MessageTemplate
 from toolang.lang.input import coerce_output
