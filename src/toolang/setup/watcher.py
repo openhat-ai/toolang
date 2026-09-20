@@ -448,9 +448,9 @@ class SetupWatcher:
             )
         except Exception:
             logger.warning("setup.model_cache_write_failed agent=%s", self.layout.name)
-            revision = (
-                await asyncio.to_thread(self._model_cache.probe_revision, name) or ""
-            )
+            # A failed write must not reuse a stale stamp: a changed probe would
+            # then collide with the previous revision and be dropped.
+            revision = self._model_cache.content_revision(probe)
         return (name, revision, probe)
 
     def _candidate_is_unchanged(self, candidate: _Candidate) -> bool:

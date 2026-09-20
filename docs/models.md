@@ -137,21 +137,19 @@ A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
 only their configured/default endpoint and use short timeouts. The setup watcher
 re-probes dynamic catalogs and publishes their current result; callers only read
-a published Setup version. Every source's resolved records are cached, and a
-dynamic catalog persists one probe file whose mtime stamps its current result.
+a published Setup version. Every source's records are cached, and a dynamic
+catalog persists one probe file whose mtime stamps its current result.
 
-The static file is cached as a normalized `catalog.json` artifact by a portable
-content revision below root `.setup`. Each root or agent model context has its
-own content-addressed `effective.json` projection below the owning `.setup`,
-including all effective models and query facts. A compact `identity.json`
-beside each projection supports query miss checks without loading the full
-effective set. Cache identities cover model-affecting configuration, plugin
-provenance, environment readiness, catalog revisions, and effective
-`allow.models`; they contain neither absolute paths nor environment values. A
-cache produced on the host is therefore reusable when the same root and home
-are mounted at different guest paths. Invalid, unsafe, or legacy `models.json`
-cache entries are misses, and a cache write failure does not reject a valid
-in-memory Setup.
+Each root or agent model context keeps one cache file per catalog below the
+owning `.setup`. The models.dev file is read once per change; its revision is the
+payload digest plus the file mtime. A local catalog's file is rewritten only when
+its probe result differs, so its mtime marks when the current run of identical
+results was first saved. Cache revisions cover model-affecting configuration,
+plugin provenance, environment values, catalog revisions, and effective
+`allow.models`; they contain neither absolute paths nor environment values, so a
+cache produced on the host stays reusable when the same root and home are mounted
+at different guest paths. Invalid, unsafe, or legacy cache entries are misses, and
+a cache write failure does not reject a valid in-memory Setup.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 

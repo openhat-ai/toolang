@@ -2,38 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
-from toolang.base.types.model import Model, Provider
-from toolang.plugin.models.collections import ModelCollection
-
-
-def model_list_rows(
-    *,
-    providers: Mapping[str, Provider],
-    models: Sequence[Model],
-    envs: Mapping[str, str],
-    queries: Sequence[str] | None = None,
-) -> list[tuple[str, str, str]]:
-    """Return table rows for selectable model listings."""
-
-    del providers, envs
-    selected = ModelCollection(tuple(models))
-    if queries is not None:
-        selected = selected.match(queries)
-    return [
-        (model.ref, model._toolang.provider, model_target_profile(model))
-        for model in selected.entries
-    ]
-
-
-def available_model_adapters() -> tuple[str, ...]:
-    """Return available model adapter names."""
-
-    from toolang.plugin.loading import list_plugin_names
-
-    return tuple(list_plugin_names(group="toolang.model_adapter"))
+from toolang.base.types.model import Model
 
 
 def model_target_profile(model: Model) -> str:

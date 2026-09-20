@@ -476,10 +476,9 @@ The cache is internal to the setup. Its contract is only:
     site; the adapter selects the credential from the mapping and never reads the
     process environment. The same rule answers availability inspection.
 14. Catalog provenance is not stored per record. `Model` carries no
-    `catalog`/`catalog_revision`; the cache/snapshot outer layer marks it, and
-    `model_projection_key(catalogs=...)` is the current carrier. Reattaching it
-    to inspection output (`ModelQueryView.catalog`, `pricing.source`) is a
-    deferred follow-up.
+    `catalog`/`catalog_revision`; the published setup marks it, and
+    `AgentSetup.revision` is the current carrier. Reattaching it to query output
+    (`ModelQueryView.catalog`, `pricing.source`) is a deferred follow-up.
 
 ## Unused catalog fields
 
@@ -574,11 +573,11 @@ uv run ty check
 uv run pytest
 ```
 
-Layout and cache changes are behavioral no-ops: catalog contents, entry-point
-names, cache keys, and inspection/selection results stay identical. Verified on
-the rebased branch: 5596 passed, 20 skipped, 147 subtests passed. Added
-regression coverage for local probe diagnostics and for the declared-adapter
-path.
+Catalog contents, entry-point names, and selection results stay identical while
+the cache layout and the publication model change. Verified on the rebased
+branch: 5590 passed, 20 skipped, 147 subtests passed. Added regression coverage
+for the declared-adapter path, for an unchanged local probe keeping its stamp,
+and for a touched models.dev file advancing the revision.
 
 ## Deferred follow-ups
 
@@ -629,11 +628,9 @@ Items 2, 3, and 5 are now scoped by *Setup-owned catalog pipeline* below.
 
 Recorded so the remaining wiring is visible rather than silent:
 
-- `build_model_accounting(..., local=)` accepts the local flag, but no caller
-  passes it, so a local model is not yet zero-rated.
-- Catalog provenance is carried only by the cache/snapshot outer layer
-  (`model_projection_key(catalogs=...)`); `ModelQueryView.catalog`,
-  `CatalogProviderView.catalog`, and `pricing.source` are not reattached yet.
+- Catalog provenance is carried only by the published setup
+  (`AgentSetup.revision`); `ModelQueryView.catalog`, `CatalogProviderView.catalog`,
+  and `pricing.source` are not reattached yet.
 - `cli._provider_api` computes and displays the effective api (display only, no
   write-back), ahead of the rest of the provider surface.
 

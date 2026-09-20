@@ -125,6 +125,11 @@ class ModelCatalogCache:
         self._write(name, {**document, "content": content})
         return _detected_revision(path)
 
+    def content_revision(self, snapshot: ModelCatalogSnapshot) -> str:
+        """Return a content-derived revision for one probe that could not be stored."""
+
+        return f"probe:{digest(_snapshot_document(snapshot))}"
+
     def probe_revision(self, name: str) -> str | None:
         """Return the stamp one probe file carries, without probing."""
 
