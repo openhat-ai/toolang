@@ -792,74 +792,53 @@ already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
 
 
-## Model Catalog Commands
+## Resource Inspection Commands
 
-- `toolang models`
-- `toolang providers`
-- `toolang adapters`
+| Command | No agent | Selected resident agent |
+| --- | --- | --- |
+| `toolang [AGENT] caps [--all]` | Root-shared, allowed capability resources | Root plus agent-owned resources under effective allow and scope precedence |
+| `toolang [AGENT] tools [--all] [--query QUERY]` | Root-configured effective tools | Tools under merged root/agent configuration and allow policy |
+| `toolang [AGENT] models [--all] [--catalog PATH] [--query QUERY] [--json]` | Root-configured ready, allowed models | Models under the selected agent's configuration |
+| `toolang [AGENT] providers [--all] [--catalog PATH] [--json]` | Providers with ready, allowed models under root configuration | Providers under the selected agent's configuration |
 
-`toolang models` shows model catalog entries and current availability,
-including:
+Omitting an agent never reads an implicit `agents/default`. Tools, models, and
+providers read published setup views without starting or parsing the resident
+agent's program. Model catalog selection is `--catalog`, effective
+`TOOLANG_MODEL_CATALOG`, selected agent's `catalog.json`, root `catalog.json`,
+then packaged data. Static catalog files replace each other; root and agent
+files are not unioned. Additional catalog plugins retain their existing behavior.
 
-- canonical provider/model identity
-- current `AVAILABLE` value as `yes` or `no`
-- right-aligned context and maximum output sizes with underscore digit grouping
-  for copyable numeric literals
-- input modalities and a comma-separated `CAPABILITIES` list
-- right-aligned base input/output prices formatted as `$input / $output` under
-  `PRICE ($/1M)`, with every numeric rate shown to two decimal places
-- a compact total and per-catalog model counts
+Resource `--all` shows the complete diagnostic view for that same scope:
+allow-excluded caps, internal and allow-excluded tools, or unready and allow-excluded models/providers
+(including empty providers). It does not grant runtime access or combine scopes.
+Default tools hide internal `_toolang` leaves. Queries and counts describe the
+selected view. `me` is not internally hidden and follows normal tool allow policy.
 
-Pass repeatable `--query/-q` options to select models, for example
-`toolang models --query '*[scope=remote]'` or
-`toolang models --query 'openrouter/*[adapter=chat_completions]'`. Run `too
-query models` for the exact identity, fields, and operators.
-
-`toolang providers` shows catalog providers and runtime availability.
-`toolang adapters` lists installed model adapter names.
-`toolang models` is a leaf command with `--query` and `--json`; it has no
-`inspect` or `update` subcommands and no `--output` or `--force` options.
-
-Discovered Ollama and llama.cpp records use reported context, output limits,
-modalities, and capabilities to populate the same table fields used by remote
-models. Their API token prices are explicitly zero; local compute costs are
-outside model token accounting.
-
-`yes` means the API is resolved, a required key is present, and the adapter
-is installed. Remote API reachability, credentials, and account entitlement
-are not probed by this listing. Local endpoints are probed for discovery;
-unavailable local models are omitted from the model table.
-
-`toolang providers` shows `ADAPTERS`, `API`, and `ENV` in that order.
-`ADAPTERS` is the deduplicated set resolved across the provider's catalog
-models, including model-level protocol overrides; it is not a preferred-adapter
-hint. Catalog-known protocols remain visible when no implementation is
-installed, such as `messages` for Anthropic. An empty or offline local catalog
-uses the provider-level adapter signal. Unavailable field values are dimmed.
-Multiple alternative environment variables use an unstyled `, ` separator and
-are all dimmed only when none is configured. An offline local provider remains
-in the table with `AVAILABLE` set to `0` and its API dimmed. JSON output
-remains the original models.dev-compatible provider data and does not expose
-resolved API, adapter, environment, or readiness facts.
-Anthropic uses the known default endpoint `https://api.anthropic.com` when the
-models.dev record omits `api`.
-The provider table footer mirrors the model footer, for example
-`7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
+`models --json` and `providers --json` export the same selected setup version as
+models.dev-compatible catalog data without Toolang metadata or resolved secrets.
+Models display identity, availability, context/output sizes, modalities,
+capabilities, and prices. Providers display readiness counts, adapters, default
+API, environment requirements, and reasons. Full cap/tool/model tables show `ALLOWED`; tool/toolset tables also show
+`INTERNAL`. Full provider tables distinguish ready counts from allow counts.
+Model `--all` also adds reasons for unready routes. Default tables omit redundant
+allow/internal columns after filtering. API readiness does not prove remote reachability or entitlement.
+See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semantics.
 
 
 ## Plugin Inventory Commands
 
 - `toolang catalogs`
 - `toolang adapters [--json]`
-- `toolang tools [--query QUERY]`
-- `toolang toolsets`
+- `toolang toolsets [--all]`
 - `toolang sandboxes`
+- `toolang channel list`
 
-`catalogs`, `adapters`, `toolsets`, and `sandboxes` list installed plugin entry
-points and their `built-in` or `external` source. `tools` instead lists the leaf
-tools assembled from installed toolsets. Catalog names identify integrations;
-`toolang models` and `toolang providers` own the merged catalog and provider
-availability views.
+These commands list locally installed entry-point identities and their
+`built-in` or `external` source. They reject agent names and do not read setup,
+configuration, or catalog files or invoke factories. An installed plugin remains
+visible even when it cannot load. `toolsets` hides internal entries such as
+`_toolang` unless `--all` is given. Plugin lists have no agent allow policy.
+`tools` belongs to resource inspection, not plugin inventory.
 
 
 ## Agent HTTP API

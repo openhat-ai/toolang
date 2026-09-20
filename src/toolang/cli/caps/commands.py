@@ -30,7 +30,6 @@ from ..common.routing import (
 )
 
 if TYPE_CHECKING:
-    from toolang.state.state import AgentState
     from toolang.state.state import StateCap
     from ..common.progress import CliProgress
 
@@ -184,26 +183,29 @@ def list_caps(
             help="Query cap collections. Repeat to add matches; see 'too query'",
         ),
     ] = None,
+    all_: Annotated[
+        bool, typer.Option("--all", help="Include allow-excluded caps")
+    ] = False,
 ) -> None:
     from toolang.state.collections import cap_table, query_cap_views
 
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
-    effective_scope = "all" if selected_agent else "root"
-    entries = _all_cap_entries(
+    entries, allowed = _cap_entries(
         context_root(ctx),
         agent_name,
-        scope=effective_scope,
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
     selected = user_call(
         query_cap_views,
-        entries,
+        entries if all_ else allowed,
         agent_name=agent_name,
         queries=query,
     )
-    headers, rows = cap_table(selected)
+    headers, rows = cap_table(
+        selected, allowed=_allowed_cap_keys(allowed) if all_ else None
+    )
     if not rows:
         typer.echo("No caps matched query." if query else "No caps found.")
         return
@@ -222,22 +224,27 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 help=(f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'"),
             ),
         ] = None,
+        all_: Annotated[
+            bool, typer.Option("--all", help="Include allow-excluded caps")
+        ] = False,
     ) -> None:
         from toolang.state.collections import cap_dataset, cap_table
 
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
-        effective_scope = "all" if selected_agent else "root"
-        entries = _all_cap_entries(
+        entries, allowed = _cap_entries(
             context_root(ctx),
             agent_name,
-            scope=effective_scope,
             prepare=selected_agent is not None,
             kinds={kind},
         )
-        dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
+        dataset = cap_dataset(
+            entries if all_ else allowed, agent_name=agent_name, kind=kind
+        )
         selected = query_items(dataset, query)
-        headers, rows = cap_table(selected, kind=kind)
+        headers, rows = cap_table(
+            selected, kind=kind, allowed=_allowed_cap_keys(allowed) if all_ else None
+        )
         if not rows:
             typer.echo(f"No {kind}s matched query." if query else f"No {kind}s found.")
             return
@@ -489,15 +496,14 @@ def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
     return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
-def _all_cap_entries(
+def _cap_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: CapScope | Literal["all"],
     prepare: bool,
     kinds: set[EntryKind],
-) -> "tuple[StateCap, ...]":
-    if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
+) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
+    if prepare:
         from ..common.progress import make_cli_progress
 
         progress = make_cli_progress()
@@ -508,31 +514,22 @@ def _all_cap_entries(
                     AgentLayout.resident(toolang_root, agent_name),
                     progress=progress.sink,
                 )
-                entries = _state_cap_entries(state, scope=scope, kinds=kinds)
-                return entries
+                entries = tuple(cap for cap in state.caps.values() if cap.kind in kinds)
+                allowed = tuple(
+                    cap for cap in state.caps_for("agent") if cap.kind in kinds
+                )
+                return entries, allowed
         except Exception as exc:
             if progress.failure_stage is not None:
                 raise ClickException(progress.failure_message(exc)) from exc
             raise
-    return cap_state.list_entries(
-        toolang_root,
-        agent_name,
-        scope=None if scope == "all" else scope,
-        kinds=kinds,
-    )
+    return user_call(cap_state.inspect_root_caps, toolang_root, kinds=kinds)
 
 
-def _state_cap_entries(
-    state: "AgentState",
-    *,
-    scope: CapScope | Literal["all"],
-    kinds: set[EntryKind],
-) -> "tuple[StateCap, ...]":
-    return tuple(
-        cap
-        for cap in state.caps.values()
-        if cap.kind in kinds and (scope == "all" or cap.scope == scope)
-    )
+def _allowed_cap_keys(
+    entries: "tuple[StateCap, ...]",
+) -> frozenset[tuple[EntryKind, str]]:
+    return frozenset((cap.kind, cap.name) for cap in entries)
 
 
 def _named_entry(

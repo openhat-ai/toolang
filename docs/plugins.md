@@ -176,18 +176,37 @@ and packaged guest bootstrap files inside `sandboxes/docker/`.
 
 Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
 `too channel list`, and `too sandboxes`) list entry-point identities and their
-built-in or external source. `too tools` lists installed leaf tools as
-`toolset/tool`, using the merged root/default-agent plugin configuration directly.
-It does not construct agent setup or filter the inventory by `allow.tools`.
-Agent-info and runtime views retain their effective-capability semantics.
+built-in or external source. They do not accept an agent name or read setup,
+configuration, or catalog files. No factory is invoked, so an installed plugin
+can be listed even if its runtime dependencies are unavailable.
+
+Resource commands have scope-specific semantics:
+
+| Command | No agent | Selected agent |
+| --- | --- | --- |
+| `too [AGENT] caps` | Root-shared, allowed caps | Root-shared plus agent-owned caps under effective allow and scope precedence |
+| `too [AGENT] tools` | Root-configured, allow-filtered tools | Tools after root/agent configuration and allow resolution |
+| `too [AGENT] models` / `providers` | Root-configured ready, allowed model resources | Ready, allowed resources under agent configuration and catalog precedence |
+
+No-agent inspection never reads an implicit default agent. Tools and model
+resources consume their published setup views; caps use capability state.
+See [tools](tools.md), [models](models.md), and [caps](caps.md) for their policies.
 
 `too tools` and `too toolsets` hide internal toolsets such as `_toolang` by
-default. Use `too tools --all` or `too toolsets --all` to include them; `me`
-remains visible in both modes. `--query` still filters the tool inventory,
-but an internal-only query needs `--all` to display matches. Tool and toolset
-counts describe the displayed rows. This visibility option grants no runtime
-access. Tool-call inspection shows the recorded plugin identity, independently
-of its Python module location.
+default. Use `--all` to include them. `me` is not internally hidden, but tool
+allow policy can exclude it from the default view. Resource `--all` shows the
+complete diagnostic view: caps include allow-excluded resources, tools include
+internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
+providers. It preserves the selected scope and configuration and never grants
+execution permissions. Queries and counts use the selected view. An
+internal-only tool query needs `--all`. Tool-call inspection shows the
+recorded plugin identity, independently of its Python module location.
+
+Full cap/tool/model tables add `ALLOWED`; full tool/toolset tables add `INTERNAL`.
+Models also keep their independent `AVAILABLE` readiness and route `REASON`.
+Full provider tables show separate readiness and allow counts. Default tables
+omit redundant policy/internal columns after filtering. Plugin inventories
+have no agent allow policy.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
 and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.

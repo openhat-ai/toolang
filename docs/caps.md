@@ -32,6 +32,22 @@ definitions.
 
 CLI and HTTP read APIs expose these runtime `scope` values directly.
 
+`too caps` and untargeted kind-specific lists show root-shared resources
+filtered by root cap-kind allow policy. `too alice caps` combines root resources
+with Alice's home and program capabilities using the precedence above, then
+reads the main agent module's published effective allow selection. Other agents'
+private resources, including an implicit `default` agent, are outside that view.
+
+`--all` includes resources excluded by allow in the same scope and adds an
+`ALLOWED` column alongside scope, form, and source. It does not resurrect
+shadowed definitions or grant runtime access. Default output omits that column
+because all displayed entries pass the policy. This applies to aggregate and
+kind-specific lists through both CLIs, for example `too alice caps --all`,
+`too alice skill list --all`, and `caps alice list --all`. Queries filter the
+chosen default/full view. Caps have no separate readiness protocol; an invalid
+or unresolvable definition remains an error, not an invented unavailable row.
+Per-module and run declarations can further narrow execution resources.
+
 HTTP write payloads use `root` and `home` directly. CLI write commands expose
 placement as command shape: without `AGENT`, they write root capabilities;
 with `AGENT`, they write that agent's home capabilities.

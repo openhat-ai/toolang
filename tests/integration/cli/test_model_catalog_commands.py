@@ -854,34 +854,57 @@ def test_models_uses_agent_provider_config_and_environment(
             assert ("test/two" in output.out) is available
 
 
-@pytest.mark.parametrize("source", ["agent", "environment", "explicit"])
-def test_models_agent_catalog_override_precedence(
-    tmp_path: Path, monkeypatch, capsys, source: str
+@pytest.mark.parametrize("command", ["models", "providers"])
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize(
+    "source", ["builtin", "root", "agent", "environment", "explicit"]
+)
+def test_model_resources_use_one_catalog_in_scope_precedence(
+    tmp_path: Path, monkeypatch, capsys, command: str, agent: bool, source: str
 ) -> None:
+    from toolang.plugin.catalogs.models_dev import path as catalog_path
+
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
     home = _resident_home(tmp_path, "alice")
+    default_home = _resident_home(tmp_path, "default")
+    (default_home / "catalog.json").write_text("invalid JSON")
+    (default_home / "config.toml").write_text("invalid TOML [")
     paths = {
+        "builtin": tmp_path / "builtin.json",
         "root": tmp_path / "catalog.json",
         "agent": home / "catalog.json",
         "environment": tmp_path / "environment.json",
         "explicit": tmp_path / "explicit.json",
     }
-    for name, path in paths.items():
+    priorities = tuple(paths)
+    for name in priorities[: priorities.index(source) + 1]:
         data = _catalog_data()
-        cast(dict[str, object], data["test"])["name"] = name
-        path.write_text(json.dumps(data))
-    if source != "agent":
-        (home / ".env").write_text(f"TOOLANG_MODEL_CATALOG={paths['environment']}\n")
+        provider = cast(dict[str, object], data.pop("test"))
+        provider["id"] = name
+        provider["name"] = name
+        paths[name].write_text(json.dumps({name: provider}))
+    monkeypatch.setattr(catalog_path, "PACKAGED_MODEL_CATALOG", paths["builtin"])
+    if source in ("environment", "explicit"):
+        monkeypatch.setenv("TOOLANG_MODEL_CATALOG", str(paths["environment"]))
     options = ["--catalog", str(paths["explicit"])] if source == "explicit" else []
 
     result = cli.main(
-        ["--root", str(tmp_path), "alice", "models", "--all", *options, "--json"]
+        [
+            "--root",
+            str(tmp_path),
+            *(["alice"] if agent else []),
+            command,
+            "--all",
+            *options,
+            "--json",
+        ]
     )
     output = capsys.readouterr()
 
     assert result == 0, output.err
-    assert json.loads(output.out)["test"]["name"] == source
+    expected = "root" if source == "agent" and not agent else source
+    assert set(json.loads(output.out)) == {expected}
 
 
 @pytest.mark.parametrize("options", [[], ["-q", "test/*"], ["--json"]])
@@ -1140,23 +1163,31 @@ def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, com
 
 
 @pytest.mark.parametrize("json_output", [True, False])
-def test_adapters_uses_published_setup_sources(
+def test_adapters_lists_installed_metadata_without_loading_setup_or_plugins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output: bool
 ) -> None:
     from types import SimpleNamespace
 
     from toolang.plugin import loading
 
-    setup = SimpleNamespace(
-        adapters={"snapshot_adapter": object()},
-        adapter_sources={"snapshot_adapter": "external"},
+    def unexpected_load(*args: object, **kwargs: object) -> None:
+        pytest.fail("Installed plugin inspection must not load setup or plugins")
+
+    entries = [
+        SimpleNamespace(
+            name="unloadable_adapter",
+            dist=SimpleNamespace(metadata={"Name": "external-package"}),
+            load=unexpected_load,
+        )
+    ]
+    monkeypatch.setattr(
+        loading,
+        "entry_points",
+        lambda *, group: entries if group == "toolang.model_adapter" else [],
     )
-    monkeypatch.setattr(model_catalog_commands, "_setup", lambda _ctx: setup)
-
-    def unexpected_discovery(*args: object, **kwargs: object) -> None:
-        raise AssertionError("CLI must consume published adapter sources")
-
-    monkeypatch.setattr(loading, "entry_points", unexpected_discovery)
+    monkeypatch.setattr("toolang.setup.watcher.SetupWatcher.refresh", unexpected_load)
+    (tmp_path / "config.toml").write_text("not valid TOML [")
+    (tmp_path / "catalog.json").write_text("not valid JSON")
     result = runner.invoke(
         cli.app,
         ["--root", str(tmp_path), "adapters", *(["--json"] if json_output else [])],
@@ -1164,8 +1195,63 @@ def test_adapters_uses_published_setup_sources(
     assert result.exit_code == 0, result.exception
     if json_output:
         assert json.loads(result.stdout) == [
-            {"id": "snapshot_adapter", "source": "external"}
+            {"id": "unloadable_adapter", "source": "external"}
         ]
     else:
-        assert "snapshot_adapter" in result.stdout
+        assert "unloadable_adapter" in result.stdout
         assert "external" in result.stdout
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+@pytest.mark.parametrize("all_", [False, True])
+def test_model_status_columns_separate_readiness_and_allow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, all_: bool
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    monkeypatch.delenv("INSPECTION_MISSING_KEY", raising=False)
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    data["offline"] = {**provider, "id": "offline", "env": ["INSPECTION_MISSING_KEY"]}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    (tmp_path / "config.toml").write_text(
+        '[allow]\nmodels = ["test/one", "offline/one"]\n'
+    )
+    rows: list[dict[str, object]] = []
+
+    def capture(headers, values, **kwargs):
+        rows.extend(dict(zip(headers, row, strict=True)) for row in values)
+
+    monkeypatch.setattr(model_catalog_commands, "echo_table", capture)
+    result = runner.invoke(
+        cli.app, ["--root", str(tmp_path), command, *(("--all",) if all_ else ())]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    if command == "models":
+        by_id = {str(row["MODEL"]): row for row in rows}
+        assert set(by_id) == (
+            {"test/one", "test/two", "offline/one", "offline/two"}
+            if all_
+            else {"test/one"}
+        )
+        if all_:
+            assert by_id["test/two"]["ALLOWED"] == "no"
+            assert str(by_id["test/two"]["AVAILABLE"]) == "yes"
+            assert by_id["offline/one"]["ALLOWED"] == "yes"
+            assert str(by_id["offline/one"]["AVAILABLE"]) == "no"
+            assert by_id["offline/two"]["ALLOWED"] == "no"
+            assert by_id["offline/two"]["REASON"] != "-"
+        else:
+            assert "ALLOWED" not in by_id["test/one"]
+    else:
+        by_id = {str(row["PROVIDER"]): row for row in rows}
+        assert set(by_id) == ({"test", "offline"} if all_ else {"test"})
+        if all_:
+            assert str(by_id["test"]["AVAILABLE MODELS"]) == "2/2"
+            assert by_id["test"]["ALLOWED MODELS"] == "1/2"
+            assert str(by_id["offline"]["AVAILABLE MODELS"]) == "0/2"
+            assert by_id["offline"]["ALLOWED MODELS"] == "1/2"
+        else:
+            assert str(by_id["test"]["AVAILABLE MODELS"]) == "1/1"
+            assert "ALLOWED MODELS" not in by_id["test"]

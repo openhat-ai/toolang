@@ -2548,7 +2548,26 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
 
 
 @pytest.fixture
-def plugin_inventory(monkeypatch: pytest.MonkeyPatch):
+def offline_model_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from toolang.base.types.model import ModelCatalogSnapshot
+    from toolang.plugin.catalogs.models_dev import path as catalog_path
+    from toolang.plugin.catalogs.ollama import OllamaModelCatalog
+    from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
+
+    path = tmp_path / "empty-catalog.json"
+    path.write_text("{}")
+    monkeypatch.setattr(catalog_path, "PACKAGED_MODEL_CATALOG", path)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+
+    async def empty_snapshot(_source):
+        return ModelCatalogSnapshot(providers={}, models=(), revision="test:empty")
+
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", empty_snapshot)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_snapshot)
+
+
+@pytest.fixture
+def plugin_inventory(monkeypatch: pytest.MonkeyPatch, offline_model_setup):
     created: list[tuple[str, dict[str, object]]] = []
 
     def entry(name: str, distribution: str):
@@ -2573,18 +2592,18 @@ def plugin_inventory(monkeypatch: pytest.MonkeyPatch):
         entry("shell", "toolang"),
         entry("vendor", "external-package"),
     ]
+    from toolang.plugin import loading
+
+    original_entry_points = loading.entry_points
     monkeypatch.setattr(
-        "toolang.plugin.loading.entry_points",
-        lambda *, group: entries if group == "toolang.toolset" else [],
+        loading,
+        "entry_points",
+        lambda *, group: (
+            entries
+            if group == "toolang.toolset"
+            else original_entry_points(group=group)
+        ),
     )
-
-    def reject_setup(*args, **kwargs):
-        pytest.fail("plugin inventory must not compute agent setup or model discovery")
-
-    monkeypatch.setattr("toolang.setup.watcher.SetupWatcher.refresh", reject_setup)
-    monkeypatch.setattr("toolang.setup.watcher.AgentSetup", reject_setup)
-    monkeypatch.setattr("toolang.setup.watcher.load_model_catalogs", reject_setup)
-    monkeypatch.setattr("toolang.setup.watcher.load_model_adapters", reject_setup)
     return created
 
 
@@ -2598,7 +2617,7 @@ def plugin_inventory(monkeypatch: pytest.MonkeyPatch):
         (("--query", "shell/*"), ("shell",)),
     ],
 )
-def test_tools_inventory_visibility_queries_and_counts(
+def test_tools_visibility_queries_and_counts(
     tmp_path: Path, plugin_inventory, options: tuple[str, ...], visible: tuple[str, ...]
 ) -> None:
     result = _invoke(tmp_path / "toolang", "tools", *options)
@@ -2617,7 +2636,12 @@ def test_tools_inventory_visibility_queries_and_counts(
         assert result.stdout.strip() == "No tools matched query."
         return
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
-    assert header.split() == ["TOOL", "DESCRIPTION", "SOURCE"]
+    assert header.split() == [
+        "TOOL",
+        "DESCRIPTION",
+        "SOURCE",
+        *(["ALLOWED", "INTERNAL"] if "--all" in options else []),
+    ]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
     tool_plural = "" if tool_count == 1 else "s"
@@ -2644,35 +2668,225 @@ def test_toolsets_inventory_does_not_construct_plugins(
     assert plugin_inventory == []
 
 
-def test_tools_inventory_merges_plugin_config_without_applying_agent_allow(
-    tmp_path: Path, plugin_inventory
+@pytest.mark.parametrize("target", [(), ("alice",), ("agent:alice",)])
+@pytest.mark.parametrize("all_", [False, True])
+def test_tools_uses_selected_scope_and_effective_allow(
+    tmp_path: Path, plugin_inventory, target: tuple[str, ...], all_: bool
 ) -> None:
     root = tmp_path / "toolang"
-    layout = AgentLayout.resident(root, "default")
-    layout.home.mkdir(parents=True)
+    _create_agent(root)
+    _create_agent(root, "default")
+    layout = AgentLayout.resident(root, "alice")
     layout.root_config.write_text(
-        "[allow]\ntools = []\n"
-        '[plugin.toolset.shell.options]\nroot = true\nchoice = "root"\n',
-        encoding="utf-8",
+        '[allow]\ntools = ["shell/echo"]\n'
+        '[plugin.toolset.shell]\nchoice = "root"\nshared = true\n'
     )
     layout.config.write_text(
-        '[allow]\ntools = []\n[plugin.toolset.shell.options]\nchoice = "agent"\n',
-        encoding="utf-8",
+        '[allow]\ntools = ["vendor/*"]\n[plugin.toolset.shell]\nchoice = "agent"\n'
     )
-    result = _invoke(root, "tools")
+    AgentLayout.resident(root, "default").config.write_text("invalid TOML [")
+
+    result = _invoke(root, *target, "tools", *(("--all",) if all_ else ()))
 
     assert result.exit_code == 0, result.stderr
-    assert "shell/echo" in result.stdout
-    assert "me/echo" in result.stdout
-    assert "vendor/echo" in result.stdout
-    assert result.stdout.strip().endswith("4 tools, 3 toolsets")
-    assert dict(plugin_inventory) == {
-        "_toolang": {},
-        "me": {},
-        "shell": {"options": {"root": True, "choice": "agent"}},
-        "vendor": {},
+    assert ("shell/echo" in result.stdout) is (all_ or not target)
+    assert ("vendor/echo" in result.stdout) is (all_ or bool(target))
+    assert ("shell/repeat" in result.stdout) is all_
+    assert ("me/echo" in result.stdout) is all_
+    assert ("_toolang/echo" in result.stdout) is all_
+    summary = "5 tools, 4 toolsets" if all_ else "1 tool, 1 toolset"
+    assert result.stdout.strip().endswith(summary)
+    assert dict(plugin_inventory)["shell"] == {
+        "choice": "agent" if target else "root",
+        "shared": True,
     }
     assert len(plugin_inventory) == 4
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_tools_all_bypasses_empty_allow_for_inspection(
+    tmp_path: Path, plugin_inventory, all_: bool
+) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    (root / "config.toml").write_text("[allow]\ntools = []\n")
+
+    result = _invoke(root, "tools", *(("--all",) if all_ else ()))
+
+    assert result.exit_code == 0, result.stderr
+    if all_:
+        assert "_toolang/echo" in result.stdout
+        assert "shell/echo" in result.stdout
+        assert "me/echo" in result.stdout
+        assert result.stdout.strip().endswith("5 tools, 4 toolsets")
+    else:
+        assert result.stdout.strip() == "No tools found."
+
+
+def test_tools_reads_published_query_views_without_rediscovering_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.plugin.toolsets.loading import load_tools
+
+    published = AgentSetup(
+        layout=AgentLayout.resident(tmp_path, "alice"),
+        providers={},
+        adapters={},
+        models=ModelCollection(),
+        tools=ToolCollection.from_tools(load_tools(toolsets=("shell",))),
+        envs={},
+    )
+
+    async def load_published(*args, **kwargs):
+        return published
+
+    def reject_discovery(*args, **kwargs):
+        pytest.fail("Tool inspection must use the published setup dataset")
+
+    monkeypatch.setattr(plugin_commands, "load_setup", load_published)
+    monkeypatch.setattr("toolang.plugin.loading.entry_points", reject_discovery)
+    result = _invoke(tmp_path, "tools")
+
+    assert result.exit_code == 0, result.stderr
+    assert "shell/exec" in result.stdout
+    assert "built-in" in result.stdout
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_tools_status_columns_distinguish_allow_and_internal(
+    tmp_path: Path, plugin_inventory, monkeypatch: pytest.MonkeyPatch, all_: bool
+) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    (root / "config.toml").write_text('[allow]\ntools = ["shell/echo"]\n')
+    rows = []
+    monkeypatch.setattr(
+        plugin_commands,
+        "echo_table",
+        lambda headers, values: rows.extend(
+            dict(zip(headers, row, strict=True)) for row in values
+        ),
+    )
+
+    result = _invoke(root, "tools", *(("--all",) if all_ else ()))
+
+    assert result.exit_code == 0, result.stderr
+    by_tool = {row["TOOL"]: row for row in rows}
+    if all_:
+        assert by_tool["shell/echo"]["ALLOWED"] == "yes"
+        assert by_tool["shell/repeat"]["ALLOWED"] == "no"
+        assert by_tool["me/echo"]["ALLOWED"] == "no"
+        assert by_tool["_toolang/echo"]["ALLOWED"] == "yes"
+        assert by_tool["_toolang/echo"]["INTERNAL"] == "yes"
+        assert by_tool["shell/echo"]["INTERNAL"] == "no"
+    else:
+        assert set(by_tool) == {"shell/echo"}
+        assert "ALLOWED" not in by_tool["shell/echo"]
+        assert "INTERNAL" not in by_tool["shell/echo"]
+
+
+@pytest.mark.parametrize(
+    "command,kind",
+    [
+        (("caps",), "psyche"),
+        (("psyche", "list"), "psyche"),
+        (("skill", "list"), "skill"),
+        (("service", "list"), "service"),
+        (("prompt", "list"), "prompt"),
+    ],
+)
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("all_", [False, True])
+def test_cap_lists_apply_scope_allow_and_display_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: tuple[str, ...],
+    kind,
+    agent: bool,
+    all_: bool,
+) -> None:
+    from toolang.catalog.cap import AuthoredCaps, CapFile
+    from toolang.cli.caps import commands as cap_commands
+
+    _create_agent(tmp_path)
+    _create_agent(tmp_path, "default")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    (tmp_path / "config.toml").write_text(f'[allow]\n{kind}s = ["shared_cap"]\n')
+    layout.config.write_text(f'[allow]\n{kind}s = ["private_cap"]\n')
+    AgentLayout.resident(tmp_path, "default").config.write_text("invalid TOML [")
+    for directory, name in (
+        (tmp_path, "shared_cap"),
+        (tmp_path, "blocked_cap"),
+        (layout.home, "private_cap"),
+    ):
+        AuthoredCaps(directory).create(
+            CapFile.parse(
+                templates.render_template(kind, name=name),
+                kind=kind,
+                name=name,
+            )
+        )
+    rows = []
+    monkeypatch.setattr(
+        cap_commands,
+        "echo_table",
+        lambda headers, values: rows.extend(
+            dict(zip(headers, row, strict=True)) for row in values
+        ),
+    )
+
+    result = _invoke(
+        tmp_path,
+        *(("alice",) if agent else ()),
+        *command,
+        *(("--all",) if all_ else ()),
+    )
+
+    assert result.exit_code == 0, result.stderr
+    identities = {
+        str(row["CAP"] if "CAP" in row else row[kind.upper()]): row for row in rows
+    }
+    # The collection formatter renders kind-qualified identities for every list.
+    by_name = {identity.rsplit("/", 1)[-1]: row for identity, row in identities.items()}
+    expected = (
+        {"shared_cap", "blocked_cap", *({"private_cap"} if agent else set())}
+        if all_
+        else {"private_cap" if agent else "shared_cap"}
+    )
+    assert set(by_name) == expected
+    if all_:
+        assert by_name["shared_cap"]["ALLOWED"] == ("no" if agent else "yes")
+        assert by_name["blocked_cap"]["ALLOWED"] == "no"
+        if agent:
+            assert by_name["private_cap"]["ALLOWED"] == "yes"
+            assert by_name["private_cap"]["SCOPE"] == "home"
+    else:
+        assert all("ALLOWED" not in row for row in rows)
+
+
+@pytest.mark.parametrize("target", [(), ("alice",)])
+def test_caps_inspection_combines_root_and_selected_agent_resources(
+    tmp_path: Path, target: tuple[str, ...]
+) -> None:
+    from toolang.catalog.cap import AuthoredCaps, CapFile
+
+    _create_agent(tmp_path)
+    _create_agent(tmp_path, "default")
+    for directory, name in (
+        (tmp_path, "shared_cap"),
+        (AgentLayout.resident(tmp_path, "alice").home, "private_cap"),
+        (AgentLayout.resident(tmp_path, "default").home, "other_cap"),
+    ):
+        AuthoredCaps(directory).create(
+            CapFile.parse("Be helpful.\n", kind="psyche", name=name)
+        )
+
+    result = _invoke(tmp_path, *target, "caps")
+
+    assert result.exit_code == 0, result.stderr
+    assert "shared_cap" in result.stdout
+    assert ("private_cap" in result.stdout) is bool(target)
+    assert "other_cap" not in result.stdout
 
 
 @pytest.mark.parametrize("command", ["tools", "toolsets"])
@@ -2682,11 +2896,13 @@ def test_plugin_inventory_help_explains_all(command: str, plugin_inventory) -> N
 
     assert result.exit_code == 0, result.stderr
     assert "--all" in strip_ansi(result.stdout)
-    assert "internal toolsets" in strip_ansi(result.stdout)
+    assert (
+        "internal toolsets" if command == "toolsets" else "allow-excluded tools"
+    ) in strip_ansi(result.stdout)
 
 
 @pytest.mark.parametrize("all_", [False, True])
-def test_tools_inventory_retains_query_diagnostics(
+def test_tools_retains_query_diagnostics(
     tmp_path: Path, plugin_inventory, all_: bool
 ) -> None:
     result = _invoke(
@@ -2703,18 +2919,19 @@ def test_tools_inventory_retains_query_diagnostics(
 
 @pytest.mark.parametrize("command", ["tools", "toolsets"])
 def test_internal_only_inventory_has_an_empty_default_view(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, offline_model_setup
 ) -> None:
     from toolang.plugin import loading
 
-    entries = tuple(loading.entry_points(group="toolang.toolset"))
+    original_entry_points = loading.entry_points
+    entries = tuple(original_entry_points(group="toolang.toolset"))
     monkeypatch.setattr(
         loading,
         "entry_points",
         lambda *, group: (
             [entry for entry in entries if entry.name == "_toolang"]
             if group == "toolang.toolset"
-            else []
+            else original_entry_points(group=group)
         ),
     )
     result = _invoke(tmp_path / "toolang", command)
@@ -2729,6 +2946,13 @@ def test_internal_only_inventory_has_an_empty_default_view(
 @pytest.mark.parametrize(
     ("command", "group", "header", "plugin_name", "empty_message"),
     (
+        (
+            "adapters",
+            "toolang.model_adapter",
+            "ADAPTER",
+            "responses",
+            "No adapters found.",
+        ),
         (
             "catalogs",
             "toolang.model_catalog",
@@ -2761,18 +2985,33 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
     plugin_name: str,
     empty_message: str,
 ) -> None:
+    from toolang.plugin import loading
+
     root = tmp_path / "toolang"
+    root.mkdir()
+    (root / "config.toml").write_text("invalid TOML [")
+    (root / "catalog.json").write_text("invalid JSON")
     requested: list[str] = []
 
-    def plugin_rows(selected_group: str) -> list[tuple[str, str]]:
-        requested.append(selected_group)
-        return [(plugin_name, "external")]
+    def reject_load(*args, **kwargs):
+        pytest.fail("Plugin inventory must not load setup or plugin factories")
+
+    def entry_points(*, group: str):
+        requested.append(group)
+        return [
+            SimpleNamespace(
+                name=plugin_name,
+                dist=SimpleNamespace(metadata={"Name": "external-package"}),
+                load=reject_load,
+            )
+        ]
 
     monkeypatch.setattr(
-        plugin_commands,
-        "plugin_info_rows",
-        plugin_rows,
+        loading,
+        "entry_points",
+        entry_points,
     )
+    monkeypatch.setattr("toolang.setup.watcher.SetupWatcher.refresh", reject_load)
 
     result = _invoke(root, command)
 
@@ -2784,14 +3023,14 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
     assert "external" in output
     assert requested == [group]
 
-    monkeypatch.setattr(plugin_commands, "plugin_info_rows", lambda _group: [])
+    monkeypatch.setattr(loading, "entry_points", lambda **_kwargs: [])
     empty = _invoke(root, command)
 
     assert empty.exit_code == 0
     assert empty.stdout.strip() == empty_message
 
 
-@pytest.mark.parametrize("command", ("catalogs", "toolsets"))
+@pytest.mark.parametrize("command", ("catalogs", "toolsets", "adapters", "sandboxes"))
 def test_plugin_inventory_commands_have_only_direct_plural_forms(
     tmp_path: Path,
     command: str,
@@ -3030,3 +3269,68 @@ class _FakeTool(Tool):
     ) -> ToolResult:
         del context
         return ToolResult(dict(arguments))
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_standalone_caps_all_preserves_scope_and_query(
+    tmp_path: Path, capsys, all_: bool
+) -> None:
+    from toolang.catalog.cap import AuthoredCaps, CapFile
+    from toolang.cli.caps import main as caps_cli
+
+    _create_agent(tmp_path)
+    layout = AgentLayout.resident(tmp_path, "alice")
+    for directory in (tmp_path, layout.home):
+        AuthoredCaps(directory).create(
+            CapFile.parse("Be helpful.\n", kind="psyche", name="shared_cap")
+        )
+    layout.config.write_text("[allow]\npsyches = []\n")
+    result = caps_cli.main(
+        [
+            "--root",
+            str(tmp_path),
+            "alice",
+            "list",
+            "--query",
+            "shared_cap",
+            *(("--all",) if all_ else ()),
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0, output.err
+    if all_:
+        assert "ALLOWED" in output.out
+        row = next(line for line in output.out.splitlines() if "shared_cap" in line)
+        assert "home" in row
+        assert row.split()[-1] == "no"
+        assert output.out.count("psyche/shared_cap") == 1
+    else:
+        assert output.out.strip() == "No caps matched query."
+
+
+@pytest.mark.parametrize("target", ["alice", "agent:alice"])
+def test_plugin_channel_listing_rejects_agent_targets(
+    tmp_path: Path, target: str
+) -> None:
+    _create_agent(tmp_path)
+    result = _invoke(tmp_path, target, "channel", "list")
+    assert result.exit_code == 2
+    assert "channel does not accept an agent target here" in result.stderr
+
+
+def test_tools_help_and_missing_agent_need_no_setup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def reject_setup(*args, **kwargs):
+        pytest.fail("Help and missing-agent routing must not construct setup")
+
+    monkeypatch.setattr(plugin_commands, "load_setup", reject_setup)
+    help_result = runner.invoke(cli.app, ["--root", str(tmp_path), "tools", "--help"])
+    assert help_result.exit_code == 0
+    assert "[AGENT] tools" in strip_ansi(help_result.stdout)
+    assert "root configuration" in strip_ansi(help_result.stdout)
+    missing = _invoke(tmp_path, "missing", "tools")
+    assert missing.exit_code != 0
+    assert "Agent missing not found" in missing.stderr
+    assert not (tmp_path / "agents" / "missing").exists()

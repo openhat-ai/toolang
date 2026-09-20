@@ -3,7 +3,11 @@
 ## Status
 
 The resident-agent catalog scope below was approved for implementation on
-2026-09-07. Allowed/default/compact preview remains deferred.
+2026-09-07. Its allow behavior and the restriction to model-only agent targets
+are superseded by [model plugins](model-plugins.md) and
+[inspection scopes](plugin-listing-visibility.md): default model/provider/tool
+views apply allow, and `--all` exposes the complete scope. Default/compact
+preview remains deferred.
 
 ## Goal
 

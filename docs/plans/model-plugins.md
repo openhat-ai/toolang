@@ -23,6 +23,9 @@ This document records the model layout, data model, and flow.
 [Model route publication](model-route-publication.md) specifies the approved
 source-cache and effective-route boundary in detail. It supersedes the catalog placement sketched in `plugins.md` and
 `models.md`, and the earlier `model-catalog-plugin-layout.md`.
+[Plugin layout and inspection scopes](plugin-listing-visibility.md) corrects
+plugin inventories to use installed metadata, defines root/agent resource
+views, and consolidates the thin family loaders.
 
 ## Layout
 
@@ -34,7 +37,6 @@ src/toolang/
 │   └── json.py                     # deterministic msgspec JSON dumps
 ├── plugin/
 │   ├── adapters/                   # one module per adapter plugin
-│   │   ├── loading.py              # load_model_adapters
 │   │   ├── _structured_output.py
 │   │   ├── _usage.py
 │   │   ├── chat_completions.py
@@ -42,7 +44,6 @@ src/toolang/
 │   │   ├── messages.py
 │   │   └── responses.py
 │   ├── catalogs/                   # one module or subpackage per catalog plugin
-│   │   ├── loading.py              # load_model_catalogs
 │   │   ├── _local.py               # helpers shared by the two local catalogs
 │   │   ├── models_dev/
 │   │   │   ├── catalog.py          # ModelsDevModelCatalog, capture, reader, factory
@@ -57,14 +58,14 @@ src/toolang/
 │   ├── toolsets/
 │   ├── values.py                   # shared readers for loosely typed plugin payloads
 │   ├── config.py
-│   └── loading.py
+│   ├── types.py                    # plugin identity and provenance
+│   └── loading.py                  # discovery and typed plugin loading
 └── setup/
     ├── cache.py                    # per-catalog model cache
     ├── catalog.py                  # snapshot merge
     ├── models.py                   # ordering, compact selection, catalog projection
     ├── watcher.py                  # installed setup publication
     ├── config.py
-    ├── tools.py
     ├── types.py
     └── errors.py
 ```
@@ -107,9 +108,9 @@ messages = "toolang.plugin.adapters.messages:create_model_adapter"
 responses = "toolang.plugin.adapters.responses:create_model_adapter"
 
 [project.entry-points."toolang.model_catalog"]
-models_dev = "toolang.plugin.catalogs.models_dev.catalog:create_models_dev_model_catalog"
-ollama = "toolang.plugin.catalogs.ollama:create_ollama_model_catalog"
-llama_cpp = "toolang.plugin.catalogs.llama_cpp:create_llama_cpp_model_catalog"
+models_dev = "toolang.plugin.catalogs.models_dev:create_model_catalog"
+ollama = "toolang.plugin.catalogs.ollama:create_model_catalog"
+llama_cpp = "toolang.plugin.catalogs.llama_cpp:create_model_catalog"
 ```
 
 Entry-point names are unchanged, so configured plugin tables and
@@ -117,8 +118,9 @@ Entry-point names are unchanged, so configured plugin tables and
 
 ### Layout decisions
 
-- `plugin/models/loading.py` splits per family, matching
-  `channels/loading.py`, `sandboxes/loading.py`, and `toolsets/loading.py`.
+- Generic and typed loading lives in `plugin/loading.py`; shared records live
+  in `plugin/types.py`. `toolsets/loading.py` retains identity validation and
+  leaf-tool wrapping. Thin per-family loading modules are removed.
 - Catalogs follow the adapters convention: a plugin per module or subpackage,
   shared helpers as a leading-underscore module. No `common/` directory.
 - `models_dev` is a subpackage: it owns the packaged data file and the catalog
@@ -412,23 +414,26 @@ toolset plugin  -> Toolset -> Tool[]                                            
                     resolve  adapter / env / ready
                     derive   ref / identity, query rows
                     index    ModelCollection (effective, allow-filtered)
-                    publish  providers, models (all), adapters (+source), tools,
+                    publish  providers, models (all), runtime adapters, tools (all),
                              defaults, limits, compact_model, envs, environment
                     cache    internal; first build may be slower
                         |
         +---------------+----------------+
    CLI inspection                       executor
-   too models / providers / adapters    ModelRequest -> Model -> ModelCall -> adapter
+   too models / providers / tools       ModelRequest -> Model -> ModelCall -> adapter
 ```
 
 - `too models` renders the published models, with availability from
   `Model._toolang.ready`.
 - `too providers` renders the published providers plus readiness.
-- `too adapters` renders published adapters with `AgentSetup.adapter_sources`,
-  an immutable mapping captured by setup alongside installed-plugin provenance.
-- No command scans entry points, re-resolves environment rules, or re-projects a
-  catalog on its own. Inspection without a running agent builds the same setup
-  object once and reads it.
+- `too tools` renders the published effective tool collection; `--all` reads
+  the complete collection captured before allow filtering in that setup version.
+- Resource inspection does not re-resolve policy, environment rules, or catalog
+  projections. Inspection without a running agent builds setup once and reads it.
+- `too adapters`, `catalogs`, `toolsets`, `sandboxes`, and `channel list` list
+  installed entry-point metadata, independently of setup. They reject agent
+  names and do not load factories or configuration. Runtime adapter instances
+  and cache provenance remain setup-owned; inventory source labels do not.
 
 ### Setup caching
 
@@ -724,7 +729,7 @@ limits, or the allow set is a new version too.
 
 ### CLI inspection
 
-`too models`, `too providers`, and `too adapters` read a setup version. The
+`too models`, `too providers`, and `too tools` read a setup version. The
 inspection pipeline is deleted: `CatalogInspection`, `load_catalog_inspection`,
 `load_matching_catalog_inspection`, the inspection projection key, the
 duplicated `_LOCAL_CATALOG_ENV`, the duplicated catalog ordering, and the

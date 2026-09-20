@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import Sequence
 from typing import Annotated
 
@@ -13,19 +15,16 @@ from ...common.query import query_items
 from toolang.base.utils.tools import is_internal_toolset_name
 from toolang.common.layout import AgentLayout
 from toolang.common.query import QueryDataset
-from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
-    ToolCollection,
     ToolQueryView,
     tool_dataset,
 )
-from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentSetup
-from toolang.setup.config import load_agent_config, load_setup_config
+from toolang.setup.watcher import load_setup
 
 channel_app = typer.Typer(
-    help="List available channels",
+    help="List installed channels",
     subcommand_metavar="<COMMAND> [ARGUMENTS]",
     add_completion=False,
     no_args_is_help=True,
@@ -46,14 +45,18 @@ def list_tools(
         ),
     ] = None,
     all_: Annotated[
-        bool, typer.Option("--all", help="Include internal toolsets and their tools")
+        bool, typer.Option("--all", help="Include internal and allow-excluded tools")
     ] = False,
 ) -> None:
-    layout = _layout(ctx)
-    configs = (load_setup_config(layout), load_agent_config(layout))
-    dataset = tool_dataset(
-        load_tools(toolset_config=merge_plugin_configs(configs, family="toolset"))
+    agent = context_agent(ctx)
+    setup = asyncio.run(
+        load_setup(
+            AgentLayout.resident(context_root(ctx), agent or "default"),
+            agent_context=agent is not None,
+            validate_defaults=False,
+        )
     )
+    dataset = setup_tool_dataset(setup, all=all_)
     selected = tuple(
         item
         for item in query_items(dataset, query)
@@ -63,6 +66,16 @@ def list_tools(
         typer.echo("No tools matched query." if query else "No tools found.")
         return
     headers, rows = dataset.table(selected)
+    if all_:
+        headers = (*headers, "ALLOWED", "INTERNAL")
+        rows = [
+            (
+                *row,
+                "yes" if item.model_name in setup.tools else "no",
+                "yes" if is_internal_toolset_name(item.toolset) else "no",
+            )
+            for row, item in zip(rows, selected, strict=True)
+        ]
     echo_table(headers, rows)
     typer.echo()
     toolset_count = len({item.toolset for item in selected})
@@ -79,6 +92,31 @@ def list_channels() -> None:
         header="CHANNEL",
         empty_message="No channels found.",
     )
+
+
+def adapters_command(
+    json_: Annotated[
+        bool,
+        typer.Option("--json", help="Write adapter metadata as JSON"),
+    ] = False,
+) -> None:
+    """List installed model-adapter entry points without loading plugins."""
+
+    rows = plugin_info_rows("toolang.model_adapter")
+    if json_:
+        typer.echo(
+            json.dumps(
+                [{"id": name, "source": source} for name, source in rows],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        return
+    if not rows:
+        typer.echo("No adapters found.")
+        return
+    echo_table(("ADAPTER", "SOURCE"), rows)
 
 
 def list_catalogs() -> None:
@@ -99,6 +137,7 @@ def list_toolsets(
         header="TOOLSET",
         empty_message="No toolsets found.",
         include_internal=all_,
+        show_internal=all_,
     )
 
 
@@ -116,6 +155,7 @@ def _list_plugins(
     header: str,
     empty_message: str,
     include_internal: bool = True,
+    show_internal: bool = False,
 ) -> None:
     rows = plugin_info_rows(group)
     if not include_internal:
@@ -123,7 +163,16 @@ def _list_plugins(
     if not rows:
         typer.echo(empty_message)
         return
-    echo_table((header, "SOURCE"), rows)
+    if show_internal:
+        echo_table(
+            (header, "SOURCE", "INTERNAL"),
+            [
+                (*row, "yes" if is_internal_toolset_name(row[0]) else "no")
+                for row in rows
+            ],
+        )
+    else:
+        echo_table((header, "SOURCE"), rows)
 
 
 def model_rows(
@@ -144,29 +193,13 @@ def model_rows(
     ]
 
 
-def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:
+def setup_tool_dataset(
+    setup: AgentSetup, *, all: bool = False
+) -> QueryDataset[ToolQueryView]:
     """Return the schema-owned tool query and display dataset for one setup."""
 
-    return _tool_dataset(setup.tools)
-
-
-def _tool_dataset(tools: ToolCollection) -> QueryDataset[ToolQueryView]:
-    return tool_dataset(
-        tools,
-        plugin_sources=plugin_sources("toolang.toolset"),
-    )
-
-
-def _layout(ctx: typer.Context) -> AgentLayout:
-    return AgentLayout.resident(
-        context_root(ctx),
-        context_agent(ctx) or "default",
-    )
+    return tool_dataset(setup.tool_collection(all=all))
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:
     return [(info.name, info.source) for info in list_plugin_infos(group=group)]
-
-
-def plugin_sources(group: str) -> dict[str, str]:
-    return {info.name: info.source for info in list_plugin_infos(group=group)}

@@ -149,7 +149,10 @@ a published Setup version. Every source's records are cached, and a dynamic
 catalog persists one probe file whose mtime stamps its current result.
 
 Each root or agent model context keeps one cache file per catalog below the
-owning `.setup`. The models.dev file is read once per change; its revision is the
+owning `.setup`: root inspection uses `${TOOLANG_ROOT}/.setup/models`, and an
+agent uses its home `.setup/models`. Root and agent setup revisions have distinct
+scope identities, even when their inputs match. The models.dev file is read once
+per change; its revision is the
 payload digest plus the file mtime. A local catalog's file is rewritten only when
 its probe result differs, so its mtime marks when the current run of identical
 results was first saved. Cache revisions cover model-affecting configuration,
@@ -381,6 +384,15 @@ complete directory, including unready and allow-excluded entries; `providers
 --all` also includes empty providers. The `available` query field describes
 readiness independently of allow membership.
 
+`too models --all` adds `ALLOWED` independently of `AVAILABLE`: a model may be
+ready but excluded by policy, or allowed but missing runtime prerequisites.
+`too providers --all` adds `ALLOWED MODELS` alongside `AVAILABLE MODELS`;
+the counts describe allow membership and readiness independently, each over
+that provider's complete model set. Default provider counts describe only
+ready, allowed models. Default tables omit redundant policy columns. `--all`
+keeps the selected configuration and catalog precedence and grants no runtime
+access, matching cap/tool resource inspection.
+
 `too models --all` and `too providers --all` show coarse unavailability reasons
 from the route's missing fields. They do not identify individual missing
 credentials or distinguish unknown adapters from uninstalled ones.
@@ -392,9 +404,13 @@ catalog declarations when unavailable; its red styling indicates the overall
 environment requirement is unmet, not that every displayed variable is missing.
 A provider is available when at least one of its selected models is ready.
 
-`too catalogs` lists installed model-catalog plugin entry points and their
-`built-in` or `external` source. It does not load the plugins or describe the
-merged catalog snapshot; use `too models` for that view.
+`too catalogs` and `too adapters [--json]` list locally installed catalog and
+adapter entry points and their `built-in` or `external` source. They do not
+accept an agent name, construct setup, read catalog/configuration files, or
+invoke plugin factories. Installed entries remain visible even if they cannot
+be loaded. Runtime setup still owns the adapter instances used for execution.
+Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
+these commands read one published setup version.
 
 `too models --query ... --json` emits another complete, deterministic,
 models.dev-compatible catalog containing only selected models, including models

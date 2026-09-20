@@ -1,10 +1,9 @@
-"""Plural model catalog, provider, and adapter commands."""
+"""Effective model catalog and provider inspection commands."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-import json
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -77,9 +76,13 @@ def models_command(
         return
     headers, rows = dataset.table(selected_views)
     if all_:
-        headers = (*headers, "REASON")
+        headers = (*headers, "ALLOWED", "REASON")
         rows = [
-            (*row, _route_reason(model._toolang.route))
+            (
+                *row,
+                "yes" if setup.model_allowed(model.ref) else "no",
+                _route_reason(model._toolang.route),
+            )
             for row, model in zip(rows, selected, strict=True)
         ]
     if not rows:
@@ -96,7 +99,7 @@ def models_command(
             None,
             None,
             "right",
-            *((None,) if all_ else ()),
+            *((None, None) if all_ else ()),
         ),
     )
     typer.echo()
@@ -180,6 +183,16 @@ def providers_command(
         )
         for item in selected_views
     ]
+    if all_:
+        headers = (*headers[:-1], "ALLOWED MODELS", headers[-1])
+        rows = [
+            (
+                *row[:-1],
+                f"{sum(setup.model_allowed(model.ref) for model in by_provider[item.id])}/{item.model_count}",
+                row[-1],
+            )
+            for row, item in zip(rows, selected_views, strict=True)
+        ]
     if not rows:
         typer.echo("No providers found.")
         return
@@ -189,36 +202,6 @@ def providers_command(
     )
     typer.echo()
     typer.echo(f" {_provider_catalog_summary(snapshot, providers=providers)}")
-
-
-def adapters_command(
-    ctx: typer.Context,
-    json_: Annotated[
-        bool,
-        typer.Option("--json", help="Write adapter metadata as JSON"),
-    ] = False,
-) -> None:
-    """List the protocol adapters this setup publishes."""
-
-    setup = _setup(ctx)
-    rows = tuple(
-        (name, setup.adapter_sources.get(name) or "-")
-        for name in sorted(setup.adapters)
-    )
-    if json_:
-        typer.echo(
-            json.dumps(
-                [{"id": name, "source": source} for name, source in rows],
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        )
-        return
-    if not rows:
-        typer.echo("No adapters found.")
-        return
-    echo_table(("ADAPTER", "SOURCE"), rows)
 
 
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
