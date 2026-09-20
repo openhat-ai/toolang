@@ -48,6 +48,8 @@ arguments. Existing visiting/roaming restrictions remain unchanged.
   scope, undo plugin configuration, combine overridden catalog files, or grant
   execution permissions. Querying and exporting read the same setup version.
   No extra factories, policy calculations, route or readiness inference.
+  An empty allow list selects no entries; it must not fail query parsing or
+  prevent inspection of the full collection.
 - Tools currently have no independent readiness protocol. The complete tool
   view contains all leaves supplied by successfully loaded toolsets; it cannot
   invent leaf metadata for an unloadable plugin. Plugin inventory still lists
@@ -88,6 +90,8 @@ default counts describe only the ready, allowed rows. Runtime-internal tools are
 allowed independently of user allow policy. Caps/tools have no separate readiness
 protocol. Keep model/provider JSON as raw catalog exports, without inspection
 columns or secrets. Query filters and totals operate on the selected view.
+Provider reasons include unready models even when other models are ready.
+Cap preparation progress identifies root and agent-home layers separately.
 
 ## Implementation layout
 

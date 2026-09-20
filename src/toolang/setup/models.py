@@ -31,6 +31,8 @@ def order_models(
     models: ModelCollection, queries: tuple[str, ...] | None
 ) -> ModelCollection:
     """Authored ordering wins; the fallback ranks providers without excluding any."""
+    if queries == ():
+        return ModelCollection()
     return models.match(
         queries
         if queries is not None

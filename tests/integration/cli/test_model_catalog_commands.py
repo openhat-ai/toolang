@@ -28,6 +28,52 @@ from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 runner = CliRunner()
 
 
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("command", ["models", "providers"])
+@pytest.mark.parametrize("all_", [False, True])
+def test_empty_model_allow_keeps_complete_diagnostic_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agent: bool,
+    command: str,
+    all_: bool,
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("# Agent alice\n")
+    (tmp_path / "config.toml").write_text('[allow]\nmodels = ["*"]\n')
+    scope = home if agent else tmp_path
+    (scope / "config.toml").write_text("[allow]\nmodels = []\n")
+
+    exit_code = cli.main(
+        [
+            "--root",
+            str(tmp_path),
+            *(("alice",) if agent else ()),
+            command,
+            *(("--all",) if all_ else ()),
+        ],
+    )
+
+    result = capsys.readouterr()
+    assert exit_code == 0, result.err
+    if not all_:
+        assert result.out.strip() == f"No {command} found."
+    elif command == "models":
+        assert "ALLOWED" in result.out
+        for ref in ("test/one", "test/two"):
+            row = next(line for line in result.out.splitlines() if ref in line)
+            assert row.split()[-1] == "no"
+    else:
+        assert "ALLOWED MODELS" in result.out
+        assert "2/2" in result.out
+        assert "0/2" in result.out
+
+
 def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     result = runner.invoke(cli.app, ["--help"])
     stdout = strip_ansi(result.stdout)
@@ -704,6 +750,15 @@ def test_provider_api_and_counts_use_independent_availability(
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY"
     assert not _is_red(env, 0)
+    assert rows[0][-1] == "API missing or unresolved"
+
+    default_result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path / "root"), "providers", "--catalog", str(catalog)],
+    )
+    assert default_result.exit_code == 0, default_result.stderr
+    if available_models:
+        assert rows[-1][-1] == ""
 
 
 @pytest.mark.parametrize("target", [[], ["alice"]])

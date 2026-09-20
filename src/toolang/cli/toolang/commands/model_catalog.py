@@ -267,8 +267,6 @@ def _route_reason(route: ModelRoute) -> str:
 
 
 def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
-    if any(model._toolang.ready for model in models):
-        return ""
     if not models:
         return _route_reason(provider._toolang.route) or "No models"
     return "; ".join(

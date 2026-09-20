@@ -2709,7 +2709,7 @@ def test_tools_all_bypasses_empty_allow_for_inspection(
 ) -> None:
     root = tmp_path / "toolang"
     root.mkdir()
-    (root / "config.toml").write_text("[allow]\ntools = []\n")
+    (root / "config.toml").write_text("[allow]\ntools = []\nmodels = []\n")
 
     result = _invoke(root, "tools", *(("--all",) if all_ else ()))
 
@@ -3227,6 +3227,23 @@ def _invoke(root: Path, *args: str, tty: bool = False):
         raise typer.Exit(cli.main(["--root", str(root), *arguments]))
 
     return runner.invoke(app, list(args), env={})
+
+
+def test_cap_inspection_progress_identifies_prepared_scopes(tmp_path: Path) -> None:
+    _create_agent(tmp_path)
+
+    cold = _invoke(tmp_path, "alice", "caps")
+    warm = _invoke(tmp_path, "alice", "caps", "--all")
+
+    assert cold.exit_code == 0, cold.stderr
+    assert cold.stderr.splitlines() == [
+        "Preparing root caps...",
+        "Prepared root caps",
+        "Preparing home caps for alice...",
+        "Prepared home caps for alice",
+    ]
+    assert warm.exit_code == 0, warm.stderr
+    assert warm.stderr == ""
 
 
 def _create_agent(root: Path, name: str = "alice") -> None:
