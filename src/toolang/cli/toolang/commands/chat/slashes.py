@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, TypeAlias, cast
 
 from typer._click.exceptions import ClickException
@@ -29,6 +29,7 @@ from .policy import (
 )
 from .shortcuts import help_lines as shortcut_help_lines
 from .tables import table_lines
+
 
 SlashOutcomeKind = Literal["success", "result", "usage", "error"]
 SlashArgument = Literal["none", "optional", "required"]
@@ -1095,10 +1096,10 @@ def _price_component(value: object) -> str:
     if value is None or isinstance(value, bool):
         return "-"
     try:
-        price = Decimal(str(value))
-    except (InvalidOperation, ValueError):
+        price = float(str(value))
+    except ValueError:
         return "-"
-    if not price.is_finite():
+    if not math.isfinite(price):
         return "-"
     number = f"{price:.2f}"
     return f"${number.rjust(5)}"
@@ -1188,7 +1189,7 @@ def model_effort_applicability(
 def model_reasoning_value(model: ModelRequest) -> str | None:
     """Return one explicit effort level or token budget for display."""
 
-    reasoning = model.parameters.reasoning
+    reasoning = model.reasoning
     if reasoning is None:
         return None
     if reasoning.effort is not None:

@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from dataclasses import replace
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -61,7 +60,9 @@ def _direct_request(
             "ref": runnable if ":" in runnable else f"agic:{runnable}",
             "input": {"_": input} if input else {},
         },
-        "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+        "model": {
+            "ref": TEST_MODEL_REF,
+        },
         "policy": {"allow": [], "limits": limits or {}},
     }
 
@@ -415,7 +416,7 @@ agic answer(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        limits=RunLimits(tokens=100, cost=Decimal("5")),
+        limits=RunLimits(tokens=100, cost=5.0),
     )
     harness.store.close()
     core = AgentCore(setup.layout)
@@ -462,7 +463,9 @@ agic answer(_: Part[]) -> Part[]:
                 f"/api/v1/runs/{source_id}/rerun",
                 json={
                     "request_id": "selector-rerun-request",
-                    "model": {"ref": "test/*", "parameters": {}},
+                    "model": {
+                        "ref": "test/*",
+                    },
                 },
             )
             rerun = client.post(

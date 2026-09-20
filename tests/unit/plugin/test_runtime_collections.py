@@ -6,9 +6,9 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
-from toolang.plugin.models.collections import ModelCollection, ModelEntry
+from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.common.query import QueryDataset
 from toolang.base.protocols.tool import Tool
@@ -37,40 +37,19 @@ class _Tool(Tool):
         return ToolResult({})
 
 
-def _model_entry(
-    provider: str,
-    model: str,
-    *,
-    key: str | None = None,
-    tools: bool = True,
-) -> ModelEntry:
-    ref = f"{provider}/{model}"
-    info = ModelInfo(
-        ref=ref,
-        provider=provider,
+def _model(provider: str, model: str, *, tools: bool = True) -> Model:
+    return Model(
+        id=model,
         name=model,
-        model=model,
-        tools=tools,
-    )
-    return ModelEntry(
-        key=key or ref,
-        ref=ref,
-        target=ModelTarget(
-            ref=ref,
-            provider=provider,
-            name=model,
-            model=model,
-            adapter="test",
-            tools=tools,
-        ),
-        info=info,
+        _toolang=ModelToolang(provider=provider, ready=True),
+        tool_call=tools,
     )
 
 
 def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> None:
-    alpha = _model_entry("alpha", "one")
-    beta = _model_entry("beta", "two", tools=False)
-    gamma = _model_entry("alpha", "three")
+    alpha = _model("alpha", "one")
+    beta = _model("beta", "two", tools=False)
+    gamma = _model("alpha", "three")
     models = ModelCollection((alpha, beta, gamma))
 
     assert models.match(("beta/*", "alpha/*")).refs() == (
@@ -100,43 +79,24 @@ def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> No
     assert models.effective_default("missing/model") == "alpha/one"
     assert ModelCollection().effective_default("missing/model") is None
     with pytest.raises(TypeError):
-        cast(dict[str, object], alpha.info.metadata)["mutable"] = True
-    with pytest.raises(TypeError):
-        cast(dict[str, object], alpha.target.options)["mutable"] = True
+        cast(dict[str, int], alpha.limit)["mutable"] = 1
     with pytest.raises(ToolangError, match="model ref is unavailable"):
         models.resolve("missing/model")
 
 
 def test_model_collection_matches_its_public_ref() -> None:
-    ref = "gateway/vendor/model"
-    info = ModelInfo(
-        ref="vendor/model",
-        provider="gateway",
-        name="model",
-        model="vendor/model",
-    )
-    entry = ModelEntry(
-        key=ref,
-        ref=ref,
-        target=ModelTarget(
-            ref="vendor/model",
-            provider="gateway",
-            name="model",
-            model="vendor/model",
-            adapter="test",
-        ),
-        info=info,
-    )
-    models = ModelCollection((entry,))
+    model = _model("gateway", "vendor/model")
+    models = ModelCollection((model,))
 
-    assert models.match(ref).entries == (entry,)
+    assert model.ref == "gateway/vendor/model"
+    assert models.match(model.ref).entries == (model,)
 
 
 def test_model_collection_subsets_reuse_the_published_matcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    alpha = _model_entry("alpha", "one")
-    beta = _model_entry("beta", "two")
+    alpha = _model("alpha", "one")
+    beta = _model("beta", "two")
     models = ModelCollection((alpha, beta))
 
     def fail_dataset(*_args: object, **_kwargs: object) -> None:
@@ -150,27 +110,25 @@ def test_model_collection_subsets_reuse_the_published_matcher(
 
 
 def test_model_collection_public_state_is_immutable() -> None:
-    models = ModelCollection((_model_entry("alpha", "one"),))
+    models = ModelCollection((_model("alpha", "one"),))
 
-    with pytest.raises(AttributeError):
+    with pytest.raises((AttributeError, TypeError)):
         setattr(cast(Any, models), "entries", ())
     with pytest.raises(TypeError):
         cast(dict[str, object], models._by_ref)["other/model"] = object()
 
 
 def test_model_collection_keys_are_stable_and_duplicate_refs_are_rejected() -> None:
-    first = ModelCollection((_model_entry("alpha", "one"), _model_entry("beta", "two")))
-    rebuilt = ModelCollection(
-        (_model_entry("alpha", "one"), _model_entry("beta", "two"))
-    )
+    first = ModelCollection((_model("alpha", "one"), _model("beta", "two")))
+    rebuilt = ModelCollection((_model("alpha", "one"), _model("beta", "two")))
 
     assert first.keys() == rebuilt.keys() == ("alpha/one", "beta/two")
     assert first == rebuilt
     with pytest.raises(ValueError, match="duplicate public refs"):
         ModelCollection(
             (
-                _model_entry("alpha", "one", key="route-a"),
-                _model_entry("alpha", "one", key="route-b"),
+                _model("alpha", "one"),
+                _model("alpha", "one"),
             )
         )
 

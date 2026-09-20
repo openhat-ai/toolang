@@ -12,7 +12,7 @@ from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
@@ -23,31 +23,25 @@ from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.plugin.loading import list_plugin_infos
-from toolang.plugin.models.catalog import (
-    catalog_json_dumps,
-)
+from toolang.common.json import dumps
 from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
     CatalogProviderView,
     ModelQueryView,
+    catalog_model_dataset,
     catalog_provider_views,
 )
-from toolang.plugin.models.discovery import (
-    absent_provider_env_vars,
-    provider_env_requirements,
-    required_provider_env_vars,
-)
-from toolang.setup.catalog import (
-    CatalogInspection,
-    load_catalog_inspection,
-    load_matching_catalog_inspection,
-)
+from toolang.setup import AgentSetup
+from toolang.setup.watcher import load_setup
 
 
 def models_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Include unready and allow-excluded models"),
+    ] = False,
     query: Annotated[
         list[str] | None,
         typer.Option(
@@ -65,39 +59,45 @@ def models_command(
     """List or export model catalog entries."""
 
     try:
-        inspection = (
-            _matching_inspection(ctx, model_catalog=model_catalog, query=query)
-            if query and not json_
-            else _inspection(ctx, model_catalog=model_catalog)
-        )
+        setup = _setup(ctx, model_catalog=model_catalog)
     except TypeError as error:
         raise ClickException(str(error)) from error
-    if inspection is None:
-        typer.echo("No models matched query.")
-        return
-    snapshot = inspection.snapshot
-    dataset = inspection.catalog_models
-    selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+    snapshot = setup.model_catalog(all=all_)
+    dataset = catalog_model_dataset(snapshot)
+    try:
+        if query:
+            MODEL_SCHEMA.parse(query)
+        selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+    except ToolangError as error:
+        raise ClickException(str(error)) from error
     selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
-        exportable = tuple(model for model in selected if not model.local)
-        if len(exportable) != len(selected):
-            local = ", ".join(model.identity for model in selected if model.local)
-            raise typer.BadParameter(
-                f"local-only models cannot be exported: {local}",
-                param_hint="--query",
-            )
-        content = catalog_json_dumps(snapshot.to_data(models=exportable))
+        content = dumps(snapshot.to_data(models=selected))
         typer.echo(content, nl=False)
         return
     headers, rows = dataset.table(selected_views)
+    if all_:
+        headers = (*headers, "REASON")
+        rows = [
+            (*row, _route_reason(model._toolang.route))
+            for row, model in zip(rows, selected, strict=True)
+        ]
     if not rows:
         typer.echo("No models matched query." if query else "No models found.")
         return
     echo_table(
         headers,
         rows,
-        justify=(None, None, "right", "right", None, None, "right"),
+        justify=(
+            None,
+            None,
+            "right",
+            "right",
+            None,
+            None,
+            "right",
+            *((None,) if all_ else ()),
+        ),
     )
     typer.echo()
     typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
@@ -106,6 +106,12 @@ def models_command(
 def providers_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
+    all_: Annotated[
+        bool,
+        typer.Option(
+            "--all", help="Include unready, allow-excluded, and empty providers"
+        ),
+    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write catalog providers as JSON"),
@@ -113,44 +119,53 @@ def providers_command(
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    inspection = _inspection(ctx, model_catalog=model_catalog)
-    snapshot = inspection.snapshot
+    setup = _setup(ctx, model_catalog=model_catalog)
+    snapshot = setup.model_catalog(all=all_)
     base_providers = tuple(
-        provider
-        for provider_id, provider in sorted(snapshot.providers.items())
-        if provider_id != "custom"
+        snapshot.providers[provider_id] for provider_id in sorted(snapshot.providers)
     )
-    available = set(inspection.models.refs())
+    by_provider: dict[str, list[Model]] = {
+        provider.id: [] for provider in base_providers
+    }
+    for model in snapshot.models:
+        by_provider[model._toolang.provider].append(model)
+    available = {model.ref for model in snapshot.models if model._toolang.ready}
     selected_views = catalog_provider_views(
         base_providers,
+        models=by_provider,
         available=available,
         adapters={
-            provider.id: _provider_adapters(provider) for provider in base_providers
+            provider.id: _provider_adapters(provider, by_provider[provider.id])
+            for provider in base_providers
         },
-        apis={provider.id: _provider_api(provider) for provider in base_providers},
+        apis={provider.id: provider._toolang.route.api for provider in base_providers},
         env_requirements={
-            provider.id: provider_env_requirements(provider)
-            for provider in base_providers
-        },
-        required_env={
-            provider.id: required_provider_env_vars(provider)
-            for provider in base_providers
-        },
-        missing_env={
-            provider.id: absent_provider_env_vars(provider, environ=inspection.envs)
+            provider.id: _provider_env_declarations(provider)
             for provider in base_providers
         },
     )
     providers = tuple(item.record for item in selected_views)
     if json_:
         typer.echo(
-            catalog_json_dumps(
-                {provider.id: provider.to_data() for provider in providers}
+            dumps(
+                {
+                    provider.id: provider.to_data(
+                        models={model.id: model for model in by_provider[provider.id]}
+                    )
+                    for provider in providers
+                }
             ),
             nl=False,
         )
         return
-    headers = ("PROVIDER", "AVAILABLE MODELS", "ADAPTERS", "API", "ENV")
+    headers = (
+        "PROVIDER",
+        "AVAILABLE MODELS",
+        "ADAPTERS",
+        "DEFAULT API",
+        "ENV",
+        "REASON",
+    )
     rows = [
         (
             item.id,
@@ -158,9 +173,10 @@ def providers_command(
                 f"{item.available_models}/{item.model_count}",
                 style="red" if item.available_models == 0 else "",
             ),
-            _provider_adapters_cell(inspection, item),
-            _provider_api_cell(item),
+            _provider_adapters_cell(item),
+            _provider_api_cell(item, by_provider[item.id]),
             _provider_env_cell(item),
+            _provider_reason(item.record, by_provider[item.id]),
         )
         for item in selected_views
     ]
@@ -176,65 +192,53 @@ def providers_command(
 
 
 def adapters_command(
+    ctx: typer.Context,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write adapter metadata as JSON"),
     ] = False,
 ) -> None:
-    """List installed protocol adapters."""
+    """List the protocol adapters this setup publishes."""
 
-    infos = tuple(list_plugin_infos(group="toolang.model_adapter"))
+    setup = _setup(ctx)
+    rows = tuple(
+        (name, setup.adapter_sources.get(name) or "-")
+        for name in sorted(setup.adapters)
+    )
     if json_:
         typer.echo(
             json.dumps(
-                [{"id": info.name, "source": info.source} for info in infos],
+                [{"id": name, "source": source} for name, source in rows],
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
             )
         )
         return
-    if not infos:
+    if not rows:
         typer.echo("No adapters found.")
         return
-    echo_table(
-        ("ADAPTER", "SOURCE"),
-        tuple((info.name, info.source) for info in infos),
+    echo_table(("ADAPTER", "SOURCE"), rows)
+
+
+def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
+    agent = context_agent(ctx)
+    return (
+        AgentLayout.resident(context_root(ctx), agent or "default"),
+        agent is not None,
     )
 
 
-def _inspection(
-    ctx: typer.Context,
-    *,
-    model_catalog: Path | None = None,
-) -> CatalogInspection:
-    agent = context_agent(ctx)
-    return asyncio.run(
-        load_catalog_inspection(
-            AgentLayout.resident(context_root(ctx), agent or "default"),
-            model_catalog=resolve_model_catalog_option(model_catalog),
-            agent_context=agent is not None,
-        )
-    )
+def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
+    """Build one setup version for the catalog commands."""
 
-
-def _matching_inspection(
-    ctx: typer.Context,
-    *,
-    model_catalog: Path | None,
-    query: Sequence[str],
-) -> CatalogInspection | None:
-    agent = context_agent(ctx)
-    try:
-        queries = MODEL_SCHEMA.parse(query)
-    except ToolangError as error:
-        raise ClickException(str(error)) from error
+    layout, agent_context = _layout(ctx)
     return asyncio.run(
-        load_matching_catalog_inspection(
-            AgentLayout.resident(context_root(ctx), agent or "default"),
+        load_setup(
+            layout,
             model_catalog=resolve_model_catalog_option(model_catalog),
-            agent_context=agent is not None,
-            queries=queries,
+            agent_context=agent_context,
+            validate_defaults=False,
         )
     )
 
@@ -244,70 +248,84 @@ def _catalog_summary(
     *,
     models: Sequence[Model],
 ) -> str:
-    catalogs = _catalog_names(snapshot)
-    parts = [
-        f"{catalog} {sum(model.catalog == catalog for model in models)}"
-        for catalog in catalogs
-    ]
+    del snapshot
     model_noun = "model" if len(models) == 1 else "models"
-    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
-    return f"{len(models)} {model_noun} from {len(parts)} {catalog_noun}: " + ", ".join(
-        parts
-    )
+    return f"{len(models)} {model_noun}"
 
 
-def _provider_api(provider: Provider) -> str | None:
-    return provider.resolved.api if provider.resolved is not None else None
-
-
-def _provider_adapters(provider: Provider) -> tuple[str, ...]:
+def _provider_adapters(provider: Provider, models: Sequence[Model]) -> tuple[str, ...]:
     adapters = {
-        model.resolved.adapter
-        for model in provider.models.values()
-        if model.resolved is not None and model.resolved.adapter
+        model._toolang.route.adapter
+        for model in models
+        if model._toolang.route.adapter is not None
     }
-    if not adapters and provider.resolved is not None and provider.resolved.adapter:
-        adapters.add(provider.resolved.adapter)
+    if not models and provider._toolang.route.adapter is not None:
+        adapters.add(provider._toolang.route.adapter)
     return tuple(sorted(adapters))
 
 
-def _provider_adapters_cell(
-    inspection: CatalogInspection,
-    provider: CatalogProviderView,
-) -> Text:
-    adapters = provider.adapters
-    if not adapters:
-        return Text("-", style="dim")
-    cell = Text()
-    for index, adapter in enumerate(adapters):
-        if index:
-            cell.append(",")
-        cell.append(
-            adapter,
-            style="dim" if adapter not in inspection.adapters else None,
+def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
+    rule = provider._toolang.route.env
+    if rule is None:
+        rule = provider._toolang.env or provider.env
+    return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
+
+
+def _route_reason(route: ModelRoute) -> str:
+    return "; ".join(
+        reason
+        for missing, reason in (
+            (route.adapter is None, "Adapter unresolved or not installed"),
+            (route.api is None, "API missing or unresolved"),
+            (route.env is None, "Environment requirements unmet"),
         )
-    return cell
+        if missing
+    )
 
 
-def _provider_api_cell(provider: CatalogProviderView) -> Text:
+def _provider_reason(provider: Provider, models: Sequence[Model]) -> str:
+    if any(model._toolang.ready for model in models):
+        return ""
+    if not models:
+        return _route_reason(provider._toolang.route) or "No models"
+    return "; ".join(
+        sorted(
+            {
+                reason
+                for model in models
+                if (reason := _route_reason(model._toolang.route))
+            }
+        )
+    )
+
+
+def _provider_adapters_cell(provider: CatalogProviderView) -> Text:
+    return (
+        Text(",".join(provider.adapters))
+        if provider.adapters
+        else Text("-", style="dim")
+    )
+
+
+def _provider_api_cell(provider: CatalogProviderView, models: Sequence[Model]) -> Text:
     api = provider.api
-    unavailable = api is None or (provider.local and provider.offline)
-    return Text(api or "-", style="red" if unavailable else "")
+    unavailable = api is None
+    overridden = any(model._toolang.route.api != api for model in models)
+    label = (api or "-") + (" (model overrides)" if overridden else "")
+    return Text(label, style="red" if unavailable else "")
 
 
 def _provider_env_cell(provider: CatalogProviderView) -> Text:
     if not provider.env_requirements:
         return Text("-")
-    missing = set(provider.missing_env)
     cell = Text()
     for index, requirement in enumerate(provider.env_requirements):
         if index:
             cell.append(", ")
-        names = requirement.split(" + ")
-        for group_index, name in enumerate(names):
-            if group_index:
-                cell.append(" + ")
-            cell.append(name, style="red" if name in missing else None)
+        cell.append(
+            requirement,
+            style="red" if provider.record._toolang.route.env is None else "",
+        )
     return cell
 
 
@@ -316,25 +334,6 @@ def _provider_catalog_summary(
     *,
     providers: Sequence[Provider],
 ) -> str:
-    parts = [
-        f"{catalog} {sum(provider.catalog == catalog for provider in providers)}"
-        for catalog in _catalog_names(snapshot)
-    ]
+    del snapshot
     provider_noun = "provider" if len(providers) == 1 else "providers"
-    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
-    return (
-        f"{len(providers)} {provider_noun} from {len(parts)} {catalog_noun}: "
-        + ", ".join(parts)
-    )
-
-
-def _catalog_names(snapshot: ModelCatalogSnapshot) -> tuple[str, ...]:
-    names = tuple(
-        dict.fromkeys(
-            provider.catalog
-            for provider in snapshot.providers.values()
-            if provider.catalog is not None
-        )
-    )
-    priority = {"models.dev": 0, "ollama": 1, "llama_cpp": 2}
-    return tuple(sorted(names, key=lambda name: (priority.get(name, 3), name)))
+    return f"{len(providers)} {provider_noun}"

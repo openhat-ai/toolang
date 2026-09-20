@@ -109,7 +109,7 @@ The selected static catalog is streamed to compute a byte digest. A catalog
 artifact key covers the cache schema, source digest, and parser/schema
 revision, so it is computable before catalog parsing. The artifact contains the
 normalized validated snapshot, its semantic snapshot revision, and its own
-canonical document digest. Exact Decimal values are preserved.
+canonical document digest. Finite float numbers are preserved.
 
 Source provenance may record an anchor kind and relative path for diagnostics,
 but path does not define equality. Identical bytes selected from root, home,
@@ -285,7 +285,7 @@ State and sandbox tests. Each implementation updates `docs/models.md`,
    prove every variant remains reusable after the others run.
 4. Prove only model-affecting config, readiness, plugin provenance, catalog
    revisions, and `allow.models` change a context key.
-5. Validate all 7,250 cached query facts, Decimal preservation, duplicate
+5. Validate all 7,250 cached query facts, float preservation, duplicate
    rejection, corruption fallback, and absence of credentials/env values.
 6. Prove dynamic probes run each watcher cycle while static reads, factories,
    and query derivation retain their unchanged call counts.

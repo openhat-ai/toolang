@@ -1,7 +1,5 @@
 """Strict authored-run HTTP conversion."""
 
-from decimal import Decimal
-
 from fastapi import HTTPException
 import pytest
 from pydantic import ValidationError
@@ -18,9 +16,8 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.execution.schemas import (
@@ -44,7 +41,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             },
             "model": {
                 "ref": "openai/test",
-                "parameters": {"reasoning": {"effort": "high"}},
+                "reasoning": {"effort": "high"},
             },
             "policy": {
                 "allow": [
@@ -69,7 +66,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             "agic:chat",
             CallInput({"_": "hello", "tone": "brief", "audience": "maintainers"}),
         ),
-        model=ModelRequest("openai/test", ModelParameters(ReasoningParameters("high"))),
+        model=ModelRequest("openai/test", reasoning=Reasoning("high")),
         policy=RunPolicy(
             allow=(
                 AgentCeiling(models=("one", "two")),
@@ -81,7 +78,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
                     prompts=("summary",),
                 ),
             ),
-            limits=RunLimits(tokens=4000, cost=Decimal("2.50")),
+            limits=RunLimits(tokens=4000, cost=2.5),
         ),
     )
 
@@ -94,7 +91,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
             "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
             "model": {
                 "ref": "anthropic/claude",
-                "parameters": {"reasoning": {"budget_tokens": 4096}},
+                "reasoning": {"budget_tokens": 4096},
             },
             "policy": {},
         }
@@ -104,7 +101,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
 
     assert request.model == ModelRequest(
         "anthropic/claude",
-        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+        reasoning=Reasoning(budget_tokens=4096),
     )
 
 
@@ -117,9 +114,7 @@ def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "openai/gpt-5",
-                    "parameters": {
-                        "reasoning": {"effort": "high", "budget_tokens": 4096}
-                    },
+                    "reasoning": {"effort": "high", "budget_tokens": 4096},
                 },
                 "policy": {},
             }
@@ -135,7 +130,7 @@ def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "anthropic/claude",
-                    "parameters": {"reasoning": {"budget_tokens": "4096"}},
+                    "reasoning": {"budget_tokens": "4096"},
                 },
                 "policy": {},
             }
@@ -161,7 +156,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
 
     assert parse_authored_retry("run_source", retry_payload) == RetryRequest(
         source="run_source",
-        commands=(RunCommand("limit", "cost", Decimal("2.50")),),
+        commands=(RunCommand("limit", "cost", 2.5),),
         request_id="retry_request",
         anchor=StepRef.from_local("run_source", (1, 2)),
     )
@@ -191,7 +186,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         AuthoredRetryRequest.model_validate(
             {
                 "request_id": "retry_request",
-                "model": {"ref": "openai/test", "parameters": {}},
+                "model": {"ref": "openai/test"},
             }
         )
     with pytest.raises(HTTPException, match="cannot replace the persisted runnable"):
@@ -224,7 +219,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
                 "input": {"named": [{"name": "focus", "source": "legacy"}]},
             }
         },
-        {"model": {"ref": "openai/test", "parameters": {"temperature": 1}}},
+        {"model": {"ref": "openai/test", "temperature": 1}},
         {"policy": {"allow": [], "limits": {"tokens": -1}}},
         {"policy": {"allow": [], "limits": {"tokens": True}}},
         {"policy": {"allow": [], "limits": {"tokens": "10"}}},
@@ -245,3 +240,23 @@ def test_authored_run_schema_rejects_extra_or_lossy_values(
 
     with pytest.raises(ValidationError):
         AuthoredRunRequest.model_validate(source)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_partial_budget_payload_rejects_boolean_costs(value: bool) -> None:
+    from toolang.api.schemas import RunLimitsPayload
+
+    with pytest.raises(ValidationError):
+        RunLimitsPayload.model_validate({"cost": value})
+
+
+@pytest.mark.parametrize("value", [1, 1.23, "1.2300000000", None])
+def test_partial_budget_payload_keeps_numeric_and_legacy_costs(
+    value: object,
+) -> None:
+    from toolang.api.schemas import RunLimitsPayload
+
+    payload = RunLimitsPayload.model_validate({"cost": value})
+    assert payload.to_limits(RunLimits()).cost == (
+        None if value is None else float(str(value))
+    )

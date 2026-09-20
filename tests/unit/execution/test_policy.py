@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
@@ -41,7 +39,7 @@ def _setup() -> AgentSetup:
         tools=ToolCollection(),
         envs={},
         defaults=RunDefaults(model=ModelRequest("root/model"), runnable="agic:chat"),
-        limits=RunLimits(tokens=100, cost=Decimal("5"), time=60),
+        limits=RunLimits(tokens=100, cost=5.0, time=60),
     )
 
 
@@ -73,7 +71,7 @@ def _setup() -> AgentSetup:
             RunOverride(
                 limits=(
                     LimitOverride("tokens", 200),
-                    LimitOverride("cost", Decimal("1.25")),
+                    LimitOverride("cost", 1.25),
                     LimitOverride("time", None),
                 )
             ),
@@ -117,7 +115,6 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
         (":model openai/gpt-5 high", "first token"),
         (":model ref=openai/gpt-5", "unknown model parameter"),
         (":model reasoning=high", "unknown model parameter"),
-        (":model effort=01", "unknown reasoning effort"),
         (":model none", "was removed"),
         (":allow", "requires"),
         (":allow unknown=value", "unknown allow field"),
@@ -193,7 +190,7 @@ def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
     current = SessionSetting(
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="agic:chat",
         limits=RunLimits(),
@@ -212,7 +209,7 @@ def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
 
     assert effort_only.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
     assert identity_only.model == ModelRequest("anthropic/claude-sonnet-4.5")
 
@@ -252,7 +249,7 @@ def test_effort_budget_auto_default_and_unset_materialize_canonically() -> None:
 
     assert budget.model == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+        reasoning=Reasoning(budget_tokens=4096),
     )
     assert automatic.model == ModelRequest("openai/gpt-5")
     assert defaulted.model == surface.model
@@ -303,4 +300,4 @@ def test_retained_execution_commands_still_resolve_without_input_changes() -> No
 
     assert ceilings == (AgentCeiling(models=("session/*",)),)
     assert bindings == RunBindings(model="session/model", runnable="flow:surface")
-    assert limits == RunLimits(tokens=80, cost=Decimal("5"), time=None)
+    assert limits == RunLimits(tokens=80, cost=5.0, time=None)

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from collections.abc import Mapping
-from decimal import Decimal
 from typing import Literal, cast
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, ModelTarget
+from toolang.base.money import cost_from_rates, cost_text, normalize_cost, number_text
+from toolang.base.types.model import (
+    Model,
+    Reasoning,
+)
 from toolang.base.types.run import ModelUsage
 
 from .types import (
@@ -18,36 +22,26 @@ from .types import (
     ModelUsageMeter,
 )
 
-_PER_MILLION = Decimal(1_000_000)
-_LOCAL_API_TOKEN_RATE_NAMES = (
-    "input",
-    "output",
-    "cache_read",
-    "cache_write",
-    "reasoning",
-    "input_audio",
-    "output_audio",
-)
+_PER_MILLION = 1_000_000
 
 
 def build_model_accounting(
-    target: ModelTarget,
+    model: Model,
     usage: ModelUsage | None,
-    catalog: ModelCatalogSnapshot | None,
     *,
-    info: ModelInfo | None = None,
+    requested: Reasoning | None = None,
+    source: str = "unknown",
+    revision: str | None = None,
 ) -> ModelAccounting | None:
-    """Build one versioned accounting value from observed usage and catalog rates."""
+    """Build one versioned accounting value from observed usage and catalog rates.
+
+    `catalog` provenance (source and revision) is supplied by the cache/snapshot
+    layer. A local catalog declares zero rates on the model's `cost`.
+    """
 
     if usage is None:
         return None
-    model = catalog.find(target.provider, target.model) if catalog is not None else None
-    rates, plan, match = _selected_rates(
-        model,
-        info=info,
-        target=target,
-        usage=usage,
-    )
+    rates, plan, match = _selected_rates(model, usage=usage)
     estimate = (
         _estimate_cost(
             usage,
@@ -59,7 +53,7 @@ def build_model_accounting(
     )
     reported = (
         ModelCost(
-            amount=_decimal_text(usage.reported_cost),
+            amount=cost_text(usage.reported_cost),
             currency=usage.reported_currency or "USD",
             complete=True,
         )
@@ -72,16 +66,13 @@ def build_model_accounting(
         output_tokens=usage.output_tokens,
         meters=_usage_meters(usage),
         reasoning=ModelReasoningAccounting(
-            requested=dict(target.reasoning) or None,
+            requested=(requested.to_data() or None) if requested is not None else None,
             selected=None,
         ),
         pricing=(
             ModelPricing(
-                source=target.catalog
-                or (model.catalog if model is not None else None)
-                or "unknown",
-                revision=target.catalog_revision
-                or (catalog.revision if catalog is not None else None),
+                source=source,
+                revision=revision,
                 plan=plan,
                 match=match,
             )
@@ -94,7 +85,7 @@ def build_model_accounting(
     )
 
 
-def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
+def selected_usd_cost(accounting: ModelAccounting | None) -> float | None:
     """Return the selected USD amount for limits and summary projections."""
 
     if accounting is None:
@@ -108,7 +99,7 @@ def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
     )
     if selected is None or selected.currency.upper() != "USD":
         return None
-    return Decimal(selected.amount)
+    return normalize_cost(float(selected.amount))
 
 
 def _selected_cost_source(
@@ -138,20 +129,20 @@ def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
     exact_zero = (
         estimate.complete
         and bool(estimate.lines)
-        and all(Decimal(line.rate) == 0 for line in estimate.lines)
+        and all(float(line.rate) == 0 for line in estimate.lines)
     )
     return not exact_zero
 
 
-def cache_hit_ratio(accounting: ModelAccounting | None) -> Decimal | None:
-    """Return an exact cache-read ratio when both numerator and total are known."""
+def cache_hit_ratio(accounting: ModelAccounting | None) -> float | None:
+    """Return the cache-read ratio when both numerator and total are known."""
 
     if accounting is None or accounting.input_tokens <= 0:
         return None
     quantity = token_meter_quantity(accounting, "input.cache_read")
     if quantity is None:
         return None
-    return Decimal(quantity) / Decimal(accounting.input_tokens)
+    return float(quantity) / float(accounting.input_tokens)
 
 
 def token_meter_quantity(
@@ -166,32 +157,27 @@ def token_meter_quantity(
     if len(meters) != 1:
         return None
     meter = meters[0]
-    quantity = Decimal(meter.quantity)
-    if meter.unit != "token" or quantity != quantity.to_integral_value():
+    quantity = float(meter.quantity)
+    if meter.unit != "token" or not quantity.is_integer():
         return None
     return int(quantity)
 
 
 def _selected_rates(
-    model: Model | None,
+    model: Model,
     *,
-    info: ModelInfo | None,
-    target: ModelTarget,
     usage: ModelUsage,
 ) -> tuple[Mapping[str, object] | None, str, dict[str, object]]:
     match: dict[str, object] = {}
     if usage.billing:
         match["billing"] = dict(sorted(usage.billing.items()))
-    metadata = info.metadata if info is not None else {}
-    raw_cost = model.cost if model is not None else metadata.get("cost")
+    raw_cost = model.cost
     if not isinstance(raw_cost, Mapping):
         return None, "standard", match
-    rates = cast(Mapping[str, object], raw_cost)
+    rates = raw_cost
     plan = "standard"
-    requested_mode = target.mode
-    experimental = (
-        model.experimental if model is not None else metadata.get("experimental")
-    )
+    requested_mode = _model_mode(model)
+    experimental = model.experimental
     if isinstance(requested_mode, str) and isinstance(experimental, Mapping):
         modes = experimental.get("modes")
         mode = (
@@ -229,13 +215,14 @@ def _selected_rates(
         rates = {**rates, **selected_tier}
         rates = {key: value for key, value in rates.items() if key != "tier"}
         match["tier"] = dict(cast(Mapping[str, object], selected_tier["tier"]))
-    local = model.local if model is not None else metadata.get("local") is True
-    if local:
-        rates = {
-            **{name: 0 for name in _LOCAL_API_TOKEN_RATE_NAMES},
-            **rates,
-        }
     return rates, plan, match
+
+
+def _model_mode(model: Model) -> str | None:
+    """Return the catalog mode declared on one model's provider block."""
+
+    value = model.provider.mode if model.provider is not None else None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _estimate_cost(
@@ -332,9 +319,11 @@ def _estimate_cost(
         complete = False
     if not lines:
         return None
-    amount = sum((Decimal(line.amount) for line in lines), Decimal(0))
+    amount = cost_from_rates(
+        ((int(line.quantity), float(line.rate)) for line in lines), per=_PER_MILLION
+    )
     return ModelCost(
-        amount=_decimal_text(amount),
+        amount=cost_text(amount),
         currency="USD",
         complete=complete,
         lines=tuple(lines),
@@ -367,7 +356,7 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
     meters.extend(
         ModelUsageMeter(
             name=meter.name,
-            quantity=_decimal_text(meter.quantity),
+            quantity=number_text(meter.quantity),
             unit=meter.unit,
         )
         for meter in usage.meters
@@ -375,33 +364,29 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
     return tuple(meters)
 
 
-def _rate(rates: Mapping[str, object], name: str) -> Decimal | None:
+def _rate(rates: Mapping[str, object], name: str) -> float | None:
     value = rates.get(name)
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return Decimal(str(value))
+    return float(value)
 
 
 def _append_line(
     lines: list[ModelCostLine],
     meter: str,
     quantity: int,
-    rate: Decimal | None,
+    rate: float | None,
 ) -> None:
     if rate is None:
         return
-    amount = Decimal(quantity) * rate / _PER_MILLION
+    amount = float(quantity * Fraction(str(rate)) / _PER_MILLION)
     lines.append(
         ModelCostLine(
             meter=meter,
             quantity=str(quantity),
             unit="token",
-            rate=_decimal_text(rate),
+            rate=number_text(rate),
             per=str(_PER_MILLION),
-            amount=_decimal_text(amount),
+            amount=number_text(amount),
         )
     )
-
-
-def _decimal_text(value: Decimal) -> str:
-    return format(value, "f")

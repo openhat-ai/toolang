@@ -5,7 +5,6 @@ import threading
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -42,9 +41,8 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall, ToolCall
@@ -749,7 +747,7 @@ def test_progress_cost_uses_adaptive_precision(
     expected: str,
 ) -> None:
     metrics = Metrics(
-        cost=Decimal(amount),
+        cost=float(amount),
         cost_known=True,
         cost_approximate=approximate,
     )
@@ -798,7 +796,7 @@ def test_progress_groups_tokens_and_cost_in_one_fact(include_cost: bool) -> None
         cache_read_tokens=11248,
         reasoning_tokens=25,
         reasoning_known_calls=2,
-        cost=Decimal("0.0003"),
+        cost=0.0003,
         cost_known=True,
         cost_approximate=True,
     )
@@ -3067,7 +3065,7 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
             SessionSetting(
                 model=ModelRequest(
                     "openai/gpt-5",
-                    ModelParameters(ReasoningParameters(effort="high")),
+                    reasoning=Reasoning(effort="high"),
                 ),
                 runnable="agic:chat",
             ),
@@ -3086,16 +3084,16 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
 @pytest.mark.parametrize(
     ("reasoning", "expected"),
     [
-        (ReasoningParameters(effort="none"), "openai/gpt-5 · none"),
-        (ReasoningParameters(budget_tokens=4096), "openai/gpt-5 · 4096"),
+        (Reasoning(effort="none"), "openai/gpt-5 · none"),
+        (Reasoning(budget_tokens=4096), "openai/gpt-5 · 4096"),
     ],
 )
 def test_chat_model_label_preserves_explicit_reasoning_values(
-    reasoning: ReasoningParameters,
+    reasoning: Reasoning,
     expected: str,
 ) -> None:
     setting = SessionSetting(
-        model=ModelRequest("openai/gpt-5", ModelParameters(reasoning)),
+        model=ModelRequest("openai/gpt-5", reasoning=reasoning),
         runnable="agic:chat",
     )
 
@@ -3951,10 +3949,9 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
 
     assert [item.source for item in app.queue] == ["first call", "second call"]
     assert [
-        item.request.model.parameters.reasoning.effort
+        item.request.model.reasoning.effort
         for item in app.queue
-        if item.request.model is not None
-        and item.request.model.parameters.reasoning is not None
+        if item.request.model is not None and item.request.model.reasoning is not None
     ] == ["low", "high"]
     assert app.queue_panel.rows() == 5
     assert isinstance(app.app.layout.current_control, BufferControl)
@@ -4913,7 +4910,7 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
                 runnable=RunnableRequest("agic:chat", input),
                 model=ModelRequest(
                     "openai/gpt-5",
-                    ModelParameters(ReasoningParameters(effort="medium")),
+                    reasoning=Reasoning(effort="medium"),
                 ),
                 policy=RunPolicy(),
             )
@@ -5890,14 +5887,14 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
         (
             ModelRequest(
                 "openai/gpt-5",
-                ModelParameters(reasoning=ReasoningParameters(effort="high")),
+                reasoning=Reasoning(effort="high"),
             ),
             "openai/gpt-5 · high",
         ),
         (
             ModelRequest(
                 "test/model",
-                ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+                reasoning=Reasoning(budget_tokens=4096),
             ),
             "test/model · 4096",
         ),
@@ -5947,7 +5944,7 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         ),
         model=ModelRequest(
             "provider/a-very-long-model",
-            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         policy=RunPolicy(),
     )
@@ -6082,11 +6079,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
                 runnable=RunnableRequest(f"agic:{name}", CallInput({"_": "hello"})),
                 model=ModelRequest(
                     "openai/gpt-5",
-                    ModelParameters(
-                        reasoning=ReasoningParameters(effort=effort)
-                        if effort != "auto"
-                        else None
-                    ),
+                    reasoning=Reasoning(effort=effort) if effort != "auto" else None,
                 ),
                 policy=RunPolicy(),
             ),

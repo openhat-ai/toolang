@@ -30,7 +30,7 @@ from ..common.output import echo_error
 from ..common.routing import (
     LocalRuntimeAgentCommand,
     OptionalPrefixAgentListCommand,
-    OptionalPrefixAgentModelsCommand,
+    OptionalPrefixAgentCatalogCommand,
     RequiredPrefixAgentCommand,
     RunAgentCommand,
     RuntimeAgentCommand,
@@ -472,13 +472,14 @@ _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
-    cls=OptionalPrefixAgentModelsCommand,
+    cls=OptionalPrefixAgentCatalogCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
-    help="List model providers",
+    help="List available model providers",
+    cls=OptionalPrefixAgentCatalogCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(

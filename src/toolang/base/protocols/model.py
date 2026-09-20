@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..types.model import ModelCatalogSnapshot, ModelTarget
+from collections.abc import Mapping
+
+from ..types.model import Model, ModelCatalogSnapshot
 from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
@@ -28,16 +30,19 @@ class ModelAdapter(Protocol):
 
     async def invoke(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
+        *,
+        environ: Mapping[str, str],
     ) -> ModelCallResult:
         """Execute one non-streaming model turn."""
 
     async def stream(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
         *,
+        environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming model turn."""

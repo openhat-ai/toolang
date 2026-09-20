@@ -6,14 +6,13 @@ import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 import threading
 from typing import Any, cast
 from uuid import uuid4
 
 from toolang.base.types.message import Message
-from toolang.base.types.model import ModelOverride, ModelRequest
+from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -27,10 +26,7 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
     resolve_public_runnable_query,
 )
-from toolang.execution.executor.resources import (
-    snapshot_model_selection,
-    validate_agent_ceiling,
-)
+from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
@@ -84,7 +80,7 @@ class LocalChatSession:
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
-        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout
@@ -150,7 +146,6 @@ class LocalChatSession:
         if queries is not None and not queries:
             return {"default": None, "items": []}
         models = setup.models.match(queries)
-        selection = snapshot_model_selection(setup)
         preferred = (
             setup.defaults.model.ref if setup.defaults.model is not None else None
         )
@@ -158,24 +153,23 @@ class LocalChatSession:
             "default": models.effective_default(preferred),
             "items": [
                 {
-                    "ref": ref,
-                    "name": target.name,
-                    "provider": target.provider,
+                    "ref": model.ref,
+                    "name": model.name,
+                    "provider": model._toolang.provider,
                     "parameters": {
                         "reasoning": {
-                            "effort": list(model_reasoning_efforts(selection, target)),
-                            "applicable": model_reasoning_effort_applicable(
-                                selection, target
-                            ),
+                            "effort": list(model_reasoning_efforts(model)),
+                            "applicable": model_reasoning_effort_applicable(model),
                         }
                     },
                     "price": {
-                        "input": _price_per_million(entry.info.input_price),
-                        "output": _price_per_million(entry.info.output_price),
+                        "input": _price_per_million(_model_token_price(model, "input")),
+                        "output": _price_per_million(
+                            _model_token_price(model, "output")
+                        ),
                     },
                 }
-                for entry in models.entries
-                for ref, target in ((entry.ref, entry.target),)
+                for model in models.entries
             ],
         }
 
@@ -592,8 +586,16 @@ def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.close()
 
 
-def _price_per_million(value: float | None) -> Decimal | None:
-    return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
+def _price_per_million(value: float | None) -> float | None:
+    return None if value is None else value * 1_000_000
+
+
+def _model_token_price(model: Model, name: str) -> float | None:
+    cost = model.cost
+    value = cost.get(name) if isinstance(cost, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) / 1_000_000
 
 
 def _local_cap_item(cap: StateCap, *, agent_name: str) -> dict[str, object]:

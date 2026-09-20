@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
 
+from toolang.base.money import cost_units
 from ..output import parse_utc_timestamp
 from .formatting import count
 
@@ -81,7 +81,7 @@ def token_fact(
     )
 
 
-def cost_fact(amount: Decimal, *, approximate: bool) -> str:
+def cost_fact(amount: float, *, approximate: bool) -> str:
     """Return one compact USD cost with adaptive nonzero precision."""
 
     if amount == 0:
@@ -90,9 +90,10 @@ def cost_fact(amount: Decimal, *, approximate: bool) -> str:
         raise ValueError("model cost must be non-negative")
     prefix = "≈$" if approximate else "$"
     for places in (2, 4):
-        quantum = Decimal(1).scaleb(-places)
-        rounded = amount.quantize(quantum, rounding=ROUND_HALF_UP)
+        divisor = 10 ** (6 - places)
+        units = (2 * cost_units(amount) + divisor) // (2 * divisor)
+        rounded = units / 10**places
         if rounded:
-            rendered = f"{rounded:f}".rstrip("0").rstrip(".")
+            rendered = f"{rounded:.{places}f}".rstrip("0").rstrip(".")
             return f"{prefix}{rendered}"
     return "≲$0.0001" if approximate else "<$0.0001"

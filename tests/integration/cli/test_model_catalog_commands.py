@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import cast
@@ -13,12 +12,18 @@ from rich.text import Text
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import (
+    Model,
+    ModelCatalogSnapshot,
+    ModelToolang,
+    Provider,
+)
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
-from toolang.plugin.models.catalog import parse_model_catalog_data
-from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
-
+from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
+from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
+from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 
 runner = CliRunner()
 
@@ -83,6 +88,8 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "--query-schema" not in models_help
     assert "too query" in models_help
     assert "models'" in models_help
+    assert "--all" in models_help
+    assert "--all" in strip_ansi(providers_result.stdout)
     assert "--json" in models_help
     assert "Write filtered models as JSON" in models_help
     assert "--output" not in models_help
@@ -109,6 +116,7 @@ def test_models_query_exports_a_valid_complete_catalog(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -119,10 +127,12 @@ def test_models_query_exports_a_valid_complete_catalog(
     )
 
     assert result.exit_code == 0, result.stderr
-    data = json.loads(result.stdout, parse_float=Decimal)
-    providers = parse_model_catalog_data(data)
+    data = json.loads(result.stdout, parse_float=float)
+    providers, models = parse_model_catalog_data(data)
     assert tuple(providers) == ("test",)
-    assert tuple(providers["test"].models) == ("two",)
+    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
+        "two",
+    )
 
 
 def test_models_query_accepts_combined_models_dev_catalog(
@@ -152,6 +162,7 @@ def test_models_query_accepts_combined_models_dev_catalog(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -162,9 +173,13 @@ def test_models_query_accepts_combined_models_dev_catalog(
     )
 
     assert result.exit_code == 0, result.stderr
-    providers = parse_model_catalog_data(json.loads(result.stdout, parse_float=Decimal))
+    providers, models = parse_model_catalog_data(
+        json.loads(result.stdout, parse_float=float)
+    )
     assert tuple(providers) == ("test",)
-    assert tuple(providers["test"].models) == ("one",)
+    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
+        "one",
+    )
 
 
 def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
@@ -253,6 +268,7 @@ def test_models_accepts_month_precision_catalog_dates(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -280,6 +296,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -325,7 +342,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         ) + len(row_value)
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
-    assert "1 model from 1 catalog: models.dev 1" in stdout
+    assert "1 model" in stdout
 
 
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
@@ -369,7 +386,7 @@ def test_models_ignores_implicit_models_file(
     assert "test" not in json.loads(result.stdout)
 
 
-def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
+def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -378,12 +395,11 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     async def ollama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
-            provider_id="ollama",
             id="local",
             name="local",
+            _toolang=ModelToolang(provider="ollama", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
-            cost={"input": 0, "output": 0},
-            local=True,
+            cost=dict(LOCAL_ZERO_COST),
         )
         provider = Provider(
             id="ollama",
@@ -391,24 +407,21 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://ollama.test/v1",
-            models={model.id: model},
-            extra={"runtime": {"status": "ready"}},
-            local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
             models=(model,),
             revision="runtime:ollama",
+            local=True,
         )
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
-            provider_id="llama_cpp",
-            id="offline",
-            name="offline",
+            id="second",
+            name="second",
+            _toolang=ModelToolang(provider="llama_cpp", ready=True),
             modalities={"input": ("text",), "output": ("text",)},
-            cost={"input": 0, "output": 0},
-            local=True,
+            cost=dict(LOCAL_ZERO_COST),
         )
         provider = Provider(
             id="llama_cpp",
@@ -416,14 +429,12 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://llama.test/v1",
-            models={model.id: model},
-            extra={"runtime": {"status": "offline"}},
-            local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
             models=(model,),
             revision="runtime:llama_cpp",
+            local=True,
         )
 
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", ollama_snapshot)
@@ -443,8 +454,23 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
-    assert "llama_cpp/offline" in stdout
-    assert "4 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 1" in stdout
+    assert "llama_cpp/second" in stdout
+    assert "2 models" in stdout
+
+    exported = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--catalog",
+            str(catalog),
+            "--json",
+        ],
+    )
+    assert exported.exit_code == 0, exported.stderr
+    assert set(json.loads(exported.stdout)) == {"ollama", "llama_cpp"}
+    assert "_toolang" not in exported.stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -474,26 +500,24 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
 
     assert providers_result.exit_code == 0, providers_result.stderr
-    assert (
-        "3 providers from 3 catalogs: models.dev 1, ollama 1, llama_cpp 1"
-        in providers_result.stdout
-    )
+    assert "2 providers" in providers_result.stdout
     assert captured_headers == (
         "PROVIDER",
         "AVAILABLE MODELS",
         "ADAPTERS",
-        "API",
+        "DEFAULT API",
         "ENV",
+        "REASON",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
-    available = by_provider["ollama"][1]
-    unavailable = by_provider["llama_cpp"][1]
-    assert isinstance(available, Text)
-    assert available.plain == "1/1"
-    assert not _is_red(available, 0)
-    assert isinstance(unavailable, Text)
-    assert unavailable.plain == "0/1"
-    assert _is_red(unavailable, 0)
+    ollama_available = by_provider["ollama"][1]
+    llama_available = by_provider["llama_cpp"][1]
+    assert isinstance(ollama_available, Text)
+    assert ollama_available.plain == "1/1"
+    assert not _is_red(ollama_available, 0)
+    assert isinstance(llama_available, Text)
+    assert llama_available.plain == "1/1"
+    assert not _is_red(llama_available, 0)
     llama_adapters = by_provider["llama_cpp"][2]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
@@ -501,7 +525,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     llama_api = by_provider["llama_cpp"][3]
     assert isinstance(llama_api, Text)
     assert llama_api.plain == "http://llama.test/v1"
-    assert _is_red(llama_api, 0)
+    assert not _is_red(llama_api, 0)
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -531,6 +555,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
         ],
@@ -547,7 +572,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert "https://api.test/v1" in row
     assert "messages" in row
     assert "TEST_API_KEY, TEST_ALT_API_KEY" in row
-    assert "1 provider from 1 catalog: models.dev 1" in stdout
+    assert "1 provider" in stdout
 
     filtered = runner.invoke(
         cli.app,
@@ -555,6 +580,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "models",
+            "--all",
             "--catalog",
             str(catalog),
             "--query",
@@ -585,6 +611,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
         ],
@@ -609,7 +636,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert env.plain == "TEST_API_KEY, TEST_ALT_API_KEY"
     assert _is_red(env, 0) is not configured
     assert not _is_red(env, env.plain.index(","))
-    assert _is_red(env, env.plain.index("TEST_ALT_API_KEY"))
+    assert _is_red(env, env.plain.index("TEST_ALT_API_KEY")) is not configured
 
     json_result = runner.invoke(
         cli.app,
@@ -617,6 +644,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
+            "--all",
             "--catalog",
             str(catalog),
             "--json",
@@ -655,7 +683,14 @@ def test_provider_api_and_counts_use_independent_availability(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(tmp_path / "root"), "providers", "--catalog", str(catalog)],
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--all",
+            "--catalog",
+            str(catalog),
+        ],
     )
 
     assert result.exit_code == 0, result.stderr
@@ -664,7 +699,7 @@ def test_provider_api_and_counts_use_independent_availability(
     assert available.plain == f"{available_models}/2"
     assert _is_red(available, 0) is (available_models == 0)
     assert isinstance(api, Text)
-    assert api.plain == "-"
+    assert api.plain == ("- (model overrides)" if available_models else "-")
     assert _is_red(api, 0)
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY"
@@ -673,18 +708,14 @@ def test_provider_api_and_counts_use_independent_availability(
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
 @pytest.mark.parametrize("colored", [False, True])
-def test_models_help_describes_optional_agent_without_loading(
-    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_help_describes_optional_agent_without_loading(
+    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool, command: str
 ) -> None:
     def unexpected_load(*args, **kwargs):
         pytest.fail("help must not load model catalogs")
 
-    monkeypatch.setattr(
-        model_catalog_commands, "load_catalog_inspection", unexpected_load
-    )
-    monkeypatch.setattr(
-        model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
-    )
+    monkeypatch.setattr(model_catalog_commands, "load_setup", unexpected_load)
     monkeypatch.setenv("TERM", "xterm-256color")
     if colored:
         monkeypatch.setenv("FORCE_COLOR", "1")
@@ -692,16 +723,17 @@ def test_models_help_describes_optional_agent_without_loading(
         monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
 
-    result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])
+    result = cli.main(["--root", str(tmp_path), *target, command, "--help"])
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
     assert result == 0
     assert ("\x1b[" in output.out) is colored
-    assert "[AGENT] models [OPTIONS]" in stdout
+    assert f"[AGENT] {command} [OPTIONS]" in stdout
     assert "Local agent name; omit for root configuration" in stdout
     assert "--catalog" in stdout
-    assert "--query" in stdout
+    assert ("--query" in stdout) is (command == "models")
+    assert "--all" in stdout
     assert "--json" in stdout
     assert not output.err
     assert not tuple(tmp_path.iterdir())
@@ -733,6 +765,7 @@ def test_models_uses_isolated_resident_catalogs(
                     str(tmp_path),
                     *target,
                     "models",
+                    "--all",
                     "-q",
                     f"test/{model}",
                     *(["--json"] if json_output else []),
@@ -742,10 +775,18 @@ def test_models_uses_isolated_resident_catalogs(
             assert result == 0, output.err
             assert not output.err
             if json_output:
-                providers = parse_model_catalog_data(
-                    json.loads(output.out, parse_float=Decimal)
+                providers, models = parse_model_catalog_data(
+                    json.loads(output.out, parse_float=float)
                 )
-                actual = tuple(providers["test"].models) if providers else ()
+                actual = (
+                    tuple(
+                        model.id
+                        for model in models
+                        if model._toolang.provider == "test"
+                    )
+                    if providers
+                    else ()
+                )
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
@@ -762,11 +803,10 @@ def test_models_uses_agent_provider_config_and_environment(
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
     monkeypatch.delenv("TEST_AGENT_MODEL_KEY", raising=False)
     (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    data = _catalog_data()
+    cast(dict[str, object], data["test"])["env"] = ["TEST_AGENT_MODEL_KEY"]
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
     home = _resident_home(tmp_path, "alice")
-    (home / "config.toml").write_text(
-        '[models.providers.test]\nadapter = "messages"\n'
-        'key_env = "TEST_AGENT_MODEL_KEY"\n'
-    )
     (home / ".env").write_text("TEST_AGENT_MODEL_KEY=synthetic-agent-key\n")
     _resident_home(tmp_path, "bob")
 
@@ -788,9 +828,9 @@ def test_models_uses_agent_provider_config_and_environment(
                 *target,
                 "models",
                 "-q",
-                "test/one[adapter=messages;available=true]",
+                "test/one[adapter=chat_completions;available=true]",
                 "-q",
-                "test/two[adapter=messages;available=true]",
+                "test/two[adapter=chat_completions;available=true]",
                 *(["--json"] if json_output else []),
             ]
         )
@@ -799,12 +839,14 @@ def test_models_uses_agent_provider_config_and_environment(
         assert not output.err
         assert "synthetic-agent-key" not in output.out
         if json_output:
-            providers = parse_model_catalog_data(
-                json.loads(output.out, parse_float=Decimal)
+            providers, models = parse_model_catalog_data(
+                json.loads(output.out, parse_float=float)
             )
             assert tuple(providers) == (("test",) if available else ())
             if available:
-                assert tuple(providers["test"].models) == ("one", "two")
+                assert tuple(
+                    model.id for model in models if model._toolang.provider == "test"
+                ) == ("one", "two")
                 assert providers["test"].npm == "@ai-sdk/openai-compatible"
                 assert "resolved" not in output.out
         else:
@@ -833,7 +875,9 @@ def test_models_agent_catalog_override_precedence(
         (home / ".env").write_text(f"TOOLANG_MODEL_CATALOG={paths['environment']}\n")
     options = ["--catalog", str(paths["explicit"])] if source == "explicit" else []
 
-    result = cli.main(["--root", str(tmp_path), "alice", "models", *options, "--json"])
+    result = cli.main(
+        ["--root", str(tmp_path), "alice", "models", "--all", *options, "--json"]
+    )
     output = capsys.readouterr()
 
     assert result == 0, output.err
@@ -866,7 +910,7 @@ def test_models_reports_agent_input_type_errors_without_a_traceback(
     home = _resident_home(tmp_path, "alice")
     if invalid_input == "config":
         (home / "config.toml").write_text("[models]\nproviders = []\n")
-        message = "models providers config must be a table"
+        message = "[models.providers.*] is not supported"
     else:
         (home / "catalog.json").write_text('{"test": 42}')
         message = "provider 'test' must be an object"
@@ -938,3 +982,190 @@ def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object
             },
         }
     }
+
+
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_commands_share_default_and_complete_views(
+    tmp_path: Path, monkeypatch, capsys, agent: bool, command: str
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    monkeypatch.delenv("MISSING_KEY", raising=False)
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    data["offline"] = {**provider, "id": "offline", "env": ["MISSING_KEY"]}
+    data["empty"] = {**provider, "id": "empty", "models": {}}
+    data["excluded"] = {**provider, "id": "excluded"}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    config_home = _resident_home(tmp_path, "alice") if agent else tmp_path
+    (config_home / "config.toml").write_text(
+        '[allow]\nmodels = ["test/one", "offline/*"]\n'
+    )
+    args = ["--root", str(tmp_path), *(["alice"] if agent else []), command]
+
+    def invoke(options: list[str]) -> str:
+        result = cli.main([*args, *options])
+        output = capsys.readouterr()
+        assert result == 0, output.err
+        return output.out
+
+    for all_ in (False, True):
+        options = ["--all"] if all_ else []
+        output = invoke([*options, "--json"])
+        exported = json.loads(output)
+        expected = {"test", "offline", "excluded"} if all_ else {"test"}
+        if command == "providers" and all_:
+            expected.add("empty")
+        assert set(exported) == expected
+        assert set(exported["test"]["models"]) == ({"one", "two"} if all_ else {"one"})
+        assert "_toolang" not in output
+        assert "synthetic-key" not in output
+        table = invoke(options)
+        assert ("offline" in table) is all_
+        assert ("excluded" in table) is all_
+        assert ("empty" in table) is (all_ and command == "providers")
+        if command == "models":
+            for query, expected_providers in (
+                ("*[available=false]", {"offline"} if all_ else set()),
+                ("test/two[available]", {"test"} if all_ else set()),
+            ):
+                queried = invoke([*options, "--query", query, "--json"])
+                assert set(json.loads(queried)) == expected_providers
+
+
+@pytest.mark.parametrize("all_", [False, True])
+def test_models_json_uses_the_published_version_without_rereading_source(
+    tmp_path: Path, monkeypatch, all_: bool
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_catalog_data()))
+    original_setup = model_catalog_commands._setup
+
+    def setup_then_remove_source(*args, **kwargs):
+        setup = original_setup(*args, **kwargs)
+        path.unlink()
+        return setup
+
+    monkeypatch.setattr(model_catalog_commands, "_setup", setup_then_remove_source)
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path), "models", *(["--all"] if all_ else []), "--json"],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+@pytest.mark.parametrize("setting", ["default", "compact"])
+def test_full_catalog_can_inspect_unready_configured_models(
+    tmp_path, monkeypatch, command, setting
+):
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    (tmp_path / "config.toml").write_text(f'[{setting}]\nmodel = "test/one"\n')
+    result = runner.invoke(
+        cli.app, ["--root", str(tmp_path), command, "--all", "--json"]
+    )
+    assert result.exit_code == 0, result.exception
+    assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_catalog_cli_reports_published_route_failures_without_resolving_again(
+    tmp_path,
+    monkeypatch,
+    command,
+):
+    import asyncio
+
+    from toolang.common.layout import AgentLayout
+    from toolang.setup import routes
+    from toolang.setup.watcher import load_setup
+
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    source = tmp_path / "catalog.json"
+    source.write_text(json.dumps(_catalog_data()))
+    setup = asyncio.run(
+        load_setup(
+            AgentLayout.resident(tmp_path, "default"),
+            agent_context=False,
+            validate_defaults=False,
+        )
+    )
+    monkeypatch.setattr(model_catalog_commands, "_setup", lambda *args, **kwargs: setup)
+    monkeypatch.setenv("TEST_API_KEY", "added-after-publication")
+    source.unlink()
+
+    def unexpected_resolution(*args, **kwargs):
+        raise AssertionError("CLI must consume published routes")
+
+    monkeypatch.setattr(routes, "resolve_provider", unexpected_resolution)
+    rows = []
+    monkeypatch.setattr(
+        model_catalog_commands,
+        "echo_table",
+        lambda headers, values, **kwargs: rows.extend(values),
+    )
+    result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
+    assert result.exit_code == 0, result.exception
+    assert rows
+    assert all("Environment requirements unmet" in str(row[-1]) for row in rows)
+    assert all("Adapter unresolved" not in str(row[-1]) for row in rows)
+    assert all("added-after-publication" not in str(row) for row in rows)
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, command):
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+    data = json.loads(json.dumps(_catalog_data()))
+    data["test"]["models"]["two"]["provider"] = {"mode": "missing"}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+
+    for all_ in (False, True):
+        result = runner.invoke(
+            cli.app,
+            ["--root", str(tmp_path), command, *(["--all"] if all_ else []), "--json"],
+        )
+        assert result.exit_code == 0, result.exception
+        models = json.loads(result.stdout)["test"]["models"]
+        assert set(models) == ({"one", "two"} if all_ else {"one"})
+        if all_:
+            assert models["two"]["provider"] == {"mode": "missing"}
+
+
+@pytest.mark.parametrize("json_output", [True, False])
+def test_adapters_uses_published_setup_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from toolang.plugin import loading
+
+    setup = SimpleNamespace(
+        adapters={"snapshot_adapter": object()},
+        adapter_sources={"snapshot_adapter": "external"},
+    )
+    monkeypatch.setattr(model_catalog_commands, "_setup", lambda _ctx: setup)
+
+    def unexpected_discovery(*args: object, **kwargs: object) -> None:
+        raise AssertionError("CLI must consume published adapter sources")
+
+    monkeypatch.setattr(loading, "entry_points", unexpected_discovery)
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path), "adapters", *(["--json"] if json_output else [])],
+    )
+    assert result.exit_code == 0, result.exception
+    if json_output:
+        assert json.loads(result.stdout) == [
+            {"id": "snapshot_adapter", "source": "external"}
+        ]
+    else:
+        assert "snapshot_adapter" in result.stdout
+        assert "external" in result.stdout

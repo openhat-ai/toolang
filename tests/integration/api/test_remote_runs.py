@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
@@ -77,7 +76,9 @@ def _authored_request(
                 **(arguments or {}),
             },
         },
-        "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+        "model": {
+            "ref": TEST_MODEL_REF,
+        },
         "policy": {"allow": allow or [], "limits": limits or {}},
     }
 
@@ -129,7 +130,9 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
             ]["id"]
             envelope = {
                 "thread_id": thread,
-                "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                "model": {
+                    "ref": TEST_MODEL_REF,
+                },
                 "policy": {"allow": [], "limits": {}},
             }
             for index, (endpoint, values) in enumerate(
@@ -246,7 +249,9 @@ agic chat(_: Part[]) -> Part[]:
                     "thread_id": thread,
                     "request_id": "invalid_part",
                     "runnable": {"ref": "agic:chat", "input": {"_": [part]}},
-                    "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                    "model": {
+                        "ref": TEST_MODEL_REF,
+                    },
                     "policy": {"allow": [], "limits": {}},
                 },
             )
@@ -297,7 +302,9 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
             envelope = {
                 "thread_id": thread,
                 "request_id": "nested_parts",
-                "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                "model": {
+                    "ref": TEST_MODEL_REF,
+                },
                 "policy": {"allow": [], "limits": {}},
             }
             for change in (
@@ -507,7 +514,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         )
         assert fallback_control is not None
         assert isinstance(fallback_control.payload, RunControlPayload)
-        assert fallback_control.payload.limits.cost == Decimal("2.50")
+        assert fallback_control.payload.limits.cost == 2.5
         assert fallback_control.payload.sandbox == "host"
         assert fallback_control.payload.authored_input == CallInput(
             {"_": "$review focus=security -\n@note.txt", "tone": "brief"}

@@ -7,14 +7,13 @@ from typing import Any, cast
 import pytest
 
 import toolang.setup as setup_package
-from toolang.base.types.model import ModelInfo, ModelTarget, Provider
+from toolang.base.types.model import Model, ModelToolang, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.setup import (
     AgentEnvironment,
     AgentSetup,
     ModelCollection,
-    ModelEntry,
     ToolCollection,
 )
 
@@ -24,7 +23,6 @@ def test_setup_facade_exposes_snapshots_without_cache_details() -> None:
         "AgentEnvironment",
         "AgentSetup",
         "ModelCollection",
-        "ModelEntry",
         "RunDefaults",
         "SetupWatcher",
         "ToolCollection",
@@ -42,10 +40,14 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
         "models",
         "tools",
         "envs",
+        "revision",
         "environment",
         "defaults",
         "limits",
         "compact_model",
+        "catalog_sources",
+        "adapter_sources",
+        "_catalog_loader",
     )
 
 
@@ -61,11 +63,11 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
             name="OpenAI",
             env=(),
             npm="@ai-sdk/openai",
-            models={},
         )
     }
     adapters = {"responses": cast(Any, object())}
     environ = {"OPENAI_API_KEY": "secret"}
+    adapter_sources = {"responses": "built-in"}
 
     setup = AgentSetup(
         layout=AgentLayout.resident(Path("/toolang"), "alice"),
@@ -74,15 +76,20 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
         models=ModelCollection(),
         tools=ToolCollection(),
         envs=environ,
+        adapter_sources=adapter_sources,
     )
     providers.clear()
     adapters.clear()
     environ.clear()
+    adapter_sources.clear()
 
     assert tuple(setup.tools) == ()
     assert tuple(setup.providers) == ("openai",)
     assert tuple(setup.adapters) == ("responses",)
     assert setup.envs == {"OPENAI_API_KEY": "secret"}
+    assert setup.adapter_sources == {"responses": "built-in"}
+    with pytest.raises(TypeError):
+        cast(dict[str, str], setup.adapter_sources)["responses"] = "external"
     assert setup.defaults == RunDefaults()
     assert setup.limits == RunLimits()
     with pytest.raises(TypeError):
@@ -108,33 +115,17 @@ def test_agent_environment_captures_safe_sandbox_context(
 
 
 def test_agent_setup_rejects_models_without_installed_provider() -> None:
-    info = ModelInfo(
-        ref="missing/one",
-        provider="missing",
+    model = Model(
+        id="one",
         name="one",
-        model="one",
+        _toolang=ModelToolang(provider="missing", ready=True),
     )
     with pytest.raises(ValueError, match="unknown providers: missing"):
         AgentSetup(
             layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={},
             adapters={},
-            models=ModelCollection(
-                (
-                    ModelEntry(
-                        key=info.ref,
-                        ref=info.ref,
-                        target=ModelTarget(
-                            ref=info.ref,
-                            provider=info.provider,
-                            name=info.name,
-                            model=info.model,
-                            adapter="test",
-                        ),
-                        info=info,
-                    ),
-                )
-            ),
+            models=ModelCollection((model,)),
             tools=ToolCollection(),
             envs={},
         )
@@ -153,7 +144,6 @@ def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
                     name="Actual",
                     env=(),
                     npm="@ai-sdk/openai-compatible",
-                    models={},
                 ),
             },
             adapters={},
@@ -164,25 +154,11 @@ def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
 
 
 def test_model_collection_rejects_duplicate_public_ref() -> None:
-    model = ModelInfo(
-        ref="openai/gpt",
-        provider="openai",
+    model = Model(
+        id="gpt",
         name="gpt",
-        model="gpt",
+        _toolang=ModelToolang(provider="openai", ready=True),
     )
 
-    entry = ModelEntry(
-        key=model.ref,
-        ref=model.ref,
-        target=ModelTarget(
-            ref=model.ref,
-            provider=model.provider,
-            name=model.name,
-            model=model.model,
-            adapter="test",
-        ),
-        info=model,
-    )
-
-    with pytest.raises(ValueError, match="duplicate entry keys"):
-        ModelCollection((entry, entry))
+    with pytest.raises(ValueError, match="duplicate public refs"):
+        ModelCollection((model, model))

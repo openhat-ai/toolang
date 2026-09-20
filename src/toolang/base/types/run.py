@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any, TypeAlias
 
 from .message import Delta, Message, Part, PartType
+from .model import Reasoning
 from .tool import ToolDefinition
 
 ModelContinuation: TypeAlias = dict[str, Any]
@@ -40,13 +41,18 @@ class ModelUsageMeter:
     """One provider-neutral or namespaced usage meter."""
 
     name: str
-    quantity: Decimal
+    quantity: float
     unit: str
 
     def __post_init__(self) -> None:
         if not self.name or not self.unit:
             raise ValueError("model usage meter name and unit are required")
-        if not self.quantity.is_finite() or self.quantity < 0:
+        if (
+            isinstance(self.quantity, bool)
+            or not isinstance(self.quantity, int | float)
+            or not math.isfinite(self.quantity)
+            or self.quantity < 0
+        ):
             raise ValueError("model usage meter quantity must be non-negative")
 
 
@@ -64,7 +70,7 @@ class ModelUsage:
     output_reasoning_tokens: int | None = None
     output_audio_tokens: int | None = None
     meters: tuple[ModelUsageMeter, ...] = field(default_factory=tuple)
-    reported_cost: Decimal | None = None
+    reported_cost: float | None = None
     reported_currency: str | None = None
     billing: dict[str, str] = field(default_factory=dict)
 
@@ -121,7 +127,10 @@ class ModelUsage:
         ):
             raise ValueError("model output usage components exceed total output")
         if self.reported_cost is not None and (
-            not self.reported_cost.is_finite() or self.reported_cost < 0
+            isinstance(self.reported_cost, bool)
+            or not isinstance(self.reported_cost, int | float)
+            or not math.isfinite(self.reported_cost)
+            or self.reported_cost < 0
         ):
             raise ValueError("reported model cost must be non-negative")
         if self.reported_cost is not None and not self.reported_currency:
@@ -155,12 +164,16 @@ class ModelCall:
     )
     # Inclusive output ceiling, including reasoning, fixed by the runtime.
     max_output_tokens: int | None = None
+    # Effective reasoning control for this call; the model keeps the capability.
+    reasoning: Reasoning | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_tokens is not None and (
             type(self.max_output_tokens) is not int or self.max_output_tokens <= 0
         ):
             raise ValueError("model max_output_tokens must be a positive integer")
+        if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
+            raise TypeError("model call reasoning must be Reasoning")
 
 
 @dataclass(frozen=True, slots=True)

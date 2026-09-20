@@ -10,9 +10,8 @@ from toolang.base.model_settings import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 
 
@@ -55,8 +54,6 @@ def test_model_body_parses_canonical_identity_and_effort(
         ("none", "was removed"),
         ("unset effort=high", "unset cannot combine"),
         ("unset max_output=100", "unset cannot combine"),
-        ("effort=-1", "unknown reasoning effort"),
-        ("effort=default", "unknown reasoning effort"),
         ("max_output=0", "must be a positive integer"),
         ("max_output=half", "unknown max output"),
     ],
@@ -72,7 +69,7 @@ def test_model_body_rejects_invalid_or_untyped_forms(
 def test_model_override_application_preserves_and_resets_typed_parameters() -> None:
     surface = ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="medium")),
+        reasoning=Reasoning(effort="medium"),
     )
 
     high = apply_model_override(
@@ -82,7 +79,7 @@ def test_model_override_application_preserves_and_resets_typed_parameters() -> N
     )
     assert high == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
     assert apply_model_override(
         high,
@@ -100,20 +97,20 @@ def test_model_override_application_preserves_and_resets_typed_parameters() -> N
         parse_model_body("default effort=low"),
     ) == ModelRequest(
         "openai/gpt-5",
-        ModelParameters(reasoning=ReasoningParameters(effort="low")),
+        reasoning=Reasoning(effort="low"),
     )
 
 
 def test_max_output_composes_and_cancels_inheritance() -> None:
-    base = ModelRequest("openai/gpt-5", ModelParameters(max_output=8192))
+    base = ModelRequest("openai/gpt-5", max_output=8192)
 
     explicit = apply_model_override(base, None, ModelOverride(max_output=2048))
     assert explicit is not None
-    assert explicit.parameters.max_output == 2048
+    assert explicit.max_output == 2048
 
     automatic = apply_model_override(explicit, None, ModelOverride(max_output="auto"))
     assert automatic is not None
-    assert automatic.parameters.max_output is None
+    assert automatic.max_output is None
 
     assert apply_model_override(base, base, ModelOverride(identity="default")) == base
     assert compose_model_overrides(
@@ -143,3 +140,39 @@ def test_setup_source_model_overrides_compose_in_order() -> None:
             parse_model_body("default effort=high"),
         )
     ) == ModelOverride(identity="default", effort="high")
+
+
+def test_model_request_preserves_existing_durable_shape():
+    from pydantic import TypeAdapter
+    from toolang.base.types.model import ModelRequest, Reasoning
+
+    adapter = TypeAdapter(ModelRequest)
+    payload = {
+        "ref": "test/one",
+        "parameters": {"reasoning": {"effort": "high"}, "max_output": 1024},
+    }
+    request = adapter.validate_python(payload)
+    assert request == ModelRequest(
+        "test/one", reasoning=Reasoning("high"), max_output=1024
+    )
+    assert adapter.dump_python(request, mode="json") == payload
+
+
+def test_model_request_schema_describes_preserved_wire_envelope():
+    from pydantic import TypeAdapter
+    from toolang.base.types.model import ModelRequest
+
+    adapter = TypeAdapter(ModelRequest)
+    for mode in ("validation", "serialization"):
+        schema = adapter.json_schema(mode=mode)
+        assert set(schema["properties"]) == {"ref", "parameters"}
+        assert set(schema["properties"]["parameters"]["properties"]) == {
+            "reasoning",
+            "max_output",
+        }
+    assert adapter.dump_python(
+        ModelRequest("test/one"), mode="json", exclude_none=True
+    ) == {
+        "ref": "test/one",
+        "parameters": {},
+    }

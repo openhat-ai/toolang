@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from toolang.base.types.message import Message, ImagePart
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import Model, ModelToolang, Reasoning
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.executor.budget import InputEstimate, message_tokens
@@ -25,52 +25,53 @@ from toolang.plugin.models.budget import (
 )
 
 
-INFO = ModelInfo(ref="test/model", provider="test", name="model", model="model")
-TARGET = ModelTarget(
-    ref="test/model", provider="test", name="model", model="model", adapter="responses"
+MODEL = Model(
+    id="model",
+    name="model",
+    _toolang=ModelToolang(provider="test", ready=True),
 )
 
 
 def test_input_budget_reserves_only_an_estimation_margin() -> None:
-    info = replace(INFO, context_window=32000, max_output_tokens=8000)
-    assert input_budget(info) == 30400
-    assert input_budget(replace(info, metadata={"limit": {"input": 10000}})) == 8976
-    assert input_budget(INFO) is None
-    assert input_budget(replace(INFO, metadata={"limit": {"input": 10000}})) == 8976
-    assert input_budget(replace(INFO, context_window=4000)) == 2976
+    model = replace(MODEL, limit={"context": 32000, "output": 8000})
+    assert input_budget(model) == 30400
+    assert input_budget(replace(model, limit={"input": 10000})) == 8976
+    assert input_budget(MODEL) is None
+    assert input_budget(replace(MODEL, limit={"input": 10000})) == 8976
+    assert input_budget(replace(MODEL, limit={"context": 4000})) == 2976
 
 
 def test_context_capacity_tracks_the_joint_window() -> None:
-    assert context_capacity(INFO) is None
-    assert context_capacity(replace(INFO, context_window=32000)) == 32000
+    assert context_capacity(MODEL) is None
+    assert context_capacity(replace(MODEL, limit={"context": 32000})) == 32000
 
 
 def test_output_allowance_defaults_to_the_model_maximum() -> None:
-    assert output_budget(TARGET, INFO) is None
-    assert output_budget(TARGET, replace(INFO, max_output_tokens=100_000)) == 100_000
+    assert output_budget(MODEL) is None
+    assert output_budget(replace(MODEL, limit={"output": 100_000})) == 100_000
 
 
 def test_explicit_max_output_is_clamped_by_the_model_limit() -> None:
-    info = replace(INFO, max_output_tokens=8000)
-    assert output_budget(replace(TARGET, max_output=4096), info) == 4096
-    assert output_budget(replace(TARGET, max_output=99_000), info) == 8000
-    assert output_budget(replace(TARGET, max_output=4096), INFO) == 4096
+    model = replace(MODEL, limit={"output": 8000})
+    assert output_budget(model, demand=4096) == 4096
+    assert output_budget(model, demand=99_000) == 8000
+    assert output_budget(MODEL, demand=4096) == 4096
 
 
 def test_output_allowance_must_exceed_an_explicit_reasoning_budget() -> None:
-    info = replace(INFO, max_output_tokens=20_000)
-    target = replace(TARGET, reasoning={"budget_tokens": 8000}, max_output=4096)
+    model = replace(MODEL, limit={"output": 20_000})
+    reasoning = Reasoning(budget_tokens=8000)
 
     with pytest.raises(ValueError, match="must exceed the reasoning budget"):
-        output_budget(target, info)
+        output_budget(model, demand=4096, reasoning=reasoning)
 
-    assert output_budget(replace(target, max_output=16_384), info) == 16_384
-    assert output_budget(replace(target, max_output=None), info) == 20_000
+    assert output_budget(model, demand=16_384, reasoning=reasoning) == 16_384
+    assert output_budget(model, demand=None, reasoning=reasoning) == 20_000
 
 
 def test_output_allowance_rejects_a_nonpositive_value() -> None:
     with pytest.raises(ValueError, match="max_output must be a positive integer"):
-        output_budget(replace(TARGET, max_output=0), INFO)
+        output_budget(MODEL, demand=0)
 
 
 def test_reliable_count_requires_calibration() -> None:
@@ -91,7 +92,7 @@ def test_clipping_trims_an_explicit_allowance_to_the_remaining_window() -> None:
         _AgicFrame,
         SimpleNamespace(
             context_capacity=32_000,
-            model=TARGET,
+            model=MODEL,
             run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
             recall=("near",),
         ),
@@ -145,7 +146,7 @@ def test_exact_budget_fits_but_one_more_token_requires_action() -> None:
     state = cast(_AgicState, SimpleNamespace(estimate=InputEstimate(), execution=None))
     frame = SimpleNamespace(
         input_budget=count,
-        model=TARGET,
+        model=MODEL,
         run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
         recall=("near",),
     )

@@ -8,7 +8,7 @@ from toolang.plugin.config import (
     merge_plugin_configs,
     resolve_sandbox_binding,
 )
-from toolang.plugin.models.config import parse_provider_configs
+from toolang.plugin.models.config import validate_models_config
 
 
 def test_merge_plugin_configs_deeply_merges_root_and_agent_layers() -> None:
@@ -87,7 +87,7 @@ def test_removed_model_catalog_config_fails_in_model_config_parser() -> None:
     config = tomllib.loads("[models.catalogs.company]")
 
     with pytest.raises(ValueError, match="unknown models config field: catalogs"):
-        parse_provider_configs((config,))
+        validate_models_config((config,))
 
 
 def test_resolve_sandbox_binding_layers_driver_and_target() -> None:

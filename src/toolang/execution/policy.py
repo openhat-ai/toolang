@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from decimal import Decimal, InvalidOperation
 import shlex
 from types import MappingProxyType
 from typing import cast
 
+from toolang.base.money import normalize_cost
 from toolang.base.errors import ToolangError
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.model import ModelOverride
@@ -39,6 +40,7 @@ from .types import (
     RunOverride,
     SessionSetting,
 )
+import math
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -599,18 +601,18 @@ def _allow_value(
     return normalized
 
 
-def _limit_value(field: str, raw: str) -> int | Decimal | None:
+def _limit_value(field: str, raw: str) -> int | float | None:
     value = raw.strip()
     if value.lower() == "none":
         return None
     if field == "cost":
         try:
-            parsed = Decimal(value)
-        except InvalidOperation as error:
+            parsed = float(value)
+        except ValueError as error:
             raise ValueError("limit cost expects a decimal or none") from error
-        if not parsed.is_finite() or parsed < 0:
+        if not math.isfinite(parsed) or parsed < 0:
             raise ValueError("limit cost expects a non-negative decimal or none")
-        return parsed
+        return normalize_cost(parsed)
     try:
         parsed = int(value)
     except ValueError as error:

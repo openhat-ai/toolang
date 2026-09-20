@@ -1,45 +1,42 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from dataclasses import dataclass
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-import toolang.plugin.models.catalog as catalog_module
+import toolang.plugin.catalogs.models_dev.path as catalog_path_module
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
     Model,
-    ModelAlias,
     ModelCatalogSnapshot,
+    ModelToolang,
     Provider,
 )
-from toolang.common.errors import ToolangError
+from toolang.common.json import dumps
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.catalog import (
-    MergedModelCatalog,
-    PACKAGED_MODEL_CATALOG,
-    catalog_json_dumps,
-    read_model_catalog_snapshot,
-    model_info_from_catalog,
-    parse_model_catalog_data,
-    query_catalog_models,
-    resolve_model_catalog_path,
-)
-from toolang.plugin.models.adapters.chat_completions import (
+from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
-from toolang.plugin.models.adapters.messages import MessagesModelAdapter
-from toolang.plugin.models.discovery import default_provider_base_url
-from toolang.plugin.models.provider_resolver import resolve_provider
-from toolang.plugin.models.resolution import (
-    ModelTargetResolver,
-    resolve_catalog_adapter,
-    resolve_unique_model_query,
+from toolang.plugin.adapters.messages import MessagesModelAdapter
+from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
+from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+from toolang.plugin.catalogs.models_dev.path import (
+    PACKAGED_MODEL_CATALOG,
+    resolve_model_catalog_path,
 )
+from toolang.setup.catalog import MergedModelCatalog
+from toolang.setup.routes import (
+    model_adapter,
+    provider_adapter,
+    resolve_provider,
+)
+
+from toolang.base.types.model import ModelProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,20 +66,15 @@ def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> No
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:
     model = Model(
-        provider_id="test",
         id="one",
         name="One",
-        catalog="models.dev",
-        catalog_revision="sha256:test",
+        _toolang=ModelToolang(provider="test", ready=True),
     )
     provider = Provider(
         id="test",
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
-        models={model.id: model},
-        catalog="models.dev",
-        catalog_revision="sha256:test",
     )
     snapshot = ModelCatalogSnapshot(
         providers={provider.id: provider},
@@ -105,19 +97,17 @@ def test_catalog_reader_attaches_origin_without_rematerializing_records(
     def reject_replace(*args: object, **kwargs: object) -> None:
         raise AssertionError("catalog records must not be replaced after parsing")
 
-    monkeypatch.setattr(catalog_module, "replace", reject_replace)
+    monkeypatch.setattr(dataclasses, "replace", reject_replace)
 
     snapshot = read_model_catalog_snapshot(path)
     model = snapshot.find("test", "one")
 
     assert model is not None
-    assert model.catalog == "models.dev"
-    assert model.catalog_revision == snapshot.revision
-    assert snapshot.providers["test"].catalog == "models.dev"
-    assert snapshot.providers["test"].catalog_revision == snapshot.revision
+    assert model is snapshot.find("test", "one")
+    assert snapshot.local is False
 
 
-def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
+def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "models.json"
@@ -130,11 +120,10 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
     model = snapshot.find("test", "one")
 
     assert model is not None
-    assert model.cost == {"input": Decimal("1.25"), "output": 2}
-    assert model.extra["future_model_field"] == ("value",)
+    assert model.cost == {"input": 1.25, "output": 2}
     exported = cast(dict[str, Any], snapshot.to_data())
-    assert exported["test"]["future_provider_field"] == {"enabled": True}
-    assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
+    assert "future_provider_field" not in exported["test"]
+    assert "future_model_field" not in exported["test"]["models"]["one"]
 
 
 def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
@@ -211,6 +200,28 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     ]
 
 
+def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
+    path = tmp_path / "models.json"
+    payload = _catalog_data()
+    payload["test"]["models"]["one"]["reasoning_options"] = [
+        {"type": "effort", "values": ["low", "high"], "exhaustive": True}
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    model = read_model_catalog_snapshot(path).models[0]
+    assert model.reasoning_options is not None
+    option = cast(dict[str, Any], model.reasoning_options[0])
+
+    with pytest.raises(TypeError):
+        option["exhaustive"] = False
+    with pytest.raises(TypeError):
+        option["values"][0] = "injected"
+    resolved = model.with_route(model._toolang.route)
+    assert resolved.reasoning_options is model.reasoning_options
+    assert model.to_data()["reasoning_options"] == [
+        {"type": "effort", "values": ["low", "high"], "exhaustive": True}
+    ]
+
+
 def test_catalog_rejects_inconsistent_identity_as_a_complete_snapshot() -> None:
     payload = _catalog_data()
     payload["test"]["models"]["one"]["id"] = "other"
@@ -261,7 +272,7 @@ def test_catalog_source_ignores_implicit_models_files(
         path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
     packaged = tmp_path / "packaged-catalog.json"
     packaged.write_text(json.dumps(_catalog_data()), encoding="utf-8")
-    monkeypatch.setattr(catalog_module, "PACKAGED_MODEL_CATALOG", packaged)
+    monkeypatch.setattr(catalog_path_module, "PACKAGED_MODEL_CATALOG", packaged)
 
     assert resolve_model_catalog_path(layout) == packaged.resolve()
     assert resolve_model_catalog_path(layout, include_agent=False) == packaged.resolve()
@@ -280,87 +291,38 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
     assert resolve_model_catalog_path(layout) == root.resolve()
 
 
-def test_catalog_query_handles_nested_identity_schema_fields_and_nullable_boolean() -> (
-    None
-):
-    provider = _provider(
-        {
-            "lab/model": _model(
-                "lab/model",
-                family="family",
-                reasoning=True,
-                temperature=None,
-            ),
-            "plain": _model(
-                "plain",
-                family="other",
-                reasoning=False,
-                temperature=False,
-            ),
-        }
-    )
-    snapshot = _snapshot(provider)
-
-    assert [item.id for item in query_catalog_models(snapshot, ("test/lab/*",))] == [
-        "lab/model"
-    ]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[reasoning=false]",))
-    ] == ["plain"]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[temperature=false]",))
-    ] == ["plain"]
-    assert [
-        item.id for item in query_catalog_models(snapshot, ("*[family=family]",))
-    ] == ["lab/model"]
-    assert [item.id for item in query_catalog_models(snapshot, None)] == [
-        "lab/model",
-        "plain",
-    ]
-    with pytest.raises(ToolangError, match="query cannot be empty"):
-        query_catalog_models(snapshot, ())
-
-
 def test_filtered_export_round_trips_deterministically() -> None:
-    provider = _provider({"one": _model("one"), "two": _model("two")})
-    snapshot = _snapshot(provider)
-    selected = query_catalog_models(snapshot, ("test/two",), include_local=False)
+    snapshot = _snapshot(_provider(), (_model("one"), _model("two")))
+    selected = tuple(model for model in snapshot.models if model.id == "two")
 
-    first = catalog_json_dumps(snapshot.to_data(models=selected))
-    second = catalog_json_dumps(snapshot.to_data(models=selected))
-    imported = parse_model_catalog_data(json.loads(first, parse_float=Decimal))
+    first = dumps(snapshot.to_data(models=selected))
+    second = dumps(snapshot.to_data(models=selected))
+    imported, models = parse_model_catalog_data(json.loads(first, parse_float=float))
 
     assert first == second
     assert tuple(imported) == ("test",)
-    assert tuple(imported["test"].models) == ("two",)
+    assert tuple(model.id for model in models) == ("two",)
 
 
 def test_strict_export_rejects_local_only_models() -> None:
-    local = _model("local", local=True)
-    provider = Provider(
-        id="test",
-        name="Test",
-        env=(),
-        npm="@ai-sdk/openai-compatible",
-        models={"local": local},
-        local=True,
+    snapshot = dataclasses.replace(
+        _snapshot(_provider(), (_model("local"),)), local=True
     )
-    snapshot = _snapshot(provider)
 
-    with pytest.raises(ValueError, match="local-only model cannot be exported"):
+    with pytest.raises(ValueError, match="local-only catalog cannot be exported"):
         snapshot.to_data()
 
 
-def test_resolved_provider_adapter_ignores_model_protocol_hints() -> None:
-    provider = _resolve(_provider({}), ChatCompletionsModelAdapter())
+def test_model_protocol_hints_override_the_provider_default() -> None:
+    provider = _resolve(_provider(), ChatCompletionsModelAdapter())
     model = Model(
-        provider_id="test",
         id="one",
         name="One",
-        provider={"npm": "@ai-sdk/anthropic"},
+        _toolang=ModelToolang(provider="test", ready=True),
+        provider=ModelProvider(npm="@ai-sdk/anthropic"),
     )
 
-    assert resolve_catalog_adapter(provider, model=model) == "chat_completions"
+    assert model_adapter(provider, model) == "messages"
 
 
 def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
@@ -370,73 +332,13 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
             name="Anthropic",
             env=("ANTHROPIC_API_KEY",),
             npm="@ai-sdk/anthropic",
-            models={},
         ),
         MessagesModelAdapter(),
         environ={"ANTHROPIC_API_KEY": "secret"},
     )
 
-    assert resolve_catalog_adapter(provider) == "messages"
-    assert (
-        default_provider_base_url(provider, environ={})
-        == "https://api.anthropic.com/v1"
-    )
-
-
-def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -> None:
-    model = Model(
-        provider_id="test",
-        id="one",
-        name="One",
-        reasoning=True,
-        structured_output=True,
-        open_weights=False,
-        release_date="2026-01-01",
-        last_updated="2026-08-30",
-        reasoning_options=({"type": "effort", "values": ["low", "high"]},),
-        experimental={
-            "modes": {
-                "fast": {
-                    "cost": {"input": 2, "output": 4},
-                    "provider": {
-                        "body": {"service_tier": "priority"},
-                        "headers": {"X-Mode": "fast"},
-                    },
-                }
-            }
-        },
-    )
-    provider = _resolve(_provider({"one": model}), ChatCompletionsModelAdapter())
-    info = model_info_from_catalog(
-        model,
-        adapter="chat_completions",
-        revision="sha256:test",
-    )
-    resolver = ModelTargetResolver(
-        providers={"test": provider},
-        models=(info,),
-        model_aliases={
-            "fast-one": ModelAlias(
-                name="fast-one",
-                ref="test/one",
-                provider="test",
-                options={"mode": "fast", "reasoning": {"effort": "high"}},
-            )
-        },
-        default_models=(),
-        envs={"TEST_API_KEY": "secret"},
-    )
-
-    target = resolve_unique_model_query(resolver, query="*[alias=fast-one]")
-
-    assert info.metadata["open_weights"] is False
-    assert info.metadata["release_date"] == "2026-01-01"
-    assert info.metadata["last_updated"] == "2026-08-30"
-    assert target.mode == "fast"
-    assert target.reasoning == {"effort": "high"}
-    assert target.structured_output is True
-    assert target.options == {"service_tier": "priority"}
-    assert target.headers == {"X-Mode": "fast"}
+    assert provider_adapter(provider) == "messages"
+    assert provider.api is None
 
 
 def _catalog_data() -> dict[str, Any]:
@@ -473,29 +375,26 @@ def _model(
     family: str | None = None,
     reasoning: bool | None = None,
     temperature: bool | None = True,
-    local: bool = False,
 ) -> Model:
     return Model(
-        provider_id="test",
         id=model_id,
         name=model_id,
+        _toolang=ModelToolang(provider="test", ready=True),
         family=family,
         reasoning=reasoning,
         temperature=temperature,
         modalities={"input": ("text", "image"), "output": ("text",)},
         limit={"context": 1000},
-        local=local,
     )
 
 
-def _provider(models: dict[str, Model]) -> Provider:
+def _provider() -> Provider:
     return Provider(
         id="test",
         name="Test",
         env=("TEST_API_KEY",),
         npm="@ai-sdk/openai-compatible",
         api="https://api.test/v1",
-        models=models,
     )
 
 
@@ -512,9 +411,36 @@ def _resolve(
     )
 
 
-def _snapshot(provider: Provider) -> ModelCatalogSnapshot:
+def _snapshot(provider: Provider, models: tuple[Model, ...]) -> ModelCatalogSnapshot:
     return ModelCatalogSnapshot(
         providers={provider.id: provider},
-        models=tuple(provider.models.values()),
+        models=models,
         revision="sha256:test",
     )
+
+
+def test_flat_snapshot_joins_same_local_ids_by_provider_and_exports_selection():
+    providers = {
+        name: Provider(id=name, name=name) for name in ("first", "second", "empty")
+    }
+    models = tuple(
+        Model(id="same", name=name, _toolang=ModelToolang(provider=name))
+        for name in ("first", "second")
+    )
+    snapshot = ModelCatalogSnapshot(providers=providers, models=models, revision="test")
+    assert all(
+        not hasattr(provider, "models") for provider in snapshot.providers.values()
+    )
+    assert snapshot.find("first", "same") is models[0]
+    assert snapshot.find("second", "same") is models[1]
+    assert snapshot.find("empty", "same") is None
+    assert snapshot.find("missing", "same") is None
+    assert snapshot.to_data(models=(models[1],)) == {
+        "second": providers["second"].to_data(models={"same": models[1]})
+    }
+    assert providers["empty"].to_data()["models"] == {}
+    assert snapshot.to_data(models=()) == {}
+    with pytest.raises(ValueError, match="unknown providers"):
+        dataclasses.replace(snapshot, providers={"first": providers["first"]})
+    with pytest.raises(ValueError, match="unique provider/model identity"):
+        dataclasses.replace(snapshot, models=(models[0], models[0]))

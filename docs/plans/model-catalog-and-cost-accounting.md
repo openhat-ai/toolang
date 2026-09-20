@@ -93,9 +93,8 @@ the current upstream fields, including provider `id`, `env`, `npm`, `api`,
 `last_updated`, `modalities`, `open_weights`, `limit`, `status`, `experimental`,
 `provider`, and `cost`.
 
-Unknown additive fields survive filtered export. Consumed fields are validated;
-an incompatible value rejects the complete snapshot. Prices parse as `Decimal`
-and serialize as JSON numbers without passing through binary floating point.
+Known catalog fields survive filtered export; unknown fields are ignored. Consumed fields are validated;
+an incompatible value rejects the complete snapshot. Prices parse as finite `float` values and serialize as JSON numbers with msgspec.
 The importer also enforces a configurable maximum size, nested key/ID
 consistency, non-negative prices, and non-negative limits.
 
@@ -249,7 +248,9 @@ It contains:
 - provider-reported cost and estimated cost side by side, selected source,
   currency, and complete/partial coverage.
 
-Decimal quantities, rates, and money persist as decimal text. Missing provider
+Float quantities, rates, and money retain decimal-text record fields. Call totals
+settle to six fractional USD digits (half up); accumulation and budget comparison
+use integer micro-USD units. Amounts are bounded by 999,999,999.999999 USD. Missing provider
 values stay unknown, not zero. Inclusive totals and component meters must not
 double count cache or reasoning. Streaming and non-streaming results normalize
 to the same final accounting.
@@ -309,7 +310,7 @@ and estimated amounts, differences, and coverage.
 ## Acceptance Tests
 
 1. Import representative upstream data, preserve unknown fields, reject an
-   incompatible complete snapshot, and round-trip Decimal prices deterministically.
+   incompatible complete snapshot, and round-trip finite float prices deterministically.
 2. Prove source precedence, explicit-source failure, regular/symlink loading,
    SHA provenance, parse reuse, invalidation on file/link change, and root/home
    isolation.

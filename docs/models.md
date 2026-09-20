@@ -9,12 +9,13 @@ the setup resolver joins those facts once for the current process.
 | Term | Meaning |
 | --- | --- |
 | `Provider` | One models.dev-compatible provider record |
-| `Model` | One models.dev-compatible model record nested under a provider |
+| `Model` | One model record linked by `_toolang.provider` |
+| `ModelProvider` | Typed per-model connection overrides, including optional `ProviderToolang` declarations |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
-| `ModelInfo` | The runtime selection projection of one catalog model |
-| `ModelTarget` | One fully resolved call target with concrete execution values |
-| `ModelEntry` | One stable concrete ref, execution target, and metadata record |
+| `ModelRequest` | One run's concrete model demand |
+| `ModelRoute` | The effective connection published at `Model._toolang.route` |
+| `ModelCall` | One model call: content plus effective controls |
 | `ModelCollection` | The immutable effective model set published by Setup |
 
 There is no model-provider plugin layer. A provider does not execute calls, and
@@ -57,24 +58,27 @@ external `--catalog` source is mounted read-only and
 Use `too alice models` to inspect a resident agent's model context. It layers
 the agent's provider/plugin configuration and dotenv values over root inputs,
 and prefers its home catalog according to the precedence above. The agent
-does not need to be running. `--catalog`, `--query/-q`, and `--json` work in
+does not need to be running. `--catalog`, `--all`, `--query/-q`, and `--json` work in
 both root and resident forms:
 
 ```bash
 too models
-too alice models --query '*[available=true]'
+too alice providers --all
+too alice models --all --query '*[available=false]'
 too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
 ```
 
-The target goes before `models`; use `agent:<name>` when an agent name matches
-a command name. Both forms list catalog entries, including unavailable models,
-unless filtered by a query. They do not apply `allow.models` or display
-`default.model`/`compact.model`. Availability reflects the invoking process's
-configuration and environment, not a running agent's session or sandbox.
+The target goes before `models` or `providers`; use `agent:<name>` when a name matches
+a command name. Both forms default to ready models permitted by `allow.models`.
+`--all` includes both unready models and models excluded by `allow.models`.
+Queries narrow the selected view; `--json` changes only the output format.
+The commands do not display `default.model`/`compact.model`. Availability reflects
+the invoking process's configuration and environment, not a running agent's
+session or sandbox.
 
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top
-level, preserves unknown additive fields, parses prices as decimal values, and
+level, drops unmodelled additive fields, parses prices as finite floats, and
 rejects an invalid complete snapshot. Canonical model metadata from the
 combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
@@ -97,8 +101,8 @@ model = "openai/gpt-5 effort=low"
 Without `allow.models`, available providers are preferred in this order: alibaba,
 anthropic, deepseek, google, meta, minimax, mistral, moonshotai, openai, openrouter,
 xai, zai, zhipuai, then all remaining providers. Models within a provider retain
-catalog order. No models are excluded by this default. Explicit queries replace
-the ordering; `*` preserves catalog order, while `all` restores the default.
+catalog order. This preference order excludes no ready models. Explicit queries
+replace the ordering; `*` preserves catalog order, while `all` restores the default.
 
 Omit `compact.model` to select the first allowed, available model with both tool
 calls and structured output. Session/request model restrictions still apply.
@@ -123,34 +127,47 @@ class ModelCatalog(Protocol):
     async def snapshot(self) -> ModelCatalogSnapshot: ...
 ```
 
-Built-in implementations are:
+Built-in catalog plugins live in `toolang.plugin.catalogs`:
 
 - `ModelsDevModelCatalog`, for the selected static file;
 - `OllamaModelCatalog`, for the configured Ollama endpoint;
-- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint;
-- `MergedModelCatalog`, which combines ordered snapshots and rejects identity
-  conflicts.
+- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint.
+
+`toolang.setup` combines ordered snapshots with `MergedModelCatalog`, which
+rejects identity conflicts, and resolves them into effective `Provider` and
+`Model` instances. Providers contain no models list: snapshots and setup hold
+separate provider and model collections, joined by `Model._toolang.provider`.
+The parser flattens external nested catalogs and JSON export rebuilds that
+structure. Provider display counts and availability use the selected models
+joined by ownership.
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
 only their configured/default endpoint and use short timeouts. The setup watcher
-re-probes dynamic catalogs every five seconds and publishes their current result;
-callers only read the published Setup. Persistent caching applies to the static
-catalog and derived model query facts, not to dynamic probe results or a fallback
-runtime snapshot.
+re-probes dynamic catalogs and publishes their current result; callers only read
+a published Setup version. Every source's records are cached, and a dynamic
+catalog persists one probe file whose mtime stamps its current result.
 
-The static file is cached as a normalized `catalog.json` artifact by a portable
-content revision below root `.setup`. Each root or agent model context has its
-own content-addressed `effective.json` projection below the owning `.setup`,
-including all effective models and query facts. A compact `identity.json`
-beside each projection supports query miss checks without loading the full
-effective set. Cache identities cover model-affecting configuration, plugin
-provenance, environment readiness, catalog revisions, and effective
-`allow.models`; they contain neither absolute paths nor environment values. A
-cache produced on the host is therefore reusable when the same root and home
-are mounted at different guest paths. Invalid, unsafe, or legacy `models.json`
-cache entries are misses, and a cache write failure does not reject a valid
-in-memory Setup.
+Each root or agent model context keeps one cache file per catalog below the
+owning `.setup`. The models.dev file is read once per change; its revision is the
+payload digest plus the file mtime. A local catalog's file is rewritten only when
+its probe result differs, so its mtime marks when the current run of identical
+results was first saved. Cache revisions cover model-affecting configuration,
+plugin provenance, environment values, catalog revisions, and effective
+`allow.models`; they contain neither absolute paths nor environment values, so a
+cache produced on the host stays reusable when the same root and home are mounted
+at different guest paths. Invalid, unsafe, or legacy cache entries are misses, and
+a cache write failure does not reject a valid in-memory Setup.
+
+Persistence retains all source records, independently of readiness or allow rules.
+Both source caches and private full-view payloads store each model once in a
+top-level list; provider records contain neither models nor model IDs.
+The published setup indexes only ready, allowed models and their providers.
+`setup.model_catalog()` returns that default view; `setup.model_catalog(all=True)`
+materializes the complete resolved view from compact serialized records pinned to
+that setup version. Full reads do not retain another query index, re-read a source,
+or change the models available to a run. Old setup versions remain consistent
+after later refreshes or cache deletion.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 
@@ -162,9 +179,8 @@ credential_env = "COMPANY_CATALOG_TOKEN"
 
 The merged mapping is passed unchanged to the catalog factory; the plugin owns
 resolution of `credential_env` when it needs the credential. Built-in
-`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Core provider
-routes remain under `[models.providers.<name>]`; they are not plugin factory
-configuration.
+`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Provider routes
+belong to the declaring catalog plugin; core provider override tables are rejected.
 
 ## One-Time Route Resolution
 
@@ -172,35 +188,55 @@ After catalog snapshots are merged, the setup resolver enriches every
 `Provider` with its default route and every `Model` with its effective route:
 
 ```text
-resolved: {
-  adapter: string?,
-  api: string?,
-  env: (string | string[])[],
-  ready: bool
-}
+ProviderToolang: { env: declared rule, adapter: declared adapter, route: ModelRoute }
+ModelToolang:    { provider: string, ready: bool, route: ModelRoute }
+ModelRoute:      { adapter: string?, api: string?, env: rule?, headers, options }
 ```
 
-The model route has `adapter`, `api`, and `ready`. Model-level
-`provider.npm`, `provider.shape`, and `provider.api` override the provider's
-default protocol facts. This supports mixed-protocol routers without a provider
-plugin.
+Setup resolves routes before publication. Provider metadata retains trusted
+catalog declarations plus its effective default route; each model carries its
+own effective route. Model-level protocol and API overrides remain catalog
+facts, without injected resolution fields. CLI and executor consume these
+published routes, and adapters receive `(model, request, *, environ)`.
 
-`Provider.api` is the raw catalog value. `Provider.resolved.api` is the
-effective API base after configuration, catalog, and adapter-default
-precedence. It becomes `ModelTarget.base_url` only at the call boundary, where
-`base_url` is the client SDK term.
+`Provider.api` stays the raw catalog value. Setup resolves model/provider API
+values, adapter defaults, and templates into `route.api`. Route environment
+rules contain names only; actual values remain in `setup.envs`.
+
+A missing/uninstalled adapter or invalid selected catalog mode yields
+`route.adapter=None`; an unresolved API
+yields `route.api=None`; unmet environment requirements yield `route.env=None`.
+An empty env rule means no credential is required. Setup resolves each field
+independently and sets `ready` only when all three are non-None. No issues list
+is stored. Headers and options are recursively immutable; adapters copy them
+into mutable provider request payloads.
+
+A declared `provider.mode` must select an object in `experimental.modes`.
+Missing or invalid selections make only that model unavailable, with empty
+effective headers/options; other models still publish. The full view preserves
+its source declarations, and a corrected catalog revision can restore readiness.
+Explicit default/compact selections still require an available model.
+
+Source cache files preserve complete catalog declarations, never effective
+routes or readiness. The version-pinned full view includes resolved facts in
+its private in-memory serialization. Changing credentials rebuilds setup facts
+without rewriting an otherwise unchanged catalog cache.
 
 The resolver applies:
 
-- explicit provider configuration before catalog `api` before the adapter's
-  protocol default API;
+- model-level `provider.api` before provider-level catalog `api` before the
+  adapter's protocol default API;
+- a provider-declared `adapter` from catalogs that are not models.dev records,
+  such as local runtimes, which takes precedence
+  over the `npm` map;
 - a small maintained `npm`-to-protocol map, including the major native packages
   whose services expose one of the built-in wire protocols;
 - environment availability rules;
 - installed-adapter and local-probe state.
 
-The outer `env` list is OR. A nested list is AND. An empty list means that no
-environment value is required. During default inference, names ending in
+The resolved `_toolang.route.env` list is OR; a nested group is AND. An empty rule
+requires no environment value. A models.dev source retains its raw flat `env`
+list until setup infers the rule. During that inference, names ending in
 `_API_KEY`, `_PAT`, or `_TOKEN` are credential alternatives; other names are
 common requirements included in every alternative. Provider-specific rules
 cover schemes that cannot be inferred, such as Amazon Bedrock:
@@ -214,15 +250,13 @@ cover schemes that cannot be inferred, such as Amazon Bedrock:
 
 `ready` is true only when an adapter is installed, an API base is concrete, one
 environment alternative is satisfied, and any local probe succeeded. Secrets
-are selected only while constructing `ModelTarget`; they are never stored in
-`Provider.resolved`, catalog JSON, hashes, or inspection output.
+are selected only at the call boundary; they are never stored in a record,
+catalog JSON, hashes, or inspection output.
 
-Local provider configuration is passed separately to the resolver. It is never
-inserted into raw catalog `extra` fields, so unknown catalog extensions cannot
-be interpreted as trusted API routes or credentials. Selection, inspection, and
-execution consume resolved facts directly; they do not repeat npm matching,
-API fallback, or env interpretation. `--json` therefore remains a raw
-catalog projection.
+Catalog plugins own provider configuration. Core `[models.providers.*]` overrides
+are rejected. Raw `_toolang` mappings from catalog JSON are not trusted runtime
+facts. Setup resolves adapters and readiness; call assembly derives the endpoint,
+headers and options from its pinned setup. JSON exports omit Toolang facts.
 
 ## Adapter Plugins
 
@@ -255,7 +289,8 @@ Only this merged table is passed to the `responses` factory. The built-in
 adapters currently define no authored plugin options; external adapters may
 define their own non-sensitive values and secret-reference fields.
 
-Adapters receive a concrete API base URL in `ModelTarget`. They translate
+Adapters receive the effective connection, the resolved `Model`, and the
+`ModelCall`. They translate
 canonical messages and tools, normalize streaming, usage, cache, reasoning,
 and audio meters, and preserve protocol state needed by later calls. For
 example, the Generate Content adapter retains Gemini thought signatures in
@@ -304,11 +339,11 @@ users can also select the adapter explicitly in provider configuration.
 ## Local Providers
 
 Ollama and llama.cpp are catalog plugins using the same `Provider` and `Model`
-types as the static source. Their endpoint is both the discovery endpoint and
-an important availability fact. An offline local provider remains visible in
-`too providers` with availability `0`, while its models are omitted from the
-normal model table. Online local models have explicit zero API token prices;
-host compute cost is outside model token accounting.
+types as the static source. They publish what their endpoint reports and
+publish nothing when it cannot be reached, so every local model that appears is
+usable. An unreachable local runtime therefore has no provider row. Local models
+have explicit zero API token prices; host compute cost is outside model token
+accounting.
 
 Configure discovery independently from the resolved provider call route:
 
@@ -325,53 +360,66 @@ loopback defaults. In a Toolang Docker guest, the defaults use
 `TOOLANG_HOST_GATEWAY`; loopback values from those two environment variables are
 rewritten to the gateway as well. An authored plugin `endpoint` is exact and is
 never rewritten, so it can deliberately select a service running inside the
-guest. `[models.providers.<name>]` remains core route configuration and is not
-passed into either catalog factory.
+guest. Configure routes through the owning catalog plugin; core
+`[models.providers.<name>]` overrides are not supported.
 
 ## Inspection and Export
 
 The public resources are:
 
 ```text
-too models [--query QUERY] [--json]
-too providers [--json]
+too models [--all] [--query QUERY] [--json]
+too providers [--all] [--json]
 too catalogs
 too adapters [--json]
 ```
 
-`too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
-`too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
-and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
-` + ` separates simultaneous requirements.
+`too models` shows ready, allowed models plus an `AVAILABLE` yes/no column.
+`too providers` lists only providers with at least one such model, and its nested
+model lists use the same scope. Add `--all` to either command to inspect the
+complete directory, including unready and allow-excluded entries; `providers
+--all` also includes empty providers. The `available` query field describes
+readiness independently of allow membership.
+
+`too models --all` and `too providers --all` show coarse unavailability reasons
+from the route's missing fields. They do not identify individual missing
+credentials or distinguish unknown adapters from uninstalled ones.
+
+Providers show `ADAPTERS`, `DEFAULT API`, `ENV`, and `REASON`. Adapter names are
+aggregated from the selected models; empty providers show their default adapter.
+The API column marks model endpoint overrides. ENV shows the satisfied rule, or
+catalog declarations when unavailable; its red styling indicates the overall
+environment requirement is unmet, not that every displayed variable is missing.
+A provider is available when at least one of its selected models is ready.
 
 `too catalogs` lists installed model-catalog plugin entry points and their
 `built-in` or `external` source. It does not load the plugins or describe the
 merged catalog snapshot; use `too models` for that view.
 
 `too models --query ... --json` emits another complete, deterministic,
-models.dev-compatible catalog containing only selected models. Local-only
-models cannot be exported. Provider and model JSON never includes `resolved`.
+models.dev-compatible catalog containing only selected models, including models
+from local catalogs. It exports the same setup version used for selection without
+re-reading the source. `too providers --json` follows the same default/`--all`
+scope and preserves empty providers in the full view. Catalog inspection skips
+validation of the configured default and compact model, so `--all` can diagnose
+an unready choice; execution setup still validates those choices strictly.
+Provider and model JSON never includes a Toolang-side fact or an unmodelled catalog field.
 
 Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models
 share query fields, including `family`, `reasoning`, `tool_call`, `temperature`,
 `structured_output`, `modalities.input`, `status`, `route.provider`,
-`route.adapter`, `route.scope`, and `available`. Run `too query models` for the
+`route.adapter`, and `available`. Run `too query models` for the
 complete contract.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.
 
 ## Runtime Configuration
 
-Root or agent configuration may override provider runtime values, filter the
-effective Setup collection, and select one exact default:
+Catalog plugins own provider routes. Root or agent configuration filters the
+published models and selects an exact default:
 
 ```toml
-[models.providers.gateway]
-adapter = "responses"
-endpoint = "https://gateway.example.com/v1"
-key_env = "GATEWAY_API_KEY"
-
 [allow]
 models = ["gateway/*"]
 
@@ -379,9 +427,9 @@ models = ["gateway/*"]
 model = "gateway/chat effort=high"
 ```
 
-Provider configuration participates in the one-time provider resolution.
-`SetupWatcher` applies `allow.models` once and publishes the resulting
-`ModelCollection`; request and runnable policy can only narrow that base.
+`SetupWatcher` filters readiness and applies `allow.models` once, then publishes
+the resulting `ModelCollection`; request and runnable policy can only narrow
+that base.
 `default.model` uses the same model body as invocation, Chat, and run-input
 settings: an optional concrete ref followed by typed assignments. The current
 assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,
@@ -400,8 +448,8 @@ Configuration deliberately supports only the string form under `[default]`;
 there is no `[default.model]` table. Legacy `none` values in Setup default
 sources normalize to canonical `unset`.
 
-`[models].default` and `[models.aliases.*]` are rejected. Custom model
-identities and aliases will be supplied by a future custom catalog rather than
+`[models.providers.*]`, `[models].default`, and `[models.aliases.*]` are rejected.
+Custom model identities and aliases will be supplied by a future custom catalog rather than
 by a parallel runtime route mechanism.
 
 ## Runtime Calls and Accounting
@@ -420,3 +468,16 @@ The runtime records inclusive token totals plus cache read/write, visible,
 reasoning, audio, and provider-specific meters. Reported provider cost is kept
 separately from catalog-derived estimates so historical calls retain their
 original pricing revision and coverage.
+
+Model request objects use flat `reasoning` and `max_output` fields in memory,
+while their existing serialized `parameters` envelope is preserved for run,
+retry, and session data. This PR does not change the durable record schema.
+Persisting effective call reasoning is deferred; current call records do not
+store that field. Pricing source and revision continue to populate existing
+accounting fields from the run's pinned `setup.catalog_sources` mapping.
+
+Call totals settle to six fractional USD digits, rounding half up after all
+components are calculated. Accumulation and budget comparison use integer
+micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
+Per-token prices are not rounded before multiplication. Existing accounting
+records retain decimal-text fields and remain readable.

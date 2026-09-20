@@ -4,7 +4,7 @@ Run the DeepSeek cases explicitly with:
 
     uv run pytest -q tests/system/cli/test_chat_tui_live_e2e.py \
       -m live_provider \
-      --live-model 'deepseek/deepseek-chat[deepseek]'
+      --live-model 'deepseek/deepseek-chat'
 """
 
 from __future__ import annotations
@@ -62,12 +62,14 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         kind,
     )
     try:
-        session.wait_for("Toolang", "^d exit", timeout=30)
+        session.wait_for(
+            "Toolang", "Ask or describe a task", deepseek_model, timeout=30
+        )
         session.send(marker.encode())
         session.wait_for(marker)
         session.send(b"\r")
         response = f"{LIVE_RESPONSE_PREFIX} {marker}"
-        expected = [f"> {marker}", response, "succeeded"]
+        expected = [marker, response, "succeeded"]
         if progress is not None:
             expected.append(progress)
         output = session.wait_for(*expected, timeout=180)
@@ -77,7 +79,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
 
         if kind == "flow":
             session.send(b"/output\r")
-            session.wait_for(response, timeout=30)
+            session.wait_for(" output ", response, timeout=30)
 
         session.send(b"\x04")
         return_code = session.wait_for_exit(timeout=30)

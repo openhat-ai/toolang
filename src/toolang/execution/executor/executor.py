@@ -6,14 +6,13 @@ import asyncio
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 import logging
-from decimal import Decimal, InvalidOperation
 import threading
 import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
 from toolang.base.types.tool import ToolResult
-from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
+from toolang.base.types.model import Model, ModelOverride, ModelRequest, Reasoning
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
@@ -40,7 +39,7 @@ from toolang.lang.input import (
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.types import Array, Value, is_unnamed_ref
 from toolang.plugin.models.resolution import (
-    apply_model_parameters,
+    resolve_model_reasoning,
 )
 from toolang.plugin.models.collections import ModelCollection
 from toolang.state.state import AgentState, state_program
@@ -1667,8 +1666,8 @@ class _Execution:
                 cost = selected_usd_cost(noted.accounting)
             else:
                 try:
-                    cost = Decimal(str(raw_cost)) if raw_cost is not None else None
-                except InvalidOperation:
+                    cost = float(str(raw_cost)) if raw_cost is not None else None
+                except ValueError:
                     cost = None
             self._limits.restore(
                 input_tokens=input_tokens,
@@ -1940,32 +1939,40 @@ class _Execution:
 
         return asyncio.get_running_loop().call_later(limit, expire)
 
-    def require_model_pricing(self, target: ModelTarget) -> None:
+    def require_model_pricing(self, model: Model) -> None:
         """Require price metadata before a cost-limited model call."""
 
-        self._limits.require_pricing(target, self.models)
+        self._limits.require_pricing(model, self.models)
 
     def model_accounting(
         self,
-        target: ModelTarget,
+        model: Model,
         usage: ModelUsage | None,
+        *,
+        setup: AgentSetup,
+        requested: Reasoning | None = None,
     ) -> _ModelAccounting:
         """Build accounting facts for one completed model call."""
 
+        source, revision = setup.catalog_sources.get(
+            model._toolang.provider, ("unknown", None)
+        )
         return _model_accounting(
-            target,
-            self.models,
+            model,
             usage,
+            requested=requested,
+            source=source,
+            revision=revision,
         )
 
     def record_model_accounting(
         self,
-        target: ModelTarget,
+        model: Model,
         accounting: _ModelAccounting,
     ) -> None:
         """Add one model accounting result to root-tree totals."""
 
-        self._limits.record_model(target, accounting)
+        self._limits.record_model(model, accounting)
 
     async def execute(
         self,
@@ -3048,12 +3055,14 @@ def _prepare_run_spec(
         if spec.bindings.model != spec.model_request.ref:
             raise ValueError("run model request does not match its model binding")
         entry = selection.resolve(spec.model_request.ref)
-        if entry.key not in resources.models:
+        if entry.ref not in resources.models:
             raise ToolangError(
                 f"model ref is outside run resources: {spec.model_request.ref}"
             )
-        target = entry.target
-        apply_model_parameters(selection, target, spec.model_request.parameters)
+        resolve_model_reasoning(
+            entry,
+            spec.model_request.reasoning,
+        )
     return runnable, input, agent_resources, resources
 
 

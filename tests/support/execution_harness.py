@@ -14,11 +14,12 @@ from typing import Any, Self
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import (
-    ModelInfo,
+    Model,
     ModelRequest,
-    ModelTarget,
+    ModelRoute,
+    ModelToolang,
     Provider,
-    ResolvedProvider,
+    ProviderToolang,
 )
 from toolang.base.types.policy import (
     AgentCeiling,
@@ -58,9 +59,10 @@ TEST_MODEL_REF = "test/scripted"
 
 @dataclass(frozen=True, slots=True)
 class ModelInvocation:
-    """One model target and normalized call observed by the fake adapter."""
+    """One model route and normalized call observed by the fake adapter."""
 
-    target: ModelTarget
+    route: ModelRoute
+    model: Model
     call: ModelCall
 
 
@@ -134,10 +136,13 @@ class ScriptedModelAdapter:
 
     async def invoke(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
+        *,
+        environ: Mapping[str, str],
     ) -> ModelCallResult:
-        turn = self._take_turn(target, request)
+        del environ
+        turn = self._take_turn(model, request)
         if turn.gate is not None:
             await turn.gate.wait()
         if turn.updates:
@@ -148,12 +153,14 @@ class ScriptedModelAdapter:
 
     async def stream(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
         *,
+        environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
-        turn = self._take_turn(target, request)
+        del environ
+        turn = self._take_turn(model, request)
         if turn.gate is not None:
             await turn.gate.wait()
         for update in turn.updates:
@@ -166,10 +173,12 @@ class ScriptedModelAdapter:
 
     def _take_turn(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
     ) -> ScriptedModelTurn:
-        self.invocations.append(ModelInvocation(target=target, call=request))
+        self.invocations.append(
+            ModelInvocation(route=model._toolang.route, model=model, call=request)
+        )
         if not self._responses:
             raise AssertionError("scripted model responses are exhausted")
         response = self._responses.popleft()
@@ -205,34 +214,35 @@ class FakeModels:
     def default_api_key_env(self) -> str | None:
         return None
 
-    def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
-        del environ
-        return (
-            ModelInfo(
-                ref=TEST_MODEL_REF,
+    def catalog_model(self) -> Model:
+        return Model(
+            id="scripted",
+            name="scripted",
+            _toolang=ModelToolang(
+                ready=True,
                 provider=self.name,
-                name="scripted",
-                model="scripted",
-                selectors=(TEST_MODEL_REF, "scripted"),
-                adapter=ScriptedModelAdapter.name,
-                streaming=self.streaming,
+                route=ModelRoute(
+                    adapter="scripted", api="https://example.invalid/v1", env=()
+                ),
             ),
+            tool_call=True,
+            structured_output=True,
         )
+
+    def list_models(self, *, environ: Mapping[str, str]) -> tuple[Model, ...]:
+        del environ
+        return (self.catalog_model(),)
 
     def catalog_provider(self) -> Provider:
         return Provider(
             id=self.name,
             name="Test",
-            env=(),
+            _toolang=ProviderToolang(
+                env=(),
+                adapter=ScriptedModelAdapter.name,
+            ),
             npm="@ai-sdk/openai-compatible",
             api="https://example.invalid/v1",
-            models={},
-            resolved=ResolvedProvider(
-                adapter=ScriptedModelAdapter.name,
-                api="https://example.invalid/v1",
-                env=(),
-                ready=True,
-            ),
         )
 
 
@@ -349,11 +359,7 @@ class ExecutionHarness:
             layout=layout,
             providers=providers,
             adapters={adapter.name: adapter},
-            models=build_model_collection(
-                providers=providers,
-                models=provider.list_models(environ={}),
-                envs={},
-            ),
+            models=build_model_collection(provider.list_models(environ={})),
             tools=ToolCollection.from_tools(
                 {**load_tools(queries=("_toolang/*",)), **(tools or {})}
             ),

@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
-from decimal import Decimal
-from ipaddress import ip_address
 import json
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from ipaddress import ip_address
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from httpx_sse import SSEError, ServerSentEvent, aconnect_sse
+from httpx_sse import ServerSentEvent, SSEError, aconnect_sse
 from pydantic import TypeAdapter, ValidationError
 
+from toolang.base.money import cost_text
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.execution.client import RunHandle
@@ -28,7 +28,6 @@ from toolang.execution.schemas import (
     RunRequest,
 )
 from toolang.execution.types import ControlTiming, RunCommand, RunRef
-
 
 _LOGGER = logging.getLogger(__name__)
 _RUN_ID_HEADER = "X-Toolang-Run-ID"
@@ -558,8 +557,8 @@ def _run_command_data(command: RunCommand) -> dict[str, object]:
     value = command.value
     if isinstance(value, tuple):
         encoded: object = list(value)
-    elif isinstance(value, Decimal):
-        encoded = str(value)
+    elif command.group == "limit" and command.field == "cost" and value is not None:
+        encoded = cost_text(cast(float, value))
     else:
         encoded = value
     return {

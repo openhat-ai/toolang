@@ -116,14 +116,20 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 Model catalog plugins return immutable provider/model snapshots. Static and
 local discovery use the same models.dev-compatible `Provider` and `Model`
-types. Catalog plugins do not execute model calls or install packages named by
-catalog metadata.
+types, but only models.dev records carry an `npm` package; every other source
+declares its protocol through `ProviderToolang.adapter`. Catalog plugins do not
+execute model calls or install packages named by catalog metadata.
 
 ### Model Adapter
 
-Model adapter plugins execute one model turn for a concrete `ModelTarget` and
-return `ModelCallResult`. Both non-streaming and streaming calls are
-asynchronous, and streaming adapters await their model-part handler.
+Model adapter plugins execute one turn for a setup-resolved `Model` and a
+`ModelCall`, returning `ModelCallResult`. Connection facts come from
+`model._toolang.route`; ownership comes from `model._toolang.provider`.
+`invoke(model, request, *, environ)` and
+`stream(model, request, *, environ, on_event)` receive only declared environment
+values from the run-pinned setup. Both calls are asynchronous, and streaming
+adapters await their model-part handler. External adapters must adopt these
+signatures; there is no separate route argument.
 
 Adapters own one protocol shape and its optional default endpoint. They do not
 discover models, match providers, calculate availability, or own pricing.
@@ -144,8 +150,8 @@ as external packages. The implementation packages are:
 - `toolang.plugin.toolsets.*`;
 - `toolang.plugin.channels.*`;
 - `toolang.plugin.sandboxes.*`;
-- `toolang.plugin.models` catalog implementations;
-- `toolang.plugin.models.adapters.*`.
+- `toolang.plugin.catalogs.*`;
+- `toolang.plugin.adapters.*`.
 
 Each entry point names one factory such as `create_toolset`, `create_channel`,
 `create_sandbox`, `create_models_dev_model_catalog`,

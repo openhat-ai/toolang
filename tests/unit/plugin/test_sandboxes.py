@@ -21,7 +21,7 @@ from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
+from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
 from toolang.plugin.sandboxes import _docker_guest as docker_guest
 from toolang.plugin.sandboxes import docker as docker_sandbox

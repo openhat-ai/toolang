@@ -150,11 +150,7 @@ def _model_setup() -> AgentSetup:
         layout=layout,
         providers=providers,
         adapters={},
-        models=build_model_collection(
-            providers=providers,
-            models=provider.list_models(environ={}),
-            envs={},
-        ),
+        models=build_model_collection(provider.list_models(environ={})),
         tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),

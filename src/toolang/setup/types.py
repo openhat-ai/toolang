@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 import platform
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.types.model import ModelOverride, Provider
+from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.collections import ModelCollection
@@ -62,10 +62,27 @@ class AgentSetup:
     models: ModelCollection
     tools: ToolCollection
     envs: Mapping[str, str]
+    revision: str = ""
     environment: AgentEnvironment | None = None
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
     compact_model: ModelOverride | None = None
+    catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    adapter_sources: Mapping[str, str] = field(default_factory=dict)
+    _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def model_catalog(self, *, all: bool = False) -> ModelCatalogSnapshot:
+        """Read the default view, or materialize this version's complete catalog."""
+
+        if all and self._catalog_loader is not None:
+            return self._catalog_loader()
+        return ModelCatalogSnapshot(
+            providers=self.providers,
+            models=self.models.entries,
+            revision=self.revision,
+        )
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
@@ -85,15 +102,21 @@ class AgentSetup:
                     f"provider mapping key {key!r} does not match {identity!r}"
                 )
         missing_providers = {
-            entry.target.provider
+            entry._toolang.provider
             for entry in self.models.entries
-            if entry.target.provider not in providers
+            if entry._toolang.provider not in providers
         }
         if missing_providers:
             raise ValueError(
                 "setup models reference unknown providers: "
                 + ", ".join(sorted(missing_providers))
             )
+        object.__setattr__(
+            self, "catalog_sources", MappingProxyType(dict(self.catalog_sources))
+        )
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "adapters", MappingProxyType(adapters))
+        object.__setattr__(
+            self, "adapter_sources", MappingProxyType(dict(self.adapter_sources))
+        )
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))

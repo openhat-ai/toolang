@@ -187,7 +187,7 @@ class OptionalPrefixAgentListCommand(OptionalPrefixAgentCommand):
     argument_help = "Local agent name; omit for root caps only"
 
 
-class OptionalPrefixAgentModelsCommand(OptionalPrefixAgentCommand):
+class OptionalPrefixAgentCatalogCommand(OptionalPrefixAgentCommand):
     argument_help = "Local agent name; omit for root configuration"
 
 

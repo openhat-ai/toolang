@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
 from pathlib import Path
 import os
 import re
@@ -24,7 +23,6 @@ from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up import server as agent_server
 from toolang.up.server import ServeSpec
-
 
 runner = CliRunner()
 
@@ -201,7 +199,7 @@ def _launch_spec(
     sandbox: str | None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None],
     default_overrides: Mapping[str, str | None],
-    limit_overrides: Mapping[str, int | Decimal | None],
+    limit_overrides: Mapping[str, int | float | None],
     dev: Path | None,
     log_spec: str | None,
     output: SandboxOutput,

@@ -15,9 +15,8 @@ from typer._click.utils import strip_ansi
 from tests.support.execution_fixtures import project_run_start
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.output import shorten_home_path
@@ -692,7 +691,7 @@ def test_chat_invocation_defaults_initialize_the_session(
     assert captured["setting"] == SessionSetting(
         model=ModelRequest(
             "test/other",
-            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+            reasoning=Reasoning(effort="high"),
         ),
         runnable="flow:review",
     )

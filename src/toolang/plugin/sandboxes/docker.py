@@ -28,7 +28,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.progress import emit_progress
-from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
+from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 
 from ._docker_cli import (
     DEFAULT_HOST_GATEWAY,

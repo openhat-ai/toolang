@@ -5,30 +5,21 @@ from dataclasses import replace
 import pytest
 
 from toolang.base.model_settings import parse_model_body
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import Model, ModelToolang
 from toolang.common.errors import ToolangError
-from toolang.plugin.models.collections import ModelCollection, ModelEntry
+from toolang.plugin.models.collections import ModelCollection
 from toolang.setup.models import DEFAULT_PROVIDERS, order_models, select_compact_model
 from toolang.setup.config import resolve_compact_model, resolve_setup_allow
 
 
-def entry(
-    ref: str, *, tools: bool = True, structured: bool | None = True
-) -> ModelEntry:
+def model(ref: str, *, tools: bool = True, structured: bool | None = True) -> Model:
     provider, _, name = ref.partition("/")
-    return ModelEntry(
-        key=ref,
-        ref=ref,
-        info=ModelInfo(ref=ref, provider=provider, name=name, model=name, tools=tools),
-        target=ModelTarget(
-            ref=ref,
-            provider=provider,
-            name=name,
-            model=name,
-            adapter="test",
-            tools=tools,
-            structured_output=structured,
-        ),
+    return Model(
+        id=name,
+        name=name,
+        _toolang=ModelToolang(provider=provider, ready=True),
+        tool_call=tools,
+        structured_output=structured,
     )
 
 
@@ -40,7 +31,7 @@ def test_default_provider_order_never_excludes_or_reorders_provider_models():
         "openai/a",
         "unknown/a",
     )
-    models = ModelCollection(tuple(entry(ref) for ref in refs))
+    models = ModelCollection(tuple(model(ref) for ref in refs))
     ordered = order_models(models, None)
     expected = []
     for provider in DEFAULT_PROVIDERS:
@@ -51,7 +42,7 @@ def test_default_provider_order_never_excludes_or_reorders_provider_models():
 
 @pytest.mark.parametrize("query", ["other/*, openai/*", ["other/*", "openai/*"]])
 def test_allow_query_string_and_list_preserve_authored_order(query):
-    models = ModelCollection((entry("openai/a"), entry("other/b"), entry("google/c")))
+    models = ModelCollection((model("openai/a"), model("other/b"), model("google/c")))
     allow = resolve_setup_allow(({"allow": {"models": query}},))
     assert order_models(models, allow.models).refs() == ("other/b", "openai/a")
 
@@ -78,11 +69,11 @@ def test_compact_config_requires_a_model_or_unset(value):
 def test_compact_selection_filters_capabilities_and_preserves_order():
     models = ModelCollection(
         (
-            entry("test/no-tools", tools=False),
-            entry("test/unknown", structured=None),
-            entry("test/no-schema", structured=False),
-            entry("test/second"),
-            entry("test/first"),
+            model("test/no-tools", tools=False),
+            model("test/unknown", structured=None),
+            model("test/no-schema", structured=False),
+            model("test/second"),
+            model("test/first"),
         )
     )
     assert select_compact_model(models, None).ref == "test/second"
@@ -100,7 +91,7 @@ def test_compact_selection_filters_capabilities_and_preserves_order():
 
 
 def test_unknown_catalog_tool_capability_does_not_qualify():
-    models = ModelCollection((entry("test/unknown"),))
+    models = ModelCollection((model("test/unknown"),))
     views = tuple(replace(view, tool_call=None) for view in models.query_views())
     models = ModelCollection(models.entries, query_views=views)
     with pytest.raises(ToolangError, match="requires an allowed model"):

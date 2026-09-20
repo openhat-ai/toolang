@@ -59,9 +59,9 @@ def validate_model_reasoning_request(
 ) -> None:
     """Reject reasoning values known to be unsupported by Chat model metadata."""
 
-    if model is None or model.parameters.reasoning is None:
+    if model is None or model.reasoning is None:
         return
-    reasoning = model.parameters.reasoning
+    reasoning = model.reasoning
     raw_items = models_payload.get("items")
     items = raw_items if isinstance(raw_items, list | tuple) else ()
     item: Mapping[str, object] | None = None

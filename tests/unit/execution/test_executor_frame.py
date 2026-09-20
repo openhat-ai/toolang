@@ -18,10 +18,11 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.model import (
-    ModelInfo,
-    ModelTarget,
+    Model,
+    ModelToolang,
+    ModelRoute,
     Provider,
-    ResolvedProvider,
+    ProviderToolang,
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
@@ -68,7 +69,6 @@ from toolang.setup import (
     AgentEnvironment,
     AgentSetup,
     ModelCollection,
-    ModelEntry,
     ToolCollection,
 )
 
@@ -79,38 +79,29 @@ def _provider() -> Provider:
         name="Test",
         env=(),
         npm="@ai-sdk/openai-compatible",
-        models={},
-        resolved=ResolvedProvider(
-            adapter="test",
-            api="https://models.example/v1",
+        _toolang=ProviderToolang(
             env=(),
-            ready=True,
+            adapter="test",
         ),
+        api="https://models.example/v1",
     )
 
 
 def _models() -> ModelCollection:
-    info = ModelInfo(
-        ref="test/model",
-        provider="test",
-        name="model",
-        model="model",
-        adapter="test",
-    )
     return ModelCollection(
         (
-            ModelEntry(
-                key=info.ref,
-                ref=info.ref,
-                target=ModelTarget(
-                    ref=info.ref,
-                    provider=info.provider,
-                    name=info.name,
-                    model=info.model,
-                    adapter="test",
-                    base_url="https://models.example/v1",
+            Model(
+                id="model",
+                name="model",
+                _toolang=ModelToolang(
+                    provider="test",
+                    ready=True,
+                    route=ModelRoute(
+                        adapter="test", api="https://example.invalid/v1", env=()
+                    ),
                 ),
-                info=info,
+                tool_call=True,
+                structured_output=True,
             ),
         )
     )
@@ -127,14 +118,25 @@ class _Adapter:
 
     async def invoke(
         self,
-        target: ModelTarget,
+        model: Model,
         request: ModelCall,
+        *,
+        environ,
     ) -> ModelCallResult:
+        del model, environ
         self.requests.append(request)
         return ModelCallResult(message=self.response)
 
-    async def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
-        return await self.invoke(target, request)
+    async def stream(
+        self,
+        model: Model,
+        request: ModelCall,
+        *,
+        environ,
+        on_event,
+    ):
+        del on_event
+        return await self.invoke(model, request, environ=environ)
 
 
 class _Tool(Tool):

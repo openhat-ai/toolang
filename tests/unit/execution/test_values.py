@@ -17,9 +17,8 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
@@ -392,12 +391,12 @@ def test_flat_input_codec_retains_presence_types_and_references() -> None:
 @pytest.mark.parametrize(
     ("reasoning", "expected"),
     [
-        (ReasoningParameters(effort="high"), {"effort": "high"}),
-        (ReasoningParameters(budget_tokens=4096), {"budget_tokens": 4096}),
+        (Reasoning(effort="high"), {"effort": "high"}),
+        (Reasoning(budget_tokens=4096), {"budget_tokens": 4096}),
     ],
 )
 def test_preparation_payload_omits_inactive_reasoning_controls(
-    reasoning: ReasoningParameters,
+    reasoning: Reasoning,
     expected: dict[str, object],
 ) -> None:
     payload = RunControlPayload(
@@ -406,7 +405,7 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
-        model_request=ModelRequest("test/model", ModelParameters(reasoning)),
+        model_request=ModelRequest("test/model", reasoning=reasoning),
         input=CallInput({}),
     )
 

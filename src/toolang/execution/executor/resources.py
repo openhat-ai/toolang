@@ -8,7 +8,7 @@ import json
 from typing import cast
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.common.query import SetOperator
@@ -62,13 +62,13 @@ _CAP_CEILING_FIELDS: tuple[tuple[EntryKind, str], ...] = (
 def agent_model_targets(
     setup: AgentSetup,
     ceiling: AgentCeiling,
-) -> tuple[str | None, tuple[tuple[str, ModelTarget], ...]]:
-    """Return the default and selectable targets within one agent ceiling."""
+) -> tuple[str | None, tuple[tuple[str, Model], ...]]:
+    """Return the default and selectable models within one agent ceiling."""
 
     models = setup.models
     if ceiling.models is not None:
         models = models.match(ceiling.models) if ceiling.models else ModelCollection()
-    targets = tuple((entry.ref, entry.target) for entry in models.entries)
+    targets = tuple((model.ref, model) for model in models.entries)
     default = setup.defaults.model.ref if setup.defaults.model is not None else None
     if default is not None and not models.contains(default):
         raise ToolangError("default model is outside the selectable model collection")
@@ -248,7 +248,7 @@ def validate_model_binding(
 
     if model is not None:
         entry = selection.resolve(model)
-        if entry.key not in resources.models:
+        if entry.ref not in resources.models:
             raise ToolangError(f"model ref is outside run resources: {model}")
     elif isinstance(runnable, AgicDecl):
         raise ToolangError(f"run requires a model: {runnable.name or runnable.kind}")

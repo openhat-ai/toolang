@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
-from decimal import Decimal, InvalidOperation
+import math
 import os
-from pathlib import Path
 import re
 import tomllib
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from pathlib import Path
 from typing import cast
 
 from dotenv import dotenv_values
+
 from toolang.base.model_settings import apply_model_override, parse_model_body
+from toolang.base.money import normalize_cost
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
@@ -22,7 +24,6 @@ from toolang.common.query import (
 )
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
-
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -252,7 +253,7 @@ def resolve_run_defaults(
 def resolve_run_limits(
     configs: Sequence[Mapping[str, object]],
     *,
-    overrides: Mapping[str, int | Decimal | None] | None = None,
+    overrides: Mapping[str, int | float | None] | None = None,
 ) -> RunLimits:
     """Resolve layered ``[limit]`` configuration and frozen overrides."""
 
@@ -355,19 +356,19 @@ def _mutable_value(value: object) -> object:
     return value
 
 
-def _limit_value(name: str, value: object) -> int | Decimal | None:
+def _limit_value(name: str, value: object) -> int | float | None:
     if isinstance(value, str) and value.lower() == "none":
         return None
     if name == "cost":
         if isinstance(value, bool) or not isinstance(value, str | int | float):
             raise TypeError("run limit cost must be a decimal string or number")
         try:
-            parsed = Decimal(str(value))
-        except InvalidOperation as exc:
+            parsed = float(str(value))
+        except ValueError as exc:
             raise ValueError("run limit cost must be a decimal or none") from exc
-        if not parsed.is_finite() or parsed < 0:
+        if not math.isfinite(parsed) or parsed < 0:
             raise ValueError("run limit cost must be non-negative or none")
-        return parsed
+        return normalize_cost(parsed)
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"run limit {name} must be an integer or 'none'")
     if value < 0:

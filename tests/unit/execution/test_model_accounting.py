@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from decimal import Decimal
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget, Provider
+from dataclasses import replace
+
+import pytest
+
+from toolang.base.types.model import (
+    Model,
+    ModelToolang,
+    Reasoning,
+)
 from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
     build_model_accounting,
@@ -13,10 +20,13 @@ from toolang.execution.accounting import (
 )
 from toolang.execution.records import step_noted_from_data, step_noted_to_data
 from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
+from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
+
+from toolang.base.types.model import ModelProvider
 
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=1000,
@@ -28,10 +38,10 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         ),
         _catalog(
             {
-                "input": Decimal("2"),
-                "output": Decimal("10"),
-                "cache_read": Decimal("0.2"),
-                "reasoning": Decimal("10"),
+                "input": 2.0,
+                "output": 10.0,
+                "cache_read": 0.2,
+                "reasoning": 10.0,
             }
         ),
     )
@@ -45,7 +55,7 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         "output.reasoning",
         "output.visible",
     ]
-    assert cache_hit_ratio(accounting) == Decimal("0.65")
+    assert cache_hit_ratio(accounting) == 0.65
     assert token_meter_quantity(accounting, "output.reasoning") == 150
 
 
@@ -75,7 +85,7 @@ def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() ->
 
 
 def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=1000, output_tokens=100),
         _catalog({"input": 0.14, "output": 0.28}),
@@ -88,7 +98,7 @@ def test_accounting_accepts_fractional_float_rates_from_effective_resources() ->
 
 
 def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -99,10 +109,10 @@ def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
         ),
         _catalog(
             {
-                "input": Decimal("2"),
-                "output": Decimal("10"),
-                "cache_read": Decimal("0.2"),
-                "cache_write": Decimal("2.5"),
+                "input": 2.0,
+                "output": 10.0,
+                "cache_read": 0.2,
+                "cache_write": 2.5,
             }
         ),
     )
@@ -120,7 +130,7 @@ def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
 
 
 def test_accounting_selects_context_tier_and_records_match() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=300, output_tokens=100),
         _catalog(
@@ -145,12 +155,12 @@ def test_accounting_selects_context_tier_and_records_match() -> None:
 
 
 def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=10,
             output_tokens=5,
-            reported_cost=Decimal("0.03"),
+            reported_cost=0.03,
             reported_currency="USD",
         ),
         _catalog({"input": 1, "output": 2}),
@@ -160,11 +170,11 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
     assert accounting.selected == "reported"
     assert accounting.reported is not None
     assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == Decimal("0.03")
+    assert selected_usd_cost(accounting) == 0.03
 
 
 def test_zero_prices_produce_a_complete_zero_cost() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=100, output_tokens=50),
         _catalog({"input": 0, "output": 0}),
@@ -174,48 +184,19 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
     assert accounting.estimate.amount == "0"
     assert accounting.estimate.complete is True
     assert [line.rate for line in accounting.estimate.lines] == ["0", "0"]
-    assert selected_usd_cost(accounting) == Decimal("0")
+    assert selected_usd_cost(accounting) == 0.0
 
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
-    model = Model(
-        provider_id="llama_cpp",
-        id="local",
-        name="Local",
-        cost={"input": 0, "output": 0},
-        local=True,
-    )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "llama_cpp": Provider(
-                id="llama_cpp",
-                name="llama.cpp",
-                env=(),
-                npm="@ai-sdk/openai-compatible",
-                models={model.id: model},
-                local=True,
-            )
-        },
-        models=(model,),
-        revision="runtime:local",
-    )
+    model = _model(dict(LOCAL_ZERO_COST))
     accounting = build_model_accounting(
-        ModelTarget(
-            ref="llama_cpp/local",
-            provider="llama_cpp",
-            name="Local",
-            model="local",
-            adapter="chat_completions",
-            catalog="llama_cpp",
-            catalog_revision="runtime:local",
-        ),
+        model,
         ModelUsage(
             input_tokens=4100,
             output_tokens=15,
             input_uncached_tokens=123,
             input_cache_read_tokens=3977,
         ),
-        catalog,
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -225,12 +206,12 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
 
 
 def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=10,
             output_tokens=5,
-            reported_cost=Decimal("2"),
+            reported_cost=2.0,
             reported_currency="EUR",
         ),
         _catalog({"input": 1, "output": 2}),
@@ -241,15 +222,15 @@ def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
     assert accounting.reported.amount == "2"
     assert accounting.reported.currency == "EUR"
     assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == Decimal("0.00002")
+    assert selected_usd_cost(accounting) == 2e-05
     assert selected_cost_is_approximate(accounting) is True
 
 
 def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(input_tokens=100, output_tokens=10),
-        _catalog({"input": 1, "output": 2, "cache_read": Decimal("0.1")}),
+        _catalog({"input": 1, "output": 2, "cache_read": 0.1}),
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -258,43 +239,14 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
 
 
 def test_accounting_selects_advertised_mode_price() -> None:
-    target = _target()
-    target = ModelTarget(
-        ref=target.ref,
-        provider=target.provider,
-        name=target.name,
-        model=target.model,
-        adapter=target.adapter,
-        catalog_revision=target.catalog_revision,
-        mode="fast",
-    )
-    catalog = _catalog({"input": 1, "output": 2})
-    model = catalog.models[0]
-    mode_model = Model(
-        provider_id=model.provider_id,
-        id=model.id,
-        name=model.name,
+    model = _model(
+        {"input": 1, "output": 2},
+        provider=ModelProvider(mode="fast"),
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
-        cost=model.cost,
     )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "test": Provider(
-                id="test",
-                name="Test",
-                env=(),
-                npm="@ai-sdk/openai",
-                models={"one": mode_model},
-            )
-        },
-        models=(mode_model,),
-        revision="sha256:catalog",
-    )
-
     accounting = build_model_accounting(
-        target,
+        model,
         ModelUsage(input_tokens=100, output_tokens=50),
-        catalog,
     )
 
     assert accounting is not None and accounting.pricing is not None
@@ -305,7 +257,7 @@ def test_accounting_selects_advertised_mode_price() -> None:
 
 
 def test_accounting_records_unsupported_billing_context_as_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -313,6 +265,7 @@ def test_accounting_records_unsupported_billing_context_as_partial() -> None:
             billing={"service_tier": "priority", "inference_geo": "us"},
         ),
         _catalog({"input": 1, "output": 2}),
+        requested=Reasoning("high"),
     )
 
     assert accounting is not None and accounting.estimate is not None
@@ -326,7 +279,7 @@ def test_accounting_records_unsupported_billing_context_as_partial() -> None:
 
 
 def test_accounting_accepts_standard_billing_context() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -341,12 +294,12 @@ def test_accounting_accepts_standard_billing_context() -> None:
 
 
 def test_accounting_preserves_billing_context_without_catalog_price() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
             output_tokens=20,
-            reported_cost=Decimal("0.03"),
+            reported_cost=0.03,
             reported_currency="USD",
             billing={"service_tier": "priority"},
         ),
@@ -355,65 +308,31 @@ def test_accounting_preserves_billing_context_without_catalog_price() -> None:
 
     assert accounting is not None and accounting.pricing is not None
     assert accounting.pricing.source == "unknown"
-    assert accounting.pricing.revision == "sha256:catalog"
+    assert accounting.pricing.revision is None
     assert accounting.pricing.match == {"billing": {"service_tier": "priority"}}
     assert accounting.reported is not None
     assert accounting.estimate is None
 
 
 def test_accounting_uses_model_catalog_provenance_without_inventing_reasoning() -> None:
-    model = Model(
-        provider_id="ollama",
-        id="local",
-        name="Local",
-        reasoning=True,
-        cost={"input": 0, "output": 0},
-        catalog="ollama",
-        catalog_revision="runtime:local",
-        local=True,
-    )
-    catalog = ModelCatalogSnapshot(
-        providers={
-            "ollama": Provider(
-                id="ollama",
-                name="Ollama",
-                env=(),
-                npm="@ai-sdk/openai-compatible",
-                models={model.id: model},
-                catalog="ollama",
-                catalog_revision="runtime:local",
-                local=True,
-            )
-        },
-        models=(model,),
-        revision="sha256:merged",
-    )
-    target = ModelTarget(
-        ref="ollama/local",
-        provider="ollama",
-        name="Local",
-        model="local",
-        adapter="chat_completions",
-        catalog="ollama",
-        catalog_revision="runtime:local",
-        reasoning={"effort": "high"},
-    )
-
+    model = _model({"input": 0, "output": 0})
     accounting = build_model_accounting(
-        target,
+        model,
         ModelUsage(input_tokens=10, output_tokens=5),
-        catalog,
+        requested=Reasoning("high"),
+        source="models_dev",
+        revision="catalog-v1",
     )
 
     assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.source == "ollama"
-    assert accounting.pricing.revision == "runtime:local"
+    assert accounting.pricing.source == "models_dev"
+    assert accounting.pricing.revision == "catalog-v1"
     assert accounting.reasoning.requested == {"effort": "high"}
     assert accounting.reasoning.selected is None
 
 
 def test_audio_rates_replace_overlapping_base_token_rates() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -441,7 +360,7 @@ def test_audio_rates_replace_overlapping_base_token_rates() -> None:
 
 
 def test_durable_model_accounting_round_trips_without_repricing() -> None:
-    accounting = build_model_accounting(
+    accounting = _accounting(
         _target(),
         ModelUsage(
             input_tokens=100,
@@ -480,37 +399,71 @@ def test_legacy_model_noted_data_projects_version_zero_accounting() -> None:
     assert restored.accounting.estimate.complete is False
 
 
-def _target() -> ModelTarget:
-    return ModelTarget(
-        ref="test/one",
-        provider="test",
-        name="One",
-        model="one",
-        adapter="responses",
-        catalog_revision="sha256:catalog",
-        reasoning={"effort": "high"},
-    )
+def _target() -> Model:
+    return _model()
 
 
-def _catalog(cost: dict[str, object]) -> ModelCatalogSnapshot:
-    model = Model(
-        provider_id="test",
+def _model(
+    cost: dict[str, object] | None = None,
+    *,
+    provider: ModelProvider | None = None,
+    experimental: dict[str, object] | None = None,
+) -> Model:
+    return Model(
         id="one",
         name="One",
+        _toolang=ModelToolang(provider="test", ready=True),
         reasoning=True,
         modalities={"input": ("text",), "output": ("text",)},
         limit={"context": 1000},
         cost=cost,
+        provider=provider,
+        experimental=experimental,
     )
-    provider = Provider(
-        id="test",
-        name="Test",
-        env=(),
-        npm="@ai-sdk/openai",
-        models={"one": model},
+
+
+def _catalog(cost: dict[str, object]) -> dict[str, object]:
+    return cost
+
+
+def _accounting(
+    model: Model,
+    usage: ModelUsage | None,
+    cost: dict[str, object] | None = None,
+    *,
+    requested: Reasoning | None = None,
+) -> ModelAccounting | None:
+    resolved = replace(model, cost=cost) if cost is not None else model
+    return build_model_accounting(resolved, usage, requested=requested)
+
+
+def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
+    from toolang.base.money import cost_units
+
+    # Both components cost 0.4 micro-USD; round the combined call, not each line.
+    accounting = build_model_accounting(
+        _model({"input": 0.2, "output": 0.2}),
+        ModelUsage(input_tokens=2, output_tokens=2),
     )
-    return ModelCatalogSnapshot(
-        providers={"test": provider},
-        models=(model,),
-        revision="sha256:catalog",
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == "0.000001"
+    cost = selected_usd_cost(accounting)
+    assert cost is not None and cost_units(cost) == 1
+    assert all(0 < float(line.amount) < 0.000001 for line in accounting.estimate.lines)
+
+
+@pytest.mark.parametrize(
+    ("rate", "expected"),
+    [(0.57999999, "0.000014"), (0.58, "0.000015"), (0.58000001, "0.000015")],
+)
+def test_call_settlement_preserves_decimal_half_micro_boundaries(
+    rate: float, expected: str
+) -> None:
+    accounting = build_model_accounting(
+        _model({"input": rate, "output": 0}),
+        ModelUsage(input_tokens=25, output_tokens=0),
     )
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == expected
+    if rate == 0.58:
+        assert accounting.estimate.lines[0].amount == "0.0000145"

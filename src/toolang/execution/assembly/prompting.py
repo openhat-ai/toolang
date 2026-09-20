@@ -12,7 +12,7 @@ from typing import cast
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, Part, TextPart
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import Model
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
@@ -182,7 +182,7 @@ class PromptInputs:
     agic: AgicDecl
     runnable_name: str
     module: str
-    model: ModelTarget
+    model: Model
     caps: Sequence[StateCap]
     facts: Mapping[str, object]
     values: Mapping[str, object]
@@ -214,13 +214,13 @@ class PromptInputs:
                 },
                 "model": {
                     "ref": self.model.ref,
-                    "provider": self.model.provider,
+                    "provider": self.model._toolang.provider,
                     "name": self.model.name,
-                    "model": self.model.model,
-                    "adapter": self.model.adapter,
-                    "base_url": self.model.base_url,
-                    "tools": self.model.tools,
-                    "streaming": self.model.streaming,
+                    "model": self.model.id,
+                    "adapter": self.model._toolang.route.adapter,
+                    "base_url": self.model._toolang.route.api,
+                    "tools": self.model.tool_call is True,
+                    "streaming": True,
                 },
             }
         )

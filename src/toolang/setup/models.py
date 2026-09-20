@@ -1,10 +1,13 @@
-"""Ordering and compact selection within an effective model collection."""
+"""Ordering, compact selection, and catalog projection for effective models."""
+
+from __future__ import annotations
+
 
 from toolang.base.model_settings import apply_model_override
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.common.errors import ToolangError
 from toolang.plugin.models.collections import ModelCollection
-from toolang.plugin.models.resolution import apply_model_parameters
+from toolang.plugin.models.resolution import resolve_model_reasoning
 
 
 DEFAULT_PROVIDERS = (
@@ -47,7 +50,7 @@ def select_compact_model(
             raise ToolangError(
                 "compaction requires an allowed model with tool calls and structured output"
             )
-        request = ModelRequest(eligible.entries[0].target.ref)
+        request = ModelRequest(eligible.entries[0].ref)
     else:
         request = apply_model_override(None, None, override)
         assert request is not None
@@ -56,6 +59,6 @@ def select_compact_model(
                 f"compact model {request.ref!r} must be available, allowed, and support "
                 "tool calls and structured output"
             )
-    target = eligible.resolve(request.ref).target
-    apply_model_parameters(eligible, target, request.parameters)
+    model = eligible.resolve(request.ref)
+    resolve_model_reasoning(model, request.reasoning)
     return request

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from decimal import Decimal
 import json
 
 import httpx
@@ -13,9 +12,8 @@ from pydantic import TypeAdapter
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.cli.toolang.commands.chat import remote
 from toolang.cli.toolang.commands.chat.base import (
@@ -44,14 +42,15 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import CallInput
 
-
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 def _run_defaults() -> dict[str, object]:
     return {
-        "model": {"ref": "test/model", "parameters": {}},
+        "model": {
+            "ref": "test/model",
+        },
         "runnable": "agic:chat",
         "policy": {"allow": [], "limits": {}},
     }
@@ -141,7 +140,7 @@ def test_remote_run_defaults_preserve_typed_model_parameters() -> None:
         {
             "model": {
                 "ref": "test/model",
-                "parameters": {"reasoning": {"effort": "high"}},
+                "reasoning": {"effort": "high"},
             },
             "runnable": "agic:chat",
             "policy": {"allow": [], "limits": {}},
@@ -150,7 +149,7 @@ def test_remote_run_defaults_preserve_typed_model_parameters() -> None:
 
     assert setting.model == ModelRequest(
         "test/model",
-        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        reasoning=Reasoning(effort="high"),
     )
 
 
@@ -388,7 +387,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             RunOverride(
                 model=ModelOverride(identity="test/model"),
                 allow=(AllowOverride("models", ("test/*",)),),
-                limits=(LimitOverride("cost", Decimal("2.50")),),
+                limits=(LimitOverride("cost", 2.5),),
             ),
         )
         assert session.get_result("run_remote", thread_id=None).output == (
@@ -399,7 +398,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         )
         assert setting.model is not None and setting.model.ref == "test/model"
         assert setting.allow.models == ("test/*",)
-        assert setting.limits.cost == Decimal("2.50")
+        assert setting.limits.cost == 2.5
     finally:
         session.close()
 

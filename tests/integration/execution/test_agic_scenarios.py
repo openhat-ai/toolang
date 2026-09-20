@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -35,9 +34,8 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import (
     ModelOverride,
-    ModelParameters,
     ModelRequest,
-    ReasoningParameters,
+    Reasoning,
 )
 from toolang.base.types.run import (
     ModelCallResult,
@@ -311,41 +309,35 @@ agic reply(_: Part[]) -> Part[]:
     )
     harness.setup = replace(
         harness.setup,
+        defaults=replace(
+            harness.setup.defaults,
+            model=ModelRequest(TEST_MODEL_REF, reasoning=Reasoning("medium")),
+        ),
         models=ModelCollection(
             tuple(
                 replace(
-                    entry,
-                    target=replace(
-                        entry.target,
-                        reasoning={"enabled": True, "effort": "medium"},
-                    ),
-                    info=replace(
-                        entry.info,
-                        metadata={
-                            **entry.info.metadata,
-                            "reasoning_options": [
-                                {"type": "toggle"},
-                                {
-                                    "type": "effort",
-                                    "values": ["medium", "high", "low"],
-                                    "exhaustive": True,
-                                },
-                            ],
+                    model,
+                    reasoning_options=(
+                        {"type": "toggle"},
+                        {
+                            "type": "effort",
+                            "values": ["medium", "high", "low"],
+                            "exhaustive": True,
                         },
                     ),
                 )
-                for entry in harness.setup.models.entries
+                for model in harness.setup.models.entries
             )
         ),
     )
     harness.executor._setup = lambda: harness.setup
     high = ModelRequest(
         TEST_MODEL_REF,
-        ModelParameters(ReasoningParameters("high")),
+        reasoning=Reasoning("high"),
     )
     low = ModelRequest(
         TEST_MODEL_REF,
-        ModelParameters(ReasoningParameters("low")),
+        reasoning=Reasoning("low"),
     )
 
     async def scenario() -> None:
@@ -421,14 +413,11 @@ agic reply(_: Part[]) -> Part[]:
             assert isinstance(replacement_control.payload, RunControlPayload)
             assert replacement_control.payload.model_request == low
 
-            automatic_spec = replace(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="reply",
-                    primary=resolve_input_parts("automatic"),
-                    model=TEST_MODEL_REF,
-                ),
-                model_request=ModelRequest(TEST_MODEL_REF),
+            automatic_spec = harness.run_spec(
+                thread=thread,
+                runnable="reply",
+                primary=resolve_input_parts("automatic"),
+                model=TEST_MODEL_REF,
             )
             automatic = await harness.executor.run(automatic_spec)
 
@@ -441,21 +430,20 @@ agic reply(_: Part[]) -> Part[]:
                 == ("succeeded")
             )
             assert [
-                invocation.target.reasoning
-                for invocation in harness.adapter.invocations
+                invocation.call.reasoning for invocation in harness.adapter.invocations
             ] == [
-                {"effort": "high"},
-                {"effort": "high"},
-                {"effort": "high"},
-                {"effort": "low"},
-                {"effort": "low"},
-                {"enabled": True, "effort": "medium"},
+                Reasoning("high"),
+                Reasoning("high"),
+                Reasoning("high"),
+                Reasoning("low"),
+                Reasoning("low"),
+                Reasoning("medium"),
             ]
             for run, expected in (
                 (preserved, {"effort": "high"}),
                 (sparse, {"effort": "low"}),
                 (replacement, {"effort": "low"}),
-                (automatic, {"enabled": True, "effort": "medium"}),
+                (automatic, {"effort": "medium"}),
             ):
                 step = harness.store.list_steps(run_id=run.id)[0]
                 assert isinstance(step.noted, ModelStepNoted)
@@ -467,7 +455,7 @@ agic reply(_: Part[]) -> Part[]:
                 source_spec,
                 model_request=ModelRequest(
                     TEST_MODEL_REF,
-                    ModelParameters(ReasoningParameters("max")),
+                    reasoning=Reasoning("max"),
                 ),
             )
             with pytest.raises(ToolangError, match="allowed: medium, high, low"):
@@ -1747,7 +1735,7 @@ agic reply(_: Text) -> Text:
     [
         (None, "succeeded", None),
         (
-            Decimal("0.02"),
+            0.02,
             "failed",
             "Run cost limit exceeded: 0.03 > 0.02 USD",
         ),
@@ -1755,7 +1743,7 @@ agic reply(_: Text) -> Text:
 )
 def test_model_step_records_cost_and_enforces_run_cost_limit(
     tmp_path: Path,
-    cost_limit: Decimal | None,
+    cost_limit: float | None,
     status: str,
     error: str | None,
 ) -> None:
@@ -1780,14 +1768,10 @@ agic reply(_: Text) -> Text:
         models=ModelCollection(
             tuple(
                 replace(
-                    entry,
-                    info=replace(
-                        entry.info,
-                        input_price=0.01,
-                        output_price=0.02,
-                    ),
+                    model,
+                    cost={"input": 10000, "output": 20000},
                 )
-                for entry in harness.setup.models.entries
+                for model in harness.setup.models.entries
             )
         ),
     )
@@ -1841,7 +1825,7 @@ agic reply(_: Text) -> Text:
                     thread=thread,
                     runnable="reply",
                     primary=resolve_input_parts("hello"),
-                    limits=RunLimits(cost=Decimal("1")),
+                    limits=RunLimits(cost=1.0),
                 ),
             )
 
@@ -2084,5 +2068,53 @@ agic chat(_: Text):
             assert record.status == "failed"
             assert isinstance(record.error, ErrorMessage)
             assert record.error.message == "model produced no visible output"
+
+    asyncio.run(scenario())
+
+
+def test_accounting_keeps_the_run_catalog_revision_after_setup_refresh(tmp_path):
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Text) -> Text:\n  recall = none\n  context: none\n  instruct: none\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                gate=gate,
+                result=ModelCallResult(
+                    message=Message.assistant("done"),
+                    usage=ModelUsage(
+                        input_tokens=1,
+                        output_tokens=1,
+                        billing={"service_tier": "standard"},
+                    ),
+                ),
+            )
+        ],
+    )
+    harness.setup = replace(harness.setup, catalog_sources={"test": ("custom", "v1")})
+    harness.executor._setup = lambda: harness.setup
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
+            harness.setup = replace(
+                harness.setup, catalog_sources={"test": ("custom", "v2")}
+            )
+            gate.release()
+            record = await run
+            assert record.status == "succeeded"
+            noted = harness.store.list_steps(run_id=record.id)[0].noted
+            assert isinstance(noted, ModelStepNoted)
+            assert noted.accounting is not None and noted.accounting.pricing is not None
+            assert noted.accounting.pricing.source == "custom"
+            assert noted.accounting.pricing.revision == "v1"
 
     asyncio.run(scenario())
