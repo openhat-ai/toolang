@@ -10,7 +10,10 @@ from tests.support.execution_assertions import (
     assert_replayed,
     without_route_snapshots,
 )
-from tests.support.execution_fixtures import project_run_start, project_run_end
+from tests.support.execution_fixtures import (
+    accept_run,
+    project_run_end,
+)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -18,7 +21,9 @@ from tests.support.execution_harness import (
     RecordingTool,
 )
 from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.model import Model, ModelRoute, ModelToolang
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.plugin.adapters.responses import response_payload
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.assembly import history as execution_history
@@ -37,6 +42,8 @@ from toolang.execution.types import (
     ThreadPrefix,
 )
 from toolang.state.prepare import prepare_agent_state
+from toolang.lang.input import RunnableInput
+from toolang.common.time import utc_now
 
 
 SOURCE = """
@@ -53,14 +60,21 @@ agic chat(_: Part[]) -> Part[]:
 
 
 def _summary(harness, thread, end, *, summary="Earlier facts.", begin=None):
-    run = project_run_start(
+    # Keep explicit adoption independent of automatic compact-thread discovery.
+    summary_thread = f"summary_{thread}"
+    if harness.store.get_thread(thread_id=summary_thread) is None:
+        harness.store.create_thread(
+            thread_id=summary_thread, origin="test", created_at=utc_now()
+        )
+    run, _ = accept_run(
         harness.store,
         run_id=harness.ids.issue_run(),
-        # Assembly tests adopt explicitly; automatic paired-Thread discovery is
-        # covered by the compact coordinator scenarios.
-        thread_id=f"summary_{thread}",
-        origin="test",
-        input=Message.user("compact"),
+        parent=None,
+        thread=summary_thread,
+        input=RunnableInput({"thread": thread, "begin": begin, "end": end}),
+        context={},
+        request_id=None,
+        created_at=utc_now(),
     )
     project_run_end(
         harness.store,
@@ -1071,6 +1085,98 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             assert without_route_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )[0] == Message.user("Earlier facts.")
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
+    tool = RecordingTool("lookup__item", output={"value": 1})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(message=Message.assistant("old reply")),
+            ModelCallResult(message=Message.assistant("recent reply")),
+            ModelCallResult(
+                tool_calls=tuple(
+                    ToolCall(f"lookup{i}", f"lookup{i}", tool.name, {})
+                    for i in range(2)
+                ),
+                continuation={
+                    "previous_response_id": "uncompacted",
+                    "reasoning": {
+                        "lookup0": [{"id": "rs_0", "type": "reasoning", "summary": []}],
+                    },
+                },
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    horizon = None
+    adopted = False
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            nonlocal adopted
+            await super().on_event(event)
+            if isinstance(event, StepEnd) and event.kind == "tool" and not adopted:
+                assert horizon is not None
+                harness.store.accept_compact_control(
+                    run_id=event.step.run_id,
+                    horizon=horizon,
+                    triggered_by=event.step,
+                    created_at=event.finished_at,
+                )
+                adopted = True
+
+    tracer = Tracer()
+
+    async def scenario():
+        nonlocal horizon
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            await _run(harness, thread, "old input", tracer)
+            recent = await _run(harness, thread, "recent input", tracer)
+            horizon = _summary(harness, thread, recent.id)
+            run = await _run(harness, thread, "current", tracer)
+            assert run.status == "succeeded", run.error
+            request = harness.adapter.invocations[-1].call
+            payload = response_payload(
+                Model(
+                    id="model",
+                    name="model",
+                    _toolang=ModelToolang(
+                        provider="openai",
+                        ready=True,
+                        route=ModelRoute(adapter="responses"),
+                    ),
+                ),
+                request,
+                stateful=True,
+            )
+            assert "previous_response_id" not in payload
+            assert [
+                item["call_id"]
+                for item in payload["input"]
+                if item["type"] == "function_call_output"
+            ] == ["lookup0", "lookup1"]
+            assert [
+                item["call_id"]
+                for item in payload["input"]
+                if item["type"] == "function_call"
+            ] == ["lookup0", "lookup1"]
+            assert [
+                item["id"] for item in payload["input"] if item["type"] == "reasoning"
+            ] == ["rs_0"]
+            assert request.messages[0] == Message.user("Earlier facts.")
+            assert "old input" not in str(request.messages)
+            assert len(tool.calls) == 2
+            step = harness.store.list_steps(run_id=run.id)[-1]
+            assert isinstance(step.given, StoredModelStepGiven)
+            assert step.given.call.messages.head == step.ref
+            assert harness.store.rebuild_model_call(step) == request
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

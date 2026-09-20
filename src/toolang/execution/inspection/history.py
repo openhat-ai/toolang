@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from toolang.lang.types import Value
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
+from ..compaction import decode_compaction
 from ..records import (
     RunControlPayload,
     ControlRecord,
@@ -280,9 +281,73 @@ class RunHistory:
                 raise ValueError(f"not a model step: {ref}")
             return self._store.rebuild_model_calls((record,))[ref]
 
-    def get_compaction(self, thread: ThreadRef | str) -> CompactionOutput | None:
-        """Find the latest applicable full-prefix summary, skipping interval tests."""
+    def read_compaction(
+        self, ref: FieldRef, thread: ThreadRef, roots: Sequence[RunRef]
+    ) -> CompactionOutput:
+        """Validate durable producer output and its entire previous-summary chain."""
+        with self._store.read_transaction():
+            _, _, members = self._store.history_thread_members(str(thread))
+            visible = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
+            if tuple(roots) != visible[: len(roots)]:
+                raise ValueError(
+                    "compact range changed; historical prefix is no longer visible"
+                )
+            chain: list[tuple[Output, Mapping[str, object]]] = []
+            seen: set[FieldRef] = set()
+            cursor = ref
+            while True:
+                if cursor in seen:
+                    raise ValueError("cyclic compact previous references")
+                seen.add(cursor)
+                if not isinstance(
+                    cursor.record, RunRef
+                ) or cursor != FieldRef.from_path(cursor.record, "output"):
+                    raise ValueError("compact horizon must reference a Run output")
+                run = self._require_run(str(cursor.record))
+                if run.parent is not None or run.status != "succeeded":
+                    raise ValueError(
+                        "compact horizon must reference a successful root Run"
+                    )
+                output = self.get_output(run.id)
+                control = self._store.get_run_control(run_id=run.id, index=0)
+                if (
+                    output is None
+                    or control is None
+                    or not isinstance(control.payload, RunControlPayload)
+                ):
+                    raise ValueError("compact Run has no output or recorded request")
+                request = control.payload.input
+                chain.append((output, request))
+                previous = request.get("previous")
+                if previous is None:
+                    break
+                if not isinstance(previous, str):
+                    raise ValueError("compact previous must be an output reference")
+                cursor = FieldRef.parse(previous)
+            result = None
+            for output, request in reversed(chain):
+                result = decode_compaction(
+                    output.local.value,
+                    thread=thread,
+                    roots=roots,
+                    request=request,
+                    previous=result,
+                )
+            assert result is not None
+            start, stop = roots.index(result.begin), roots.index(result.end)
+            records = [self._require_run(str(root)) for root in roots]
+            if any(
+                r.status in {"pending", "running"} for r in records[start:stop]
+            ) or not any(
+                r.status not in {"pending", "running"} for r in records[stop:]
+            ):
+                raise ValueError(
+                    "compact must exclude active roots and retain a terminal root"
+                )
+            return CompactionOutput(ref, result)
 
+    def get_compaction(self, thread: ThreadRef | str) -> CompactionOutput | None:
+        """Find the latest validated full-prefix result, skipping interval outputs."""
         target = ThreadRef.parse(thread)
         with self._store.read_transaction():
             if self._store.get_thread(thread_id=str(target)) is None:
@@ -291,43 +356,23 @@ class RunHistory:
             if self._store.get_thread(thread_id=compact_id) is None:
                 return None
             _, _, target_members = self._store.history_thread_members(str(target))
-            roots = tuple(ref for ref, root in target_members.items() if ref == root)
+            roots = tuple(
+                RunRef(ref) for ref, root in target_members.items() if ref == root
+            )
             if len(roots) < 2:
                 return None
             _, _, members = self._store.history_thread_members(compact_id)
             for run_id, root_id in reversed(members.items()):
                 if run_id != root_id:
                     continue
-                run = self._require_run(run_id)
-                if run.status == "succeeded" and run.output is not None:
-                    output = self.get_output(run.id)
-                    assert output is not None
-                    raw = output.local.value
-                    if not isinstance(raw, Mapping):
-                        continue
-                    value = cast(Mapping[str, object], raw)
-                    control = self._store.get_run_control(run_id=run.id, index=0)
-                    assert control is not None and isinstance(
-                        control.payload, RunControlPayload
+                try:
+                    output = self.read_compaction(
+                        FieldRef.from_path(RunRef(run_id), "output"), target, roots
                     )
-                    input = control.payload.input
-                    summary = value.get("summary")
-                    if not (
-                        value.get("thread") == input.get("thread") == str(target)
-                        and value.get("begin") in (None, roots[0])
-                        and value.get("end") == input.get("end")
-                        and value.get("end") in roots[1:]
-                        and isinstance(summary, str)
-                        and summary.strip()
-                        and (
-                            input.get("begin") in (None, roots[0])
-                            or input.get("previous")
-                        )
-                    ):
-                        continue
-                    return CompactionOutput(
-                        FieldRef.from_path(RunRef(run.id), "output"), output
-                    )
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if output.result.begin == roots[0]:
+                    return output
             return None
 
     def thread_view(

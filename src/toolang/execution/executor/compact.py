@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import fcntl
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.policy import RunBindings
@@ -22,7 +22,6 @@ from toolang.state.builtin import prepare_builtin_state
 from toolang.state.state import AgentState
 
 from ..inspection.history import RunHistory
-from ..schemas import CompactionOutput
 from ..records import CompactControlPayload
 from ..assembly.tool_replies import control_summary
 from ..types import FieldRef, RunRef, StepRef, ThreadRef
@@ -33,31 +32,6 @@ if TYPE_CHECKING:
     from .runs.agic import _AgicState
 
 
-def valid_output(
-    output: CompactionOutput,
-    thread: str,
-    roots: Sequence[RunRef],
-    expected: Mapping[str, object] | None = None,
-) -> bool:
-    raw: object = output.output.local.value
-    if not isinstance(raw, Mapping):
-        return False
-    value = cast(Mapping[str, object], raw)
-    summary = value.get("summary")
-    return (
-        value.get("thread") == thread
-        and bool(roots)
-        and value.get("begin") in (None, str(roots[0]))
-        and value.get("end") in tuple(str(root) for root in roots[1:])
-        and isinstance(summary, str)
-        and bool(summary.strip())
-        and (
-            expected is None
-            or all(value.get(key) == item for key, item in expected.items())
-        )
-    )
-
-
 def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
     """Freeze applicable history at root creation, never while replaying a call."""
     if thread.startswith("compact_"):
@@ -66,11 +40,7 @@ def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
     output = history.get_compaction(thread)
     if output is None:
         return None
-    roots = tuple(
-        RunRef(run.id)
-        for run in history.thread_view(thread, include_children=False).roots
-    )
-    return output.ref if valid_output(output, thread, roots) else None
+    return output.ref
 
 
 @asynccontextmanager
@@ -134,11 +104,22 @@ async def execute(
             raise ToolangError("compact range changed while waiting; retry required")
         reader = RunHistory(store)
         output = reader.get_compaction(target)
-        expected = {"thread": str(target), "begin": begin, "end": end}
-        if not (
-            output is not None
-            and valid_output(output, str(target), history.roots, expected)
-        ):
+        if output is None or output.result.end != end_ref:
+            reuse = (
+                output is not None
+                and output.result.end in history.roots
+                and history.roots.index(output.result.end)
+                < history.roots.index(end_ref)
+            )
+            resolved: dict[str, str | bool] = {
+                "thread": str(target),
+                "begin": str(history.roots[0]),
+                "end": end,
+                "bare": not reuse,
+            }
+            if reuse:
+                assert output is not None
+                resolved.update(begin=str(output.result.end), previous=str(output.ref))
             frame = state.frame_for_step(*execution.state_snapshot())
             resources = frame.run.agent_resources
             if resources is None:
@@ -161,13 +142,7 @@ async def execute(
                     bindings=RunBindings(model=request.ref, runnable="agic:compact"),
                     limits=frame.run.limits,
                     model_request=request,
-                    input=RunnableInput(
-                        {
-                            key: value
-                            for key, value in expected.items()
-                            if value is not None
-                        }
-                    ),
+                    input=RunnableInput(resolved),
                 )
             )
             try:
@@ -179,16 +154,14 @@ async def execute(
                 raise
             if record.status != "succeeded":
                 raise ToolangError(f"compact Run {record.id} {record.status}")
-            result = reader.get_output(RunRef(record.id))
-            if result is None:
-                raise ToolangError("compact Run returned no output")
-            output = CompactionOutput(
-                FieldRef.from_path(RunRef(record.id), "output"), result
-            )
-        if not valid_output(output, str(target), history.roots, expected):
-            raise ToolangError(
-                "compact output must echo its full range and contain a nonempty summary"
-            )
+            try:
+                output = reader.read_compaction(
+                    FieldRef.from_path(RunRef(record.id), "output"),
+                    target,
+                    history.roots,
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                raise ToolangError(f"invalid compact output: {exc}") from exc
         controls = execution.compact(step, output.ref)
         return {
             "controls": [

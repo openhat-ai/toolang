@@ -3005,12 +3005,19 @@ class RunStore:
                 for message in tail_delta(by_ref[ref], *facts[ref], self.resolve_value)
             )
 
+        from .inspection.history import RunHistory
+
         return MessageHistory(
             str(root.thread),
             tuple(RunRef(run.id) for run in roots),
             load,
             tail,
             self.resolve_value,
+            lambda ref: (
+                RunHistory(self)
+                .read_compaction(ref, ThreadRef.parse(str(root.thread)), tuple(by_ref))
+                .result
+            ),
         )
 
     def run_horizon(self, run_id: str) -> FieldRef | None:

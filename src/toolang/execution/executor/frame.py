@@ -17,6 +17,7 @@ from toolang.base.types.message import (
 from toolang.base.types.model import Model, Reasoning, env_names
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
+from toolang.common.json import dumps
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import is_generated_ref
 from toolang.plugin.models.resolution import (
@@ -34,6 +35,7 @@ from toolang.state.state import (
 
 from ..assembly import prompting
 from ..recall import recall_sources
+from .budget import text_tokens
 from .common import BoundRun
 from .resources import (
     workspace_declarations,
@@ -76,6 +78,7 @@ class _AgicFrame:
     output_budget: int | None = None
     input_budget: int | None = None
     context_capacity: int | None = None
+    input_overhead: int = 0
 
 
 def build_agic_frame(
@@ -210,8 +213,11 @@ def build_agic_frame(
         ),
         reasoning=reasoning,
         output_budget=output,
-        input_budget=input_budget(resolved_model),
+        input_budget=input_budget(resolved_model, output),
         context_capacity=context_capacity(resolved_model),
+        input_overhead=text_tokens(dumps(route.options, indent=None))
+        if route.options
+        else 0,
     )
     _log_frame(prepared)
     return prepared
@@ -245,12 +251,15 @@ def _log_frame(prepared: _AgicFrame) -> None:
     run = prepared.run
     prompt_context, messages, _ = prepared.inputs.rendered_input
     _LOGGER.debug(
-        "prompt.assembled thread=%s run=%s runnable=%s model=%s tools=%s",
+        "prompt.assembled thread=%s run=%s runnable=%s model=%s tools=%s context=%s input_budget=%s output_budget=%s",
         run.thread,
         run.run_id,
         prepared.inputs.runnable_name,
         prepared.model.ref,
         json.dumps(sorted(prepared.tools), ensure_ascii=False),
+        prepared.context_capacity,
+        prepared.input_budget,
+        prepared.output_budget,
     )
     _LOGGER.debug(
         "prompt.instructions thread=%s run=%s text=%s",

@@ -41,6 +41,7 @@ from .records import (
     step_message_role,
 )
 from .types import (
+    CompactionResult,
     ControlRef,
     ControlTiming,
     ControlKind,
@@ -135,7 +136,7 @@ class CompactionOutput:
     """The selected compact Run's typed output and its stable field reference."""
 
     ref: FieldRef
-    output: Output
+    result: CompactionResult
 
 
 @dataclass(frozen=True, slots=True)

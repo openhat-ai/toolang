@@ -238,7 +238,10 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             constrain(harness, context=baseline + 4096)
             harness.adapter._responses.extend(
                 [
-                    ModelCallResult(tool_calls=(call,)),
+                    ModelCallResult(
+                        tool_calls=(call,),
+                        continuation={"previous_response_id": "old-context"},
+                    ),
                     *compact_responses(thread, end),
                     reply("done"),
                 ]
@@ -270,6 +273,8 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             after = history.get_model_call(last.ref)
             assert before == harness.adapter.invocations[3].call
             assert after == harness.adapter.invocations[-1].call
+            assert after.continuation == {"previous_response_id": "old-context"}
+            assert after.max_output_tokens == before.max_output_tokens == 512
             assert "old old" in str([m.to_data() for m in before.messages])
             text = str([m.to_data() for m in after.messages])
             assert "Earlier facts." in text and "old old" not in text
@@ -934,5 +939,59 @@ def test_committed_compact_control_survives_delivery_failure(tmp_path, monkeypat
                 len(RunHistory(harness.store).thread_view(f"compact_{thread}").roots)
                 == 1
             )
+
+    asyncio.run(scenario())
+
+
+def test_automatic_incremental_compaction_freezes_previous_coverage(tmp_path):
+    harness = seeded_harness(tmp_path)
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            harness.adapter._responses.extend(
+                [
+                    *compact_responses(thread, end),
+                    reply("large output " * 12000),
+                ]
+            )
+            first = await harness.executor.run(spec(harness, thread, "first compact"))
+            assert first.status == "succeeded", first.error
+            history = RunHistory(harness.store)
+            previous = history.get_compaction(thread)
+            assert previous is not None
+            # Record the large terminal reply, then add a small retained root.
+            constrain(harness, context=1_000_000)
+            harness.adapter._responses.extend(
+                [reply("small"), reply("small retained output")]
+            )
+            intermediate = await harness.executor.run(
+                spec(harness, thread, "record output")
+            )
+            assert intermediate.status == "succeeded", intermediate.error
+            retained = await harness.executor.run(spec(harness, thread, "retained"))
+            assert retained.status == "succeeded", retained.error
+            constrain(harness)
+            harness.adapter._responses.extend(
+                [
+                    *compact_responses(thread, retained.id, summary="Combined prefix."),
+                    reply("done"),
+                ]
+            )
+            final = await harness.executor.run(spec(harness, thread, "continue"))
+            assert final.status == "succeeded", final.error
+            latest = history.get_compaction(thread)
+            assert latest is not None and latest.ref != previous.ref
+            assert latest.result.begin == previous.result.begin
+            assert str(latest.result.end) == retained.id
+            control = harness.store.get_run_control(
+                run_id=str(latest.ref.record), index=0
+            )
+            assert isinstance(control.payload, RunControlPayload)
+            assert control.payload.input["previous"] == str(previous.ref)
+            assert control.payload.input["begin"] == str(previous.result.end)
+            assert control.payload.input["bare"] is False
+            text = str(harness.adapter.invocations[-1].call.messages)
+            assert "Combined prefix." in text and "large output" not in text
 
     asyncio.run(scenario())
