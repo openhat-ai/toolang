@@ -227,6 +227,7 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
             layout,
             model_catalog=resolve_model_catalog_option(model_catalog),
             agent_context=agent_context,
+            validate_defaults=False,
         )
     )
 

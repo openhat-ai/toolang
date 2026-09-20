@@ -317,11 +317,13 @@ def test_accounting_uses_model_catalog_provenance_without_inventing_reasoning() 
         model,
         ModelUsage(input_tokens=10, output_tokens=5),
         requested=Reasoning("high"),
+        source="models_dev",
+        revision="catalog-v1",
     )
 
     assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.source == "unknown"
-    assert accounting.pricing.revision is None
+    assert accounting.pricing.source == "models_dev"
+    assert accounting.pricing.revision == "catalog-v1"
     assert accounting.reasoning.requested == {"effort": "high"}
     assert accounting.reasoning.selected is None
 

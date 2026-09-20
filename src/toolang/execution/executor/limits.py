@@ -136,8 +136,12 @@ def _model_accounting(
     usage: ModelUsage | None,
     *,
     requested: Reasoning | None = None,
+    source: str = "unknown",
+    revision: str | None = None,
 ) -> _ModelAccounting:
-    durable = build_model_accounting(model, usage, requested=requested)
+    durable = build_model_accounting(
+        model, usage, requested=requested, source=source, revision=revision
+    )
     price = _accounting_price(durable) or _model_price(model)
     selected_cost = selected_usd_cost(durable)
     return _ModelAccounting(

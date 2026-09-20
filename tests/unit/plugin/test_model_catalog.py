@@ -215,9 +215,7 @@ def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
         option["exhaustive"] = False
     with pytest.raises(TypeError):
         option["values"][0] = "injected"
-    resolved = dataclasses.replace(
-        model, _toolang=ModelToolang(provider="test", ready=True)
-    )
+    resolved = model.with_readiness(True)
     assert resolved.reasoning_options is model.reasoning_options
     assert model.to_data()["reasoning_options"] == [
         {"type": "effort", "values": ["low", "high"], "exhaustive": True}

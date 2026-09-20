@@ -112,3 +112,33 @@ def test_source_cache_preserves_provider_adapter_trust(
     assert model_adapter(warm, warm.models["one"]) == model_adapter(
         cold, cold.models["one"]
     )
+
+
+def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
+    from types import MappingProxyType
+    from toolang.setup.cache import catalog_loader
+
+    cost = {"input": 1}
+    efforts = ["low"]
+    limits = {"output": 100}
+    model = Model(
+        id="one",
+        name="One",
+        _toolang=ModelToolang(provider="test", ready=True),
+        cost=MappingProxyType(cost),
+        limit=MappingProxyType(limits),
+        reasoning_options=(MappingProxyType({"values": efforts}),),
+    )
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider(id="test", name="Test", models={"one": model})},
+        models=(model,),
+        revision="v1",
+    )
+    load = catalog_loader(snapshot, revision="v1")
+    cost["input"] = 99
+    limits["output"] = 999
+    efforts.append("high")
+    assert snapshot == load()
+    assert model.cost == {"input": 1}
+    assert model.limit == {"output": 100}
+    assert model.reasoning_options == ({"values": ("low",)},)

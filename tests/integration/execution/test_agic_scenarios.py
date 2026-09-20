@@ -2071,3 +2071,51 @@ agic chat(_: Text):
             assert record.error.message == "model produced no visible output"
 
     asyncio.run(scenario())
+
+
+def test_accounting_keeps_the_run_catalog_revision_after_setup_refresh(tmp_path):
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Text) -> Text:\n  recall = none\n  context: none\n  instruct: none\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                gate=gate,
+                result=ModelCallResult(
+                    message=Message.assistant("done"),
+                    usage=ModelUsage(
+                        input_tokens=1,
+                        output_tokens=1,
+                        billing={"service_tier": "standard"},
+                    ),
+                ),
+            )
+        ],
+    )
+    harness.setup = replace(harness.setup, catalog_sources={"test": ("custom", "v1")})
+    harness.executor._setup = lambda: harness.setup
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
+            harness.setup = replace(
+                harness.setup, catalog_sources={"test": ("custom", "v2")}
+            )
+            gate.release()
+            record = await run
+            assert record.status == "succeeded"
+            noted = harness.store.list_steps(run_id=record.id)[0].noted
+            assert isinstance(noted, ModelStepNoted)
+            assert noted.accounting is not None and noted.accounting.pricing is not None
+            assert noted.accounting.pricing.source == "custom"
+            assert noted.accounting.pricing.revision == "v1"
+
+    asyncio.run(scenario())

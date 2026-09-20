@@ -172,9 +172,8 @@ credential_env = "COMPANY_CATALOG_TOKEN"
 
 The merged mapping is passed unchanged to the catalog factory; the plugin owns
 resolution of `credential_env` when it needs the credential. Built-in
-`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Core provider
-routes remain under `[models.providers.<name>]`; they are not plugin factory
-configuration.
+`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Provider routes
+belong to the declaring catalog plugin; core provider override tables are rejected.
 
 ## One-Time Route Resolution
 
@@ -193,24 +192,25 @@ record. Model-level
 default protocol facts. This supports mixed-protocol routers without a provider
 plugin.
 
-`Provider.api` is the raw catalog value. The effective API base after
-configuration, catalog, and adapter-default precedence is computed per call and
-carried on the `ModelRoute`, where it is used as the client SDK base URL.
+`Provider.api` is the raw catalog value. The effective API base, using model
+and provider catalog values and then the adapter default, is computed per call
+and carried on the `ModelRoute` as the client SDK base URL.
 
 The resolver applies:
 
-- explicit provider configuration before catalog `api` before the adapter's
-  protocol default API;
+- model-level `provider.api` before provider-level catalog `api` before the
+  adapter's protocol default API;
 - a provider-declared `adapter` from catalogs that are not models.dev records,
-  such as local runtimes and core route configuration, which takes precedence
+  such as local runtimes, which takes precedence
   over the `npm` map;
 - a small maintained `npm`-to-protocol map, including the major native packages
   whose services expose one of the built-in wire protocols;
 - environment availability rules;
 - installed-adapter and local-probe state.
 
-The outer `env` list is OR. A nested list is AND. An empty list means that no
-environment value is required. During default inference, names ending in
+The resolved `_toolang.env` list is OR; a nested group is AND. An empty rule
+requires no environment value. A models.dev source retains its raw flat `env`
+list until setup infers the rule. During that inference, names ending in
 `_API_KEY`, `_PAT`, or `_TOKEN` are credential alternatives; other names are
 common requirements included in every alternative. Provider-specific rules
 cover schemes that cannot be inferred, such as Amazon Bedrock:
@@ -227,12 +227,10 @@ environment alternative is satisfied, and any local probe succeeded. Secrets
 are selected only at the call boundary; they are never stored in a record,
 catalog JSON, hashes, or inspection output.
 
-Local provider configuration is passed separately to the resolver. It is never
-written into a catalog record, so unknown catalog extensions cannot be
-interpreted as trusted API routes or credentials. Selection, inspection, and
-execution consume resolved facts directly; they do not repeat npm matching,
-API fallback, or env interpretation. `--json` therefore remains a catalog
-projection of the persisted facts.
+Catalog plugins own provider configuration. Core `[models.providers.*]` overrides
+are rejected. Raw `_toolang` mappings from catalog JSON are not trusted runtime
+facts. Setup resolves adapters and readiness; call assembly derives the endpoint,
+headers and options from its pinned setup. JSON exports omit Toolang facts.
 
 ## Adapter Plugins
 
@@ -336,8 +334,8 @@ loopback defaults. In a Toolang Docker guest, the defaults use
 `TOOLANG_HOST_GATEWAY`; loopback values from those two environment variables are
 rewritten to the gateway as well. An authored plugin `endpoint` is exact and is
 never rewritten, so it can deliberately select a service running inside the
-guest. `[models.providers.<name>]` remains core route configuration and is not
-passed into either catalog factory.
+guest. Configure routes through the owning catalog plugin; core
+`[models.providers.<name>]` overrides are not supported.
 
 ## Inspection and Export
 
@@ -370,8 +368,10 @@ merged catalog snapshot; use `too models` for that view.
 models.dev-compatible catalog containing only selected models, including models
 from local catalogs. It exports the same setup version used for selection without
 re-reading the source. `too providers --json` follows the same default/`--all`
-scope and preserves empty providers in the full view. Provider and model JSON
-never includes a Toolang-side fact or an unmodelled catalog field.
+scope and preserves empty providers in the full view. Catalog inspection skips
+validation of the configured default and compact model, so `--all` can diagnose
+an unready choice; execution setup still validates those choices strictly.
+Provider and model JSON never includes a Toolang-side fact or an unmodelled catalog field.
 
 Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models
@@ -384,15 +384,10 @@ not query syntax.
 
 ## Runtime Configuration
 
-Root or agent configuration may override provider runtime values, filter the
-effective Setup collection, and select one exact default:
+Catalog plugins own provider routes. Root or agent configuration filters the
+published models and selects an exact default:
 
 ```toml
-[models.providers.gateway]
-adapter = "responses"
-endpoint = "https://gateway.example.com/v1"
-key_env = "GATEWAY_API_KEY"
-
 [allow]
 models = ["gateway/*"]
 
@@ -400,7 +395,6 @@ models = ["gateway/*"]
 model = "gateway/chat effort=high"
 ```
 
-Provider configuration participates in the one-time provider resolution.
 `SetupWatcher` filters readiness and applies `allow.models` once, then publishes
 the resulting `ModelCollection`; request and runnable policy can only narrow
 that base.
@@ -422,8 +416,8 @@ Configuration deliberately supports only the string form under `[default]`;
 there is no `[default.model]` table. Legacy `none` values in Setup default
 sources normalize to canonical `unset`.
 
-`[models].default` and `[models.aliases.*]` are rejected. Custom model
-identities and aliases will be supplied by a future custom catalog rather than
+`[models.providers.*]`, `[models].default`, and `[models.aliases.*]` are rejected.
+Custom model identities and aliases will be supplied by a future custom catalog rather than
 by a parallel runtime route mechanism.
 
 ## Runtime Calls and Accounting
@@ -442,3 +436,10 @@ The runtime records inclusive token totals plus cache read/write, visible,
 reasoning, audio, and provider-specific meters. Reported provider cost is kept
 separately from catalog-derived estimates so historical calls retain their
 original pricing revision and coverage.
+
+Model request objects use flat `reasoning` and `max_output` fields in memory,
+while their existing serialized `parameters` envelope is preserved for run,
+retry, and session data. This PR does not change the durable record schema.
+Persisting effective call reasoning is deferred; current call records do not
+store that field. Pricing source and revision continue to populate existing
+accounting fields from the run's pinned `setup.catalog_sources` mapping.

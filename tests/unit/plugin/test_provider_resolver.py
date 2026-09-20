@@ -358,3 +358,30 @@ def _model(provider_id: str, model_id: str, name: str) -> Model:
         name=name,
         _toolang=ModelToolang(provider=provider_id),
     )
+
+
+def test_imported_catalog_env_requires_account_and_credential():
+    from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+
+    raw = {
+        "cloud": {
+            "id": "cloud",
+            "name": "Cloud",
+            "npm": "@ai-sdk/openai",
+            "env": ["CLOUD_ACCOUNT", "CLOUD_API_KEY", "CLOUD_TOKEN"],
+            "models": {
+                "one": {"id": "one", "name": "One", "modalities": {}, "limit": {}}
+            },
+        }
+    }
+    provider = parse_model_catalog_data(raw)["cloud"]
+    for environ, ready in (
+        ({"CLOUD_ACCOUNT": "account"}, False),
+        ({"CLOUD_API_KEY": "key"}, False),
+        ({"CLOUD_ACCOUNT": "account", "CLOUD_API_KEY": "key"}, True),
+    ):
+        resolved = resolve_provider(provider, adapters=_adapters(), environ=environ)
+        assert resolved.models["one"]._toolang.ready is ready
+        assert credential_value(resolved._toolang.env, environ=environ) == (
+            "key" if ready else None
+        )

@@ -12,8 +12,6 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     ModelToolang,
     Provider,
-    ProviderToolang,
-    normalized_env,
 )
 
 
@@ -124,7 +122,6 @@ def _parse_provider(
         api=_optional_text(data.get("api"), label=f"provider {provider_id} api"),
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
         models=models,
-        _toolang=ProviderToolang(env=normalized_env(env)),
     )
 
 

@@ -126,10 +126,12 @@ class SetupWatcher:
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
         compact_override: ModelOverride | None = None,
         agent_context: bool = True,
+        validate_defaults: bool = True,
     ) -> None:
         self.layout = layout
         self._sandbox = sandbox
         self._agent_context = agent_context
+        self._validate_defaults = validate_defaults
         self._model_catalog_override = model_catalog
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
@@ -302,7 +304,16 @@ class SetupWatcher:
             layout=self.layout,
             sandbox=self._sandbox,
             revision=projection_key,
+            validate_defaults=self._validate_defaults,
             snapshot=resolved_catalog,
+            catalog_sources={
+                provider_id: (name, revision)
+                for name, revision, snapshot in (
+                    ("models_dev", load.source.revision, load.static),
+                    *load.additional,
+                )
+                for provider_id in snapshot.providers
+            },
             adapters=adapters,
             tools=tools,
             envs=inputs.envs,
@@ -549,6 +560,7 @@ def _build_setup(
     sandbox: str,
     revision: str,
     snapshot: ModelCatalogSnapshot,
+    catalog_sources: Mapping[str, tuple[str, str]],
     adapters: dict[str, ModelAdapter],
     tools: dict[str, Tool],
     envs: dict[str, str],
@@ -556,6 +568,7 @@ def _build_setup(
     defaults: RunDefaults,
     limits: RunLimits,
     compact_model: ModelOverride | None = None,
+    validate_defaults: bool = True,
 ) -> AgentSetup:
     dataset = catalog_model_dataset(
         snapshot,
@@ -575,7 +588,11 @@ def _build_setup(
         ),
         allow.models,
     )
-    if compact_model is not None and compact_model.identity != "unset":
+    if (
+        validate_defaults
+        and compact_model is not None
+        and compact_model.identity != "unset"
+    ):
         select_compact_model(models, compact_model)
     tool_collection = ToolCollection.from_tools(tools)
     if allow.tools is not None:
@@ -585,7 +602,7 @@ def _build_setup(
         tool_collection = tool_collection.subset(
             (*tool_collection.runtime, *selected)
         ).compact()
-    if defaults.model is not None:
+    if validate_defaults and defaults.model is not None:
         model = models.resolve(defaults.model.ref)
         resolve_model_reasoning(model, defaults.model.reasoning)
     all_providers = dict(snapshot.providers)
@@ -615,6 +632,7 @@ def _build_setup(
         defaults=defaults,
         limits=limits,
         compact_model=compact_model,
+        catalog_sources=catalog_sources,
         _catalog_loader=catalog_loader(snapshot, revision=revision),
     )
 
@@ -680,6 +698,7 @@ async def load_setup(
     model_catalog: Path | None = None,
     sandbox: str = "host",
     agent_context: bool = True,
+    validate_defaults: bool = True,
 ) -> AgentSetup:
     """Build one setup version once, without a running watcher."""
 
@@ -688,5 +707,6 @@ async def load_setup(
         sandbox=sandbox,
         model_catalog=model_catalog,
         agent_context=agent_context,
+        validate_defaults=validate_defaults,
     )
     return await watcher.refresh()

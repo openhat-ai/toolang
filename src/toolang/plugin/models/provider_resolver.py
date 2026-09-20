@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from string import Template
 from typing import cast
 
@@ -12,7 +12,6 @@ from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
     ModelRoute,
-    ModelToolang,
     Provider,
     ProviderToolang,
     ResolvedEnv,
@@ -69,12 +68,6 @@ _ENV_OVERRIDES: Mapping[str, ResolvedEnv] = {
         ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"),
     ),
 }
-
-
-@dataclass(frozen=True, slots=True)
-class _ProtocolRoute:
-    adapter: str
-    api: str | None = None
 
 
 def resolve_catalog_providers(
@@ -177,10 +170,7 @@ def _resolve_model(
         and api is not None
         and env_is_ready(provider._toolang.env, environ=environ)
     )
-    return replace(
-        resolved_model,
-        _toolang=ModelToolang(ready=ready, provider=model._toolang.provider),
-    )
+    return resolved_model.with_readiness(ready)
 
 
 def _with_model_adapter(

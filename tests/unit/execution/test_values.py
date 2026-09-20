@@ -412,7 +412,8 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
     data = control_payload_to_data(payload)
 
     model_request = cast(dict[str, object], data["model_request"])
-    assert model_request["reasoning"] == expected
+    parameters = cast(dict[str, object], model_request["parameters"])
+    assert parameters["reasoning"] == expected
     assert control_payload_from_data("run", data) == payload
 
 

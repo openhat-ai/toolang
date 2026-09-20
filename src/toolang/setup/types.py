@@ -67,6 +67,7 @@ class AgentSetup:
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
     compact_model: ModelOverride | None = None
+    catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
         default=None, repr=False, compare=False
     )
@@ -109,6 +110,9 @@ class AgentSetup:
                 "setup models reference unknown providers: "
                 + ", ".join(sorted(missing_providers))
             )
+        object.__setattr__(
+            self, "catalog_sources", MappingProxyType(dict(self.catalog_sources))
+        )
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "adapters", MappingProxyType(adapters))
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))

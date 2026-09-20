@@ -1043,3 +1043,19 @@ def test_models_json_uses_the_published_version_without_rereading_source(
     )
     assert result.exit_code == 0, result.stderr
     assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+@pytest.mark.parametrize("setting", ["default", "compact"])
+def test_full_catalog_can_inspect_unready_configured_models(
+    tmp_path, monkeypatch, command, setting
+):
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    (tmp_path / "config.toml").write_text(f'[{setting}]\nmodel = "test/one"\n')
+    result = runner.invoke(
+        cli.app, ["--root", str(tmp_path), command, "--all", "--json"]
+    )
+    assert result.exit_code == 0, result.exception
+    assert set(json.loads(result.stdout)["test"]["models"]) == {"one", "two"}

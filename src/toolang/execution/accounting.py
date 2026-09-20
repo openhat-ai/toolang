@@ -29,6 +29,8 @@ def build_model_accounting(
     usage: ModelUsage | None,
     *,
     requested: Reasoning | None = None,
+    source: str = "unknown",
+    revision: str | None = None,
 ) -> ModelAccounting | None:
     """Build one versioned accounting value from observed usage and catalog rates.
 
@@ -68,8 +70,8 @@ def build_model_accounting(
         ),
         pricing=(
             ModelPricing(
-                source="unknown",
-                revision=None,
+                source=source,
+                revision=revision,
                 plan=plan,
                 match=match,
             )

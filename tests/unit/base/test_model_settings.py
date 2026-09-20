@@ -140,3 +140,39 @@ def test_setup_source_model_overrides_compose_in_order() -> None:
             parse_model_body("default effort=high"),
         )
     ) == ModelOverride(identity="default", effort="high")
+
+
+def test_model_request_preserves_existing_durable_shape():
+    from pydantic import TypeAdapter
+    from toolang.base.types.model import ModelRequest, Reasoning
+
+    adapter = TypeAdapter(ModelRequest)
+    payload = {
+        "ref": "test/one",
+        "parameters": {"reasoning": {"effort": "high"}, "max_output": 1024},
+    }
+    request = adapter.validate_python(payload)
+    assert request == ModelRequest(
+        "test/one", reasoning=Reasoning("high"), max_output=1024
+    )
+    assert adapter.dump_python(request, mode="json") == payload
+
+
+def test_model_request_schema_describes_preserved_wire_envelope():
+    from pydantic import TypeAdapter
+    from toolang.base.types.model import ModelRequest
+
+    adapter = TypeAdapter(ModelRequest)
+    for mode in ("validation", "serialization"):
+        schema = adapter.json_schema(mode=mode)
+        assert set(schema["properties"]) == {"ref", "parameters"}
+        assert set(schema["properties"]["parameters"]["properties"]) == {
+            "reasoning",
+            "max_output",
+        }
+    assert adapter.dump_python(
+        ModelRequest("test/one"), mode="json", exclude_none=True
+    ) == {
+        "ref": "test/one",
+        "parameters": {},
+    }

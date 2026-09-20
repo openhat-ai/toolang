@@ -2,6 +2,11 @@
 
 ## Goal and scope
 
+This PR simplifies model types around catalog records, makes agent setup own
+model caching and versioned publication, and separates catalog and adapter
+plugins. Provider plugins and model aliases are not supported. Records and their
+existing serialized formats stay unchanged; any record redesign is a follow-up.
+
 One place defines what the model plugins are, what data they produce, and how
 that data reaches the CLI and the executor.
 
@@ -54,7 +59,7 @@ src/toolang/
 │   └── loading.py
 └── setup/
     ├── cache.py                    # per-catalog model cache
-    ├── catalog.py                  # snapshot merge and the models.dev source read
+    ├── catalog.py                  # snapshot merge
     ├── models.py                   # ordering, compact selection, catalog projection
     ├── watcher.py                  # installed setup publication
     ├── config.py
@@ -76,16 +81,14 @@ entry point, and it does not import `plugin/adapters` or `plugin/catalogs`.
 | Cache document envelope and primitives | `toolang/common/cache.py` |
 | Deterministic Decimal-safe JSON | `toolang/common/json.py` |
 
-The static models.dev artifact cache was removed: loading it still ran full
-validation, the cached shape is the source shape again, and the default packaged
-catalog is small enough that the extra read costs more than a direct parse. The
-catalog file is captured once instead: `ModelsDevModelCatalog.capture()` returns
-a stable `FileObservation` plus a `ModelCatalogSource` holding the payload bytes
-and the portable `sha256:` revision, and `ModelCatalogSource.snapshot()`
-validates those same bytes.
+Setup persists one complete file per catalog. The models.dev source is captured
+once per changed file observation, then decoded from a matching source cache or
+parsed from the captured bytes. There is no separate persisted filtered view.
 
-`CACHE_SCHEMA` is 6. Older `.setup` catalog caches are rebuilt so raw source
-`_toolang` mappings cannot become trusted adapter declarations through decoding.
+`CACHE_SCHEMA` is 7. Older source caches are rebuilt so imported flat `env` lists
+are resolved by setup, rather than treated as explicit plugin OR alternatives.
+The schema also preserves the boundary between raw `_toolang` mappings and
+trusted adapter declarations.
 Cache reads preserve Decimal prices and both boolean and object `interleaved`
 values. A skipped probe write uses a content revision instead of the old file's
 stamp.
@@ -203,26 +206,26 @@ importer accepts. Anything else our records carry is a Toolang-side fact, not
 catalog data.
 
 The resolved instance carries `ProviderToolang{env, adapter}`: the normalized
-OR-of-AND `env` rule and the effective `adapter`. Configuration overrides are
-applied while producing that instance.
+OR-of-AND `env` rule and the effective `adapter`. Catalog plugins supply provider
+routes; core provider overrides are rejected.
 `api` is not overwritten: `Provider.api` keeps the catalog value and the
 effective api is computed per call.
 
 ### Request headers and options
 
-`headers` and `options` are not catalog data, and they are load-bearing: every
-built-in adapter sends them.
+Effective `headers` and `options` are call-time request data that every built-in
+adapter sends. Their raw source blocks remain catalog data.
 
 | What | Read by |
 | --- | --- |
 | `headers` | `chat_completions` and `responses` as client default headers; `messages` and `generate_content` merged into the raw request headers |
 | `options` | all four adapters, merged into the provider request body, and read for `audio`, `modalities`, and `max_completion_tokens` |
 
-They come from core provider configuration (`[models.providers.<name>].options`),
-the built-in OpenRouter header defaults (`PROVIDER_CONVENTIONS`), and an
+They come from model-level catalog provider blocks, the built-in OpenRouter
+header defaults (`PROVIDER_CONVENTIONS`), and an
 advertised `experimental.modes.<mode>` body and headers. Resolution merges them
-per model into the call-time `ModelRoute`; they are never written to a record
-entry and never exported.
+per model into the call-time `ModelRoute`. The merged values are not stored on
+model records or exported; exports preserve the raw catalog blocks.
 
 `Provider` is the catalog group's state: the setup publishes it and
 `too providers` renders it. It is not execution input.
@@ -234,7 +237,7 @@ reintroduced under another name:
 
 | Field | Where it comes from | Resolution |
 | --- | --- | --- |
-| `scope` | not authored model data | computed per query row as `local` or `remote` from the provider's locality |
+| `scope` | not authored model data | query vocabulary retains the field, but current rows do not populate it |
 | `tags` | no owner after `ModelAlias` was removed | dropped; the query row leaves `tags` empty |
 | `selectors` | removed | the query identity is `provider/model` (`IdentitySpec`) |
 | `streaming` | fixed `_MODEL_STREAMING = True` in the executor | not model data; whether to stream is an execution and adapter decision |
@@ -253,13 +256,13 @@ record points at the other instance.
 | `api` | `Provider.api` | computed per call (`model_api`); never written back |
 | `env` | `Provider.env`, the declared names | `ProviderToolang.env`, the normalized OR-of-AND rule |
 | `adapter` | not catalog data: `ProviderToolang.adapter`, or a model-level deviation on `Model.provider._toolang.adapter` | `model_adapter(provider, model)` |
-| `headers`, `options` | provider/model configuration | merged into the call-time `ModelRoute` |
+| `headers`, `options` | model catalog provider blocks and built-in conventions | merged into the call-time `ModelRoute` |
 | `ready` | unset | `ModelToolang.ready`, the persisted availability |
 | `available` | derived | display-only projection of `ready`; never persisted |
 | `local` | `ModelCatalogSnapshot.local` | the catalog's own property; a derived provider index, never a record field |
 
-Whether a model is local or remote derives from its provider's
-`ProviderToolang.local`, which the setup attaches from the declaring catalog.
+Catalog snapshots declare locality. The current merged query view does not
+publish that fact; neither `Model` nor `ProviderToolang` carries a `local` field.
 
 Export uses the catalog instances, so `--json` stays a raw catalog projection
 and never shows an effective route. Inspection keeps the merged catalog
@@ -283,7 +286,7 @@ moves.
 | --- | --- | --- |
 | Capability | `Model.reasoning`, `Model.reasoning_options` | what this model can do; the catalog knows it |
 | Demand | `ModelRequest.reasoning` | what this run asks for |
-| Effective control | `ModelCall.reasoning` | what this call uses, and what the adapter and the durable record see |
+| Effective control | `ModelCall.reasoning` | what this call uses and what the adapter sees |
 
 Effort levels are provider-defined. The only source of truth is the model's
 catalog `reasoning_options`, which declares `effort`, `budget_tokens`, or
@@ -336,7 +339,7 @@ They differ for three reasons:
 - the allowance is derived per call from the demand, the model's catalog
   capability, and the remaining input window, so it can differ between steps and
   is usually concrete even when the demand was `auto`;
-- only the call value reaches the provider and the durable call record.
+- only the call allowance reaches the provider and the durable call record.
 
 One function derives the allowance from `(demand, model, remaining window)`, and
 it runs only while assembling the call. `ModelTarget.max_output` and
@@ -383,8 +386,8 @@ class ModelCall:
 ```
 
 The call carries content plus the effective controls. It never carries model
-identity or selection, so an adapter is invoked as `(Model, ModelCall)` and the
-durable record replays a call without resolving a model for controls again.
+identity or selection. An adapter receives `(ModelRoute, Model, ModelCall)`.
+Durable call reasoning is deferred to the separate records follow-up.
 
 `ModelCall.reasoning` is the validated, effective control for this call and uses
 the same `Reasoning` shape as the request demand. It replaces the
@@ -465,23 +468,24 @@ The cache is internal to the setup. Its contract is only:
 9. Per-million prices and the `ModelInfo.metadata` bag are not stored again;
    they derive from the catalog fields that already exist.
 10. `local` belongs to the catalog and nowhere else. The catalog declares it on
-    its snapshot; no `Provider` or `Model` carries it, and a provider's locality
-    is derived from the source that declared it.
+    its snapshot; no `Provider` or `Model` carries it. Query locality remains
+    unpopulated until setup publishes the required source association.
 11. `scope`, `tags`, `selectors`, and `streaming` are not model, request, or
     call data; each is dropped, moved to its owner, or computed where it is
     used. `mode` is provider-declared catalog data (58 published models use it),
     so it stays.
-12. `headers` and `options` are not catalog data but are request data: resolution
-    merges them per model into the call-time `ModelRoute`; they are never stored
-    on a record entry, never exported, and never written to a durable record.
+12. Effective `headers` and `options` are merged per model into the call-time
+    `ModelRoute`, without separate model or durable record fields. Raw catalog
+    provider blocks remain on the model and in catalog exports.
 13. `api_key` is never a record field. The setup trims the process environment
     to the names a provider declares and passes that mapping through the call
     site; the adapter selects the credential from the mapping and never reads the
     process environment. The same rule answers availability inspection.
 14. Catalog provenance is not stored per record. `Model` carries no
     `catalog`/`catalog_revision`; the published setup marks it, and
-    `AgentSetup.revision` is the current carrier. Reattaching it to query output
-    (`ModelQueryView.catalog`, `pricing.source`) is a deferred follow-up.
+    `AgentSetup.catalog_sources` maps provider IDs to source names and revisions.
+    Accounting consumes the run-pinned mapping for existing pricing fields;
+    `AgentSetup.revision` identifies the complete setup version.
 
 ## Unused catalog fields
 
@@ -495,42 +499,26 @@ resolution, inspection, execution, or accounting today.
 | `interleaved` | model | parsed, exported, never read | 1003 published models declare `{"field": "reasoning_content"}` |
 | `limit` keys other than `context`, `output` | model | only `context` and `output` are read | `setup/models.py`, `plugin/models/collections.py` |
 | `cost` keys other than `input`, `output`, `tiers` | model | `cache_read`, `cache_write`, `context_over_200k`, `reasoning`, `audio` parsed, never read | `execution/accounting.py` reads `input`/`output`/`tiers` |
-| `provider.body` (model-level override) | model | parsed raw, never read | 1 published model; no adapter reads it |
-| `provider.headers` (model-level override) | model | parsed raw, never read | models.dev schema allows it; 0 published today |
 | `doc` | provider | parsed, exported, never read | only `Provider.to_data()` |
 | unknown top-level fields | provider, model | ignored at parse time | not modelled by any type |
 
 Each row is either wired up in a later change or left as export-only; this list
 exists so the gap is visible rather than silent.
 
-## Durable record
+## Durable record boundary
 
-After the fold the durable model step keeps only what a replay cannot re-derive
-from the model ref:
+No records schema change is included. Runtime `ModelRequest` fields are flat,
+but serialization keeps `{ref, parameters: {reasoning, max_output}}`. Existing
+run/retry/session data must retain its controls when read and re-serialized.
+There is no replacement `ModelParameters` runtime object.
 
-```text
-StoredModelStepGiven
-  model: str                 # the resolved model ref (provider/model identity)
-  call: ModelCallRefs
-    instructions: str        # reference into the prompt store
-    messages: {head, delta}  # incremental message templates
-    tools: str | None        # reference
-    output_schema: dict | None
-    cont: object | None
-    reasoning: Reasoning | None        # effective control (moved off ModelTarget)
-    max_output_tokens: int | None      # the allowance this call actually applied
-    version: int
-```
+`ModelCall.reasoning` is effective runtime call data. Existing `ModelCallRefs`
+and durable call codecs do not store it; adding replay support belongs to a
+separate records change. No new durable field is claimed in this PR.
 
-Reasons this is the natural form:
-
-- it stores *which model* and *what it was asked*, plus the effective controls,
-  and nothing else;
-- `reasoning` moves from the deleted `ModelTarget.reasoning` onto the call, so a
-  replay reproduces the request without resolving a model for controls again;
-- the resolved route (`api`, `adapter`, `ready`), `headers`, `options`, and the
-  credential are never stored: replay re-resolves them from the model ref and the
-  environment, exactly as a first run does.
+Existing accounting `pricing.source` and `pricing.revision` are populated from
+the setup version pinned by the run, including after a later setup refresh.
+Catalog provenance remains setup-owned rather than duplicated on every model.
 
 ## Adapter invocation
 
@@ -566,7 +554,6 @@ The credential value is therefore never a `Model`/`Provider` field; only the
 declared *names* are catalog/provider data (`Provider.env`), and only the trimmed
 *values* are transient call input.
 
-
 ## Acceptance
 
 ```sh
@@ -576,64 +563,36 @@ uv run ty check
 uv run pytest
 ```
 
-Catalog contents, entry-point names, and selection results stay identical while
-the cache layout and the publication model change. Verified on the rebased
-branch: 5590 passed, 20 skipped, 147 subtests passed. Added regression coverage
-for the declared-adapter path, for an unchanged local probe keeping its stamp,
-and for a touched models.dev file advancing the revision.
+Regression coverage must verify:
+
+- existing run/retry/session model requests retain nested wire controls while
+  runtime request fields remain flat;
+- models.dev environment inference requires common fields and one credential;
+- plugin-owned mutable mappings cannot alter a published setup version;
+- `models` and `providers` share default/`--all` scope, and full inspection works
+  even when a configured default or compact model is unavailable;
+- accounting retains the run's catalog source and revision after setup refresh;
+- unchanged local probes keep their stamp, and changed catalog input advances
+  the setup revision.
 
 ## Deferred follow-ups
 
-Measured on this tree (best of three, one machine) before any optimization:
+The setup pipeline below replaces the old parallel inspection pipeline and
+projection-cache design. Remaining structural work is separate from this fix:
 
-| Step | 15-model packaged catalog | 3000-model catalog (1.17 MiB) |
-| --- | --- | --- |
-| parse and validate | 0.46 ms | 55 ms |
-| resolve providers | 0.15 ms | 23 ms |
-| project model facts | 0.24 ms | 44 ms |
-| build model collection | 0.57 ms | 617 ms |
-| catalog dataset | 0.39 ms | 75 ms |
-| merge snapshots | - | 1.7 ms |
-| cache write | 5.0 ms | 652 ms |
-| cache read | 2.1 ms | 363 ms |
-
-Findings that motivate the follow-ups:
-
-- `build_model_collection` is dominated by `_discover_available_candidates`
-  (532 ms of 617 ms): every model builds a target and a query string, then the
-  collection and the catalog dataset each project the same models again.
-  Reusing one view set cuts `ModelCollection` construction from 84 ms to 20 ms.
-- On the default catalog the projection cache costs more than it saves; on the
-  large catalog it is ~2.2x faster than recomputation while writing 5.3x the
-  source size per revision, with no pruning.
-- The watcher and the one-shot inspection build the same pipeline twice, each
-  with its own `_LOCAL_CATALOG_ENV`, snapshot wrapper, catalog-config assembly,
-  and merge wrapper.
-
-Deferred work, in order:
-
-1. Reuse one projection across the collection and the catalog dataset, and stop
-   re-deriving candidates.
-2. Decide the projection cache from those numbers: delete it, or rebuild it as
-   one file per key with a bounded set and version-and-digest validation only.
-3. Collapse the watcher and inspection pipelines into one builder, and make
-   snapshot merging a pure function over snapshots.
-4. Move the residual `plugin/models/` package to its own concept package,
-   split the plugin-facing types in `base/types/model.py` from the runtime
-   selection types, move the model-setting body parser out of `base`, and let
-   `too models`, `too providers`, and `too adapters` all read the setup.
-5. Prune stale `.setup` model-cache files; the cache keeps one file per catalog
-   and never removes an obsolete one.
-
-Items 2, 3, and 5 are now scoped by *Setup-owned catalog pipeline* below.
+- Move the residual `plugin/models/` runtime/query package to its owning concept
+  package and move model-setting source parsing out of `base`.
+- Revisit whether adapters need a separate `ModelRoute` call-time value after
+  their catalog-facing contract is settled.
+- Adapt durable call records to effective reasoning in a separate records change.
 
 ### Known gaps
 
 Recorded so the remaining wiring is visible rather than silent:
 
-- Catalog provenance is carried only by the published setup
-  (`AgentSetup.revision`); `ModelQueryView.catalog`, `CatalogProviderView.catalog`,
-  and `pricing.source` are not reattached yet.
+- Query views do not populate `route.scope` or catalog provenance columns.
+  Accounting consumes
+  setup-owned provenance through its existing pricing fields.
 - `cli._provider_api` computes and displays the effective api (display only, no
   write-back), ahead of the rest of the provider surface.
 
@@ -720,7 +679,9 @@ persisted document keeps them.
 
 ### Source revisions
 
-Every source reports its own revision; the setup never invents one.
+The models.dev reader reports its file revision. Setup assigns probe revisions
+from persisted content and detection time, with a content-digest fallback if a
+write is skipped or fails.
 
 | Source | Revision | Reload trigger |
 | --- | --- | --- |
@@ -732,8 +693,9 @@ Every source reports its own revision; the setup never invents one.
 - Consecutive identical probes leave the file untouched, so the mtime — and the
   revision — stays at the moment the identical run was first saved. A differing
   probe rewrites the file and with it the stamp.
-- A merged snapshot exposes `revisions: tuple[(name, revision), ...]` instead of
-  a single revision copied from the first source.
+- Setup includes all source revisions in its projection key and retains the
+  provider-to-source mapping in `catalog_sources`. The intermediate merged
+  snapshot keeps its first source revision; it is not the published setup ID.
 
 ### Projection key
 
@@ -809,8 +771,9 @@ while setup retains a version-pinned complete catalog for explicit inspection.
   `--json` changes only formatting and exports raw catalog facts from all sources.
   `available` continues to mean readiness, independently of allow membership.
   Both commands support an optional resident agent target before the command.
-- Existing validation of explicit default and compact models remains strict:
-  those choices must belong to the default view.
+- Runtime validation of explicit default and compact models remains strict.
+  Catalog CLI calls explicitly skip selection validation so an invalid choice
+  does not prevent inspecting the published catalog.
 
 Touchpoints: setup types, watcher publication and cache codec; catalog CLI
 commands; model documentation; setup and CLI acceptance tests.
@@ -823,4 +786,4 @@ queries and JSON preserve the selected scope, including local models.
 
 Tradeoffs: each live setup retains serialized full records but no full query
 index. Explicit full reads incur decoding cost. Existing per-source persistence
-and strict setup validation remain unchanged. No open decisions.
+and strict runtime setup validation remain unchanged. No open decisions.

@@ -250,6 +250,7 @@ async def execute(
             state.prepared.model,
             usage,
             requested=state.prepared.reasoning,
+            setup=state.prepared.run.setup,
         ),
         record_accounting=lambda accounting: execution.record_model_accounting(
             state.prepared.model, accounting

@@ -13,7 +13,6 @@ revision.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -71,15 +70,6 @@ _MODEL_FIELDS = frozenset(
         "_toolang",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CachedCatalog:
-    """One catalog source as its plugin produced it, with its own revision."""
-
-    name: str
-    revision: str
-    snapshot: ModelCatalogSnapshot
 
 
 class ModelCatalogCache:
@@ -519,7 +509,6 @@ def _optional_bool(data: Mapping[str, object], name: str) -> bool | None:
 
 
 __all__ = [
-    "CachedCatalog",
     "ModelCatalogCache",
     "catalog_loader",
     "environment_identity",

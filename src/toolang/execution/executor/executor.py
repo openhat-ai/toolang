@@ -1950,14 +1950,20 @@ class _Execution:
         model: Model,
         usage: ModelUsage | None,
         *,
+        setup: AgentSetup,
         requested: Reasoning | None = None,
     ) -> _ModelAccounting:
         """Build accounting facts for one completed model call."""
 
+        source, revision = setup.catalog_sources.get(
+            model._toolang.provider, ("unknown", None)
+        )
         return _model_accounting(
             model,
             usage,
             requested=requested,
+            source=source,
+            revision=revision,
         )
 
     def record_model_accounting(

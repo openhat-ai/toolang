@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias, cast
+
+from pydantic import (
+    GetJsonSchemaHandler,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
 # Effect levels are provider-defined; the catalog's reasoning_options is the only
@@ -66,6 +76,64 @@ class ModelRequest:
     ref: str
     reasoning: Reasoning | None = None
     max_output: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_parameters(cls, value: object) -> object:
+        """Keep the established wire shape while using flat runtime fields."""
+
+        if not isinstance(value, Mapping) or "parameters" not in value:
+            return value
+        if "reasoning" in value or "max_output" in value:
+            raise ValueError("model request cannot mix parameters and flat controls")
+        data = cast(Mapping[str, object], value)
+        parameters = data["parameters"]
+        if not isinstance(parameters, Mapping):
+            raise ValueError("model parameters must be an object")
+        if set(parameters) - {"reasoning", "max_output"}:
+            raise ValueError("unknown model parameters")
+        return {
+            **{key: item for key, item in data.items() if key != "parameters"},
+            **parameters,
+        }
+
+    @model_serializer(mode="wrap")
+    def _write_parameters(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        """Preserve durable and API serialization without another runtime type."""
+
+        data = handler(self)
+        return {
+            "ref": data["ref"],
+            "parameters": {
+                key: data[key] for key in ("reasoning", "max_output") if key in data
+            },
+        }
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """Describe the established wire envelope rather than the runtime layout."""
+
+        record_schema = cast(
+            core_schema.CoreSchema,
+            {key: value for key, value in schema.items() if key != "serialization"},
+        )
+        result = handler.resolve_ref_schema(handler(record_schema))
+        properties = result["properties"]
+        result["properties"] = {
+            "ref": properties["ref"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    key: properties[key] for key in ("reasoning", "max_output")
+                },
+                "additionalProperties": False,
+            },
+        }
+        return result
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):
@@ -197,25 +265,17 @@ class Model:
             raise ValueError("model id and name are required")
         if not self._toolang.provider:
             raise ValueError("model requires its provider id")
-        # Freeze idempotently: a resolved copy (`replace`) must reuse the same
-        # immutable nested values instead of re-wrapping them.
-        if not isinstance(self.modalities, MappingProxyType):
-            object.__setattr__(
-                self,
-                "modalities",
-                MappingProxyType(
-                    {str(key): tuple(value) for key, value in self.modalities.items()}
-                ),
-            )
-        if not isinstance(self.limit, MappingProxyType):
-            object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
-        if self.reasoning_options is not None and not (
-            isinstance(self.reasoning_options, tuple)
-            and all(
-                isinstance(option, MappingProxyType)
-                for option in self.reasoning_options
-            )
-        ):
+        # A read-only view may still wrap a dictionary owned by a plugin.
+        # Detach all nested values before publishing or resolving a record.
+        object.__setattr__(
+            self,
+            "modalities",
+            MappingProxyType(
+                {str(key): tuple(value) for key, value in self.modalities.items()}
+            ),
+        )
+        object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
+        if self.reasoning_options is not None:
             object.__setattr__(
                 self,
                 "reasoning_options",
@@ -223,14 +283,23 @@ class Model:
             )
         for name in ("experimental", "provider", "cost"):
             value = getattr(self, name)
-            if value is not None and not isinstance(value, MappingProxyType):
+            if value is not None:
                 object.__setattr__(self, name, _immutable_mapping(value))
-        if isinstance(self.interleaved, Mapping) and not isinstance(
-            self.interleaved, MappingProxyType
-        ):
+        if isinstance(self.interleaved, Mapping):
             object.__setattr__(
                 self, "interleaved", _immutable_mapping(self.interleaved)
             )
+
+    def with_readiness(self, ready: bool) -> Self:
+        """Resolve readiness while sharing this record's already detached facts."""
+
+        result = copy(self)
+        object.__setattr__(
+            result,
+            "_toolang",
+            ModelToolang(ready=ready, provider=self._toolang.provider),
+        )
+        return result
 
     @property
     def identity(self) -> str:
@@ -414,22 +483,6 @@ class ModelCatalogSnapshot:
             )
             for provider_id in sorted(by_provider)
         }
-
-
-def _optional_int(value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("model integer fields must be integers")
-    return value
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise TypeError("model price fields must be numbers")
-    return float(value)
 
 
 def _mutable_json(value: object) -> object:

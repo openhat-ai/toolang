@@ -1255,6 +1255,8 @@ def test_complete_catalog_is_pinned_without_rereading_sources(
     assert not new_catalog.models[0]._toolang.ready
     assert old_catalog.revision == first.revision != second.revision
     assert new_catalog.revision == second.revision
+    assert first.catalog_sources["test"][0] == "models_dev"
+    assert first.catalog_sources["test"][1] != second.catalog_sources["test"][1]
 
 
 def test_automatic_compaction_ignores_unready_models(tmp_path, monkeypatch):
