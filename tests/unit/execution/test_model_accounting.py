@@ -204,6 +204,87 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
     assert selected_cost_is_approximate(accounting) is False
 
 
+def test_local_zero_price_is_exact_without_cache_breakdown() -> None:
+    accounting = build_model_accounting(
+        _model(dict(LOCAL_ZERO_COST)),
+        ModelUsage(input_tokens=4100, output_tokens=15),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is True
+    assert accounting.selected == "zero"
+
+
+@pytest.mark.parametrize(
+    ("rates", "usage"),
+    [
+        (
+            {"input": 0, "output": 0, "cache_read": 1},
+            ModelUsage(input_tokens=100, output_tokens=15, input_uncached_tokens=20),
+        ),
+        (
+            {"input": 0, "output": 0, "reasoning": 1},
+            ModelUsage(
+                input_tokens=100,
+                output_tokens=15,
+                output_visible_tokens=5,
+                output_reasoning_tokens=0,
+            ),
+        ),
+    ],
+)
+def test_incomplete_usage_breakdown_marks_estimate_partial(
+    rates: dict[str, object], usage: ModelUsage
+) -> None:
+    accounting = build_model_accounting(
+        _model(rates),
+        usage,
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is False
+    assert accounting.selected == "estimated"
+
+
+def test_unknown_cache_write_breakdown_marks_estimate_partial() -> None:
+    accounting = build_model_accounting(
+        _model({"input": 0, "output": 0, "cache_write": 1}),
+        ModelUsage(input_tokens=100, output_tokens=15),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is False
+    assert accounting.selected == "estimated"
+
+
+@pytest.mark.parametrize("cache_rate", [None, 0.1])
+def test_cache_write_usage_is_excluded_from_uncached_input(
+    cache_rate: float | None,
+) -> None:
+    rates: dict[str, object] = {"input": 2, "output": 0, "cache_write": 3}
+    if cache_rate is not None:
+        rates["cache_read"] = cache_rate
+    accounting = build_model_accounting(
+        _model(rates),
+        ModelUsage(input_tokens=100, output_tokens=15, input_cache_write_tokens=10),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == 0.00021
+    assert accounting.estimate.complete is (cache_rate is None)
+
+
+def test_missing_cache_write_usage_keeps_inferred_input_partial() -> None:
+    accounting = build_model_accounting(
+        _model({"input": 0, "output": 0, "cache_read": 0, "cache_write": 1}),
+        ModelUsage(input_tokens=100, output_tokens=15, input_cache_read_tokens=20),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is False
+    assert accounting.selected == "estimated"
+
+
 def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
     accounting = _accounting(
         _target(),

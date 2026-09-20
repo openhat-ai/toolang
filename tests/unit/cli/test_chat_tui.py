@@ -734,6 +734,48 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
 
 
 @pytest.mark.parametrize(
+    "accounting",
+    [
+        None,
+        ModelAccounting(input_tokens=10, output_tokens=5),
+        ModelAccounting(
+            input_tokens=10,
+            output_tokens=5,
+            reported=ModelCost(amount=1.0, currency="EUR", complete=True),
+            selected="reported",
+        ),
+    ],
+)
+def test_progress_marks_incomplete_usd_totals_as_approximate(
+    accounting: ModelAccounting | None,
+) -> None:
+    metrics = Metrics()
+    for index, item in enumerate(
+        (
+            ModelAccounting(
+                input_tokens=10,
+                output_tokens=5,
+                reported=ModelCost(amount=0.03, currency="USD", complete=True),
+                selected="reported",
+            ),
+            accounting,
+        )
+    ):
+        metrics.record_step(
+            StepEnd(
+                step=StepRef.parse(f"run_1.{index}"),
+                kind="model",
+                status="succeeded",
+                noted=ModelStepNoted(accounting=item),
+            )
+        )
+
+    assert metrics.cost == 0.03
+    assert metrics.cost_approximate is True
+    assert "≈$0.03" in " ".join(metrics.facts())
+
+
+@pytest.mark.parametrize(
     ("amount", "approximate", "expected"),
     [
         ("0", False, ""),

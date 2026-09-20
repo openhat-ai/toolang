@@ -245,10 +245,13 @@ class Metrics:
                     self.cost = add_cost(self.cost, selected)
                     self.cost_known = True
                 self.cost_approximate = (
-                    self.cost_approximate or selected_cost_is_approximate(accounting)
+                    self.cost_approximate
+                    or selected is None
+                    or selected_cost_is_approximate(accounting)
                 )
             else:
                 self.cache_unknown_calls += 1
+                self.cost_approximate = True
         elif event.kind == "tool":
             self.tool_calls += 1
 

@@ -220,8 +220,24 @@ def _estimate_cost(
     cache_read = usage.input_cache_read_tokens
     cache_write = usage.input_cache_write_tokens
     uncached = usage.input_uncached_tokens
-    if uncached is None and cache_read is not None:
-        uncached = max(usage.input_tokens - cache_read - (cache_write or 0), 0)
+    input_rate = _rate(rates, "input")
+    if uncached is None:
+        remaining = usage.input_tokens - (cache_read or 0) - (cache_write or 0)
+        if remaining > 0 and any(
+            quantity is None and _rate(rates, name) not in {None, input_rate}
+            for name, quantity in (
+                ("cache_read", cache_read),
+                ("cache_write", cache_write),
+            )
+        ):
+            complete = False
+        if cache_read is not None or cache_write is not None:
+            uncached = remaining
+    if (
+        uncached is not None
+        and uncached + (cache_read or 0) + (cache_write or 0) < usage.input_tokens
+    ):
+        complete = False
     input_audio = usage.input_audio_tokens
     if input_audio is not None and _rate(rates, "input_audio") is not None:
         _append_line(lines, "input.audio", input_audio, _rate(rates, "input_audio"))
@@ -237,7 +253,6 @@ def _estimate_cost(
         )
     elif cache_write not in {None, 0}:
         complete = False
-    input_rate = _rate(rates, "input")
     if input_rate is not None:
         if uncached is not None:
             _append_line(lines, "input.uncached", uncached, input_rate)
@@ -246,8 +261,6 @@ def _estimate_cost(
             if input_audio is not None and _rate(rates, "input_audio") is not None:
                 input_quantity = max(input_quantity - input_audio, 0)
             _append_line(lines, "input", input_quantity, input_rate)
-            if _rate(rates, "cache_read") is not None:
-                complete = False
     else:
         complete = False
 
@@ -255,6 +268,13 @@ def _estimate_cost(
     visible = usage.output_visible_tokens
     if visible is None and reasoning is not None:
         visible = max(usage.output_tokens - reasoning, 0)
+    if (
+        _rate(rates, "reasoning") is not None
+        and reasoning is not None
+        and visible is not None
+        and visible + reasoning < usage.output_tokens
+    ):
+        complete = False
     output_audio = usage.output_audio_tokens
     if output_audio is not None and _rate(rates, "output_audio") is not None:
         _append_line(lines, "output.audio", output_audio, _rate(rates, "output_audio"))
