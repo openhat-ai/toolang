@@ -467,3 +467,61 @@ def test_resolver_does_not_apply_npm_endpoints_to_explicit_adapter_declarations(
             replace(provider, models={"model": model}), adapters=_adapters(), environ={}
         )
         assert resolved.models["model"]._toolang.route.api is None
+
+
+def test_invalid_modes_only_disable_the_affected_model():
+    provider = _provider("test", npm="@ai-sdk/openai", env=())
+    for experimental in (
+        None,
+        {},
+        {"modes": []},
+        {"modes": {"fast": None}},
+        {"modes": {"fast": "invalid"}},
+    ):
+        invalid = replace(
+            _model("test", "invalid", "Invalid"),
+            provider={
+                "mode": "fast",
+                "headers": {"X-Test": "raw"},
+                "body": {"temperature": 0},
+            },
+            experimental=experimental,
+        )
+        source = replace(provider, models={**provider.models, "invalid": invalid})
+        resolved = resolve_provider(source, adapters=_adapters(), environ={})
+        assert resolved.models["model"]._toolang.ready
+        assert resolved._toolang.route.ready
+        model = resolved.models["invalid"]
+        assert not model._toolang.ready
+        assert model._toolang.route.adapter is None
+        assert model._toolang.route.api == "https://api.openai.com/v1"
+        assert model._toolang.route.env == ()
+        assert model._toolang.route.headers == {}
+        assert model._toolang.route.options == {}
+        assert model.to_data() == invalid.to_data()
+
+
+def test_valid_modes_merge_request_data_and_allow_empty_definitions():
+    provider = _provider("test", npm="@ai-sdk/openai", env=())
+    for selected in (
+        {},
+        {"provider": {"headers": {"X-Test": "mode"}, "body": {"temperature": 1}}},
+    ):
+        model = replace(
+            provider.models["model"],
+            provider={
+                "mode": "fast",
+                "headers": {"X-Test": "raw"},
+                "body": {"temperature": 0},
+            },
+            experimental={"modes": {"fast": selected}},
+        )
+        resolved = resolve_provider(
+            replace(provider, models={"model": model}), adapters=_adapters(), environ={}
+        )
+        result = resolved.models["model"]
+        assert result._toolang.ready
+        assert result._toolang.route.headers == {
+            "X-Test": "mode" if selected else "raw"
+        }
+        assert result._toolang.route.options == {"temperature": 1 if selected else 0}

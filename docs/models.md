@@ -196,12 +196,19 @@ published routes, and adapters receive `(model, request, *, environ)`.
 values, adapter defaults, and templates into `route.api`. Route environment
 rules contain names only; actual values remain in `setup.envs`.
 
-A missing or uninstalled adapter yields `route.adapter=None`; an unresolved API
+A missing/uninstalled adapter or invalid selected catalog mode yields
+`route.adapter=None`; an unresolved API
 yields `route.api=None`; unmet environment requirements yield `route.env=None`.
 An empty env rule means no credential is required. Setup resolves each field
 independently and sets `ready` only when all three are non-None. No issues list
 is stored. Headers and options are recursively immutable; adapters copy them
 into mutable provider request payloads.
+
+A declared `provider.mode` must select an object in `experimental.modes`.
+Missing or invalid selections make only that model unavailable, with empty
+effective headers/options; other models still publish. The full view preserves
+its source declarations, and a corrected catalog revision can restore readiness.
+Explicit default/compact selections still require an available model.
 
 Source cache files preserve complete catalog declarations, never effective
 routes or readiness. The version-pinned full view includes resolved facts in

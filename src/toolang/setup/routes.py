@@ -8,7 +8,6 @@ from string import Template
 from typing import cast
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.common.errors import ToolangError
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
@@ -127,16 +126,23 @@ def resolve_provider(
         name = model_adapter(provider, model)
         implementation = adapters.get(name) if name is not None else None
         override = model.provider or {}
+        mode_blocks = _mode_provider_blocks(model)
         route = ModelRoute(
-            adapter=name if implementation is not None else None,
+            adapter=name
+            if implementation is not None and mode_blocks is not None
+            else None,
             api=_resolve_api(
                 _optional_text(override.get("api")) or provider.api,
                 environ=environ,
                 default=_default_api(implementation, npm=_model_npm(provider, model)),
             ),
             env=satisfied,
-            headers=model_headers(provider, model),
-            options=model_options(provider, model),
+            headers=model_headers(provider, model, mode_blocks=mode_blocks)
+            if mode_blocks is not None
+            else {},
+            options=model_options(provider, model, mode_blocks=mode_blocks)
+            if mode_blocks is not None
+            else {},
         )
         models[model_id] = model.with_route(route)
     return replace(
@@ -192,19 +198,23 @@ def model_adapter(provider: Provider, model: Model) -> str | None:
     return provider_adapter(provider)
 
 
-def model_headers(provider: Provider, model: Model) -> dict[str, str]:
+def model_headers(
+    provider: Provider, model: Model, *, mode_blocks: tuple[Mapping[str, object], ...]
+) -> dict[str, str]:
     """Return the effective request headers for one model."""
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
     override = model.provider or {}
     _merge_headers(headers, override.get("headers"))
-    for mode_block in _mode_provider_blocks(model):
+    for mode_block in mode_blocks:
         _merge_headers(headers, mode_block.get("headers"))
     return headers
 
 
-def model_options(provider: Provider, model: Model) -> dict[str, object]:
+def model_options(
+    provider: Provider, model: Model, *, mode_blocks: tuple[Mapping[str, object], ...]
+) -> dict[str, object]:
     """Return the effective request body options for one model."""
 
     options: dict[str, object] = {}
@@ -215,7 +225,7 @@ def model_options(provider: Provider, model: Model) -> dict[str, object]:
     body = override.get("body")
     if isinstance(body, Mapping):
         options.update(cast(Mapping[str, object], body))
-    for mode_block in _mode_provider_blocks(model):
+    for mode_block in mode_blocks:
         body = mode_block.get("body")
         if isinstance(body, Mapping):
             options.update(cast(Mapping[str, object], body))
@@ -240,7 +250,9 @@ def _convention_block(provider_id: str) -> Mapping[str, object]:
     }
 
 
-def _mode_provider_blocks(model: Model) -> tuple[Mapping[str, object], ...]:
+def _mode_provider_blocks(model: Model) -> tuple[Mapping[str, object], ...] | None:
+    """Return selected overrides, or None when the declared mode is invalid."""
+
     mode = model_mode(model)
     if mode is None:
         return ()
@@ -253,7 +265,7 @@ def _mode_provider_blocks(model: Model) -> tuple[Mapping[str, object], ...]:
     )
     selected = modes.get(mode) if modes is not None else None
     if not isinstance(selected, Mapping):
-        raise ToolangError(f"model {model.identity} does not advertise mode {mode!r}")
+        return None
     block = cast(Mapping[str, object], selected).get("provider")
     return (cast(Mapping[str, object], block),) if isinstance(block, Mapping) else ()
 

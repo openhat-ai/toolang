@@ -1286,3 +1286,50 @@ def test_route_environment_refresh_leaves_source_cache_and_old_views_unchanged(
     assert first.model_catalog(all=True) == first_full
     assert first.models.refs() == ()
     assert second.model_catalog(all=True).models == second.models.entries
+
+
+@pytest.mark.parametrize("refresh_existing", [False, True])
+@pytest.mark.parametrize("excluded", [False, True])
+def test_setup_publishes_around_invalid_modes_and_recovers(
+    tmp_path, monkeypatch, refresh_existing, excluded
+):
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one", "two"))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    if excluded:
+        monkeypatch.setattr(
+            watcher_module,
+            "load_setup_config",
+            lambda _layout: {"allow": {"models": "test/one, test/three"}},
+        )
+    previous = asyncio.run(watcher.refresh()) if refresh_existing else None
+    _write_catalog(path, ("one", "two", "three"))
+    data = json.loads(path.read_text())
+    data["test"]["models"]["two"]["provider"] = {"mode": "fast"}
+    path.write_text(json.dumps(data))
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup is not previous
+    assert not watcher.diagnostics()
+    assert set(setup.models.refs()) == {"test/one", "test/three"}
+    assert set(setup.providers["test"].models) == {"one", "three"}
+    full = setup.model_catalog(all=True)
+    invalid = full.find("test", "two")
+    assert invalid is not None and not invalid._toolang.ready
+    assert invalid._toolang.route.adapter is None
+    assert invalid.provider == {"mode": "fast"}
+    warm = asyncio.run(SetupWatcher(watcher.layout).refresh())
+    assert warm.model_catalog(all=True) == full
+    if previous is not None:
+        prior_model = previous.model_catalog(all=True).find("test", "two")
+        assert prior_model is not None and prior_model._toolang.ready
+
+    data["test"]["models"]["two"]["experimental"] = {"modes": {"fast": {}}}
+    path.write_text(json.dumps(data))
+    repaired = asyncio.run(watcher.refresh())
+    assert repaired.revision != setup.revision
+    fixed = repaired.model_catalog(all=True).find("test", "two")
+    assert fixed is not None and fixed._toolang.ready
+    assert repaired.models.contains("test/two") is not excluded
+    assert setup.model_catalog(all=True) == full

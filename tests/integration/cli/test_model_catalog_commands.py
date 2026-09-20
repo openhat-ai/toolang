@@ -1104,3 +1104,23 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
     assert all("Environment requirements unmet" in str(row[-1]) for row in rows)
     assert all("Adapter unresolved" not in str(row[-1]) for row in rows)
     assert all("added-after-publication" not in str(row) for row in rows)
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, command):
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+    data = json.loads(json.dumps(_catalog_data()))
+    data["test"]["models"]["two"]["provider"] = {"mode": "missing"}
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+
+    for all_ in (False, True):
+        result = runner.invoke(
+            cli.app,
+            ["--root", str(tmp_path), command, *(["--all"] if all_ else []), "--json"],
+        )
+        assert result.exit_code == 0, result.exception
+        models = json.loads(result.stdout)["test"]["models"]
+        assert set(models) == ({"one", "two"} if all_ else {"one"})
+        if all_:
+            assert models["two"]["provider"] == {"mode": "missing"}

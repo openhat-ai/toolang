@@ -35,7 +35,7 @@ placeholder values are omitted from source-cache documents.
 For published routes:
 
 - adapter is the selected installed adapter name, or None when resolution or
-  installation is missing.
+  installation is missing, or the selected catalog mode is invalid.
 - api is the expanded effective endpoint, or None when absent or unresolved.
 - env is the satisfied normalized environment rule, containing names only;
   None means unsatisfied, while () means no environment is required.
@@ -43,6 +43,14 @@ For published routes:
   valid and do not affect readiness.
 - Each field is resolved independently. A model is ready exactly when adapter,
   api, and env are all non-None. Allow membership is a separate policy result.
+
+A declared `provider.mode` must select an object in `experimental.modes`.
+A missing or non-object selection makes only that model unavailable:
+`route.adapter=None`, empty effective headers/options, and independently resolved
+API/env. Preserve its source declarations in the full view and source cache.
+Other models continue to publish, even when allow policy excludes the invalid
+model. A later valid catalog revision restores readiness. Existing validation
+of explicitly configured default/compact models remains in force.
 
 No issues field or diagnostic type is added. Inspection reports coarse failure
 categories from None fields; it does not promise exact missing variable names
@@ -136,6 +144,8 @@ relocation is not required for this change.
   adapters and endpoints; source declarations are unchanged after resolution.
 - CLI and executor consume identical pinned routes. Refresh, source replacement,
   or cache deletion cannot alter an older setup's default or full view.
+- Invalid catalog modes do not reject startup or refresh; cold/warm loads,
+  allow exclusion, recovery, and old snapshot stability retain this behavior.
 - Default and --all membership, nested provider membership, empty providers,
   query adapter fields, and catalog-only JSON exports retain their contracts.
 - Built-in adapter request/stream behavior remains equivalent, and existing
