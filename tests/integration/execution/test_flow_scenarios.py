@@ -745,7 +745,10 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert rerun_control.payload.sandbox == "docker:python:3.13-slim"
             assert not hasattr(rerun_control.payload, "rerun_from")
             assert rerun_control.payload.runnable == source_control.payload.runnable
-            assert rerun_control.payload.model == source_control.payload.model
+            assert (
+                rerun_control.payload.model_request
+                == source_control.payload.model_request
+            )
             assert rerun_control.payload.limits == source_control.payload.limits
             assert rerun_control.payload.input == source_control.payload.input
             assert rerun_control.payload.resources == source_control.payload.resources

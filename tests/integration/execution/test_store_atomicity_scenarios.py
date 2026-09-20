@@ -1333,7 +1333,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 kind="model",
                 input=(),
                 occurrence=None,
-                given=ModelStepGiven(model="test/model", call=call),
+                given=ModelStepGiven(setup="test-setup", model="test/model", call=call),
                 state=ControlRef.for_run("run_atomic_model", 0),
                 started_at="2026-01-01T00:00:00Z",
             )

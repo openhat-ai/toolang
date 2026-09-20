@@ -42,6 +42,7 @@ from toolang.lang.input import resolve_input_parts
 
 def _capture_replayable_model_step(store: RunStore) -> StepRecord:
     given = ModelStepGiven(
+        setup="test-setup",
         model="test/model",
         call=ModelCall(
             instructions="stable instructions",
@@ -379,6 +380,7 @@ def test_stored_model_call_delta_round_trip() -> None:
         "model",
         {
             "model": "test/model",
+            "setup": "test-setup",
             "call": {
                 "instructions": "instruction-ref",
                 "version": 1,
@@ -386,6 +388,7 @@ def test_stored_model_call_delta_round_trip() -> None:
                 "tools": None,
                 "output_schema": None,
                 "cont": {"cursor": "saved"},
+                "reasoning": {"effort": "high"},
                 "max_output_tokens": 4096,
             },
         },
@@ -401,6 +404,7 @@ def test_stored_model_call_delta_round_trip() -> None:
         "tools": None,
         "output_schema": None,
         "cont": {"cursor": "saved"},
+        "reasoning": {"effort": "high"},
         "max_output_tokens": 4096,
     }
 

@@ -2170,6 +2170,7 @@ def _prepared_agic(
             state=cast(Any, state),
             state_ref=ControlRef.for_run("run_1", 0),
             setup=AgentSetup(
+                revision="test-setup",
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
                 adapters={},

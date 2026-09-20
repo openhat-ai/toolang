@@ -297,7 +297,7 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         ref=StepRef.parse("run_a.1"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("instructions", [])),
+        given=ModelStepGiven("test", ModelCall("instructions", []), setup="test-setup"),
         preceded_by=(steer.ref,),
         started_at="2026-01-01T00:00:04Z",
     )
@@ -396,7 +396,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ref=StepRef.parse("run_a.2"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("", [])),
+        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
         preceded_by=(control.ref,),
         started_at="2026-01-01T00:00:06Z",
     )

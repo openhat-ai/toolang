@@ -2,40 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from fractions import Fraction
 
-from toolang.base.money import add_cost, cost_from_rates, cost_units
-from toolang.base.types.model import Model, Reasoning
+from toolang.base.money import add_cost, cost_units
+from toolang.base.types.model import Model
 from toolang.base.types.policy import RunLimits
-from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
-from toolang.execution.accounting import build_model_accounting, selected_usd_cost
+from toolang.execution.accounting import selected_usd_cost
 from toolang.execution.types import ModelAccounting
 from toolang.plugin.models.collections import ModelCollection
 
 
 class _RunLimitExceeded(ToolangError):
     """Raised when one effective run limit has been exhausted."""
-
-
-@dataclass(frozen=True, slots=True)
-class _TokenPrice:
-    """Captured USD price per input and output token."""
-
-    input: float | None = None
-    output: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _ModelAccounting:
-    """Accounting facts for one completed model call."""
-
-    usage: ModelUsage | None
-    price: _TokenPrice | None = None
-    cost: float | None = None
-    accounting: ModelAccounting | None = None
 
 
 @dataclass(slots=True)
@@ -96,13 +75,13 @@ class _RunLimitState:
     def record_model(
         self,
         model: Model,
-        accounting: _ModelAccounting,
+        accounting: ModelAccounting | None,
     ) -> None:
         """Record one completed model call and enforce root-tree totals."""
 
         if self.limits.tokens is None and self.limits.cost is None:
             return
-        usage = accounting.usage
+        usage = accounting
         if usage is None and self.limits.tokens is not None:
             raise ToolangError(
                 f"Model usage is required by run token or cost limits: {model.ref}"
@@ -117,9 +96,10 @@ class _RunLimitState:
             )
         if self.limits.cost is None:
             return
-        if accounting.cost is None:
+        cost = selected_usd_cost(accounting)
+        if cost is None:
             return
-        self.cost = add_cost(self.cost, accounting.cost)
+        self.cost = add_cost(self.cost, cost)
         if cost_units(self.cost) > cost_units(self.limits.cost):
             raise _RunLimitExceeded(
                 f"Run cost limit exceeded: {self.cost} > {self.limits.cost} USD"
@@ -132,70 +112,3 @@ class _RunLimitState:
         if limit is None:
             raise RuntimeError("run time limit is disabled")
         self.error = f"Run time limit exceeded: {limit}s"
-
-
-def _model_accounting(
-    model: Model,
-    usage: ModelUsage | None,
-    *,
-    requested: Reasoning | None = None,
-    source: str = "unknown",
-    revision: str | None = None,
-) -> _ModelAccounting:
-    durable = build_model_accounting(
-        model, usage, requested=requested, source=source, revision=revision
-    )
-    price = _accounting_price(durable) or _model_price(model)
-    selected_cost = selected_usd_cost(durable)
-    return _ModelAccounting(
-        usage=usage,
-        price=price,
-        cost=selected_cost if selected_cost is not None else _model_cost(usage, price),
-        accounting=durable,
-    )
-
-
-def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
-    if accounting is None or accounting.estimate is None:
-        return None
-    input_rate: float | None = None
-    output_rate: float | None = None
-    for line in accounting.estimate.lines:
-        rate = float(Fraction(line.rate) / Fraction(line.per))
-        if line.meter in {"input", "input.uncached"}:
-            input_rate = rate
-        if line.meter in {"output", "output.visible"}:
-            output_rate = rate
-    if input_rate is None and output_rate is None:
-        return None
-    return _TokenPrice(input=input_rate, output=output_rate)
-
-
-def _model_price(model: Model) -> _TokenPrice | None:
-    rates = model.cost
-    input_price = _token_price(
-        rates.get("input") if isinstance(rates, Mapping) else None
-    )
-    output_price = _token_price(
-        rates.get("output") if isinstance(rates, Mapping) else None
-    )
-    if input_price is None and output_price is None:
-        return None
-    return _TokenPrice(input=input_price, output=output_price)
-
-
-def _token_price(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(Fraction(str(value)) / 1_000_000)
-
-
-def _model_cost(
-    usage: ModelUsage | None,
-    price: _TokenPrice | None,
-) -> float | None:
-    if usage is None or price is None or price.input is None or price.output is None:
-        return None
-    return cost_from_rates(
-        ((usage.input_tokens, price.input), (usage.output_tokens, price.output))
-    )

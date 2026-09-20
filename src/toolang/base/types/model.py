@@ -8,16 +8,9 @@ from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Self, TypeAlias, cast
+from typing import Literal, Self, TypeAlias
 
-from pydantic import (
-    GetJsonSchemaHandler,
-    SerializerFunctionWrapHandler,
-    model_serializer,
-    model_validator,
-)
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import core_schema
+from pydantic import ConfigDict
 
 
 def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
@@ -92,67 +85,11 @@ class Reasoning:
 class ModelRequest:
     """One exact model ref and the controls this run asks for."""
 
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
     ref: str
     reasoning: Reasoning | None = None
     max_output: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _read_parameters(cls, value: object) -> object:
-        """Keep the established wire shape while using flat runtime fields."""
-
-        if not isinstance(value, Mapping) or "parameters" not in value:
-            return value
-        if "reasoning" in value or "max_output" in value:
-            raise ValueError("model request cannot mix parameters and flat controls")
-        data = cast(Mapping[str, object], value)
-        parameters = data["parameters"]
-        if not isinstance(parameters, Mapping):
-            raise ValueError("model parameters must be an object")
-        if set(parameters) - {"reasoning", "max_output"}:
-            raise ValueError("unknown model parameters")
-        return {
-            **{key: item for key, item in data.items() if key != "parameters"},
-            **parameters,
-        }
-
-    @model_serializer(mode="wrap")
-    def _write_parameters(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, object]:
-        """Preserve durable and API serialization without another runtime type."""
-
-        data = handler(self)
-        return {
-            "ref": data["ref"],
-            "parameters": {
-                key: data[key] for key in ("reasoning", "max_output") if key in data
-            },
-        }
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
-    ) -> JsonSchemaValue:
-        """Describe the established wire envelope rather than the runtime layout."""
-
-        record_schema = cast(
-            core_schema.CoreSchema,
-            {key: value for key, value in schema.items() if key != "serialization"},
-        )
-        result = handler.resolve_ref_schema(handler(record_schema))
-        properties = result["properties"]
-        result["properties"] = {
-            "ref": properties["ref"],
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    key: properties[key] for key in ("reasoning", "max_output")
-                },
-                "additionalProperties": False,
-            },
-        }
-        return result
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):

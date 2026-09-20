@@ -282,11 +282,11 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
         meters=(
             ModelUsageMeter(
                 name="output.reasoning",
-                quantity="3",
+                quantity=3.0,
                 unit="token",
             ),
         ),
-        estimate=ModelCost(amount="0.025", currency="USD", complete=True),
+        estimate=ModelCost(amount=0.025, currency="USD", complete=True),
         selected="estimated",
     )
     known = replace(
@@ -365,7 +365,7 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
     accounting = ModelAccounting(
         input_tokens=10,
         output_tokens=4,
-        meters=(ModelUsageMeter("output.reasoning", "3", "token"),),
+        meters=(ModelUsageMeter("output.reasoning", 3.0, "token"),),
     )
     snapshot = replace(
         snapshot,

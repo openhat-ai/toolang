@@ -790,7 +790,9 @@ class StepData:
         if isinstance(step.given, StoredModelStepGiven):
             if call is None:
                 raise ValueError(f"model call is missing for Step {step.ref}")
-            given: StepGiven = ModelStepGiven(model=step.given.model, call=call)
+            given: StepGiven = ModelStepGiven(
+                model=step.given.model, setup=step.given.setup, call=call
+            )
         else:
             given = step.given
         return cls(

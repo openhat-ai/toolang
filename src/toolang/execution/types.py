@@ -1404,6 +1404,7 @@ class ModelStepGiven:
 
     model: str
     call: ModelCall
+    setup: str = field(kw_only=True)
     # Internal recording metadata; public event codecs expose only the call.
     messages: ModelMessages | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
@@ -1412,6 +1413,8 @@ class ModelStepGiven:
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
             raise ValueError("model Step given requires a model identity")
+        if not isinstance(self.setup, str) or not self.setup:
+            raise TypeError("model Step setup must be a revision string")
         if not isinstance(self.call, ModelCall):
             raise TypeError("model Step given requires a ModelCall")
 
@@ -1456,44 +1459,17 @@ StepGiven: TypeAlias = Annotated[
 
 
 @dataclass(frozen=True, slots=True)
-class ModelTokenCount:
-    """Input and output tokens consumed by one model Step."""
-
-    input: int
-    output: int
-
-    def __post_init__(self) -> None:
-        if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in (self.input, self.output)
-        ):
-            raise ValueError("model token counts must be non-negative integers")
-
-
-@dataclass(frozen=True, slots=True)
-class ModelTokenPrice:
-    """Decimal-text prices applied to one model Step."""
-
-    input: str | None
-    output: str | None
-
-    def __post_init__(self) -> None:
-        _validate_decimal_text(self.input, label="input token price")
-        _validate_decimal_text(self.output, label="output token price")
-
-
-@dataclass(frozen=True, slots=True)
 class ModelUsageMeter:
     """One auditable quantity within model-call accounting."""
 
     name: str
-    quantity: str
+    quantity: float
     unit: str = "token"
 
     def __post_init__(self) -> None:
         if not self.name or not self.unit:
             raise ValueError("model usage meter name and unit are required")
-        _validate_decimal_text(self.quantity, label="model usage meter quantity")
+        _validate_accounting_number(self.quantity, label="model usage meter quantity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1501,11 +1477,11 @@ class ModelCostLine:
     """One applied quantity and rate contributing to a model cost."""
 
     meter: str
-    quantity: str
+    quantity: float
     unit: str
-    rate: str
-    per: str
-    amount: str
+    rate: float
+    per: float
+    amount: float
     condition: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -1517,7 +1493,9 @@ class ModelCostLine:
             ("per", self.per),
             ("amount", self.amount),
         ):
-            _validate_decimal_text(value, label=f"model cost line {label}")
+            _validate_accounting_number(value, label=f"model cost line {label}")
+        if self.per <= 0:
+            raise ValueError("model cost line per must be positive")
         if self.condition is not None and not isinstance(self.condition, dict):
             raise TypeError("model cost line condition must be an object")
 
@@ -1526,13 +1504,14 @@ class ModelCostLine:
 class ModelCost:
     """One provider-reported or catalog-estimated monetary amount."""
 
-    amount: str
+    amount: float
     currency: str
     complete: bool
     lines: tuple[ModelCostLine, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_decimal_text(self.amount, label="model cost amount")
+        _validate_accounting_number(self.amount, label="model cost amount")
+        object.__setattr__(self, "amount", normalize_cost(self.amount))
         if not self.currency:
             raise ValueError("model cost currency is required")
         if not isinstance(self.complete, bool):
@@ -1541,32 +1520,16 @@ class ModelCost:
 
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
-    """Catalog pricing provenance captured for one completed call."""
+    """Applied pricing plan and conditions captured for one completed call."""
 
-    source: str
-    revision: str | None = None
     plan: str = "standard"
     match: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.source or not self.plan:
-            raise ValueError("model pricing source and plan are required")
+        if not self.plan:
+            raise ValueError("model pricing plan is required")
         if not isinstance(self.match, dict):
             raise TypeError("model pricing match must be an object")
-
-
-@dataclass(frozen=True, slots=True)
-class ModelReasoningAccounting:
-    """Requested, selected, and provider-reported reasoning controls."""
-
-    requested: dict[str, Any] | None = None
-    selected: dict[str, Any] | None = None
-    reported: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        for value in (self.requested, self.selected, self.reported):
-            if value is not None and not isinstance(value, dict):
-                raise TypeError("model reasoning accounting values must be objects")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1576,23 +1539,36 @@ class ModelAccounting:
     input_tokens: int
     output_tokens: int
     meters: tuple[ModelUsageMeter, ...] = ()
-    reasoning: ModelReasoningAccounting = ModelReasoningAccounting()
     pricing: ModelPricing | None = None
     reported: ModelCost | None = None
     estimate: ModelCost | None = None
-    selected: Literal["reported", "estimated", "none"] = "none"
+    selected: Literal["reported", "estimated", "zero", "unknown"] = "unknown"
     version: int = 1
 
     def __post_init__(self) -> None:
-        if self.version not in {0, 1}:
+        if type(self.version) is not int or self.version != 1:
             raise ValueError(f"unsupported model accounting version: {self.version}")
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 0
             for value in (self.input_tokens, self.output_tokens)
         ):
             raise ValueError("model accounting totals must be non-negative integers")
-        if self.selected not in {"reported", "estimated", "none"}:
+        if self.selected not in {"reported", "estimated", "zero", "unknown"}:
             raise ValueError("invalid selected model cost source")
+        if self.selected == "zero" and not (
+            self.estimate is not None
+            and self.estimate.complete
+            and self.estimate.amount == 0
+            and bool(self.estimate.lines)
+            and all(line.rate == 0 for line in self.estimate.lines)
+            and self.estimate.currency.upper() == "USD"
+            and self.reported is None
+        ):
+            raise ValueError("zero model cost requires a complete free estimate")
+        if self.selected == "unknown" and (
+            self.reported is not None or self.estimate is not None
+        ):
+            raise ValueError("unknown model cost cannot select known costs")
         if self.selected == "reported" and self.reported is None:
             raise ValueError("reported model cost selection requires reported cost")
         if self.selected == "estimated" and self.estimate is None:
@@ -1603,9 +1579,6 @@ class ModelAccounting:
 class ModelStepNoted:
     """Accounting and continuation learned when a model Step ends."""
 
-    tokens: ModelTokenCount | None = None
-    price: ModelTokenPrice | None = None
-    cost: str | None = None
     accounting: ModelAccounting | None = None
     continuation: ModelContinuation | None = field(
         default=None,
@@ -1616,11 +1589,6 @@ class ModelStepNoted:
     )
 
     def __post_init__(self) -> None:
-        if self.tokens is not None and not isinstance(self.tokens, ModelTokenCount):
-            raise TypeError("model Step tokens require ModelTokenCount")
-        if self.price is not None and not isinstance(self.price, ModelTokenPrice):
-            raise TypeError("model Step price requires ModelTokenPrice")
-        _validate_decimal_text(self.cost, label="model cost")
         if self.accounting is not None and not isinstance(
             self.accounting, ModelAccounting
         ):
@@ -1879,16 +1847,10 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
     return False
 
 
-def _validate_decimal_text(value: str | None, *, label: str) -> None:
-    if value is None:
-        return
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{label} must be non-empty decimal text")
-    try:
-        parsed = float(value)
-    except Exception as exc:
-        raise ValueError(f"{label} must be decimal text") from exc
-    if not math.isfinite(parsed) or parsed < 0:
+def _validate_accounting_number(value: float, *, label: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"{label} must be a number")
+    if not math.isfinite(value) or value < 0:
         raise ValueError(f"{label} must be finite and non-negative")
 
 

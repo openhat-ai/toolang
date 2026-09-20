@@ -994,7 +994,7 @@ def test_inspect_projects_complete_persisted_model_call(
             ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             input=(),
-            given=ModelStepGiven(model="test/model", call=call),
+            given=ModelStepGiven(setup="test-setup", model="test/model", call=call),
             state=ControlRef.for_run(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
@@ -2776,6 +2776,7 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
     from toolang.plugin.toolsets.loading import load_tools
 
     published = AgentSetup(
+        revision="test-setup",
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers={},
         adapters={},
@@ -3215,6 +3216,7 @@ def test_agent_info_builds_state_and_setup_without_server(
 
         async def refresh(self) -> AgentSetup:
             return AgentSetup(
+                revision="test-setup",
                 layout=self.layout,
                 providers={},
                 adapters={},
@@ -3259,6 +3261,7 @@ def test_agent_info_reports_only_state_published_caps(
 
         async def refresh(self) -> AgentSetup:
             return AgentSetup(
+                revision="test-setup",
                 layout=self.layout,
                 providers={},
                 adapters={},
@@ -3412,6 +3415,7 @@ class _EmptySetupWatcher:
 
     async def refresh(self) -> AgentSetup:
         return AgentSetup(
+            revision="test-setup",
             layout=self.layout,
             providers={},
             adapters={},

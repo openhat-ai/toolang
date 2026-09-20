@@ -1,5 +1,9 @@
 # Float prices and typed catalog decoding
 
+Record and model-request wire details are superseded by the approved
+[model records contract](model-records.md).
+
+
 Approved in the PR #554 discussion: use float and msgspec, including cost
 accounting and budgets; retain the existing record wire formats.
 

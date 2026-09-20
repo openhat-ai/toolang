@@ -519,18 +519,12 @@ exists so the gap is visible rather than silent.
 
 ## Durable record boundary
 
-No records schema change is included. Runtime `ModelRequest` fields are flat,
-but serialization keeps `{ref, parameters: {reasoning, max_output}}`. Existing
-run/retry/session data must retain its controls when read and re-serialized.
-There is no replacement `ModelParameters` runtime object.
-
-`ModelCall.reasoning` is effective runtime call data. Existing `ModelCallRefs`
-and durable call codecs do not store it; adding replay support belongs to a
-separate records change. No new durable field is claimed in this PR.
-
-Existing accounting `pricing.source` and `pricing.revision` are populated from
-the setup version pinned by the run, including after a later setup refresh.
-Catalog provenance remains setup-owned rather than duplicated on every model.
+The follow-up [model records contract](model-records.md) replaces the original
+compatibility boundary. ModelRequest uses flat ref, reasoning, and max_output
+fields on the wire. Model steps persist the setup revision and effective call
+reasoning. Results contain only accounting and continuation; pricing retains
+plan and match without source/revision. Numeric accounting replaces decimal-text
+amounts. No setup history table or new replay feature is included.
 
 ## Adapter invocation
 
@@ -583,7 +577,7 @@ Regression coverage must verify:
 - plugin-owned mutable mappings cannot alter a published setup version;
 - `models` and `providers` share default/`--all` scope, and full inspection works
   even when a configured default or compact model is unavailable;
-- accounting retains the run's catalog source and revision after setup refresh;
+- model steps retain their setup revision and applied rates after setup refresh;
 - unchanged local probes keep their stamp, and changed catalog input advances
   the setup revision.
 

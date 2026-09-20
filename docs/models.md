@@ -492,19 +492,25 @@ Canonical and durable JSON use the compact `cont` key. Streaming emits ordered
 `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` updates.
 
 The runtime records inclusive token totals plus cache read/write, visible,
-reasoning, audio, and provider-specific meters. Reported provider cost is kept
-separately from catalog-derived estimates so historical calls retain their
-original pricing revision and coverage.
+reasoning, audio, and provider-specific meters. Each model step stores its model
+ref, setup revision, and normalized call, including effective reasoning. The
+revision is provenance only: no historical setup table or model replay feature
+is provided.
 
-Model request objects use flat `reasoning` and `max_output` fields in memory,
-while their existing serialized `parameters` envelope is preserved for run,
-retry, and session data. This PR does not change the durable record schema.
-Persisting effective call reasoning is deferred; current call records do not
-store that field. Pricing source and revision continue to populate existing
-accounting fields from the run's pinned `setup.catalog_sources` mapping.
+Run and retry model requests use flat `ref`, `reasoning`, and `max_output` fields.
+Model step results contain only `accounting` and `cont`. Accounting retains usage,
+applied pricing plan/conditions and rate lines, provider-reported cost, estimated
+cost, and coverage. It does not duplicate catalog source/revision or reasoning
+controls. Historical costs are read from recorded amounts, never current prices.
+
+Cost selection is `reported`, `estimated`, `zero`, or `unknown`. `zero` requires
+an explicitly free, complete estimate; a positive rate rounded to zero remains
+`estimated`. Partial estimates retain `complete: false`. Unknown costs are not
+free. Provider reports remain `reported`, including zero and non-USD amounts.
 
 Call totals settle to six fractional USD digits, rounding half up after all
 components are calculated. Accumulation and budget comparison use integer
 micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
-Per-token prices are not rounded before multiplication. Existing accounting
-records retain decimal-text fields and remain readable.
+Accounting uses numeric fields; rates and intermediate lines are not rounded
+before final settlement. The records change intentionally does not support old
+formats. See [the record contract](plans/model-records.md).

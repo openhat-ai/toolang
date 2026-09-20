@@ -345,7 +345,6 @@ def test_preparation_payload_round_trips_resolved_input() -> None:
         limits=RunLimits(tokens=10),
         state="0" * 64,
         runnable="agic:worker",
-        model="test/model",
         model_request=ModelRequest("test/model"),
         input=CallInput({"_": Array("Part[]", (TextPart("hello"),))}),
         sandbox="docker:python:3.13-slim",
@@ -404,7 +403,6 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
         limits=RunLimits(),
         state="0" * 64,
         runnable="agic:worker",
-        model="test/model",
         model_request=ModelRequest("test/model", reasoning=reasoning),
         input=CallInput({}),
     )
@@ -412,7 +410,7 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
     data = control_payload_to_data(payload)
 
     model_request = cast(dict[str, object], data["model_request"])
-    parameters = cast(dict[str, object], model_request["parameters"])
+    parameters = model_request
     assert parameters["reasoning"] == expected
     assert control_payload_from_data("run", data) == payload
 
@@ -423,7 +421,6 @@ def test_preparation_payload_preserves_an_absent_model_request() -> None:
         limits=RunLimits(),
         state="0" * 64,
         runnable="flow:worker",
-        model="none",
         model_request=None,
         input=CallInput({}),
     )
@@ -435,72 +432,20 @@ def test_preparation_payload_preserves_an_absent_model_request() -> None:
     assert restored == payload
 
 
-def test_preparation_payload_materializes_a_legacy_model_field() -> None:
-    payload = RunControlPayload(
-        resources=AgentResources(models=("test/model",)),
-        limits=RunLimits(),
-        state="0" * 64,
-        runnable="agic:worker",
-        model="test/model",
-        model_request=ModelRequest("test/model"),
-        input=CallInput({}),
-    )
-    data = control_payload_to_data(payload)
-    data.pop("model_request")
-
-    restored = control_payload_from_data("run", data)
-
-    assert isinstance(restored, RunControlPayload)
-    assert restored.model_request == ModelRequest("test/model")
-
-
-def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
+def test_preparation_payload_requires_the_model_request_field() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
-        state="0" * 64,
-        runnable="flow:worker",
-        model="none",
-        model_request=None,
-        input=CallInput({}),
-    )
-    data = control_payload_to_data(payload)
-    data.pop("model_request")
-
-    restored = control_payload_from_data("run", data)
-
-    assert isinstance(restored, RunControlPayload)
-    assert restored.model_request is None
-
-
-def test_preparation_payload_rejects_a_legacy_non_exact_model_ref() -> None:
-    payload = RunControlPayload(
-        resources=AgentResources(models=("test/*",)),
-        limits=RunLimits(),
-        state="0" * 64,
+        state=None,
         runnable="agic:worker",
-        model="test/*",
-        model_request=None,
         input=CallInput({}),
+        model_request=None,
     )
     data = control_payload_to_data(payload)
+    assert "model" not in data
     data.pop("model_request")
-
-    with pytest.raises(ValueError, match="model request ref must be exact"):
+    with pytest.raises(ValueError, match="model_request"):
         control_payload_from_data("run", data)
-
-
-def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
-    with pytest.raises(ValueError, match="model request must match model"):
-        RunControlPayload(
-            resources=AgentResources(models=("test/model",)),
-            limits=RunLimits(),
-            state="0" * 64,
-            runnable="agic:worker",
-            model="test/model",
-            model_request=ModelRequest("other/model"),
-            input=CallInput({}),
-        )
 
 
 def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
@@ -509,7 +454,6 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         limits=RunLimits(),
         state="0" * 64,
         runnable="agic:worker",
-        model="test/model",
         model_request=ModelRequest("test/model"),
         input=CallInput({"_": Array("Part[]", (TextPart("expanded"),))}),
         authored_input=CallInput(
@@ -548,7 +492,7 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
         limits=RunLimits(),
         state="0" * 64,
         runnable="flow:worker",
-        model="none",
+        model_request=None,
         input=CallInput({}),
     )
 
@@ -567,7 +511,7 @@ def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
             limits=RunLimits(),
             state="0" * 64,
             runnable="flow:worker",
-            model="none",
+            model_request=None,
             input=CallInput({}),
             sandbox=sandbox,
         )
@@ -579,7 +523,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
         limits=RunLimits(),
         state="0" * 64,
         runnable="agic:worker",
-        model="test/model",
+        model_request=ModelRequest("test/model"),
         input=CallInput({"_": "hello"}),
     )
     data = control_payload_to_data(payload)
@@ -618,7 +562,6 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         limits=RunLimits(),
         state=None,
         runnable="agic:child",
-        model="test/model",
         model_request=ModelRequest("test/model"),
         input=CallInput({}),
     )

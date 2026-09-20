@@ -356,6 +356,7 @@ class ExecutionHarness:
         layout = AgentLayout.resident(root, "alice")
         providers = {provider.name: provider.catalog_provider()}
         setup = AgentSetup(
+            revision="test-setup",
             layout=layout,
             providers=providers,
             adapters={adapter.name: adapter},

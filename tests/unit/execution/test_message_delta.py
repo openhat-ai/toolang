@@ -230,6 +230,7 @@ def test_delta_metadata_does_not_change_public_model_events() -> None:
         "test/model",
         call,
         ModelMessages(StepRef.parse("run_ab12.0"), literal_delta(call.messages)),
+        setup="test-setup",
     )
     event = StepBegin(StepRef.parse("run_ab12.0"), "model", given)
     payload = run_event_to_data(event)
@@ -289,6 +290,7 @@ def test_call_version_is_checked_before_decoding_future_messages(version) -> Non
         ModelCallRefs(
             "hash", ModelMessages(StepRef.parse("run_ab12.0")), None, None, None
         ),
+        setup="test-setup",
     )
     data = stored_step_given_to_data("model", given)
     call = cast(dict[str, Any], data["call"])

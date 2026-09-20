@@ -12,7 +12,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
 from toolang.base.types.tool import ToolResult
-from toolang.base.types.model import Model, ModelOverride, ModelRequest, Reasoning
+from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
@@ -48,7 +48,7 @@ from toolang.state.cache import agent_revision_dir, validate_agent_revision
 from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
-from ..accounting import selected_usd_cost
+from ..accounting import build_model_accounting, selected_usd_cost
 from ..assembly.history import MessageHistory, adopted_horizon
 from ..recall import canonical_recall
 from ..calls import (
@@ -72,6 +72,7 @@ from ..store import RunStore
 from ..assembly.tool_replies import control_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
+    ModelAccounting,
     value_for_type,
     ControlTiming,
     AgentResources,
@@ -127,10 +128,8 @@ from .resources import (
     validate_model_binding,
 )
 from .limits import (
-    _ModelAccounting,
     _RunLimitExceeded,
     _RunLimitState,
-    _model_accounting,
 )
 from ._persist import _PersistSink
 
@@ -367,7 +366,6 @@ class RunExecutor:
             limits=bound.limits,
             state=bound.state.revision,
             runnable=_bound_runnable(bound),
-            model=_bound_model(bound),
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
@@ -464,7 +462,6 @@ class RunExecutor:
             limits=bound.limits,
             state=bound.state.revision,
             runnable=_bound_runnable(bound),
-            model=_bound_model(bound),
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
@@ -625,13 +622,8 @@ class RunExecutor:
         if module and resolved_module != module:
             raise ValueError(f"run runnable module changed: {preparation.runnable}")
         persisted_model_request = preparation.model_request
-        persisted_model = (
-            None if preparation.model == "none" else ModelRequest(preparation.model)
-        )
         selected_model_request = model_request or (
-            ModelRequest(model)
-            if model is not None
-            else persisted_model_request or persisted_model
+            ModelRequest(model) if model is not None else persisted_model_request
         )
         default_model_request = setup.defaults.model
         if default_model_request is None:
@@ -1649,28 +1641,10 @@ class _Execution:
             if step.kind == "model" and step.status == "succeeded"
         ):
             noted = step.noted if isinstance(step.noted, ModelStepNoted) else None
-            input_tokens = (
-                noted.accounting.input_tokens
-                if noted and noted.accounting
-                else noted.tokens.input
-                if noted and noted.tokens
-                else None
-            )
-            output_tokens = (
-                noted.accounting.output_tokens
-                if noted and noted.accounting
-                else noted.tokens.output
-                if noted and noted.tokens
-                else None
-            )
-            raw_cost = noted.cost if noted is not None else None
-            if noted is not None and noted.accounting is not None:
-                cost = selected_usd_cost(noted.accounting)
-            else:
-                try:
-                    cost = float(str(raw_cost)) if raw_cost is not None else None
-                except ValueError:
-                    cost = None
+            accounting = noted.accounting if noted is not None else None
+            input_tokens = accounting.input_tokens if accounting is not None else None
+            output_tokens = accounting.output_tokens if accounting is not None else None
+            cost = selected_usd_cost(accounting)
             self._limits.restore(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -1950,27 +1924,15 @@ class _Execution:
         self,
         model: Model,
         usage: ModelUsage | None,
-        *,
-        setup: AgentSetup,
-        requested: Reasoning | None = None,
-    ) -> _ModelAccounting:
+    ) -> ModelAccounting | None:
         """Build accounting facts for one completed model call."""
 
-        source, revision = setup.catalog_sources.get(
-            model._toolang.provider, ("unknown", None)
-        )
-        return _model_accounting(
-            model,
-            usage,
-            requested=requested,
-            source=source,
-            revision=revision,
-        )
+        return build_model_accounting(model, usage)
 
     def record_model_accounting(
         self,
         model: Model,
-        accounting: _ModelAccounting,
+        accounting: ModelAccounting | None,
     ) -> None:
         """Add one model accounting result to root-tree totals."""
 
@@ -2425,7 +2387,6 @@ class _Execution:
                     limits=binding.limits,
                     state=None,
                     runnable=_bound_runnable(binding),
-                    model=_bound_model(binding),
                     model_request=binding.model_request,
                     input=binding.control_input,
                     sandbox=None,

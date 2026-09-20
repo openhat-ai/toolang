@@ -24,6 +24,7 @@ from ...events import StepBegin, StepEnd
 from ...assembly import prompting
 from ...records import ControlRecord
 from ...types import (
+    ModelAccounting,
     ControlRef,
     FieldRef,
     RunRef,
@@ -38,7 +39,6 @@ from ..common import (
     program_structs,
 )
 
-from ..limits import _ModelAccounting
 from ...assembly.message_buffer import MessageBuffer
 from ..budget import InputEstimate
 from ..frame import _AgicFrame, build_agic_frame
@@ -77,10 +77,16 @@ class _AgicState:
     before_call: Callable[[], None]
     messages: MessageBuffer
     execution: _Execution | None = None
-    account_usage: Callable[[ModelUsage | None], _ModelAccounting] = lambda usage: (
-        _ModelAccounting(usage=usage)
+    account_usage: Callable[[ModelUsage | None], ModelAccounting | None] = (
+        lambda usage: (
+            ModelAccounting(usage.input_tokens, usage.output_tokens)
+            if usage is not None
+            else None
+        )
     )
-    record_accounting: Callable[[_ModelAccounting], None] = lambda _accounting: None
+    record_accounting: Callable[[ModelAccounting | None], None] = lambda _accounting: (
+        None
+    )
     limits: RunLimits = RunLimits()
     record_output: Callable[[FieldRef], None] = lambda _ref: None
     output: FieldRef | None = None
@@ -255,8 +261,6 @@ async def execute(
         account_usage=lambda usage: execution.model_accounting(
             state.prepared.model,
             usage,
-            requested=state.prepared.reasoning,
-            setup=state.prepared.run.setup,
         ),
         record_accounting=lambda accounting: execution.record_model_accounting(
             state.prepared.model, accounting

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from toolang.execution.types import ModelCost
+
+from toolang.execution.types import ModelAccounting
+
 import pytest
 
 from toolang.base.types.message import (
@@ -37,7 +41,6 @@ from toolang.execution.types import (
     LoopTermination,
     ModelStepGiven,
     ModelStepNoted,
-    ModelTokenCount,
     Occurrence,
     OccurrencePosition,
     StepRef,
@@ -64,7 +67,9 @@ SPAN = Span(line=1)
 
 
 def _model(model: str = "deepseek/deepseek-chat") -> ModelStepGiven:
-    return ModelStepGiven(model=model, call=ModelCall(instructions="", messages=[]))
+    return ModelStepGiven(
+        setup="test-setup", model=model, call=ModelCall(instructions="", messages=[])
+    )
 
 
 def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
@@ -379,8 +384,14 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
             status="succeeded",
             output=_parts("Comparing\napproaches"),
             noted=ModelStepNoted(
-                tokens=ModelTokenCount(input=3400, output=86),
-                cost="0.002",
+                accounting=ModelAccounting(
+                    input_tokens=3400,
+                    output_tokens=86,
+                    estimate=ModelCost(
+                        amount=float("0.002"), currency="USD", complete=True
+                    ),
+                    selected="estimated",
+                )
             ),
             finished_at="2026-01-01T00:00:01.800Z",
         )
@@ -560,8 +571,14 @@ def test_model_tool_call_only_output_discards_live_presentation() -> None:
             status="succeeded",
             output=_part_output(_tool_call_part()),
             noted=ModelStepNoted(
-                tokens=ModelTokenCount(input=12, output=3),
-                cost="0.001",
+                accounting=ModelAccounting(
+                    input_tokens=12,
+                    output_tokens=3,
+                    estimate=ModelCost(
+                        amount=float("0.001"), currency="USD", complete=True
+                    ),
+                    selected="estimated",
+                )
             ),
         )
     )
@@ -798,8 +815,14 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             status="succeeded",
             output=_parts("Done."),
             noted=ModelStepNoted(
-                tokens=ModelTokenCount(input=639, output=215),
-                cost="0.00149",
+                accounting=ModelAccounting(
+                    input_tokens=639,
+                    output_tokens=215,
+                    estimate=ModelCost(
+                        amount=float("0.00149"), currency="USD", complete=True
+                    ),
+                    selected="estimated",
+                )
             ),
         )
     )

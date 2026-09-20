@@ -187,9 +187,6 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
                     if step.noted.accounting is not None:
                         input_tokens += step.noted.accounting.input_tokens
                         output_tokens += step.noted.accounting.output_tokens
-                    elif step.noted.tokens:
-                        input_tokens += step.noted.tokens.input
-                        output_tokens += step.noted.tokens.output
             elif step.kind == "tool":
                 tool_total += 1
             else:

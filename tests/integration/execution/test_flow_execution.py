@@ -132,6 +132,7 @@ def _state(*flows: FlowDecl) -> Any:
 def _setup() -> AgentSetup:
     layout = AgentLayout.resident(Path("/"), "alice")
     return AgentSetup(
+        revision="test-setup",
         layout=layout,
         providers={},
         adapters={},
@@ -147,6 +148,7 @@ def _model_setup() -> AgentSetup:
     layout = AgentLayout.resident(Path("/"), "alice")
     providers = {provider.name: provider.catalog_provider()}
     return AgentSetup(
+        revision="test-setup",
         layout=layout,
         providers=providers,
         adapters={},
@@ -224,6 +226,7 @@ def _spec(
 
 def _capture_model_text(store: RunStore, body: str) -> str:
     captured = store.capture_model_call(
+        setup="test-setup",
         step=StepRef.parse("run_ab12.0"),
         model="test/model",
         call=ModelCall(instructions=body, messages=[]),
@@ -283,7 +286,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert run_control is not None and run_control.status == "applied"
     assert isinstance(run_control.payload, RunControlPayload)
     assert run_control.payload.runnable == "flow:pipeline"
-    assert run_control.payload.model == "none"
+    assert run_control.payload.model_request is None
     assert run_control.payload.limits == _setup().limits
     assert run_control.payload.input == {}
     assert run_control.payload.resources is not None
@@ -718,6 +721,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
     }
     base_setup = _setup()
     setup = AgentSetup(
+        revision="test-setup",
         layout=base_setup.layout,
         providers=base_setup.providers,
         adapters=base_setup.adapters,
