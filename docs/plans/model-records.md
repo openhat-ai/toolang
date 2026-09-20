@@ -24,7 +24,7 @@ Approved in the PR #554 follow-up discussion; implementation starts from PR #564
   precision and exact decimal-rate settlement; accumulate budgets in micro-USD.
 - Do not add a SetupRecord/table, historical setup restoration, or model-call
   replay feature. Records retain useful facts for future replay-oriented design.
-- Execution database schema 46 rejects older stores without migration.
+- Execution database schema 47 rejects older stores without migration.
   No old-format compatibility. RunRecord, ThreadRecord, JobRecord,
   non-model steps, and PR #564 compaction semantics remain unchanged.
 
