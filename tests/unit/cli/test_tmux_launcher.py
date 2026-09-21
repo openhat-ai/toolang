@@ -229,6 +229,8 @@ def _place(
 ) -> bool:
     """Run the chat placement decision with one fixed launcher."""
 
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
     monkeypatch.setattr(chat, "resolve_launcher", lambda **_kwargs: launcher)
     return chat._place_chat(
@@ -273,7 +275,7 @@ def test_resolve_launcher_honours_the_disable_switch() -> None:
     assert (
         tmux.resolve_launcher(
             agent="eve",
-            environment={**TMUX_ENV, tmux.MARKS_ENV: "0"},
+            environment={**TMUX_ENV, tmux.ENABLED_ENV: "0"},
             server_factory=boom,
             pane_factory=boom,
         )
@@ -371,7 +373,7 @@ def test_mark_thread_records_the_window_option() -> None:
 
     launcher.mark_thread(window, "term_x")
 
-    assert window.options[tmux.MARK_THREAD_ID] == "term_x"
+    assert window.options[tmux.MARK_THREAD] == "term_x"
 
 
 def test_open_pad_splits_the_window_with_the_command() -> None:
@@ -387,15 +389,47 @@ def test_open_pad_splits_the_window_with_the_command() -> None:
 def test_thread_window_picks_the_newest_match() -> None:
     session = FakeSession("$0", "eve")
     older = session.add_window(FakeWindow("@1"))
-    older.set_option(tmux.MARK_THREAD_ID, "term_x")
+    older.set_option(tmux.MARK_THREAD, "term_x")
     other = session.add_window(FakeWindow("@2"))
-    other.set_option(tmux.MARK_THREAD_ID, "term_y")
+    other.set_option(tmux.MARK_THREAD, "term_y")
     newer = session.add_window(FakeWindow("@3"))
-    newer.set_option(tmux.MARK_THREAD_ID, "term_x")
+    newer.set_option(tmux.MARK_THREAD, "term_x")
     launcher = _launcher(FakeServer([session]), FakePane(session_id="$0"))
 
     assert launcher.thread_window(session, "term_x") is newer
     assert launcher.thread_window(session, "term_missing") is None
+
+
+def test_thread_window_ignores_the_old_metadata_key() -> None:
+    session = FakeSession("$0", "eve")
+    legacy = session.add_window(FakeWindow("@1", "term_x"))
+    legacy.set_option("@toolang_thread_id", "term_x")
+    renamed = session.add_window(FakeWindow("@2", "user-renamed"))
+    renamed.set_option("@toolang_thread", "term_y")
+    launcher = _launcher(FakeServer([session]), FakePane())
+
+    assert launcher.thread_window(session, "term_x") is None
+    assert launcher.thread_window(session, "term_y") is renamed
+
+
+@pytest.mark.parametrize(
+    "input_tty, output_tty", [(False, False), (True, False), (False, True)]
+)
+def test_non_tty_chat_does_not_resolve_a_launcher(
+    monkeypatch: pytest.MonkeyPatch, input_tty: bool, output_tty: bool
+) -> None:
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: input_tty)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: output_tty)
+    monkeypatch.setenv("TMUX", TMUX_ENV["TMUX"])
+    monkeypatch.setenv("TMUX_PANE", TMUX_ENV["TMUX_PANE"])
+
+    def forbidden(**_kwargs: object) -> None:
+        raise AssertionError("non-TTY chat must not resolve or mutate tmux")
+
+    monkeypatch.setattr(chat, "resolve_launcher", forbidden)
+    assert chat._place_chat(
+        cast(Any, None), thread_id="term_x", argv=["too", "eve", "chat"]
+    )
 
 
 def test_ensure_session_creates_the_agent_session_with_its_chat_window() -> None:
@@ -555,7 +589,7 @@ def test_place_chat_switches_to_an_open_thread_window(
 ) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
-    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.set_option(tmux.MARK_THREAD, "term_x")
     window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$9"))
@@ -574,7 +608,7 @@ def test_place_chat_reuses_an_open_thread_inside_the_agent_session(
 ) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
-    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.set_option(tmux.MARK_THREAD, "term_x")
     window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$0"))  # already in session eve
@@ -592,7 +626,7 @@ def test_place_chat_opens_a_pad_in_a_container_without_a_live_chat(
 ) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
-    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.set_option(tmux.MARK_THREAD, "term_x")
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$9"))
 
@@ -626,7 +660,7 @@ def test_place_chat_labels_a_new_window_for_a_known_thread(
 
     window = agent.windows[-1]
     assert agent.opened == [(None, os.getcwd(), "too eve chat --thread term_x")]
-    assert window.options[tmux.MARK_THREAD_ID] == "term_x"
+    assert window.options[tmux.MARK_THREAD] == "term_x"
     assert window.window_name == "term_x"
     assert server.switched == ["eve"]
     assert capsys.readouterr().out == "\u21aa opened in tmux session eve\n"
@@ -681,7 +715,7 @@ def test_place_chat_keeps_chat_here_when_an_open_thread_cannot_be_reached(
 ) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "term_x"))
-    window.set_option(tmux.MARK_THREAD_ID, "term_x")
+    window.set_option(tmux.MARK_THREAD, "term_x")
     window.panes[0].options[tmux.MARK_PAD] = tmux.PAD_CHAT
     server = UnreachableServer([session])
     launcher = _launcher(server, FakePane(session_id="$9"))

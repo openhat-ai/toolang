@@ -46,7 +46,6 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall, ToolCall
-from toolang.cli.common import tmux
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
     ProgressRow,
@@ -83,7 +82,6 @@ from toolang.cli.toolang.commands.chat.base import (
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.input import QuickCommand
-from toolang.cli.toolang.commands.chat.marks import ChatMarks
 from toolang.cli.toolang.commands.chat.policy import update_session_setting
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.common.errors import ToolangError
@@ -6339,46 +6337,134 @@ def test_chat_status_and_run_context_use_unlined_entry_labels() -> None:
     )
 
 
-def test_chat_tui_publishes_the_thread_title_once_the_run_is_accepted() -> None:
-    """Acceptance makes the thread's first title readable; the run may still run."""
+@pytest.mark.parametrize("slow_metadata", ["write", "rename"])
+def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) -> None:
+    from queue import Queue
 
-    window_writes: list[tuple[str, str]] = []
+    from prompt_toolkit.output.vt100 import Vt100_Output
 
-    def set_window(option: str, value: str) -> object:
-        window_writes.append((option, value))
-        return None
+    from toolang.cli.common import tmux
+    from toolang.cli.toolang.commands.chat.base import ThreadTitle
+    from toolang.cli.toolang.commands.chat.marks import ChatMarks
+    from toolang.cli.toolang.commands.chat.title import ChatTitle
+
+    metadata_entered = threading.Event()
+    title_entered = threading.Event()
+    released = threading.Event()
+    results: Queue[ThreadTitle] = Queue()
+    writes: list[tuple[str, str]] = []
+    stream = StringIO()
+
+    def slow() -> None:
+        metadata_entered.set()
+        assert released.wait(5)
+
+    def set_window(name: str, value: str) -> None:
+        if slow_metadata == "write":
+            slow()
+        writes.append((name, value))
+
+    def rename_window(name: str) -> None:
+        if slow_metadata == "rename":
+            slow()
+        writes.append(("name", name))
+
+    def lookup(_thread: str) -> str:
+        title_entered.set()
+        assert released.wait(5)
+        return "hello world"
 
     marks = ChatMarks(
         marks=tmux.Marks(
             pane_id="%3",
             window_id="@1",
-            _set_pane=lambda _option, _value: None,
+            _set_pane=lambda *_: None,
             _set_window=set_window,
-        ),
-        title_lookup=lambda _thread_id: "hello world",
-    )
-    marks.set_thread("term_x")
-    app = tui.ChatTuiApp(
-        thread_id="term_x",
-        setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
-        input_history=None,
-        client=FakeClient(),
-        marks=marks,
+            _rename_window=rename_window,
+        )
     )
 
-    app._handle_run_state(RunAccepted("run_1"))
+    async def scenario() -> None:
+        app = tui.ChatTuiApp(
+            thread_id="term_x",
+            setting=FakeClient().initial_setting(),
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+            marks=marks,
+        )
+        app.loop = asyncio.get_running_loop()
+        app.title = ChatTitle(
+            output=Vt100_Output(stream, lambda: Size(24, 80), term="xterm"),
+            enabled=True,
+            lookup=lookup,
+            on_result=results.put,
+        )
+        app.title.set_thread("term_x")
+        marks.start_background()
+        marks.start("term_x")
+        try:
+            app._handle_run_state(RunAccepted("run_1"))
+            assert metadata_entered.wait(5)
+            assert title_entered.wait(5)
+            ui_progress = asyncio.Event()
+            app.loop.call_soon(ui_progress.set)
+            await ui_progress.wait()
+            assert not released.is_set()
+            assert "hello world" not in stream.getvalue()
+            released.set()
+            result = await asyncio.to_thread(results.get, True, 5)
+            app.handle_ui_event(ChatUIEvent("thread_title", result))
+            assert stream.getvalue().endswith("\x1b]2;hello world\x07")
+            app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
+            assert results.empty()
+        finally:
+            released.set()
+            app.title.clear()
+            marks.clear()
+        assert writes[0] == ("@toolang_thread", "term_x")
+        assert not any(name == "@toolang_thread_title" for name, _ in writes)
 
-    # the run is still active, so its thread title must already be set
-    assert window_writes == [
-        (tmux.MARK_THREAD_ID, "term_x"),
-        (tmux.MARK_THREAD_TITLE, "hello world"),
-    ]
+    asyncio.run(scenario())
 
-    app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
 
-    # the end-of-run read is a fallback, not a second publish
-    assert window_writes == [
-        (tmux.MARK_THREAD_ID, "term_x"),
-        (tmux.MARK_THREAD_TITLE, "hello world"),
-    ]
+@pytest.mark.parametrize(
+    "input_tty, output_tty",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_terminal_title_requires_tty_but_not_tmux(
+    monkeypatch: pytest.MonkeyPatch, input_tty: bool, output_tty: bool
+) -> None:
+    class Input(DummyInput):
+        def fileno(self) -> int:
+            return 0
+
+    class Output(DummyOutput):
+        def __init__(self) -> None:
+            self.titles: list[str] = []
+
+        def fileno(self) -> int:
+            return 1
+
+        def set_title(self, title: str) -> None:
+            self.titles.append(title)
+
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    monkeypatch.setenv("TOOLANG_TMUX", "0")
+    monkeypatch.setattr(
+        tui.os, "isatty", lambda fd: input_tty if fd == 0 else output_tty
+    )
+    output = Output()
+    with create_app_session(input=Input(), output=output):
+        app = tui.ChatTuiApp(
+            thread_id=None,
+            setting=FakeClient().initial_setting(),
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        app.title.start(None)
+        app.title.clear()
+    assert output.titles == (["new_chat", ""] if input_tty and output_tty else [])
+    assert not app.marks.active

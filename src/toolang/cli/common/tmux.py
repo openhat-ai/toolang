@@ -1,15 +1,14 @@
 """Publish toolang state as tmux options while chat runs in a pane.
 
 A chat that runs inside a tmux pane records what it hosts, each value at its own
-scope, so tmux-side views can read it with ``#{@toolang_thread_id}`` and friends.
-The pane carries the pad kind (``chat`` today), its window carries the thread id
-and title, and the agent is a session option the launcher writes. A window with
+scope, so tmux-side views can read it with ``#{@toolang_thread}`` and friends.
+The pane carries the pad kind (``chat`` today), its window carries the thread id,
+and the agent is a session option the launcher writes. A window with
 no value of its own reads its session's, so the agent is visible across the whole
 session while the thread marks stay on the one window that shows it.
 
-Nothing is renamed: the marks are user options only, and a view that wants the
-agent, the thread, or the pad reads ``docs/chat.md``'s recommended ``prefix w``
-format.
+Identity marks are user options. Terminal titles are published separately by
+chat through OSC 2; tmux views can display the native ``pane_title``.
 
 Detection and targeting are delegated to ``libtmux``, which reads ``TMUX`` and
 ``TMUX_PANE`` from the environment, so this module carries no socket or protocol
@@ -32,11 +31,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from wcwidth import wcwidth
-
 MARK_AGENT = "@toolang_agent"
-MARK_THREAD_ID = "@toolang_thread_id"
-MARK_THREAD_TITLE = "@toolang_thread_title"
+MARK_THREAD = "@toolang_thread"
 MARK_PAD = "@toolang_pad"
 
 # One value per scope: the agent belongs to the session, the thread to the window
@@ -50,7 +46,7 @@ PAD_CHAT = "chat"
 # The window name a brand-new chat starts under, before its thread id exists.
 WINDOW_NAME_FALLBACK = "new_chat"
 PANE_MARKS = frozenset({MARK_PAD})
-WINDOW_MARKS = frozenset({MARK_THREAD_ID, MARK_THREAD_TITLE})
+WINDOW_MARKS = frozenset({MARK_THREAD})
 
 # The agent is a session option: the launcher writes it when it determines the
 # agent's session, and every window in that session reads it by inheritance.
@@ -59,15 +55,12 @@ SESSION_NAME_FALLBACK = "agent"
 _SESSION_CHARS = re.compile(r"[^a-z0-9-]+")
 _SESSION_DASHES = re.compile(r"-{2,}")
 
-TITLE_WIDTH = 60
-ELLIPSIS = "\u2026"
-
 # tmux detaches an attached client when the session it is showing goes away.
 # A session toolang creates holds only chat windows, so chat exiting would take
 # the client with it; the option below keeps the client in tmux instead.
 DETACH_ON_DESTROY = "detach-on-destroy"
 
-MARKS_ENV = "TOOLANG_TMUX_MARKS"
+ENABLED_ENV = "TOOLANG_TMUX"
 DEBUG_ENV = "TOOLANG_TMUX_DEBUG"
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -276,7 +269,7 @@ def resolve_marks(
     """
 
     environ = os.environ if environment is None else environment
-    if not marks_enabled(environ):
+    if not tmux_enabled(environ):
         return None
     if not environ.get("TMUX") or not environ.get("TMUX_PANE"):
         return None
@@ -379,7 +372,7 @@ class Launcher:
 
         found: TmuxWindow | None = None
         for window in self.list_windows(session):
-            if _text(_option(window, MARK_THREAD_ID)) == thread_id:
+            if _text(_option(window, MARK_THREAD)) == thread_id:
                 found = window
         return found
 
@@ -411,7 +404,7 @@ class Launcher:
         """Record the thread a container window belongs to."""
 
         try:
-            window.set_option(MARK_THREAD_ID, thread_id)
+            window.set_option(MARK_THREAD, thread_id)
         except Exception as exc:
             _debug(f"thread not marked: {exc}")
 
@@ -586,12 +579,12 @@ def resolve_launcher(
 ) -> Launcher | None:
     """Return the launcher for the current pane, or ``None`` outside tmux.
 
-    Placement shares the marks kill switch, so ``TOOLANG_TMUX_MARKS=0`` keeps
+    Placement shares the marks kill switch, so ``TOOLANG_TMUX=0`` keeps
     chat in the current terminal whatever else is configured.
     """
 
     environ = os.environ if environment is None else environment
-    if not marks_enabled(environ):
+    if not tmux_enabled(environ):
         return None
     if not environ.get("TMUX") or not environ.get("TMUX_PANE"):
         return None
@@ -647,36 +640,10 @@ def _active_window(session: TmuxSession) -> TmuxWindow | None:
     return windows[0] if windows else None
 
 
-def marks_enabled(environment: Mapping[str, str]) -> bool:
-    """Whether this process should publish the marks."""
+def tmux_enabled(environment: Mapping[str, str]) -> bool:
+    """Whether tmux placement, naming, and identity publication are enabled."""
 
-    return environment.get(MARKS_ENV, "").strip().casefold() not in _DISABLED_VALUES
-
-
-def clip_title(text: str, *, width: int = TITLE_WIDTH) -> str:
-    """Collapse whitespace and clip one title to ``width`` terminal columns.
-
-    A title can be an entire authored message, so it is reduced to a single line
-    before it becomes a tmux option. Clipping counts display columns (CJK counts
-    as two) and marks the cut with an ellipsis that fits inside ``width``.
-    """
-
-    flat = " ".join(text.split())
-    if width <= 0:
-        return ""
-    if _display_width(flat) <= width:
-        return flat
-    if width <= _display_width(ELLIPSIS):
-        return ELLIPSIS[:width]
-    clipped: list[str] = []
-    used = 0
-    for char in flat:
-        step = max(wcwidth(char), 0)
-        if used + step > width - _display_width(ELLIPSIS):
-            break
-        clipped.append(char)
-        used += step
-    return "".join(clipped).rstrip() + ELLIPSIS
+    return environment.get(ENABLED_ENV, "").strip().casefold() not in _DISABLED_VALUES
 
 
 def _window_method(window: object, name: str) -> OptionWriter:
@@ -695,10 +662,6 @@ def _optional(target: object, name: str) -> Any:
 
 def _text(value: object) -> str:
     return value if isinstance(value, str) else ""
-
-
-def _display_width(text: str) -> int:
-    return sum(max(wcwidth(char), 0) for char in text)
 
 
 def _libtmux_pane() -> TmuxPane:
