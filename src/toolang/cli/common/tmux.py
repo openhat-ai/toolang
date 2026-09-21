@@ -420,6 +420,7 @@ class Launcher:
     def _enter_target(self, window: TmuxWindow, pane: TmuxPane, *, action: str) -> None:
         try:
             session = window.session
+            target = f"{session.session_name}:{window.window_name}.{pane.pane_id}"
             location = (
                 f"session {session.session_name} ({session.session_id}), "
                 f"window {window.window_name} ({window.window_id}), pane {pane.pane_id}"
@@ -435,7 +436,8 @@ class Launcher:
                 f"{action.capitalize()} chat pane in tmux {location}; not selected. "
                 f"{exc}. The target was kept."
             ) from exc
-        print(f"↪ {action} chat pane in tmux {location}; selected")
+        verb = "switched to" if action == "reused" else action
+        print(f"{verb} chat pane {target}")
 
     def agent_session(self) -> TmuxSession | None:
         """The agent's session: its ``@toolang_agent`` mark first, name second.

@@ -290,7 +290,12 @@ time.sleep(60)
             target_session.session_id
         ]
         assert ("%session-changed" in events(client)) is not same_session
-        assert "created chat pane" in capsys.readouterr().out
+        notice = capsys.readouterr().out.strip()
+        assert notice.startswith("created chat pane ")
+        address = notice.removeprefix("created chat pane ")
+        assert tmux(server, "display-message", "-p", "-t", address, "#{pane_id}") == [
+            target_pane.pane_id
+        ]
 
 
 def wait_for_pane_exit(server: libtmux.Server, pane_id: str) -> None:

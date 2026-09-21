@@ -460,9 +460,10 @@ def test_place_chat_reuses_or_creates_pad_and_enters_target(
     assert window.panes[-1].selected
     assert server.switched == ([] if same_session else ["$0"])
     out = capsys.readouterr().out
-    assert ("reused chat pane" if live_pad else "created chat pane") in out
-    assert "renamed-agent ($0), window renamed-thread (@1)" in out
-    assert "; selected" in out
+    verb = "switched to" if live_pad else "created"
+    assert out == (
+        f"{verb} chat pane renamed-agent:renamed-thread.{window.panes[-1].pane_id}\n"
+    )
 
 
 def test_place_chat_reports_creation_error_here(
@@ -652,7 +653,9 @@ def test_tmux_thread_reuses_validates_and_keeps_empty_threads(tmp_path: Path) ->
         store.close()
 
 
-def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None:
+def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "custom"))
     window.options[tmux.MARK_THREAD] = "term_x"
@@ -661,6 +664,7 @@ def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None
     assert launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
     assert not window.pads and not session.opened and not window.selected
     assert window.window_name == "custom"
+    assert capsys.readouterr().out == ""
 
 
 def test_same_window_navigation_only_selects_the_pane() -> None:
