@@ -64,9 +64,11 @@ lookups must not be mistaken for absent targets. Navigation failure preserves
 the target; no duplicate local fallback. Creation success does not imply child
 readiness. Explicit retry never kills an unrelated live process; no retry loop.
 
-Success notices use `switched to chat pane <target>`, `created chat pane <target>`,
-or `restarted chat pane <target>`. Use `session:window.%pane_id` so the address
-works as a tmux `-t` target. In-place startup prints no placement notice.
+Notices use `located chat pane %id in session:window` for an existing pane,
+`created` for a new pane, and `reused` for a retry. Display current names;
+`%id` works as a tmux pane command's `-t` target. In-place startup stays silent.
+Navigation failures append `; failed to switch: <reason>` to the notice;
+creation failures use `failed to create chat pane: <reason>`.
 
 Bindings use the normal Chat command for routing, or `TOOLANG_TMUX=0` to remain
 in their dedicated pane without metadata. OSC remains enabled in both cases.

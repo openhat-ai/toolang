@@ -292,7 +292,8 @@ time.sleep(60)
         assert ("%session-changed" in events(client)) is not same_session
         notice = capsys.readouterr().out.strip()
         assert notice.startswith("created chat pane ")
-        address = notice.removeprefix("created chat pane ")
+        address, location = notice.removeprefix("created chat pane ").split(" in ", 1)
+        assert location == f"{target_session.session_name}:{target_window.window_name}"
         assert tmux(server, "display-message", "-p", "-t", address, "#{pane_id}") == [
             target_pane.pane_id
         ]
@@ -312,7 +313,11 @@ def wait_for_pane_exit(server: libtmux.Server, pane_id: str) -> None:
 @pytest.mark.parametrize("missing", ["session", "window", "pane"])
 @pytest.mark.parametrize("delay", [0, 0.2])
 def test_failed_child_retains_error_and_explicit_retry_reuses_pane(
-    server: libtmux.Server, tmp_path: Path, missing: str, delay: float
+    server: libtmux.Server,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    missing: str,
+    delay: float,
 ) -> None:
     origin = server.sessions[0]
     source = origin.active_pane
@@ -353,11 +358,15 @@ def test_failed_child_retains_error_and_explicit_retry_reuses_pane(
         )
         assert launcher.chat_pad(window) is None
         count = len(tmux(server, "list-panes", "-a"))
+        capsys.readouterr()
         assert not launcher.place_chat(
             thread_id="term_x", argv=argv, directory=str(tmp_path)
         )
         wait_for_pane_exit(server, pane.pane_id)
         assert len(tmux(server, "list-panes", "-a")) == count
+        assert capsys.readouterr().out == (
+            f"reused chat pane {pane.pane_id} in {agent.session_name}:{window.window_name}\n"
+        )
 
 
 def test_successful_child_closes_its_pane(
