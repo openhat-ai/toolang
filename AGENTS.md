@@ -121,7 +121,11 @@ applies, raise the ambiguity and ask the human before proceeding.
 
 ## Verification
 
-Run the default verification before every commit:
+For documentation-only changes, verify accuracy against the implementation,
+validate relevant links and examples, and run `git diff --check`. The default
+code checks and full test suite are not required.
+
+For code or test changes, run the default verification before every commit:
 
 ```sh
 uv run ruff check .
