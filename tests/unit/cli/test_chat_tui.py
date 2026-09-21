@@ -2566,12 +2566,14 @@ def test_chat_widgets_share_output_width_after_resize(
 @pytest.mark.parametrize("queued", [False, True])
 @pytest.mark.parametrize("columns", [25, 40, 100, 160])
 @pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("refresh", ["resize", "render", "erase"])
 def test_chat_resize_erases_the_reflowed_live_origin(
     monkeypatch: pytest.MonkeyPatch,
     draft: str,
     queued: bool,
     columns: int,
     live: bool,
+    refresh: str,
 ) -> None:
     async def exercise() -> None:
         async with _queue_test_app() as (app, output):
@@ -2602,17 +2604,31 @@ def test_chat_resize_erases_the_reflowed_live_origin(
             def up(amount: int) -> None:
                 physical_cursor[1] -= amount
 
+            def write(value: str) -> None:
+                # Rendering can return to column zero with a carriage return.
+                if "\r" in value:
+                    physical_cursor[0] = 0
+
             monkeypatch.setattr(output, "cursor_backward", backward)
             monkeypatch.setattr(output, "cursor_up", up)
+            monkeypatch.setattr(output, "write", write)
             monkeypatch.setattr(
                 output,
                 "erase_down",
                 lambda: erased_from.append((physical_cursor[0], physical_cursor[1])),
             )
             output.columns = columns
-            app.app._on_resize()
+            if refresh == "resize":
+                app.app._on_resize()
+            elif refresh == "render":
+                _render_chat_layout(app)
+            else:
+                app.app.renderer.erase(leave_alternate_screen=False)
 
-            assert erased_from == [(0, 0)]
+            if columns == 100 and refresh == "render":
+                assert erased_from == []
+            else:
+                assert erased_from[0] == (0, 0)
             assert app.prompt.buffer.text == draft
             assert app.prompt.buffer.cursor_position == len(draft)
 

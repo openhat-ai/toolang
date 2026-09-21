@@ -24,6 +24,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.renderer import Renderer
 from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -198,12 +199,21 @@ class ChatTuiAppContext:
         self._app.app.exit()
 
 
-class _ChatApplication(Application[None]):
-    def _on_resize(self) -> None:
-        renderer = self.renderer
-        previous_size = renderer._last_size
-        screen = renderer.last_rendered_screen
-        styled = renderer._style_string_has_style
+class _ChatRenderer(Renderer):
+    """Account for reflow before any operation that touches the old frame."""
+
+    def render(self, app: Application, layout: Layout, is_done: bool = False) -> None:
+        self._reflow_cursor()
+        super().render(app, layout, is_done=is_done)
+
+    def erase(self, leave_alternate_screen: bool = True) -> None:
+        self._reflow_cursor()
+        super().erase(leave_alternate_screen=leave_alternate_screen)
+
+    def _reflow_cursor(self) -> None:
+        previous_size = self._last_size
+        screen = self.last_rendered_screen
+        styled = self._style_string_has_style
         columns = max(1, self.output.get_size().columns)
         if (
             previous_size is not None
@@ -215,7 +225,7 @@ class _ChatApplication(Application[None]):
             # so even an empty Input row can now occupy several terminal rows.
             # Correct the old cursor offset before prompt-toolkit erases from
             # the live origin; changing the new layout alone leaves stale rows.
-            cursor = renderer._cursor_pos
+            cursor = self._cursor_pos
             rows = 0
             for row_index in range(cursor.y):
                 used = max(
@@ -228,10 +238,7 @@ class _ChatApplication(Application[None]):
                 )
                 used = min(used, previous_size.columns)
                 rows += max(1, (used + columns - 1) // columns)
-            renderer._cursor_pos = Point(
-                x=cursor.x % columns, y=rows + cursor.x // columns
-            )
-        super()._on_resize()
+            self._cursor_pos = Point(x=cursor.x % columns, y=rows + cursor.x // columns)
 
 
 class ChatTuiApp:
@@ -341,7 +348,7 @@ class ChatTuiApp:
                 input_area,
             ]
         )
-        self.app = _ChatApplication(
+        self.app = Application(
             layout=Layout(
                 FloatContainer(
                     content=body,
@@ -364,6 +371,13 @@ class ChatTuiApp:
             color_depth=ColorDepth.DEPTH_24_BIT,
             erase_when_done=True,
             mouse_support=False,
+        )
+        self.app.renderer = _ChatRenderer(
+            self.app.renderer.style,
+            self.app.output,
+            full_screen=self.app.full_screen,
+            mouse_support=self.app.mouse_support,
+            cpr_not_supported_callback=self.app.cpr_not_supported_callback,
         )
         self.app.key_processor.after_key_press += self._clear_status_error_on_escape
         self.app_context: AppContext = ChatTuiAppContext(self)
