@@ -2562,6 +2562,63 @@ def test_chat_widgets_share_output_width_after_resize(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("draft", ["", "draft " * 12, "中文" * 30])
+@pytest.mark.parametrize("queued", [False, True])
+@pytest.mark.parametrize("columns", [25, 40, 100, 160])
+@pytest.mark.parametrize("live", [False, True])
+def test_chat_resize_erases_the_reflowed_live_origin(
+    monkeypatch: pytest.MonkeyPatch,
+    draft: str,
+    queued: bool,
+    columns: int,
+    live: bool,
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            if not queued:
+                app.queue.clear()
+            if live:
+                app.unfinalized_blocks.append(
+                    blocks.ExecutionProgressBlock(
+                        ProgressBlock("step:run_1.0", (ProgressRow("working"),))
+                    )
+                )
+            app.prompt.replace_input(draft)
+            screen = _render_chat_layout(app)
+            cursor = screen.get_cursor_position(app.app.layout.current_window)
+            # A terminal reflows the full-width painted Queue/Input rows before
+            # delivering SIGWINCH. The cursor's logical row also wraps.
+            live_rows = app._live_area_height()
+            wrapped_rows = (100 + columns - 1) // columns
+            reflowed_y = (
+                live_rows + (cursor.y - live_rows) * wrapped_rows + cursor.x // columns
+            )
+            physical_cursor = [cursor.x % columns, reflowed_y]
+            erased_from: list[tuple[int, int]] = []
+
+            def backward(amount: int) -> None:
+                physical_cursor[0] = max(0, physical_cursor[0] - amount)
+
+            def up(amount: int) -> None:
+                physical_cursor[1] -= amount
+
+            monkeypatch.setattr(output, "cursor_backward", backward)
+            monkeypatch.setattr(output, "cursor_up", up)
+            monkeypatch.setattr(
+                output,
+                "erase_down",
+                lambda: erased_from.append((physical_cursor[0], physical_cursor[1])),
+            )
+            output.columns = columns
+            app.app._on_resize()
+
+            assert erased_from == [(0, 0)]
+            assert app.prompt.buffer.text == draft
+            assert app.prompt.buffer.cursor_position == len(draft)
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("selected_index", [0, 1, 2])
 def test_chat_queue_preserves_cursor_and_selection_across_transitions(
     selected_index: int,

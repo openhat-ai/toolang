@@ -12,6 +12,7 @@ from typing import TypeGuard, cast
 from uuid import uuid4
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition, has_completions, has_focus
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
@@ -197,6 +198,42 @@ class ChatTuiAppContext:
         self._app.app.exit()
 
 
+class _ChatApplication(Application[None]):
+    def _on_resize(self) -> None:
+        renderer = self.renderer
+        previous_size = renderer._last_size
+        screen = renderer.last_rendered_screen
+        styled = renderer._style_string_has_style
+        columns = max(1, self.output.get_size().columns)
+        if (
+            previous_size is not None
+            and columns < previous_size.columns
+            and screen is not None
+            and styled is not None
+        ):
+            # Reflow happens before SIGWINCH. Painted padding counts as content,
+            # so even an empty Input row can now occupy several terminal rows.
+            # Correct the old cursor offset before prompt-toolkit erases from
+            # the live origin; changing the new layout alone leaves stale rows.
+            cursor = renderer._cursor_pos
+            rows = 0
+            for row_index in range(cursor.y):
+                used = max(
+                    (
+                        column + max(1, cell.width)
+                        for column, cell in screen.data_buffer[row_index].items()
+                        if cell.char != " " or styled[cell.style]
+                    ),
+                    default=0,
+                )
+                used = min(used, previous_size.columns)
+                rows += max(1, (used + columns - 1) // columns)
+            renderer._cursor_pos = Point(
+                x=cursor.x % columns, y=rows + cursor.x // columns
+            )
+        super()._on_resize()
+
+
 class ChatTuiApp:
     @staticmethod
     def run(
@@ -304,7 +341,7 @@ class ChatTuiApp:
                 input_area,
             ]
         )
-        self.app = Application(
+        self.app = _ChatApplication(
             layout=Layout(
                 FloatContainer(
                     content=body,
