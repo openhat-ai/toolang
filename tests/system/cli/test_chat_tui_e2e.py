@@ -98,7 +98,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "agic:chat",
             "scripted",
         )
-        session.wait_for_bytes(b"\x1b]0;new_chat\x07")
+        session.wait_for_bytes(b"\x1b]0;[new chat]\x07")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\x1b[O\x1b[I" * 3)
@@ -138,7 +138,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
             "scripted",
         )
         assert "embedded" not in banner
-        session.wait_for_bytes(b"\x1b]0;new_chat\x07")
+        session.wait_for_bytes(b"\x1b]0;[new chat]\x07")
 
         session.send(b"hello remote\r")
         output = session.wait_for(

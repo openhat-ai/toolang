@@ -441,9 +441,9 @@ session name and window title; the tab title follows the session name by default
 In tmux it sets `pane_title`, independently of `window_name`.
 For iTerm2, include **Session Name** in **Settings > Profiles > General > Title**
 and leave the tab title override unset to display the chat title.
-The title has no role prefix. Before the title is available, chat shows the thread
-id, or `new_chat` before the thread exists. Titles are single-line, limited to 60
-display columns, and stripped of terminal control characters.
+The title has no role prefix. Before the title is available, chat shows
+`[new chat]`, even when its thread ID is already known. Titles are single-line,
+limited to 60 display columns, and stripped of terminal control characters.
 
 A resumed chat reads its title at startup. A new thread reads its title once the
 first run is accepted, with run end as a retry opportunity. Queries run outside
@@ -549,9 +549,14 @@ input. Window and pane selections themselves are shared tmux state.
 
 Targets are created detached and selected after preparation. The invoking
 terminal reports the target's names/IDs and creation, reuse, or retry outcome.
-Creation and navigation failures are reported here with a nonzero exit status.
+Lookup, creation, and navigation failures are reported here with a nonzero exit
+status. A failed lookup never means the target is absent.
 A navigation failure keeps the target and does not start a duplicate local chat.
 Creation success confirms that the pane exists, not that Chat startup finished.
+
+Use tmux 3.6 or newer on Linux for reliable exit handling. Older builds with
+utempter can lose child exit notifications, leaving exit status empty or keeping
+a successful pane open ([upstream fix](https://github.com/tmux/tmux/issues/4559)).
 
 Each new pane's command sets its own `remain-on-exit failed` before executing
 Chat. Startup and later nonzero exits retain the pane, error output, and exit

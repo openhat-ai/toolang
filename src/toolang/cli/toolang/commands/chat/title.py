@@ -73,7 +73,7 @@ class ChatTitle:
             self._generation += 1
             self._pending = self._retry = self._published = False
         if not self._published:
-            self._emit(thread_id or "new_chat")
+            self._emit("[new chat]")
 
     def refresh(self) -> None:
         if (

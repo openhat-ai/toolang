@@ -76,6 +76,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Ubuntu's tmux 3.4 can lose SIGCHLD with utempter (tmux/tmux#4559).
+      - name: Install tmux for Linux integration tests
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/tmux.tar.gz" \
+            https://github.com/tmux/tmux-builds/releases/download/v3.7c/tmux-3.7c-linux-x86_64.tar.gz
+          echo "cc56bd1cc873eb6089c615f0496b072385bda8a6d944069f38564a5d49c128aa  $RUNNER_TEMP/tmux.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/tmux"
+          tar -xzf "$RUNNER_TEMP/tmux.tar.gz" -C "$RUNNER_TEMP/tmux"
+          echo "$RUNNER_TEMP/tmux" >> "$GITHUB_PATH"
+
       - name: Run tests
         run: uv run --frozen pytest -q
 

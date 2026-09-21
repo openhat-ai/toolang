@@ -1,137 +1,86 @@
-# Locate, create, and enter a Chat pane
+# Tmux Chat routing
 
-Status: approved in conversation, including eager thread creation for launcher
-paths. Supersedes PR #575's original same-session-only policy. Process-title
-naming and service process identity are separate work.
+Status: approved, including eager thread allocation and the `[new chat]` OSC
+placeholder. Process titles and service process identity are separate work.
 
-## Goal and success criteria
+## Goal and scope
 
-Inside an interactive tmux terminal, `too <agent> chat` ensures one target
-agent/session, thread/window, and chat/pane, starts Chat if needed, and enters it.
-Outside tmux, run directly without tmux operations. Preserve failed Chat panes
-and their error output, including immediate startup failures.
+Interactive `too <agent> chat` in tmux locates or creates one target chat pane
+and enters it. Missing targets are created detached with Chat as their command.
+Outside tmux, non-TTY, or with `TOOLANG_TMUX=0`, run directly without placement.
+The switch also disables metadata publication; OSC 0 independently requires
+TTY stdin/stdout. Keep the public CLI and existing factories; add no entry point,
+private pane marker, empty-pane protocol, or `--here` option.
 
-## Identity and thread allocation
+## Identity and ownership
 
-| Scope | Identity |
-| --- | --- |
-| Session | `@toolang_agent` |
-| Window | `@toolang_thread` |
-| Pane | `@toolang_pad=chat` |
+| Scope | Metadata | Default name |
+| --- | --- | --- |
+| Session | `@toolang_agent` | Agent name |
+| Window | `@toolang_thread` | Thread ID |
+| Pane | `@toolang_pad=chat` | OSC title |
 
-Keep scopes identical for ordinary and control clients, including shared
-sessions. Locate by metadata rather than display names, use stable IDs for
-operations, and qualify linked windows with their intended session.
+CLI orchestration validates a supplied thread or creates an empty thread through
+`ThreadManager` before placement. Empty threads persist if the user exits without
+submitting; direct execution retains lazy allocation. The launcher owns tmux
+routing and publishes metadata, then starts the public command with
+`TOOLANG_TMUX=0` and the resolved thread ID, root/agent, options, and directory.
 
-Before placement, validate a requested thread or create an empty thread through
-`ThreadManager` in the agent's shared execution store. Allocation does not start
-an agent or model. Each new Chat gets its own thread/window; empty threads remain
-if the user exits before submission. Direct execution retains lazy allocation.
-
-New sessions use agent names, new windows use thread IDs. Existing marked
-containers keep user-assigned names. An unowned matching session name may be
-adopted; another agent's session is never overwritten.
-
-## Launcher boundary
-
-Keep placement policy and tmux operations inside the launcher. CLI orchestration
-resolves the agent layout, thread, terminal/environment conditions, working
-directory, and chat options, then supplies concrete values to the launcher.
-Construct child argv from those resolved values, not the invoking command text.
-Reuse the existing public command, factories, and parameter parsing.
-
-`TOOLANG_TMUX` controls both launcher and metadata publication. False values
-(`0`, `false`, `no`, `off`) disable both. Otherwise placement/publication require
-TTY stdin/stdout plus `TMUX` and `TMUX_PANE`. Outside tmux, never query, create,
-or attach to a server. OSC 0 titles independently require TTY stdin/stdout.
-
-The launcher publishes target metadata and directly creates missing objects
-with a command that starts `TOOLANG_TMUX=0 too ... chat --thread <id>`. No empty
-pane, waiting placeholder, separate startup protocol, hidden `_chat` command,
-`--here`, or private `_TOOLANG_CHAT_PANE` marker is needed. The child runs Chat
-without reentering placement or publishing metadata. Child startup never waits
-for the parent to finish navigation.
-
-A key binding can call the public Chat command from any session. A binding that
-wants Chat to stay in its own dedicated pane uses `TOOLANG_TMUX=0`. It deliberately
-omits metadata, while preserving OSC titles. Do not infer intent from pane age.
+Locate by metadata, preserving renamed containers. An unowned matching session
+name may be adopted; foreign ownership gets a suffixed name. Keep the same scopes
+for ordinary/control clients. OSC initially shows `[new chat]` until the real
+title arrives, independently of window identity; clear OSC on normal exit.
 
 ## Resolution and navigation
 
-| Target state | Action |
+| Condition | Action |
 | --- | --- |
-| Missing session | Create it with the first Chat window/pane |
-| Missing thread window | Create its Chat window/pane |
-| Live chat exists | Reuse; do not start another process |
-| Exact thread window, current unmarked pane, no live chat | Run here |
-| Retained failed Chat, no live chat | Explicit invocation restarts that pane |
-| No Chat pane | Create a split in the thread window |
+| Session/window missing | Create it with its Chat pane |
+| Live Chat exists | Reuse it |
+| Current unmarked pane in the exact thread window, no live Chat | Run here |
+| Failed Chat exists, no live Chat | Explicit invocation retries its pane |
+| No Chat pane | Create a split |
+| Current target pane | No navigation |
+| Same window, different pane | Select pane |
+| Same session, different window | Select window and pane |
+| Different session | Select window/pane, then switch one client |
 
-Being in the agent's session alone never justifies repurposing the current
-window. All new objects are created detached; select after preparation.
+A new chat always gets its own thread/window. Never issue redundant same-session
+`switch-client`. Qualify linked windows with session IDs. Use tmux's normal
+current-client selection: exact input-origin identification is not guaranteed
+with shared clients; window/pane selection itself is shared state. Real session
+changes may rebuild iTerm's mapped windows.
 
-| Target location | Navigation |
-| --- | --- |
-| Current pane | None |
-| Same window, another pane | Select pane |
-| Same session, another window | Select window and pane |
-| Another session | Select window and pane, then switch one client |
+## Errors and bindings
 
-Use tmux's normal current-client resolution. With shared clients this may select
-the most recently active eligible client; do not promise exact input-origin
-identification. Never switch every client. Window/pane selections are shared
-state. Same-session operations never call `switch-client`; cross-session iTerm
-window rebuilding is expected for an actual session change.
+The creation command sets its own `remain-on-exit failed` before executing Chat.
+Nonzero startup/runtime exits retain output and status even in a singleton
+session. Setup failure displays the error and waits for Enter without starting
+Chat. Successful exit closes the created pane; new sessions set
+`detach-on-destroy off`. No global tmux options are changed.
 
-## Errors and lifetime
+Lookup, creation, and navigation failures are reported to the caller. Failed
+lookups must not be mistaken for absent targets. Navigation failure preserves
+the target; no duplicate local fallback. Creation success does not imply child
+readiness. Explicit retry never kills an unrelated live process; no retry loop.
 
-The creation command first sets its own `remain-on-exit failed`, then executes
-Chat with `TOOLANG_TMUX=0`. Expand `TMUX_PANE` inside that new pane. A short shell
-prefix establishes retention before Chat can fail; no global option is changed.
-If retention setup fails, show the error and wait for Enter without starting Chat.
+Bindings use the normal Chat command for routing, or `TOOLANG_TMUX=0` to remain
+in their dedicated pane without metadata. OSC remains enabled in both cases.
 
-- Creation failure: report in the invoking terminal and return nonzero.
-- Chat startup/runtime failure: keep pane, output, and exit status, including
-  when it is the last pane of the window/session. It remains selectable.
-- Navigation failure: keep the target, report its location and error, return
-  nonzero, and never start a duplicate local chat.
-- Normal exit: created pane closes; in-place Chat returns to its shell. Newly
-  created sessions use `detach-on-destroy off` to allow client fallback.
+## Implementation and acceptance
 
-Failed panes retain pad identity; check `pane_dead` before reusing a live Chat.
-Explicit retry can respawn the failed pane without killing another live process.
-There is no automatic retry. Parent creation success does not claim child startup
-readiness; later errors are displayed in the target, not forwarded to the caller.
-Preserve normal-exit OSC clearing and error visibility after the alternate screen.
+Touchpoints: `cli/common/tmux.py`, Chat orchestration/title, their unit tests,
+isolated tmux integration tests, their CI dependency, and `docs/chat.md`.
 
-## Touchpoints and acceptance
+Verify missing/existing targets, current-pane execution, early allocation and
+empty-thread persistence, canonical child options, disabled/non-TTY bypass,
+metadata scopes, renamed/linked windows, ordinary/control clients, single-client
+cross-session switching, lookup/creation/navigation failures, immediate/later
+child failure, retained errors/retry, normal exit, and OSC placeholder updates.
+Run default lint/format/type checks and offline tests before commits. iTerm GUI
+behavior remains a manual check. Linux exit tests use a pinned tmux build with
+the upstream utempter/SIGCHLD fix (#4559); users need tmux 3.6+ for reliable exit
+handling on affected builds. No mouse reporting or iTerm settings changes.
 
-Files: CLI common tmux launcher, Chat command orchestration, existing launcher
-unit tests, isolated tmux integration tests, and `docs/chat.md`.
-
-- Cover the missing/existing session/window/pane matrix and in-place execution.
-- Verify early persistent allocation, existing-thread validation, canonical
-  child options, empty-thread persistence, and direct-mode lazy allocation.
-- Verify disabled/outside/non-TTY paths perform no placement or publication;
-  independent OSC behavior remains intact. Child Chat starts exactly once.
-- Cover renamed containers, linked windows, ordinary and control clients.
-  Same-session selection emits no session-change notification; cross-session
-  navigation switches one client and selects the intended target.
-- Cover immediate and later nonzero exits in each creation path, retained errors
-  in singleton sessions, explicit retry, normal exit, creation/navigation errors,
-  and retention setup failure. Never force-replace a live unrelated process.
-- Run default lint, formatting, type checks, and offline tests before commits.
-  Real iTerm GUI behavior remains a manual check after updating the PR.
-
-## Risks and exclusions
-
-Allocation moves work to startup and can leave empty threads; both are accepted.
-No mouse reporting, iTerm preference changes, custom control protocol, process
-renaming, or service identity changes. No unresolved behavior decisions remain.
-
-## References
-
-- [tmux command manual](https://man.openbsd.org/tmux)
-- [tmux Control Mode](https://github.com/tmux/tmux/wiki/Control-Mode)
-- [tmux 3.7c client selection](https://github.com/tmux/tmux/blob/3.7c/cmd-find.c)
-- [iTerm2 3.6.11 session handling](https://github.com/gnachman/iTerm2/blob/v3.6.11/sources/TmuxController.m)
+References: [tmux manual](https://man.openbsd.org/tmux),
+[Control Mode](https://github.com/tmux/tmux/wiki/Control-Mode).

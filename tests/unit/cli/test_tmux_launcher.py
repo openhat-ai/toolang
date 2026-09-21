@@ -28,14 +28,6 @@ class FakePad:
         self.options: dict[str, str] = {}
         self.selected = False
         self.pane_dead = "0"
-        self.respawned: list[str | None] = []
-
-    def respawn(
-        self, *, shell: str | None = None, start_directory: str | None = None
-    ) -> object:
-        self.respawned.append(shell)
-        self.pane_dead = "0"
-        return self
 
     def show_option(self, option: str) -> Any:
         return self.options.get(option)
@@ -52,6 +44,11 @@ class FakePad:
         self.selected = True
         return self
 
+    def respawn(
+        self, *, shell: str | None = None, start_directory: str | None = None
+    ) -> object:
+        raise AssertionError("failed-pane retry is covered by real tmux tests")
+
 
 class FakeWindow:
     """A window that records options, splits, selection, and its session."""
@@ -62,7 +59,6 @@ class FakeWindow:
         self.session: FakeSession | None = None
         self.options: dict[str, str] = {}
         self.selected = False
-        self.killed = False
         self.panes: list[FakePad] = [FakePad(self)]
         self.pads: list[tuple[str | None, str | None]] = []
 
@@ -75,10 +71,6 @@ class FakeWindow:
 
     def select(self) -> object:
         self.selected = True
-        return self
-
-    def kill_window(self) -> object:
-        self.killed = True
         return self
 
     def unset_option(self, option: str) -> object:
@@ -160,8 +152,6 @@ class FakeServer:
         self._sessions = list(sessions or [])
         self.created: list[tuple[str, str | None, str | None]] = []
         self.switched: list[str] = []
-        self.attached: list[str] = []
-        self.clients: list[object] = []
 
     @property
     def sessions(self) -> list[FakeSession]:
@@ -188,10 +178,6 @@ class FakeServer:
         self.switched.append(target_session)
         return self
 
-    def attach_session(self, target_session: str) -> object:
-        self.attached.append(target_session)
-        return self
-
 
 class BrokenServer(FakeServer):
     """A server that refuses to create sessions."""
@@ -214,10 +200,6 @@ class FakePane:
     def __init__(self, session_id: str = "$0", pane_id: str = "%3") -> None:
         self.pane_id = pane_id
         self.session_id = session_id
-
-
-class _Layout:
-    name = "eve"
 
 
 def _launcher(server: FakeServer, pane: FakePane, agent: str = "eve") -> tmux.Launcher:
@@ -319,13 +301,6 @@ def test_agent_session_prefers_the_session_option() -> None:
     assert launcher.agent_session() is marked
 
 
-def test_agent_session_falls_back_to_an_unowned_name() -> None:
-    named = FakeSession("$0", "eve")
-    launcher = _launcher(FakeServer([named]), FakePane(session_id="$9"))
-
-    assert launcher.agent_session() is named
-
-
 def test_agent_session_marks_a_session_it_adopts_by_name() -> None:
     """Determining the session records the agent mark, so the name is a fallback."""
 
@@ -364,39 +339,6 @@ def test_chat_pad_finds_a_pad_in_any_pane() -> None:
     window.panes.append(background)
 
     assert launcher.chat_pad(window) is background
-
-
-def test_name_window_renames_a_container() -> None:
-    window = FakeWindow("@1")
-    launcher = _launcher(
-        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
-    )
-
-    launcher.name_window(window, "term_x")
-
-    assert window.window_name == "term_x"
-
-
-def test_mark_thread_records_the_window_option() -> None:
-    window = FakeWindow("@1")
-    launcher = _launcher(
-        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
-    )
-
-    launcher.mark_thread(window, "term_x")
-
-    assert window.options[tmux.MARK_THREAD] == "term_x"
-
-
-def test_open_pad_splits_the_window_with_the_command() -> None:
-    window = FakeWindow("@1")
-    launcher = _launcher(
-        FakeServer([FakeSession("$0", "eve")]), FakePane(session_id="$9")
-    )
-
-    pad = launcher.open_pad(window, command="too eve chat", directory="/work")
-    assert pad is window.panes[-1]
-    assert window.pads == [("/work", "too eve chat")]
 
 
 def test_thread_window_picks_the_newest_match() -> None:
@@ -444,90 +386,6 @@ def test_non_tty_chat_does_not_resolve_a_launcher(
     chat.chat_command(cast(Any, None))
 
 
-def test_ensure_session_creates_the_agent_session_with_its_chat_window() -> None:
-    shell = FakeSession("$0", "shell")
-    server = FakeServer([shell])
-    launcher = _launcher(server, FakePane(session_id="$0"))
-
-    session, window = launcher.ensure_session(command="too eve chat", directory="/work")
-
-    assert session is not None
-    assert window is not None
-    assert server.created == [("eve", "/work", "too eve chat")]
-    assert session.show_option(tmux.SESSION_AGENT) == "eve"
-    assert window.session is session
-
-
-def test_ensure_session_suffixes_a_name_another_agent_owns() -> None:
-    foreign = FakeSession("$0", "eve")
-    foreign.set_option(tmux.SESSION_AGENT, "ta")
-    server = FakeServer([foreign])
-    launcher = _launcher(server, FakePane(session_id="$0"))
-
-    session, _window = launcher.ensure_session(command="c", directory="/work")
-
-    assert server.created == [("eve-2", "/work", "c")]
-    assert session is not None
-    assert session.show_option(tmux.SESSION_AGENT) == "eve"
-
-
-def test_ensure_session_adopts_a_name_matched_session() -> None:
-    named = FakeSession("$0", "eve")
-    named.add_window(FakeWindow("@0"))
-    server = FakeServer([named])
-    launcher = _launcher(server, FakePane(session_id="$9"))
-
-    session, window = launcher.ensure_session(command="c")
-
-    assert session is named
-    assert window is None
-    assert named.options[tmux.SESSION_AGENT] == "eve"
-    assert server.created == []
-
-
-def test_ensure_session_keeps_the_client_when_the_new_session_dies() -> None:
-    server = FakeServer([FakeSession("$0", "shell")])
-    launcher = _launcher(server, FakePane(session_id="$0"))
-
-    session, _window = launcher.ensure_session(command="c")
-
-    assert session is not None
-    assert session.show_option(tmux.DETACH_ON_DESTROY) == "off"
-
-
-def test_ensure_session_leaves_an_existing_session_alone() -> None:
-    named = FakeSession("$0", "eve")
-    named.add_window(FakeWindow("@0"))
-    launcher = _launcher(FakeServer([named]), FakePane(session_id="$9"))
-
-    launcher.ensure_session(command="c")
-
-    assert tmux.DETACH_ON_DESTROY not in named.options
-
-
-def test_ensure_session_reports_a_refused_creation() -> None:
-    launcher = _launcher(BrokenServer(), FakePane(session_id="$9"))
-
-    with pytest.raises(
-        TmuxPlacementError, match="Could not create tmux session.*refused"
-    ):
-        launcher.ensure_session(command="c")
-
-
-def test_open_window_reports_a_refused_window() -> None:
-    class Refusing(FakeSession):
-        def new_window(self, *args: Any, **kwargs: Any) -> FakeWindow:
-            raise RuntimeError("no space")
-
-    session = Refusing("$0", "eve")
-    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"))
-
-    with pytest.raises(
-        TmuxPlacementError, match="Could not create tmux chat window: no space"
-    ):
-        launcher.open_window(session, command="c")
-
-
 @pytest.mark.parametrize("same_session", [True, False])
 def test_select_target_switches_only_across_sessions(same_session: bool) -> None:
     session = FakeSession("$0", "user-renamed")
@@ -540,27 +398,6 @@ def test_select_target_switches_only_across_sessions(same_session: bool) -> None
     assert window.selected is True
     assert pad.selected is True
     assert server.switched == ([] if same_session else ["$0"])
-    assert server.attached == []
-
-
-def test_list_windows_ignores_a_session_that_will_not_list() -> None:
-    class Unlistable(FakeSession):
-        @property
-        def windows(self) -> list[FakeWindow]:
-            raise RuntimeError("session gone")
-
-    session = Unlistable("$0", "eve")
-    launcher = _launcher(FakeServer([session]), FakePane(session_id="$0"))
-
-    assert launcher.list_windows(session) == ()
-    assert launcher.thread_window(session, "term_x") is None
-
-
-def test_place_chat_runs_in_place_outside_tmux(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert _place(monkeypatch, None) is True
-    assert capsys.readouterr().out == ""
 
 
 def test_new_chat_creates_a_window_even_in_the_agent_session(
@@ -602,40 +439,10 @@ def test_place_chat_reuses_or_creates_pad_and_enters_target(
     assert window.selected
     assert window.panes[-1].selected
     assert server.switched == ([] if same_session else ["$0"])
-    assert not server.attached
     out = capsys.readouterr().out
     assert ("reused chat pane" if live_pad else "created chat pane") in out
     assert "renamed-agent ($0), window renamed-thread (@1)" in out
     assert "; selected" in out
-
-
-@pytest.mark.parametrize("session_exists", [True, False])
-@pytest.mark.parametrize("thread_id", [None, "term_x"])
-def test_place_chat_creates_missing_target_detached(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    session_exists: bool,
-    thread_id: str | None,
-) -> None:
-    shell = FakeSession("$0", "shell")
-    agent = FakeSession("$1", "eve")
-    agent.add_window(FakeWindow("@0"))
-    server = FakeServer([shell, agent] if session_exists else [shell])
-    launcher = _launcher(server, FakePane(session_id="$0"))
-
-    assert _place(monkeypatch, launcher, thread_id=thread_id) is False
-
-    target = server.sessions[-1]
-    window = target.windows[-1]
-    assert len(server.created) == (0 if session_exists else 1)
-    assert len(target.opened) == (1 if session_exists else 0)
-    assert window.window_name == (thread_id or "term_new")
-    assert window.options.get(tmux.MARK_THREAD) == (thread_id or "term_new")
-    assert window.selected and not window.killed
-    assert server.switched == [target.session_id]
-    assert not server.attached
-    assert window.panes[0].options[tmux.MARK_PAD] == tmux.PAD_CHAT
-    assert "created chat pane" in capsys.readouterr().out
 
 
 def test_place_chat_reports_creation_error_here(
@@ -643,9 +450,7 @@ def test_place_chat_reports_creation_error_here(
 ) -> None:
     launcher = _launcher(BrokenServer(), FakePane(session_id="$9"))
 
-    with pytest.raises(
-        ClickException, match="Could not create tmux session eve: eve refused"
-    ) as error:
+    with pytest.raises(ClickException, match="eve refused") as error:
         _place(monkeypatch, launcher)
     error.value.show()
     assert error.value.exit_code == 1
@@ -677,8 +482,7 @@ def test_failed_selection_keeps_prepared_target_and_reports_location(
     error.value.show()
 
     assert len(window.pads) == (0 if live_pad else 1)
-    assert window.killed is False
-    assert not server.created and not server.switched and not server.attached
+    assert not server.created and not server.switched
     captured = capsys.readouterr()
     assert "window term_x (@1), pane" in captured.err
     assert "selection refused" in captured.err
@@ -724,7 +528,7 @@ def test_place_chat_displays_window_or_pane_creation_failure(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no space for a new pane" in captured.err
-    assert not window.killed and not window.pads and not session.opened
+    assert not window.pads and not session.opened
 
 
 def test_cli_allocates_thread_before_launch_and_preserves_parsed_options(
@@ -839,22 +643,6 @@ def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None
     assert window.window_name == "custom"
 
 
-def test_failed_chat_is_restarted_without_replacing_a_live_process() -> None:
-    session = FakeSession("$0", "eve")
-    window = session.add_window(FakeWindow("@1"))
-    window.options[tmux.MARK_THREAD] = "term_x"
-    failed = window.panes[0]
-    failed.options[tmux.MARK_PAD] = "chat"
-    failed.pane_dead = "1"
-    server = FakeServer([session])
-    launcher = _launcher(server, FakePane(session_id="$9"))
-    assert launcher.chat_pad(window) is None
-    assert not launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
-    assert failed.respawned == [launcher.chat_command(["too"])]
-    assert not window.pads
-    assert server.switched == ["$0"]
-
-
 def test_same_window_navigation_only_selects_the_pane() -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1"))
@@ -887,5 +675,21 @@ def test_launcher_reports_identity_publication_failure() -> None:
     session = Unmarkable("$0", "eve")
     launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"))
     with pytest.raises(TmuxPlacementError, match="session mark refused"):
+        launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
+    assert not session.opened
+
+
+def test_window_lookup_failure_does_not_create_a_duplicate_chat() -> None:
+    class Unreadable(FakeSession):
+        @property
+        def windows(self) -> list[FakeWindow]:
+            raise RuntimeError("window lookup failed")
+
+    session = Unreadable("$0", "eve")
+    existing = session.add_window(FakeWindow("@1"))
+    existing.set_option(tmux.MARK_THREAD, "term_x")
+    existing.panes[0].set_option(tmux.MARK_PAD, "chat")
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"))
+    with pytest.raises(TmuxPlacementError, match="window lookup failed"):
         launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
     assert not session.opened
