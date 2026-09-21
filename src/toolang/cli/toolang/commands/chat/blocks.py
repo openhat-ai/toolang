@@ -279,6 +279,7 @@ class RunControlBlock(MutableBlock):
         *,
         input_background: str = DARK_TERMINAL_SURFACES.input_background,
         request: RunRequest | None = None,
+        effort_applicable: bool | None = None,
     ) -> RunControlBlock:
         return cls(
             message=message,
@@ -287,7 +288,10 @@ class RunControlBlock(MutableBlock):
             model=(request.model.ref if request.model else "model unspecified")
             if request
             else "",
-            reasoning=(model_reasoning_value(request.model) or "auto")
+            reasoning=(
+                model_reasoning_value(request.model)
+                or ("auto" if effort_applicable is True else "")
+            )
             if request and request.model
             else "",
         )

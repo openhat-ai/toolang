@@ -322,7 +322,7 @@ def _model_item(
     ref: str,
     model: Model,
     efforts: tuple[str, ...],
-    effort_applicable: bool,
+    effort_applicable: bool | None,
     input_price: float | None,
     output_price: float | None,
 ) -> dict[str, object]:

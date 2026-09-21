@@ -1343,3 +1343,41 @@ def test_auto_output_does_not_reinherit_a_cleared_default(tmp_path):
             assert harness.adapter.invocations[0].call.max_output_tokens == 4096
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("control", ["high", "none", 2048])
+def test_unknown_reasoning_preserves_configured_default(tmp_path, control):
+    from toolang.base.types.model import ModelRequest, Reasoning
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[ModelCallResult(message=Message.assistant("hello"))],
+    )
+    reasoning = (
+        Reasoning(control)
+        if isinstance(control, str)
+        else Reasoning(budget_tokens=control)
+    )
+    default = ModelRequest("test/scripted", reasoning=reasoning)
+    harness.setup = replace(
+        harness.setup, defaults=replace(harness.setup.defaults, model=default)
+    )
+
+    async def scenario():
+        async with harness:
+            spec = replace(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="seed",
+                    primary=(TextPart("hello"),),
+                ),
+                model_request=None,
+            )
+            run = await harness.executor.run(spec)
+            assert run.status == "succeeded", run.error
+            invocation = harness.adapter.invocations[0]
+            assert invocation.model.reasoning is None
+            assert invocation.call.reasoning == reasoning
+
+    asyncio.run(scenario())

@@ -1080,6 +1080,12 @@ class ChatTuiApp:
             blocks.RunControlBlock.create(
                 call.source,
                 request=call.request,
+                effort_applicable=(
+                    self._selected_model_effort_applicable(call.request.model.ref)
+                    if call.request.model is not None
+                    and slashes.model_reasoning_value(call.request.model) is None
+                    else None
+                ),
                 input_background=self.surfaces.input_background,
             )
         )

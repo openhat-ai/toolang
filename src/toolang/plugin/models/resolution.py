@@ -46,13 +46,15 @@ def model_reasoning_effort_exhaustive(model: Model) -> bool:
     )
 
 
-def model_reasoning_effort_applicable(model: Model) -> bool:
-    """Return whether input-level reasoning control applies to one model."""
+def model_reasoning_effort_applicable(model: Model) -> bool | None:
+    """Report known reasoning applicability without promoting unknown facts."""
 
-    return model.reasoning is not False or any(
+    if any(
         option.get("type") in {"effort", "budget_tokens", "toggle"}
         for option in model_reasoning_controls(model)
-    )
+    ):
+        return True
+    return model.reasoning
 
 
 def resolve_model_reasoning(

@@ -128,7 +128,7 @@ def build_agic_frame(
         if (
             reasoning is None
             and default_request.reasoning is not None
-            and model_reasoning_effort_applicable(resolved_model)
+            and model_reasoning_effort_applicable(resolved_model) is not False
         ):
             reasoning = resolve_model_reasoning(
                 resolved_model,

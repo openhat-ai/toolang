@@ -5935,7 +5935,7 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
     ("model", "model_label"),
     [
         (None, "model unspecified"),
-        (ModelRequest("openai/gpt-5"), "openai/gpt-5 · auto"),
+        (ModelRequest("openai/gpt-5"), "openai/gpt-5"),
         (
             ModelRequest(
                 "openai/gpt-5",
@@ -6110,16 +6110,29 @@ def test_chat_short_live_view_keeps_steer_feedback_and_queue_focus(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("applicable", [None, False, True])
 @pytest.mark.parametrize("queued_effort", ["auto", "high"])
 def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
     queued_effort: Literal["auto", "high"],
+    applicable: bool | None,
 ) -> None:
+    class CatalogClient(FakeClient):
+        def list_models(self, queries=None):
+            return {
+                "items": [
+                    {
+                        "ref": "openai/gpt-5",
+                        "parameters": {"reasoning": {"applicable": applicable}},
+                    }
+                ]
+            }
+
     app = tui.ChatTuiApp(
         thread_id="term_1",
         setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=FakeClient(),
+        client=CatalogClient(),
     )
 
     def call(name: str, effort: Literal["auto", "low", "high"]) -> QueuedCall:
@@ -6149,11 +6162,13 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
         b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
     )
     assert "agic:resolved-first · openai/gpt-5 · low" in _render_text(first.render())
-    assert f"agic:queued · openai/gpt-5 · {queued_effort}" in _render_text(
-        second.render()
+    suffix = (
+        f" · {queued_effort}" if queued_effort != "auto" or applicable is True else ""
     )
+    assert second.reasoning == (queued_effort if suffix else "")
+    assert f"agic:queued · openai/gpt-5{suffix}" in _render_text(second.render())
     app.handle_run_event(_run_begin(run_id="run_next", runnable_name="resolved-queued"))
-    assert f"agic:resolved-queued · openai/gpt-5 · {queued_effort}" in _render_text(
+    assert f"agic:resolved-queued · openai/gpt-5{suffix}" in _render_text(
         second.render()
     )
     assert "new/default" not in _render_text(first.render()) + _render_text(
@@ -6382,3 +6397,27 @@ def test_chat_tui_publishes_the_thread_title_once_the_run_is_accepted() -> None:
         (tmux.MARK_THREAD_ID, "term_x"),
         (tmux.MARK_THREAD_TITLE, "hello world"),
     ]
+
+
+@pytest.mark.parametrize("applicable", [None, False, True])
+@pytest.mark.parametrize(
+    "control",
+    [None, Reasoning("high"), Reasoning("none"), Reasoning(budget_tokens=2048)],
+)
+def test_run_context_only_labels_auto_for_confirmed_reasoning(applicable, control):
+    request = RunRequest(
+        thread_id="term_1",
+        request_id="one",
+        runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
+        model=ModelRequest("llama_cpp/model", reasoning=control),
+        policy=RunPolicy(),
+    )
+    kwargs = {} if applicable is None else {"effort_applicable": applicable}
+    block = blocks.RunControlBlock.create("hello", request=request, **kwargs)
+    assert request.model is not None
+    explicit = slashes.model_reasoning_value(request.model)
+    expected = explicit or ("auto" if applicable is True else "")
+    assert block.reasoning == expected
+    assert (" · auto" in _render_text(block.render(), width=100)) is (
+        control is None and applicable is True
+    )

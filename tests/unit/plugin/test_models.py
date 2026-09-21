@@ -2250,3 +2250,16 @@ def test_explicit_reasoning_budget_respects_known_bounds():
     for value in (512, 8192):
         with pytest.raises(ToolangError, match="reasoning budget"):
             resolve_model_reasoning(model, Reasoning(budget_tokens=value))
+
+
+@pytest.mark.parametrize("capability", [None, False, True])
+def test_reasoning_applicability_preserves_unknown_capability(capability):
+    model = replace(_reasoning_model([]), reasoning=capability)
+    assert model_reasoning_effort_applicable(model) is capability
+    if capability is None:
+        for control in (
+            Reasoning("high"),
+            Reasoning("none"),
+            Reasoning(budget_tokens=2048),
+        ):
+            assert resolve_model_reasoning(model, control) == control

@@ -240,7 +240,12 @@ def test_run_override_errors_add_contextual_help_guidance() -> None:
 
 @pytest.mark.parametrize(
     "metadata",
-    [{}, {"effort": [], "applicable": True}, {"effort": ["low"], "exhaustive": False}],
+    [
+        {},
+        {"effort": [], "applicable": True},
+        {"applicable": None},
+        {"effort": ["low"], "exhaustive": False},
+    ],
 )
 @pytest.mark.parametrize(
     "control", [Reasoning("high"), Reasoning("none"), Reasoning(budget_tokens=8192)]
