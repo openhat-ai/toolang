@@ -6,17 +6,26 @@ after `uv sync`. File names use `snake_case`; runnable names remain unchanged.
 
 ## Start here
 
-1. Read [simulated_history_none.too](basics/simulated_history_none.too) for a
+1. Run [hello_world.too](basics/hello_world.too) for a minimal unnamed agic
+   that asks the configured model to reply with `Hello, world!`. No input or
+   runnable name is needed:
+
+   ```sh
+   uv run too examples/basics/hello_world.too
+   ```
+
+2. Read [simulated_history_none.too](basics/simulated_history_none.too) for a
    small agic with explicit conversation messages.
-2. Try [proposal_workshop.too](workflows/proposal_workshop.too) for a bounded
+3. Try [proposal_workshop.too](workflows/proposal_workshop.too) for a bounded
    draft, review, and revision loop.
-3. Read [delivery_plan.too](workflows/delivery_plan.too) for parallel work and
+4. Read [delivery_plan.too](workflows/delivery_plan.too) for parallel work and
    sequential review, then [deep_search.too](workflows/deep_search.too) for web
    tools and collection filtering.
 
 Inspect the source and runnable help without calling a provider:
 
 ```sh
+uv run too examples/basics/hello_world.too --help
 uv run too parse examples/workflows/proposal_workshop.too --cst --json
 uv run too examples/workflows/proposal_workshop.too --help
 uv run too examples/workflows/proposal_workshop.too workshop --help
@@ -41,6 +50,7 @@ uv run too examples/workflows/proposal_workshop.too workshop \
 
 | File | Demonstrates | Requirements and expected result |
 | --- | --- | --- |
+| [hello_world.too](basics/hello_world.too) | A minimal unnamed agic as the default entry | Configured model; run without arguments for `Hello, world!`. |
 | [simulated_history_none.too](basics/simulated_history_none.too) | Explicit user/assistant messages with `recall = none` | Configured model; `followup` should identify the user as Ada. |
 | [simulated_history_memory.too](basics/simulated_history_memory.too) | Explicit replay with `recall = far` | Configured model; `followup` should recall Friday morning from the authored messages. This does not demonstrate persisted memory retrieval. |
 | [fixed_model.too](basics/fixed_model.too) | An agic restricted to one model | Configured `openai/gpt-5` and the remote `briceyan/review` skill; `gpt_only` rewrites text and rejects a model outside its allowlist. |
