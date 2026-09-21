@@ -258,6 +258,35 @@ def test_host_launch_cancellation_waits_for_creation_and_stops_the_process(
     assert stopped == [process.pid]
 
 
+def test_host_launch_identity_failure_stops_created_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True,
+    )
+    output = tmp_path / "output.log"
+    output.touch()
+    workload = host_sandbox._HostWorkload(process, output)
+    monkeypatch.setattr(host_sandbox, "_launch", lambda _plan: workload)
+
+    def fail(*args: object, **kwargs: object) -> SandboxRef:
+        raise ValueError("cannot inspect host process")
+
+    monkeypatch.setattr(host_sandbox, "_process_ref", fail)
+    sandbox = create_sandbox("host", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    try:
+        with pytest.raises(ValueError, match="cannot inspect"):
+            asyncio.run(sandbox.launch(plan))
+        assert process.poll() is not None
+        assert not output.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

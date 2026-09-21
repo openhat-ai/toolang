@@ -32,7 +32,6 @@ from ...common.context import (
     user_call,
 )
 from ...common.output import (
-    active_agent_error,
     agent_avatar,
     created_time,
     echo_pairs_table,
@@ -132,15 +131,8 @@ def remove_agent(
 
     root = context_root(ctx)
     layout = AgentLayout.resident(root, agent)
-    process = agents.AgentProcess(layout)
-    status = process.status(ui_base_url=ui_base_url())
-    if status is not None and status.status in {"running", "preparing", "starting"}:
-        raise ClickException(active_agent_error(status))
-    if process.pids():
-        raise ClickException(f"Agent {agent} already running")
     try:
-        user_call(asyncio.run, sandbox_runtime.release_for_removal(layout))
-        LocalAgents(root / "agents").remove(agent)
+        user_call(asyncio.run, sandbox_runtime.remove_agent(layout))
     except FileNotFoundError as exc:
         raise ClickException(f"Agent {agent} not found") from exc
     except (OSError, RuntimeError) as exc:
@@ -183,7 +175,11 @@ def info_agent(
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
         raise ClickException(f"Agent {agent_name} not found")
-    runtime_state = process.state() or {}
+    try:
+        runtime_state = process.state() or {}
+        runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
+    except (OSError, ValueError):
+        runtime_state, runtime_identity = {}, None
     state = _prepare_state(layout)
     model_catalog = resolve_model_catalog_option(model_catalog)
     watcher = (
@@ -221,8 +217,7 @@ def info_agent(
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
-    message = runtime_value(runtime_state.get("message"))
-    runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
+    message = runtime_value(status.message)
     if runtime_identity is not None and status.status != "stopped":
         rows.append(runtime_identity)
     if status.endpoint:
