@@ -63,7 +63,7 @@ def test_title_updates_tab_and_window_with_osc_0_until_exit() -> None:
     title.clear()
     title.refresh()
     assert stream.getvalue() == (
-        "\x1b]0;new_chat\x07\x1b]0;term_x\x07\x1b]0;修复登录问题\x07\x1b]0;\x07"
+        "\x1b]0;[new chat]\x07\x1b]0;修复登录问题\x07\x1b]0;\x07"
     )
     assert lookups == ["term_x"]
     assert results.empty()
@@ -106,7 +106,7 @@ def test_title_retries_at_next_lifecycle_event(
     )
     title.start("term_x")
     title.accept(results.get(timeout=5))
-    assert stream.getvalue() == "\x1b]0;term_x\x07"
+    assert stream.getvalue() == "\x1b]0;[new chat]\x07"
     title.refresh()
     title.accept(results.get(timeout=5))
     assert stream.getvalue().endswith("\x1b]0;ready\x07")

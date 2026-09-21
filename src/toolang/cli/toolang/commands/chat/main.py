@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
-import shlex
+import sqlite3
 import sys
 from typing import cast
 
@@ -23,6 +23,11 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
+from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
+from toolang.execution.store import RunStore
+from toolang.execution.threads import ThreadManager
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
@@ -35,6 +40,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
     StepRef,
+    ThreadPrefix,
 )
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
@@ -44,7 +50,8 @@ from toolang.cli.common.context import (
     ui_base_url,
     user_call,
 )
-from toolang.cli.common.execution import open_execution
+from toolang.cli.common.execution import open_execution, run_store_schema_error
+from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.agent_server import (
     AgentServerAcquisitionError,
     acquire_agent_server,
@@ -59,7 +66,6 @@ from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.tmux import (
-    WINDOW_NAME_FALLBACK,
     resolve_launcher,
     resolve_marks,
 )
@@ -104,8 +110,33 @@ def chat_command(
     compact_model: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    if not _place_chat(ctx, thread_id=thread_id, argv=sys.argv):
-        return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        layout = context_layout(ctx)
+        try:
+            launcher = resolve_launcher(agent=layout.name)
+        except TmuxPlacementError as exc:
+            raise ClickException(str(exc)) from exc
+        if launcher is not None:
+            thread_id = user_call(_tmux_thread, layout, thread_id)
+            argv = _chat_argv(
+                layout,
+                thread_id=thread_id,
+                model_catalog=model_catalog,
+                allows=allows,
+                defaults=defaults,
+                sandbox=sandbox,
+                dev=dev,
+                limits=limits,
+                compact_model=compact_model,
+            )
+            try:
+                run_here = launcher.place_chat(
+                    thread_id=thread_id, argv=argv, directory=os.getcwd()
+                )
+            except TmuxPlacementError as exc:
+                raise ClickException(str(exc)) from exc
+            if not run_here:
+                return
     _chat_interactive(
         ctx,
         thread_id=thread_id,
@@ -119,79 +150,78 @@ def chat_command(
     )
 
 
-def _place_chat(
-    ctx: typer.Context,
-    *,
-    thread_id: str | None,
-    argv: Sequence[str],
-) -> bool:
-    """Send this chat run to the agent's tmux session when tmux can host it.
+def _tmux_thread(layout: AgentLayout, thread_id: str | None) -> str:
+    """Resolve durable identity before the launcher starts another process.
 
-    An existing container for ``--thread`` is resolved first, so a thread that is
-    already open is reused even when chat was started inside the agent's own
-    session. Returns ``True`` when chat keeps running in this process. ``False``
-    means the run now lives in the agent's session: the notice is printed and the
-    caller must return, because the client points at another window.
+    Execution state is shared with hosted runtimes, just as for the other local
+    thread commands. Allocating a thread does not start an agent or model.
     """
 
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return True
-    agent = context_layout(ctx).name
-    launcher = resolve_launcher(agent=agent)
-    if launcher is None:
-        return True
-    command = shlex.join(list(argv))
-    directory = os.getcwd()
-    session = launcher.agent_session()
-    if session is not None and thread_id is not None:
-        window = launcher.thread_window(session, thread_id)
-        if window is not None:
-            pad = launcher.chat_pad(window)
-            if pad is not None:
-                # the thread is already open, so move to its chat rather than
-                # start a second one; when the client cannot move, chat runs
-                # here instead of adding another view of the thread
-                if not launcher.switch_client(window, pane=pad):
-                    return True
-                _announce_session(agent)
-                return False
-            # the container outlived its chat, so give it a fresh chat pad; the
-            # pad runs either way, and the notice is printed even when the
-            # client cannot be moved
-            if launcher.open_pad(window, command=command, directory=directory):
-                launcher.switch_client(window)
-                _announce_session(agent)
-                return False
-            return True
-    if session is not None and launcher.is_current(session):
-        return True
-    session, window = launcher.ensure_session(command=command, directory=directory)
-    if session is None:
-        return True
-    if window is None:
-        window = launcher.open_window(session, command=command, directory=directory)
-    if window is None:
-        return True
-    if thread_id is not None:
-        # the thread is known before chat starts, so the container is named and
-        # addressable by its option right away
-        launcher.mark_thread(window, thread_id)
-        launcher.name_window(window, thread_id)
-    else:
-        # a new thread id only exists after the first submit; chat renames the
-        # window once it knows the id
-        launcher.name_window(window, WINDOW_NAME_FALLBACK)
-    if not launcher.switch_client(window):
-        launcher.close_window(window)
-        return True
-    _announce_session(agent)
-    return False
+    if thread_id is not None and not layout.run_store.is_file():
+        raise ClickException(f"thread not found: {thread_id}")
+    try:
+        store = RunStore(layout.run_store, read_only=thread_id is not None)
+    except RunStoreSchemaError as exc:
+        raise ClickException(
+            run_store_schema_error(exc, path=layout.run_store)
+        ) from exc
+    except sqlite3.Error as exc:
+        raise ClickException(f"Could not open thread store: {exc}") from exc
+    try:
+        if thread_id is not None:
+            if RunHistory(store).get_thread(thread_id, run_limit=0) is None:
+                raise ClickException(f"thread not found: {thread_id}")
+            return thread_id
+        return ThreadManager(store, IdIssuer(layout.id_state)).create(
+            prefix=ThreadPrefix.TERM
+        )
+    except sqlite3.Error as exc:
+        raise ClickException(f"Could not prepare chat thread: {exc}") from exc
+    finally:
+        store.close()
 
 
-def _announce_session(agent: str) -> None:
-    """Tell the user where chat went: one line on stdout."""
+def _chat_argv(
+    layout: AgentLayout,
+    *,
+    thread_id: str,
+    model_catalog: Path | None,
+    allows: list[str] | None,
+    defaults: list[str] | None,
+    sandbox: str | None,
+    dev: Path | None,
+    limits: list[str] | None,
+    compact_model: str | None,
+) -> list[str]:
+    """Re-enter Chat for the prepared layout using already parsed CLI options."""
 
-    print(f"\u21aa opened in tmux session {agent}")
+    argv = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        "--root",
+        str(layout.root),
+        f"agent:{layout.name}",
+        "chat",
+        "--thread",
+        thread_id,
+    ]
+    for option, value in (
+        ("--catalog", model_catalog),
+        ("--sandbox", sandbox),
+        ("--dev", dev),
+        ("--compact-model", compact_model),
+    ):
+        if value is not None:
+            argv.append(f"{option}={value}")
+    for option, values in (
+        ("--allow", allows),
+        ("--default", defaults),
+        ("--limit", limits),
+    ):
+        for value in values or ():
+            argv.append(f"{option}={value}")
+    return argv
 
 
 def _chat_interactive(

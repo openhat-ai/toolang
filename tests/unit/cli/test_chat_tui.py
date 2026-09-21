@@ -6540,7 +6540,7 @@ def test_terminal_title_requires_tty_but_not_tmux(
         app.title.start(None)
         app.title.clear()
     assert output.writes == (
-        ["\x1b]0;new_chat\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
+        ["\x1b]0;[new chat]\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
     )
     assert not app.marks.active
 
