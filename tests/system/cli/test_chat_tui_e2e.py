@@ -3,18 +3,86 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 from pathlib import Path
+import shlex
+import shutil
+import sys
 import time
+from uuid import uuid4
 
+from libtmux import Server
 import pytest
 
+from tests import PROJECT_ROOT
 from tests.support.chat_tui_pty import ChatTuiPtySession
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix",
     reason="pseudo-terminal chat testing requires POSIX",
 )
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+@pytest.mark.parametrize("refresh", ["resize", "render"])
+def test_chat_input_repaints_after_terminal_reflow(
+    tmp_path: Path, refresh: str
+) -> None:
+    # Use an actual terminal grid so the assertion does not duplicate the
+    # application's reflow formula. The render path simulates an invalidation
+    # being serviced before the resize callback.
+    bootstrap = f"""
+import runpy
+import sys
+from pathlib import Path
+from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
+
+original_init = ChatTuiApp.__init__
+def init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    def rendered(app):
+        Path(sys.argv[1], 'rendered-width').write_text(str(app.output.get_size().columns))
+    self.app.after_render += rendered
+    if {refresh!r} == 'render':
+        self.app._on_resize = self.app._redraw
+ChatTuiApp.__init__ = init
+runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
+"""
+    server = Server(socket_name=f"toolang-resize-{uuid4().hex}", config_file=os.devnull)
+    try:
+        session = server.new_session(
+            session_name="resize",
+            start_directory=PROJECT_ROOT,
+            window_command=shlex.join([sys.executable, "-c", bootstrap, str(tmp_path)]),
+            x=100,
+            y=30,
+            environment={"TOOLANG_TMUX": "0", "TERM": "xterm-256color"},
+        )
+        window = session.active_window
+        pane = window.active_pane
+        assert pane is not None
+        rendered_width = tmp_path / "rendered-width"
+        for columns in (100, 40, 160, 25):
+            window.resize(width=columns)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if rendered_width.exists() and rendered_width.read_text() == str(
+                    columns
+                ):
+                    break
+                time.sleep(0.02)
+            else:
+                pytest.fail(f"Chat did not redraw at {columns} columns")
+            lines = pane.capture_pane(escape_sequences=True)
+            assert lines is not None
+            accent = re.compile(r"^(?:\x1b\[[0-9;]*m)*\x1b\[106m ")
+            assert sum(bool(accent.match(line)) for line in lines) == 3, "\n".join(
+                lines
+            )
+            assert sum("Ask or describe" in line for line in lines) == 1, lines
+    finally:
+        server.kill()
 
 
 def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
