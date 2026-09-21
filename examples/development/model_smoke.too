@@ -1,0 +1,48 @@
+#!/usr/bin/env toolang
+
+# Manual provider checks using the existing agic model allowlists.
+# These are fixed sample identities, not a list of recommended or latest models.
+# Check `uv run too models --all` for catalog entries and configure the chosen
+# provider before running. Each selected identity must match its agic's allowlist.
+# The old @openrouter suffix is not used for provider routing.
+#
+# GPT-5:
+#   uv run too examples/development/model_smoke.too gpt \
+#     --model openai/gpt-5 -- "Explain dependency injection."
+#
+# Claude Sonnet 4.5:
+#   uv run too examples/development/model_smoke.too claude \
+#     --model anthropic/claude-sonnet-4.5 -- "Explain dependency injection."
+#
+# Gemini 3.1 Pro Preview:
+#   uv run too examples/development/model_smoke.too gemini \
+#     --model google/gemini-3.1-pro-preview -- "Explain dependency injection."
+#
+# The grok and qwen entries retain historical model identities for experiments.
+# They require matching catalog entries and provider configuration.
+# Expected: three short technical bullet points. Calls use live providers.
+
+agic gpt(_: Part[]):
+  models = openai/gpt-5
+
+  Summarize the input into three short technical bullet points.
+
+agic claude(_: Part[]):
+  models = anthropic/claude-sonnet-4.5
+
+  Summarize the input into three short technical bullet points.
+
+agic gemini(_: Part[]):
+  models = google/gemini-3.1-pro-preview
+
+  Summarize the input into three short technical bullet points.
+
+agic grok(_: Part[]):
+  models = x-ai/grok-4.20
+
+  Summarize the input into three short technical bullet points.
+
+agic qwen(_: Part[]):
+  models = qwen/qwen3-coder-next
+
+  Summarize the input into three short technical bullet points.

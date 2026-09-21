@@ -4,7 +4,10 @@
 # retrieval. `recall = far` still keeps stored thread history out of the
 # model input, so the explicit message blocks below are the conversation replay.
 #
-#   toolang examples/script.simulated-history.memory.too followup "What did I ask you to remember?"
+# Requires a configured model. From the repository root:
+#   uv run too examples/basics/simulated_history_memory.too followup \
+#     -- "What did I ask you to remember?"
+# Expected: the answer mentions Friday morning.
 
 agic followup(_: Part[]):
   recall = far

@@ -4,7 +4,10 @@
 # `recall = none` keeps stored thread history out of the model input, so the
 # explicit user/assistant/user blocks below are the only conversation history.
 #
-#   toolang examples/script.simulated-history.none.too followup "What is my name?"
+# Requires a configured model. From the repository root:
+#   uv run too examples/basics/simulated_history_none.too followup \
+#     -- "What is my name?"
+# Expected: the answer mentions Ada.
 
 agic followup(_: Part[]):
   recall = none

@@ -1,5 +1,10 @@
 ##! Turn a rough project idea into an execution-ready delivery plan.
 
+# Requires a configured model. Model calls use the configured provider.
+# From the repository root:
+#   uv run too examples/workflows/delivery_plan.too plan constraints="Two engineers, six weeks" -- "Launch an internal documentation portal."
+# Expected: a delivery plan assembled from workstreams and refined through reviews.
+
 agic decompose(_, constraints?) -> Text[]:
   recall = none
   tools = none

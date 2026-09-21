@@ -171,7 +171,7 @@ import json
 import sys
 from toolang.cli.toolang.main import main
 
-status = main(["examples/deep_search.too", *sys.argv[1:]])
+status = main(["examples/workflows/deep_search.too", *sys.argv[1:]])
 prefixes = (
     "fastapi", "httpx", "toolang.execution.executor", "toolang.execution.schemas",
     "toolang.execution.remote", "toolang.execution.store", "toolang.setup",

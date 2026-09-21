@@ -2,6 +2,12 @@
 
 ##! Try prose runs and simple collection transformations locally.
 
+# Experimental declarations for source inspection and manual exploration.
+# From the repository root (offline):
+#   uv run too parse examples/development/playground.too --cst --json
+#   uv run too examples/development/playground.too --help
+# Running a runnable requires a configured model. This is not a guided tutorial.
+
 struct Summary:
   title: Text
   summary: Text

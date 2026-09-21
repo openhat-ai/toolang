@@ -42,7 +42,7 @@ without preparing an agent or starting execution.
 - Agic help, the script-level Runnables list, successful execution, progress
   rendering, and statement description wording remain unchanged.
 
-For `too examples/deep_search.too research --help`, the section contains:
+For `too examples/workflows/deep_search.too research --help`, the section contains:
 
 ```text
 Flow outline

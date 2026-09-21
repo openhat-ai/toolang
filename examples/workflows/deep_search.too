@@ -1,3 +1,10 @@
+##! Research a question through query expansion, concurrent search, and synthesis.
+
+# Requires a configured model and the web toolset. Search accesses the network.
+# From the repository root:
+#   uv run too examples/workflows/deep_search.too research -- "What are the tradeoffs of SQLite WAL mode?"
+# Expected: a research brief with findings, uncertainty, and source notes.
+
 agic expand_queries -> Text[]:
   recall = none
   tools = none

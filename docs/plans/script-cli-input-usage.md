@@ -90,7 +90,7 @@ syntax.
 ### Synopsis
 
 ```text
-Usage: too examples/deep_search.too research [OPTIONS] INPUT
+Usage: too examples/workflows/deep_search.too research [OPTIONS] INPUT
 Usage: too app.too demo [OPTIONS] [ARGS] INPUT
 Usage: too app.too named [OPTIONS] [ARGS]
 Usage: too app.too empty [OPTIONS]

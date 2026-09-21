@@ -932,9 +932,14 @@ def test_repo_program_fixtures_parse_cleanly() -> None:
 
 
 def test_example_programs_parse_cleanly() -> None:
-    for source_path in sorted((PROJECT_ROOT / "examples").glob("*.too")):
-        if source_path.name == "script-playground.too":
-            continue
+    examples = PROJECT_ROOT / "examples"
+    sources = sorted(
+        path
+        for path in examples.rglob("*.too")
+        if ".toolang" not in path.relative_to(examples).parts
+    )
+    assert sources
+    for source_path in sources:
         program = Program.from_source(source_path.read_text(encoding="utf-8"))
         assert program.agics, source_path.name
 

@@ -1,5 +1,11 @@
-# Alice is a small remote-ready assistant example.
-# The goal is one file that can be published and used without local setup.
+# A shareable assistant with a remote skill, an HTTP service, and a psyche.
+# Requires a configured model, network access to briceyan/pdf-processing,
+# and the Context7 service when used.
+#
+# From the repository root:
+#   uv run too examples/basics/alice.too --help
+#   uv run too examples/basics/alice.too -- "Explain when to use a PDF skill."
+# Expected: a concise response guided by the declared capabilities.
 
 with skill briceyan/pdf-processing
 

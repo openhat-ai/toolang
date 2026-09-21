@@ -1,5 +1,10 @@
 ##! Turn a rough idea into a decision-ready proposal through bounded review.
 
+# Requires a configured model. Model calls use the configured provider.
+# From the repository root:
+#   uv run too examples/workflows/proposal_workshop.too workshop audience="Engineering leads" criteria="Low maintenance" -- "Propose a weekly release process."
+# Expected: a proposal revised through three review cycles.
+
 agic draft_proposal(_, audience?, criteria?):
   recall = none
   tools = none

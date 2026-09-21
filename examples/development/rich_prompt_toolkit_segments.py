@@ -2,11 +2,11 @@
 
 Run non-interactive output:
 
-    uv run python examples/rich_prompt_toolkit_segments.py
+    uv run python examples/development/rich_prompt_toolkit_segments.py
 
 Run the prompt-toolkit view in a real terminal:
 
-    uv run python examples/rich_prompt_toolkit_segments.py --interactive
+    uv run python examples/development/rich_prompt_toolkit_segments.py --interactive
 """
 
 from __future__ import annotations
