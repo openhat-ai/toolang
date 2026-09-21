@@ -30,6 +30,8 @@ def output_allowance(
             if name not in source:
                 continue
             value = source[name]
+            if value is None:
+                continue
             if type(value) is not int or value <= 0:
                 raise ValueError("provider output allowance must be a positive integer")
             values.append(value)

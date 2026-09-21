@@ -138,10 +138,10 @@ def resolve_local_endpoint(
     if value is None:
         host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
         return f"http://{host}:{default_port}"
-    if endpoint is None:
-        value = replace_guest_loopback(value, environ)
     if "://" not in value:
         value = f"http://{value}"
+    if endpoint is None:
+        value = replace_guest_loopback(value, environ)
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("local model catalog endpoint must be an HTTP(S) URL")

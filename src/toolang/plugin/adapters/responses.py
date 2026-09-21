@@ -416,7 +416,7 @@ def _apply_reasoning(
     wire: dict[str, object] = {}
     if isinstance(effort, str):
         wire["effort"] = effort
-    payload.pop("reasoning", None)
+    clear_options(payload, "reasoning")
     if wire:
         payload["reasoning"] = wire
 

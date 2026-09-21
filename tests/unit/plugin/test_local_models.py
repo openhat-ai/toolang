@@ -509,3 +509,89 @@ def test_same_checkpoint_reports_different_server_limits(monkeypatch):
         "http://a.test/v1",
         "http://b.test/v1",
     ]
+
+
+@pytest.mark.parametrize(
+    "catalog,env_name,port",
+    [
+        (OllamaModelCatalog, "OLLAMA_HOST", 11434),
+        (LlamaCppModelCatalog, "LLAMA_CPP_HOST", 8080),
+    ],
+)
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_schemeless_environment_endpoint_uses_guest_gateway(
+    catalog, env_name, port, host, monkeypatch
+):
+    urls = []
+
+    def handler(request):
+        urls.append(str(request.url))
+        return httpx.Response(200, json={"models": [], "data": []})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    instance = catalog(
+        {env_name: f"{host}:{port}", "TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+    )
+    asyncio.run(instance.snapshot())
+    assert urls and all(
+        url.startswith(f"http://host.docker.internal:{port}/") for url in urls
+    )
+
+
+def test_llama_props_cannot_publish_another_models_limits(monkeypatch):
+    client = _FakeClient(
+        gets={
+            "http://llama.test/v1/models": {
+                "data": [{"id": "a", "meta": {"n_ctx": 4096}}, {"id": "b"}]
+            },
+            "http://llama.test/props?model=a&autoload=false": {
+                "model_alias": "b",
+                "default_generation_settings": {
+                    "n_ctx": 131072,
+                    "params": {"n_predict": 32768},
+                },
+            },
+        }
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
+    snapshot = asyncio.run(
+        LlamaCppModelCatalog({}, endpoint="http://llama.test").snapshot()
+    )
+    model = snapshot.find("llama_cpp", "a")
+    assert model is not None
+    assert model.limit == {"context": 4096}
+
+
+@pytest.mark.parametrize(
+    "identity,expected",
+    [
+        ("a", True),
+        ("a-alias", True),
+        ("b", False),
+        ("shared", False),
+        ("unknown", False),
+    ],
+)
+def test_llama_props_match_exact_ids_or_unique_advertised_aliases(identity, expected):
+    entries = (
+        ("a", {"aliases": ["a-alias", "shared"]}),
+        ("b", {"aliases": ["shared"]}),
+    )
+    assert (
+        llama_cpp_models._props_match("a", entries, {"model_alias": identity})
+        is expected
+    )
+
+
+def test_schemeless_explicit_endpoint_stays_exact_in_guest():
+    assert (
+        ollama_models._ollama_host(
+            "localhost:11434", {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+        )
+        == "http://localhost:11434"
+    )

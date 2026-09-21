@@ -312,11 +312,15 @@ def chat_completion_payload(
     )
     _apply_reasoning(payload, request.reasoning, model._toolang.provider)
     if request.max_output_tokens is not None:
+        extra_options = options.get("extra_body")
         field = (
             "max_completion_tokens"
             if model._toolang.provider == "openai"
-            or "max_completion_tokens" in model._toolang.route.options
-            or "max_completion_tokens" in options.get("extra_body", {})
+            or options.get("max_completion_tokens") is not None
+            or (
+                isinstance(extra_options, Mapping)
+                and extra_options.get("max_completion_tokens") is not None
+            )
             else "max_tokens"
         )
         # These compatible APIs use max_tokens, including when authored generic

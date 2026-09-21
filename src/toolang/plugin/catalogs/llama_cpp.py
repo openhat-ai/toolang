@@ -20,6 +20,7 @@ from toolang.plugin.values import (
     mapping,
     optional_int,
     optional_text,
+    string_tuple,
 )
 
 from ._local import (
@@ -69,6 +70,11 @@ class LlamaCppModelCatalog(ModelCatalog):
                         f"{url}?{urlencode({'model': model_id, 'autoload': 'false'})}",
                         fallback=url if len(entries) == 1 else None,
                     )
+                    if not _props_match(model_id, entries, props):
+                        logger.debug(
+                            "catalog.llama_cpp.props_model_mismatch model=%s", model_id
+                        )
+                        props = {}
                     discovered.append(_llama_cpp_model(model_id, entry, props))
                 models = tuple(discovered)
         except httpx.HTTPError as exc:
@@ -201,6 +207,30 @@ def _llama_cpp_modalities(value: object) -> tuple[str, ...]:
             if normalized not in modalities:
                 modalities.append(normalized)
     return tuple(modalities)
+
+
+def _props_match(
+    model_id: str,
+    entries: tuple[tuple[str, Mapping[str, object]], ...],
+    props: Mapping[str, object],
+) -> bool:
+    """Reject scoped responses that explicitly identify another listed model."""
+
+    names = {key: set(string_tuple(entry.get("aliases"))) for key, entry in entries}
+    identity = optional_text(props.get("model_alias"))
+    if identity is None:
+        path = optional_text(props.get("model_path"))
+        # Older servers expose a file path instead of an API identity. Only
+        # compare it when it matches an advertised name; never guess basenames.
+        if path is None or not any(
+            path == key or path in aliases for key, aliases in names.items()
+        ):
+            return True
+        identity = path
+    if identity in names:
+        return identity == model_id
+    owners = [key for key, aliases in names.items() if identity in aliases]
+    return owners == [model_id]
 
 
 def _tool_capability(caps: Mapping[str, object]) -> bool | None:

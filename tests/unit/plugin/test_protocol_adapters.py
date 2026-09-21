@@ -1677,3 +1677,82 @@ def test_local_chat_routes_encode_output_with_the_supported_wire_field(provider)
     assert payload["max_tokens"] == 8192
     assert "max_completion_tokens" not in payload
     assert "max_completion_tokens" not in payload["extra_body"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_output_accepts_null_sdk_extra_body(stream):
+    model = _model().with_route(_route(options={"extra_body": None}))
+    payload = chat_completions.chat_completion_payload(
+        model, ModelCall("", [], max_output_tokens=4096), stream=stream
+    )
+    assert payload["max_tokens"] == 4096
+
+
+@pytest.mark.parametrize("effort", ["high", "none"])
+def test_responses_explicit_effort_wins_on_the_sdk_wire(effort):
+    import httpx
+    from openai import AsyncOpenAI
+
+    captured = []
+
+    def handle(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"id": "resp_test", "object": "response", "output": []}
+        )
+
+    model = _model(provider="openai").with_route(
+        _route(
+            options={
+                "extra_body": {
+                    "reasoning": {"effort": "low"},
+                    "metadata": {"trace": "kept"},
+                },
+            }
+        )
+    )
+    payload = responses.response_payload(
+        model, ModelCall("", [], reasoning=Reasoning(effort)), stateful=False
+    )
+
+    async def call():
+        async with AsyncOpenAI(
+            api_key="test",
+            base_url="https://example.invalid",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        ) as client:
+            await client.responses.create(**payload)
+
+    asyncio.run(call())
+    assert captured[0]["reasoning"]["effort"] == effort
+    assert captured[0]["metadata"] == {"trace": "kept"}
+
+
+@pytest.mark.parametrize(
+    "adapter,options",
+    [
+        (chat_completions.ChatCompletionsModelAdapter(), {"max_tokens": None}),
+        (responses.ResponsesModelAdapter(), {"max_output_tokens": None}),
+        (messages_adapter.MessagesModelAdapter(), {"max_tokens": None}),
+        (
+            generate_content_adapter.GenerateContentModelAdapter(),
+            {"generationConfig": {"maxOutputTokens": None}},
+        ),
+    ],
+)
+def test_null_authored_output_is_unspecified(adapter, options):
+    assert adapter.output_allowance(options) is None
+
+
+def test_null_alias_does_not_override_the_authored_output_field():
+    model = _model().with_route(
+        _route(options={"max_tokens": 1024, "max_completion_tokens": None})
+    )
+    allowance = chat_completions.ChatCompletionsModelAdapter().output_allowance(
+        model._toolang.route.options
+    )
+    payload = chat_completions.chat_completion_payload(
+        model, ModelCall("", [], max_output_tokens=allowance), stream=False
+    )
+    assert payload["max_tokens"] == 1024
+    assert "max_completion_tokens" not in payload
