@@ -9,6 +9,8 @@ import sys
 import time
 import json
 
+import psutil
+
 from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 from urllib.request import urlopen
 
@@ -45,10 +47,9 @@ def test_host_sandbox_start_health_and_stop(tmp_path: Path) -> None:
         assert state is not None
         assert state.sandbox == "host"
         assert state.ref.meta["signal_scope"] == "process_group"
-        title = subprocess.check_output(
-            ["ps", "-p", state.ref.runtime_id, "-o", "command="], text=True
-        ).strip()
-        assert title.startswith("too:alice _serve "), title
+        argv = psutil.Process(int(state.ref.runtime_id)).cmdline()
+        assert "toolang.cli.toolang" in argv
+        assert "_serve" in argv
         info = subprocess.run(
             (*base, "info", "alice"), capture_output=True, text=True, timeout=20
         )
