@@ -112,7 +112,10 @@ def chat_command(
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     if sys.stdin.isatty() and sys.stdout.isatty():
         layout = context_layout(ctx)
-        launcher = resolve_launcher(agent=layout.name)
+        try:
+            launcher = resolve_launcher(agent=layout.name)
+        except TmuxPlacementError as exc:
+            raise ClickException(str(exc)) from exc
         if launcher is not None:
             thread_id = user_call(_tmux_thread, layout, thread_id)
             argv = _chat_argv(

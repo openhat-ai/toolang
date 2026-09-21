@@ -277,19 +277,39 @@ def test_resolve_launcher_honours_the_disable_switch() -> None:
     )
 
 
-def test_resolve_launcher_ignores_a_failing_lookup() -> None:
+def test_resolve_launcher_reports_a_failing_lookup() -> None:
     def boom() -> Any:
         raise RuntimeError("no server running")
 
-    assert (
+    with pytest.raises(TmuxPlacementError, match="no server running"):
         tmux.resolve_launcher(
             agent="eve",
             environment=TMUX_ENV,
             server_factory=boom,
             pane_factory=boom,
         )
-        is None
+
+
+def test_cli_does_not_start_locally_when_tmux_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        chat, "context_layout", lambda _ctx: AgentLayout.resident(tmp_path, "eve")
     )
+    for name, value in {**TMUX_ENV, tmux.ENABLED_ENV: "1"}.items():
+        monkeypatch.setenv(name, value)
+
+    def fail() -> Any:
+        raise RuntimeError("no server running")
+
+    monkeypatch.setattr(tmux, "_libtmux_server", fail)
+    monkeypatch.setattr(
+        chat, "_chat_interactive", lambda *a, **kw: pytest.fail("local fallback")
+    )
+    with pytest.raises(ClickException, match="no server running"):
+        chat.chat_command(cast(Any, None))
 
 
 def test_agent_session_prefers_the_session_option() -> None:

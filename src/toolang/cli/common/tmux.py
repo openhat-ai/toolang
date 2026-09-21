@@ -577,12 +577,10 @@ def resolve_launcher(
     try:
         server = build_server()
         pane = build_pane()
+        if not _text(getattr(pane, "pane_id", None)):
+            raise ValueError("Current tmux pane has no ID")
     except Exception as exc:
-        _debug(f"not placing chat: {exc}")
-        return None
-    if not _text(getattr(pane, "pane_id", None)):
-        _debug("not placing chat: resolved pane has no id")
-        return None
+        raise TmuxPlacementError(f"Could not resolve current tmux pane: {exc}") from exc
     return Launcher(agent=agent, _server=server, _pane=pane)
 
 
