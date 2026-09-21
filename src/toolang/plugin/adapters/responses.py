@@ -25,7 +25,7 @@ from toolang.base.types.message import (
     message_summary,
 )
 from toolang.base.types.model import Model, Reasoning
-from ._payload import request_options
+from ._payload import clear_options, output_allowance, request_options
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -62,6 +62,11 @@ class ResponsesModelAdapter(ModelAdapter):
     name: str = "responses"
     description: str | None = "Use the OpenAI Responses-compatible API shape."
     default_api: str | None = "https://api.openai.com/v1"
+
+    def output_allowance(self, options: Mapping[str, object]) -> int | None:
+        """Normalize this protocol's explicitly authored output allowance."""
+
+        return output_allowance(options, "max_output_tokens", sdk_extensions=True)
 
     async def invoke(
         self,
@@ -362,6 +367,7 @@ def response_payload(
     )
     _apply_reasoning(payload, request.reasoning)
     if request.max_output_tokens is not None:
+        clear_options(payload, "max_output_tokens")
         payload["max_output_tokens"] = request.max_output_tokens
     return payload
 
@@ -410,7 +416,7 @@ def _apply_reasoning(
     wire: dict[str, object] = {}
     if isinstance(effort, str):
         wire["effort"] = effort
-    payload.pop("reasoning", None)
+    clear_options(payload, "reasoning")
     if wire:
         payload["reasoning"] = wire
 

@@ -5,14 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from hashlib import sha256
 import json
+import logging
+import math
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from toolang.base.types.model import (
-    Model,
-    ModelCatalogSnapshot,
-    Provider,
-    ProviderToolang,
+    CatalogModel,
+    CatalogSnapshot,
+    CatalogProvider,
 )
 
 
@@ -62,6 +63,8 @@ def config_timeout(config: Mapping[str, object]) -> float:
     value = config.get("timeout", 2.0)
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError("local model catalog timeout must be numeric")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("local model catalog timeout must be positive and finite")
     return float(value)
 
 
@@ -70,23 +73,27 @@ def local_snapshot(
     provider_id: str,
     provider_name: str,
     endpoint: str,
-    models: tuple[Model, ...],
-) -> ModelCatalogSnapshot:
+    models: tuple[CatalogModel, ...],
+) -> CatalogSnapshot:
     """Build one ephemeral snapshot for a local runtime provider."""
 
-    provider = Provider(
+    provider = CatalogProvider(
         id=provider_id,
         name=provider_name,
-        _toolang=ProviderToolang(env=(), adapter="chat_completions"),
+        adapter="chat_completions",
         api=endpoint,
     )
     identity = json.dumps(
-        provider.to_data(models={model.id: model for model in models}),
+        {
+            "provider": provider_id,
+            "api": endpoint,
+            "models": {model.id: model.to_data() for model in models},
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     )
-    return ModelCatalogSnapshot(
+    return CatalogSnapshot(
         providers={provider_id: provider},
         models=tuple(sorted(models, key=lambda model: model.id)),
         revision=f"runtime:{sha256(identity.encode()).hexdigest()}",
@@ -131,6 +138,45 @@ def resolve_local_endpoint(
     if value is None:
         host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
         return f"http://{host}:{default_port}"
+    if "://" not in value:
+        value = f"http://{value}"
     if endpoint is None:
         value = replace_guest_loopback(value, environ)
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("local model catalog endpoint must be an HTTP(S) URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(
+            "catalog endpoint must not contain credentials, query, or fragment"
+        )
     return value.rstrip("/")
+
+
+def config_headers(config: Mapping[str, object]) -> Mapping[str, str]:
+    """Validate optional discovery headers without publishing credentials."""
+
+    value = config.get("headers", {})
+    if not isinstance(value, Mapping) or any(
+        not isinstance(k, str) or not isinstance(v, str) for k, v in value.items()
+    ):
+        raise ValueError("local model catalog headers must map strings to strings")
+    return dict(cast(Mapping[str, str], value))
+
+
+def positive_count(value: object, *, name: str) -> int | None:
+    """Normalize discovered counts; leave unknown and sentinel values absent."""
+
+    if type(value) is int and value > 0:
+        return value
+    if value is not None and (type(value) is not int or value not in {-2, -1, 0}):
+        logging.getLogger(__name__).warning("catalog.invalid_count field=%s", name)
+    return None
+
+
+def config_endpoint(config: Mapping[str, object]) -> str | None:
+    """Reject an invalid explicit endpoint instead of falling back to localhost."""
+
+    value = config.get("endpoint")
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise ValueError("local model catalog endpoint must be a non-empty string")
+    return value.strip() if isinstance(value, str) else None

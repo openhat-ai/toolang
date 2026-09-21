@@ -31,9 +31,10 @@ CompactionResult(thread: str, begin: str, end: str, summary: str)
 
 ## Model-call rules
 
-1. Resolve output allowance `O` from target max output, otherwise model maximum,
-   clamped to the advertised maximum. Resolve any provider-option fallback before
-   admission; adapters must send the admitted allowance unchanged.
+1. Resolve output allowance `O` from explicit controls or the host automatic
+   policy (4096, context-quarter cap, explicit reasoning headroom), clamped to
+   the catalog route output limit. Adapters normalize authored options before
+   admission and send the admitted allowance unchanged.
 2. `O` includes reasoning. Explicit reasoning budget `R` requires `O > R`;
    do not double-count reasoning, translate effort labels into token counts,
    or silently shrink the selected output/reasoning allowance.

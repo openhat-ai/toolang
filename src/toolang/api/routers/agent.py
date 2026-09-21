@@ -22,6 +22,7 @@ from toolang.execution.types import ModelStepNoted
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
+    model_reasoning_effort_exhaustive,
 )
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
@@ -333,6 +334,7 @@ def _model_item(
             "reasoning": {
                 "effort": list(efforts),
                 "applicable": effort_applicable,
+                "exhaustive": model_reasoning_effort_exhaustive(model),
             }
         },
         "price": {

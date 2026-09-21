@@ -2224,3 +2224,29 @@ def _run_agic(prepared: _AgicFrame) -> Message | None:
             )
         )
     )
+
+
+@pytest.mark.parametrize("options", [None, ()])
+@pytest.mark.parametrize(
+    "control",
+    [None, Reasoning("high"), Reasoning("none"), Reasoning(budget_tokens=8192)],
+)
+def test_missing_reasoning_controls_allow_explicit_attempts(options, control):
+    model = Model(
+        id="m",
+        name="M",
+        _toolang=ModelToolang(provider="third_party"),
+        reasoning=True,
+        reasoning_options=options,
+    )
+    assert resolve_model_reasoning(model, control) == control
+
+
+def test_explicit_reasoning_budget_respects_known_bounds():
+    model = _reasoning_model([{"type": "budget_tokens", "min": 1024, "max": 4096}])
+    assert resolve_model_reasoning(model, Reasoning(budget_tokens=2048)) == Reasoning(
+        budget_tokens=2048
+    )
+    for value in (512, 8192):
+        with pytest.raises(ToolangError, match="reasoning budget"):
+            resolve_model_reasoning(model, Reasoning(budget_tokens=value))

@@ -1258,3 +1258,88 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("context", [None, 32768])
+@pytest.mark.parametrize("control", [None, "high", "none", 8192])
+def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
+    tmp_path, streaming, context, control
+):
+    from toolang.base.types.model import ModelRequest, Reasoning
+    from toolang.plugin.models.resolution import build_model_collection
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        streaming=streaming,
+        responses=[ModelCallResult(message=Message.assistant("hello"))],
+    )
+    model = replace(
+        harness.setup.models.resolve("test/scripted"),
+        limit={} if context is None else {"context": context},
+        reasoning=True,
+        reasoning_options=None,
+    )
+    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    reasoning = (
+        Reasoning(budget_tokens=control)
+        if isinstance(control, int)
+        else Reasoning(effort=control)
+        if control is not None
+        else None
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            spec = replace(
+                harness.run_spec(
+                    thread=thread, runnable="seed", primary=(TextPart("hello"),)
+                ),
+                model_request=ModelRequest(model.ref, reasoning=reasoning),
+            )
+            run = await harness.executor.run(spec)
+            assert run.status == "succeeded", run.error
+            (invocation,) = harness.adapter.invocations
+            assert invocation.call.reasoning == reasoning
+            assert invocation.call.max_output_tokens == (
+                9216 if control == 8192 else 4096
+            )
+            (step,) = harness.store.list_steps(run_id=run.id)
+            assert harness.store.rebuild_model_call(step) == invocation.call
+            assert "output" not in invocation.model.limit
+
+    asyncio.run(scenario())
+
+
+def test_auto_output_does_not_reinherit_a_cleared_default(tmp_path):
+    from toolang.base.model_settings import apply_model_override
+    from toolang.base.types.model import ModelOverride, ModelRequest
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[ModelCallResult(message=Message.assistant("hello"))],
+    )
+    default = ModelRequest("test/scripted", max_output=8192)
+    harness.setup = replace(
+        harness.setup, defaults=replace(harness.setup.defaults, model=default)
+    )
+    selected = apply_model_override(default, default, ModelOverride(max_output="auto"))
+
+    async def scenario():
+        async with harness:
+            spec = replace(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="seed",
+                    primary=(TextPart("hello"),),
+                ),
+                model_request=selected,
+            )
+            run = await harness.executor.run(spec)
+            assert run.status == "succeeded", run.error
+            assert harness.adapter.invocations[0].call.max_output_tokens == 4096
+
+    asyncio.run(scenario())

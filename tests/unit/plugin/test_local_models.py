@@ -48,7 +48,7 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
                 ],
                 "details": {"family": "gemma3"},
                 "model_info": {"gemma3.context_length": 131_072},
-                "parameters": "temperature 0.7",
+                "parameters": "temperature 0.7\nnum_ctx 32768\nnum_predict 8192",
             }
         },
     )
@@ -62,7 +62,7 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     assert model is not None
     assert model.family == "gemma3"
     assert model.last_updated == "2026-08-24"
-    assert model.limit == {"context": 131_072}
+    assert model.limit == {"context": 32_768, "output": 8192}
     assert model.modalities == {
         "input": ("text", "image", "audio"),
         "output": ("text",),
@@ -184,7 +184,7 @@ def test_local_detail_failures_keep_list_metadata(
     llama_model = llama_snapshot.find("llama_cpp", "local")
 
     assert llama_model is not None
-    assert llama_model.limit == {"context": 32_768}
+    assert llama_model.limit == {}
     assert llama_model.tool_call is None
     assert llama_model.cost == LOCAL_ZERO_COST
 
@@ -304,7 +304,7 @@ class _FakeClient:
         self.post_payloads = dict(posts or {})
         self.posts: list[tuple[str, object]] = []
 
-    def factory(self, *, timeout: float) -> _FakeClient:
+    def factory(self, *, timeout: float, headers=None) -> _FakeClient:
         assert timeout == 2.0
         return self
 
@@ -315,6 +315,9 @@ class _FakeClient:
         return
 
     async def get(self, url: str) -> _FakeResponse:
+        if url not in self.gets:
+            response = httpx.Response(404, request=httpx.Request("GET", url))
+            response.raise_for_status()
         payload = self.gets[url]
         if isinstance(payload, Exception):
             raise payload
@@ -327,3 +330,268 @@ class _FakeClient:
         if isinstance(response, Exception):
             raise response
         return _FakeResponse(response)
+
+
+@pytest.mark.parametrize(
+    "parameters,loaded,expected",
+    [
+        ("", None, {}),
+        ('num_ctx "8192"\nnum_predict "2048"', None, {"context": 8192, "output": 2048}),
+        ("num_ctx 8192\nnum_predict 2048", 4096, {"context": 4096, "output": 2048}),
+        (
+            "num_ctx 8192\nnum_ctx 16384\nnum_predict 1024\nnum_predict -1",
+            None,
+            {"context": 16384},
+        ),
+        ("num_ctx true\nnum_predict invalid", None, {}),
+        ('num_ctx 8192\nnum_ctx "bad', None, {}),
+        ("num_ctx -1\nnum_predict -2", None, {}),
+    ],
+)
+def test_ollama_limits_describe_configured_route(
+    parameters, loaded, expected, monkeypatch
+):
+    entry = {"name": "same-model", "capabilities": ["completion", "tools"]}
+    client = _FakeClient(
+        gets={
+            "http://service.test/api/tags": {"models": [entry]},
+            "http://service.test/api/ps": {
+                "models": [{"model": "same-model", "context_length": loaded}]
+            },
+        },
+        posts={
+            ("http://service.test/api/show", "same-model"): {
+                "parameters": parameters,
+                "model_info": {"model.context_length": 1000000},
+            }
+        },
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
+    snapshot = asyncio.run(
+        OllamaModelCatalog({}, endpoint="http://service.test").snapshot()
+    )
+    model = snapshot.models[0]
+    assert model.limit == expected
+    assert model.tool_call is True
+    assert not hasattr(model, "_toolang")
+    assert "defaults" not in model.to_data()
+
+
+@pytest.mark.parametrize("primary", [-1, 0, True, "invalid"])
+def test_llama_prediction_primary_is_not_replaced_by_positive_alias(primary):
+    model = llama_cpp_models._llama_cpp_model(
+        "m",
+        {"meta": {"n_ctx": 4096, "n_ctx_train": 131072}},
+        {
+            "default_generation_settings": {
+                "params": {"n_predict": primary, "max_tokens": 8192}
+            },
+            "chat_template_caps": {
+                "supports_reasoning_effort": False,
+                "supports_tools": True,
+            },
+            "modalities": {"audio": True},
+        },
+    )
+    assert model.limit == {"context": 4096}
+    assert model.reasoning is None
+    assert model.reasoning_options is None
+    assert model.tool_call is None
+    assert model.attachment is True
+
+
+def test_llama_router_uses_model_specific_props_without_autoload(monkeypatch):
+    client = _FakeClient(
+        gets={
+            "http://service.test/v1/models": {
+                "data": [{"id": "a/model"}, {"id": "b/model"}]
+            },
+            "http://service.test/props?model=a%2Fmodel&autoload=false": {
+                "default_generation_settings": {
+                    "n_ctx": 32768,
+                    "params": {"n_predict": 8192},
+                },
+            },
+            "http://service.test/props?model=b%2Fmodel&autoload=false": {
+                "default_generation_settings": {
+                    "n_ctx": 131072,
+                    "params": {"n_predict": 16384},
+                },
+            },
+        }
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
+    snapshot = asyncio.run(
+        LlamaCppModelCatalog({}, endpoint="http://service.test").snapshot()
+    )
+    assert [dict(model.limit) for model in snapshot.models] == [
+        {"context": 32768, "output": 8192},
+        {"context": 131072, "output": 16384},
+    ]
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [ollama_models.create_model_catalog, llama_cpp_models.create_model_catalog],
+)
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"endpoint": 123},
+        {"endpoint": ""},
+        {"timeout": 0},
+        {"timeout": float("inf")},
+        {"headers": {"Authorization": 1}},
+    ],
+)
+def test_invalid_discovery_configuration_fails_clearly(factory, config):
+    with pytest.raises((ValueError, TypeError)):
+        factory(config)
+
+
+def test_discovery_credentials_are_not_published(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"models": [{"model": "m"}]}
+            if request.url.path == "/api/tags"
+            else {},
+        )
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    catalog = ollama_models.create_model_catalog(
+        {
+            "endpoint": "http://service.test",
+            "headers": {"Authorization": "Bearer private"},
+        }
+    )
+    snapshot = asyncio.run(catalog.snapshot())
+    assert all(request.headers["authorization"] == "Bearer private" for request in seen)
+    assert "private" not in repr(snapshot)
+
+
+def test_same_checkpoint_reports_different_server_limits(monkeypatch):
+    settings = {"a.test": (32768, 8192), "b.test": (131072, 16384)}
+
+    def handler(request):
+        context, output = settings[request.url.host]
+        if request.url.path == "/api/tags":
+            payload = {"models": [{"model": "same:latest"}]}
+        elif request.url.path == "/api/show":
+            payload = {"parameters": f"num_ctx {context}\nnum_predict {output}"}
+        else:
+            payload = {"models": []}
+        return httpx.Response(200, json=payload)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    snapshots = [
+        asyncio.run(OllamaModelCatalog({}, endpoint=f"http://{host}").snapshot())
+        for host in settings
+    ]
+    assert snapshots[0].models[0].id == snapshots[1].models[0].id
+    assert [dict(snapshot.models[0].limit) for snapshot in snapshots] == [
+        {"context": context, "output": output} for context, output in settings.values()
+    ]
+    assert [snapshot.providers["ollama"].api for snapshot in snapshots] == [
+        "http://a.test/v1",
+        "http://b.test/v1",
+    ]
+
+
+@pytest.mark.parametrize(
+    "catalog,env_name,port",
+    [
+        (OllamaModelCatalog, "OLLAMA_HOST", 11434),
+        (LlamaCppModelCatalog, "LLAMA_CPP_HOST", 8080),
+    ],
+)
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_schemeless_environment_endpoint_uses_guest_gateway(
+    catalog, env_name, port, host, monkeypatch
+):
+    urls = []
+
+    def handler(request):
+        urls.append(str(request.url))
+        return httpx.Response(200, json={"models": [], "data": []})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    instance = catalog(
+        {env_name: f"{host}:{port}", "TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+    )
+    asyncio.run(instance.snapshot())
+    assert urls and all(
+        url.startswith(f"http://host.docker.internal:{port}/") for url in urls
+    )
+
+
+def test_llama_props_cannot_publish_another_models_limits(monkeypatch):
+    client = _FakeClient(
+        gets={
+            "http://llama.test/v1/models": {
+                "data": [{"id": "a", "meta": {"n_ctx": 4096}}, {"id": "b"}]
+            },
+            "http://llama.test/props?model=a&autoload=false": {
+                "model_alias": "b",
+                "default_generation_settings": {
+                    "n_ctx": 131072,
+                    "params": {"n_predict": 32768},
+                },
+            },
+        }
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", client.factory)
+    snapshot = asyncio.run(
+        LlamaCppModelCatalog({}, endpoint="http://llama.test").snapshot()
+    )
+    model = snapshot.find("llama_cpp", "a")
+    assert model is not None
+    assert model.limit == {"context": 4096}
+
+
+@pytest.mark.parametrize(
+    "identity,expected",
+    [
+        ("a", True),
+        ("a-alias", True),
+        ("b", False),
+        ("shared", False),
+        ("unknown", False),
+    ],
+)
+def test_llama_props_match_exact_ids_or_unique_advertised_aliases(identity, expected):
+    entries = (
+        ("a", {"aliases": ["a-alias", "shared"]}),
+        ("b", {"aliases": ["shared"]}),
+    )
+    assert (
+        llama_cpp_models._props_match("a", entries, {"model_alias": identity})
+        is expected
+    )
+
+
+def test_schemeless_explicit_endpoint_stays_exact_in_guest():
+    assert (
+        ollama_models._ollama_host(
+            "localhost:11434", {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+        )
+        == "http://localhost:11434"
+    )

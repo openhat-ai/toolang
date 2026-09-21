@@ -30,6 +30,7 @@ from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
+    model_reasoning_effort_exhaustive,
 )
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.execution.store import RunStore
@@ -160,6 +161,7 @@ class LocalChatSession:
                         "reasoning": {
                             "effort": list(model_reasoning_efforts(model)),
                             "applicable": model_reasoning_effort_applicable(model),
+                            "exhaustive": model_reasoning_effort_exhaustive(model),
                         }
                     },
                     "price": {

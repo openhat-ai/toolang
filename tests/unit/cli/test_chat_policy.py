@@ -236,3 +236,23 @@ def test_run_override_errors_add_contextual_help_guidance() -> None:
     assert run_override_error(":model effort=extreme\nhello", "invalid effort.") == (
         "invalid effort · See :? for help"
     )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"effort": [], "applicable": True}, {"effort": ["low"], "exhaustive": False}],
+)
+@pytest.mark.parametrize(
+    "control", [Reasoning("high"), Reasoning("none"), Reasoning(budget_tokens=8192)]
+)
+def test_chat_allows_explicit_attempts_with_incomplete_reasoning_metadata(
+    metadata, control
+):
+    from toolang.cli.toolang.commands.chat.policy import (
+        validate_model_reasoning_request,
+    )
+
+    validate_model_reasoning_request(
+        {"items": [{"ref": "p/m", "parameters": {"reasoning": metadata}}]},
+        ModelRequest("p/m", reasoning=control),
+    )

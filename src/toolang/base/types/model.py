@@ -32,8 +32,8 @@ def _immutable_json(value: object) -> object:
 
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
-# Effect levels are provider-defined; the catalog's reasoning_options is the only
-# source of truth, so Toolang keeps no closed vocabulary here.
+# Effort levels are provider-defined. Incomplete catalog evidence must not
+# prevent explicit attempts, so Toolang keeps no closed vocabulary here.
 ModelEffort: TypeAlias = str | int | Literal["auto"]
 ModelMaxOutput: TypeAlias = int | Literal["auto"]
 
@@ -228,13 +228,12 @@ class ModelProvider:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class Model:
-    """One models.dev-compatible model record within a provider."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelFacts:
+    """Portable model capabilities shared by declarations and resolved records."""
 
-    id: str
-    name: str
-    _toolang: ModelToolang
+    id: str = field(kw_only=False)
+    name: str = field(kw_only=False)
     description: str | None = None
     family: str | None = None
     attachment: bool | None = None
@@ -252,8 +251,7 @@ class Model:
     limit: Mapping[str, int] = field(default_factory=dict)
     status: str | None = None
     experimental: Mapping[str, object] | None = None
-    # The corrected provider this model must use, not the owning provider;
-    # `_toolang.provider` carries the association.
+    # Per-model connection overrides; ownership is carried separately.
     provider: ModelProvider | None = None
     cost: Mapping[str, object] | None = None
 
@@ -262,8 +260,6 @@ class Model:
             raise ValueError("model id and name are required")
         if self.provider is not None and not isinstance(self.provider, ModelProvider):
             raise TypeError("model provider must be ModelProvider")
-        if not self._toolang.provider:
-            raise ValueError("model requires its provider id")
         # A read-only view may still wrap a dictionary owned by a plugin.
         # Detach all nested values before publishing or resolving a record.
         object.__setattr__(
@@ -273,6 +269,9 @@ class Model:
                 {str(key): tuple(value) for key, value in self.modalities.items()}
             ),
         )
+        for name, value in self.limit.items():
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"model limit.{name} must be a positive integer")
         object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
         if self.reasoning_options is not None:
             object.__setattr__(
@@ -288,31 +287,6 @@ class Model:
             object.__setattr__(
                 self, "interleaved", _immutable_mapping(self.interleaved)
             )
-
-    def with_route(self, route: ModelRoute) -> Self:
-        """Publish a route while sharing this record's already detached catalog facts."""
-
-        result = copy(self)
-        object.__setattr__(
-            result,
-            "_toolang",
-            ModelToolang(
-                ready=route.ready, provider=self._toolang.provider, route=route
-            ),
-        )
-        return result
-
-    @property
-    def identity(self) -> str:
-        """Return the exact provider/model catalog identity."""
-
-        return f"{self._toolang.provider}/{self.id}"
-
-    @property
-    def ref(self) -> str:
-        """Return the public exact ref used to select this model."""
-
-        return self.identity
 
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
@@ -349,6 +323,55 @@ class Model:
         }
         data.update({key: _mutable_json(value) for key, value in optional.items()})
         return {key: value for key, value in data.items() if value is not None}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogModel(ModelFacts):
+    """A plugin's model declaration, with no host execution state."""
+
+    provider_id: str = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        ModelFacts.__post_init__(self)
+        if not self.provider_id:
+            raise ValueError("model requires its provider id")
+
+
+@dataclass(frozen=True, slots=True)
+class Model(ModelFacts):
+    """A model declaration assembled with Toolang ownership and routing."""
+
+    _toolang: ModelToolang
+
+    def __post_init__(self) -> None:
+        ModelFacts.__post_init__(self)
+        if not self._toolang.provider:
+            raise ValueError("model requires its provider id")
+
+    def with_route(self, route: ModelRoute) -> Self:
+        """Publish a route while sharing this record's already detached catalog facts."""
+
+        result = copy(self)
+        object.__setattr__(
+            result,
+            "_toolang",
+            ModelToolang(
+                ready=route.ready, provider=self._toolang.provider, route=route
+            ),
+        )
+        return result
+
+    @property
+    def identity(self) -> str:
+        """Return the exact provider/model catalog identity."""
+
+        return f"{self._toolang.provider}/{self.id}"
+
+    @property
+    def ref(self) -> str:
+        """Return the public exact ref used to select this model."""
+
+        return self.identity
 
 
 def normalized_env(env: ResolvedEnv) -> ResolvedEnv:
@@ -483,3 +506,54 @@ def _mutable_json(value: object) -> object:
     if isinstance(value, tuple | list):
         return [_mutable_json(item) for item in value]
     return value
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogProvider:
+    """Portable connection declarations, without resolved host routes."""
+
+    id: str
+    name: str
+    api: str | None = None
+    adapter: str | None = None
+    env: ResolvedEnv = ()
+
+    def __post_init__(self) -> None:
+        if not self.id or not self.name:
+            raise ValueError("provider id and name are required")
+        object.__setattr__(self, "env", normalized_env(self.env))
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSnapshot:
+    """Immutable plugin declarations; setup owns their host translation."""
+
+    providers: Mapping[str, CatalogProvider]
+    models: tuple[CatalogModel, ...]
+    revision: str
+    local: bool = False
+
+    def __post_init__(self) -> None:
+        providers = dict(self.providers)
+        models = tuple(self.models)
+        if any(key != provider.id for key, provider in providers.items()):
+            raise ValueError("catalog provider keys must match provider ids")
+        identities = [(model.provider_id, model.id) for model in models]
+        if len(identities) != len(set(identities)):
+            raise ValueError("catalog models must have unique provider/model identity")
+        if any(model.provider_id not in providers for model in models):
+            raise ValueError("catalog models reference unknown providers")
+        object.__setattr__(self, "providers", MappingProxyType(providers))
+        object.__setattr__(self, "models", models)
+
+    def find(self, provider_id: str, model_id: str) -> CatalogModel | None:
+        """Find one exact declaration."""
+
+        return next(
+            (
+                model
+                for model in self.models
+                if model.provider_id == provider_id and model.id == model_id
+            ),
+            None,
+        )

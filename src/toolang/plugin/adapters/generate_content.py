@@ -23,7 +23,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import Model, Reasoning
-from ._payload import request_options
+from ._payload import output_allowance, request_options
 from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
@@ -48,6 +48,16 @@ class GenerateContentModelAdapter(ModelAdapter):
     name: str = "generate_content"
     description: str | None = "Use the Google Gemini Generate Content API shape."
     default_api: str | None = "https://generativelanguage.googleapis.com/v1beta"
+
+    def output_allowance(self, options: Mapping[str, object]) -> int | None:
+        """Normalize this protocol's explicitly authored output allowance."""
+
+        generation = options.get("generationConfig")
+        return (
+            output_allowance(cast(Mapping[str, object], generation), "maxOutputTokens")
+            if isinstance(generation, Mapping)
+            else None
+        )
 
     async def invoke(
         self,

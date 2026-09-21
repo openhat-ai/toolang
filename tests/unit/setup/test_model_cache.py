@@ -224,7 +224,7 @@ def test_route_detaches_nested_plugin_data():
 
 def test_flat_cache_rejects_unknown_model_ownership(tmp_path):
     from toolang.common.cache import store_document
-    from toolang.setup.cache import _snapshot_document
+    from toolang.setup.cache import _snapshot_document, _CATALOG_SCHEMA
 
     model = Model(id="one", name="One", _toolang=ModelToolang(provider="test"))
     snapshot = ModelCatalogSnapshot(
@@ -238,7 +238,7 @@ def test_flat_cache_rejects_unknown_model_ownership(tmp_path):
         tmp_path / "models_dev.json",
         kind="catalog",
         key="models_dev",
-        document={**document, "revision": "source"},
+        document={**document, "revision": "source", "catalog_schema": _CATALOG_SCHEMA},
     )
     assert (
         ModelCatalogCache(tmp_path).load_source("models_dev", revision="source") is None
@@ -281,7 +281,7 @@ def test_typed_full_snapshot_preserves_nested_provider_and_routes() -> None:
 def test_source_cache_never_restores_persisted_effective_routes(tmp_path: Path) -> None:
     from toolang.base.types.model import ModelRoute
     from toolang.common.cache import store_document
-    from toolang.setup.cache import _snapshot_document
+    from toolang.setup.cache import _snapshot_document, _CATALOG_SCHEMA
 
     route = ModelRoute(adapter="messages", api="https://old.test/v1", env=())
     snapshot = ModelCatalogSnapshot(
@@ -293,7 +293,11 @@ def test_source_cache_never_restores_persisted_effective_routes(tmp_path: Path) 
         tmp_path / "models_dev.json",
         kind="catalog",
         key="models_dev",
-        document={**_snapshot_document(snapshot, resolved=True), "revision": "source"},
+        document={
+            **_snapshot_document(snapshot, resolved=True),
+            "revision": "source",
+            "catalog_schema": _CATALOG_SCHEMA,
+        },
     )
     loaded = ModelCatalogCache(tmp_path).load_source("models_dev", revision="source")
     assert loaded is not None

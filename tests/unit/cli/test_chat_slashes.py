@@ -39,6 +39,7 @@ class _Client:
                 "parameters": {
                     "reasoning": {
                         "effort": ["low", "high"],
+                        "exhaustive": True,
                         "applicable": True,
                     }
                 },
