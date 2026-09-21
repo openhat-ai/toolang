@@ -460,9 +460,10 @@ def test_place_chat_reuses_or_creates_pad_and_enters_target(
     assert window.panes[-1].selected
     assert server.switched == ([] if same_session else ["$0"])
     out = capsys.readouterr().out
-    assert ("reused chat pane" if live_pad else "created chat pane") in out
-    assert "renamed-agent ($0), window renamed-thread (@1)" in out
-    assert "; selected" in out
+    verb = "located" if live_pad else "created"
+    assert out == (
+        f"{verb} chat pane {window.panes[-1].pane_id} in renamed-agent:renamed-thread\n"
+    )
 
 
 def test_place_chat_reports_creation_error_here(
@@ -474,7 +475,39 @@ def test_place_chat_reports_creation_error_here(
         _place(monkeypatch, launcher)
     error.value.show()
     assert error.value.exit_code == 1
-    assert "eve refused" in capsys.readouterr().err
+    assert "failed to create chat pane: eve refused" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("level", ["session", "window", "pane"])
+def test_mark_failure_does_not_report_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    level: str,
+) -> None:
+    server = FakeServer()
+    if level != "session":
+        session = FakeSession("$0", "eve")
+        session.options[tmux.SESSION_AGENT] = "eve"
+        server = FakeServer([session])
+        if level == "pane":
+            window = session.add_window(FakeWindow("@1", "term_x"))
+            window.options[tmux.MARK_THREAD] = "term_x"
+    target_class = {"session": FakeSession, "window": FakeWindow, "pane": FakePad}[
+        level
+    ]
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("metadata refused")
+
+    monkeypatch.setattr(target_class, "set_option", refuse)
+    launcher = _launcher(server, FakePane(session_id="$9"))
+    with pytest.raises(ClickException, match="^failed to mark chat pane:") as error:
+        _place(monkeypatch, launcher, thread_id="term_x")
+
+    assert "metadata refused" in str(error.value)
+    assert server.sessions[0].windows[0].panes
+    assert not server.switched
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("live_pad", [True, False])
@@ -496,7 +529,7 @@ def test_failed_selection_keeps_prepared_target_and_reports_location(
     launcher = _launcher(server, FakePane(session_id="$0"))
 
     with pytest.raises(
-        ClickException, match="selection refused.*target was kept"
+        ClickException, match="failed to switch: selection refused"
     ) as error:
         _place(monkeypatch, launcher, thread_id="term_x")
     error.value.show()
@@ -504,8 +537,12 @@ def test_failed_selection_keeps_prepared_target_and_reports_location(
     assert len(window.pads) == (0 if live_pad else 1)
     assert not server.created and not server.switched
     captured = capsys.readouterr()
-    assert "window term_x (@1), pane" in captured.err
-    assert "selection refused" in captured.err
+    verb = "located" if live_pad else "created"
+    assert captured.out == ""
+    assert captured.err == (
+        f"Error: {verb} chat pane {window.panes[-1].pane_id} in eve:term_x; "
+        "failed to switch: selection refused\n"
+    )
 
 
 def test_place_chat_runs_in_its_current_marked_pad(
@@ -547,7 +584,7 @@ def test_place_chat_displays_window_or_pane_creation_failure(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "no space for a new pane" in captured.err
+    assert "failed to create chat pane: no space for a new pane" in captured.err
     assert not window.pads and not session.opened
 
 
@@ -652,7 +689,9 @@ def test_tmux_thread_reuses_validates_and_keeps_empty_threads(tmp_path: Path) ->
         store.close()
 
 
-def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None:
+def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     session = FakeSession("$0", "eve")
     window = session.add_window(FakeWindow("@1", "custom"))
     window.options[tmux.MARK_THREAD] = "term_x"
@@ -661,6 +700,7 @@ def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None
     assert launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
     assert not window.pads and not session.opened and not window.selected
     assert window.window_name == "custom"
+    assert capsys.readouterr().out == ""
 
 
 def test_same_window_navigation_only_selects_the_pane() -> None:

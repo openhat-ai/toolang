@@ -344,10 +344,11 @@ class Launcher:
         """Ensure and enter one target; return True only to run in this pane."""
 
         command = self.chat_command(argv)
+        operation = "prepare"
         try:
             session = self.agent_session()
             window = self.thread_window(session, thread_id) if session else None
-            action = "reused"
+            action = "located"
             if window is not None:
                 pad = self.chat_pad(window)
                 if pad is not None and self.is_current_pane(pad.pane_id):
@@ -362,14 +363,17 @@ class Launcher:
                         return True
                     pad = self.chat_pad(window, dead=True)
                     if pad is not None:
+                        operation = "restart"
                         pad.respawn(shell=command, start_directory=directory)
-                        action = "restarted"
+                        action = "reused"
                     else:
+                        operation = "create"
                         pad = window.split(
                             start_directory=directory, shell=command, attach=False
                         )
                         action = "created"
             else:
+                operation = "create"
                 if session is None:
                     session = self._server.new_session(
                         session_name=self._available_name(),
@@ -377,6 +381,7 @@ class Launcher:
                         start_directory=directory,
                         window_command=command,
                     )
+                    operation = "mark"
                     self._own(session)
                     session.set_option(DETACH_ON_DESTROY, "off")
                     window = session.active_window
@@ -386,15 +391,15 @@ class Launcher:
                     window = session.new_window(
                         start_directory=directory, window_shell=command, attach=False
                     )
+                operation = "mark"
                 window.set_option(MARK_THREAD, thread_id)
                 window.rename_window(thread_id)
                 pad = window.panes[0]
                 action = "created"
+            operation = "mark"
             pad.set_option(MARK_PAD, PAD_CHAT)
         except Exception as exc:
-            raise TmuxPlacementError(
-                f"Could not prepare tmux chat target: {exc}"
-            ) from exc
+            raise TmuxPlacementError(f"failed to {operation} chat pane: {exc}") from exc
 
         self._enter_target(window, pad, action=action)
         return False
@@ -420,9 +425,9 @@ class Launcher:
     def _enter_target(self, window: TmuxWindow, pane: TmuxPane, *, action: str) -> None:
         try:
             session = window.session
-            location = (
-                f"session {session.session_name} ({session.session_id}), "
-                f"window {window.window_name} ({window.window_id}), pane {pane.pane_id}"
+            notice = (
+                f"{action} chat pane {pane.pane_id} in "
+                f"{session.session_name}:{window.window_name}"
             )
         except Exception as exc:
             raise TmuxPlacementError(
@@ -431,11 +436,8 @@ class Launcher:
         try:
             self.select_target(window, pane=pane)
         except TmuxPlacementError as exc:
-            raise TmuxPlacementError(
-                f"{action.capitalize()} chat pane in tmux {location}; not selected. "
-                f"{exc}. The target was kept."
-            ) from exc
-        print(f"↪ {action} chat pane in tmux {location}; selected")
+            raise TmuxPlacementError(f"{notice}; {exc}") from exc
+        print(notice)
 
     def agent_session(self) -> TmuxSession | None:
         """The agent's session: its ``@toolang_agent`` mark first, name second.
@@ -522,9 +524,7 @@ class Launcher:
             if not self.is_current(session):
                 self._server.switch_client(session.session_id)
         except Exception as exc:
-            raise TmuxPlacementError(
-                f"Could not select tmux chat target: {exc}"
-            ) from exc
+            raise TmuxPlacementError(f"failed to switch: {exc}") from exc
         return True
 
     def _available_name(self) -> str:
