@@ -63,24 +63,28 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
         pane = window.active_pane
         assert pane is not None
         rendered_width = tmp_path / "rendered-width"
+        accent = re.compile(r"^(?:\x1b\[[0-9;]*m)*\x1b\[106m ")
         for columns in (100, 40, 160, 25):
             window.resize(width=columns)
             deadline = time.monotonic() + 10
+            lines: list[str] = []
             while time.monotonic() < deadline:
                 if rendered_width.exists() and rendered_width.read_text() == str(
                     columns
                 ):
-                    break
+                    # after_render flushes output, but tmux may still be parsing
+                    # the PTY bytes. Wait for the actual grid, not just the file.
+                    lines = pane.capture_pane(escape_sequences=True) or []
+                    if (
+                        sum(bool(accent.match(line)) for line in lines) == 3
+                        and sum("Ask or describe" in line for line in lines) == 1
+                    ):
+                        break
                 time.sleep(0.02)
             else:
-                pytest.fail(f"Chat did not redraw at {columns} columns")
-            lines = pane.capture_pane(escape_sequences=True)
-            assert lines is not None
-            accent = re.compile(r"^(?:\x1b\[[0-9;]*m)*\x1b\[106m ")
-            assert sum(bool(accent.match(line)) for line in lines) == 3, "\n".join(
-                lines
-            )
-            assert sum("Ask or describe" in line for line in lines) == 1, lines
+                pytest.fail(
+                    f"Chat did not redraw at {columns} columns:\n" + "\n".join(lines)
+                )
     finally:
         server.kill()
 
