@@ -478,6 +478,40 @@ def test_place_chat_reports_creation_error_here(
     assert "failed to create chat pane: eve refused" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("level", ["session", "window", "pane"])
+def test_configuration_failure_does_not_report_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    level: str,
+) -> None:
+    server = FakeServer()
+    if level != "session":
+        session = FakeSession("$0", "eve")
+        session.options[tmux.SESSION_AGENT] = "eve"
+        server = FakeServer([session])
+        if level == "pane":
+            window = session.add_window(FakeWindow("@1", "term_x"))
+            window.options[tmux.MARK_THREAD] = "term_x"
+    target_class = {"session": FakeSession, "window": FakeWindow, "pane": FakePad}[
+        level
+    ]
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("metadata refused")
+
+    monkeypatch.setattr(target_class, "set_option", refuse)
+    launcher = _launcher(server, FakePane(session_id="$9"))
+    with pytest.raises(
+        ClickException, match="^failed to configure chat pane:"
+    ) as error:
+        _place(monkeypatch, launcher, thread_id="term_x")
+
+    assert "metadata refused" in str(error.value)
+    assert server.sessions[0].windows[0].panes
+    assert not server.switched
+    assert capsys.readouterr().out == ""
+
+
 @pytest.mark.parametrize("live_pad", [True, False])
 def test_failed_selection_keeps_prepared_target_and_reports_location(
     monkeypatch: pytest.MonkeyPatch,

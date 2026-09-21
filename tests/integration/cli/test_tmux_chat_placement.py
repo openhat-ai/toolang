@@ -328,6 +328,7 @@ def test_failed_child_retains_error_and_explicit_retry_reuses_pane(
         )
         agent.set_option(MARK_AGENT, "eve")
         if missing == "pane":
+            agent.active_window.rename_window("retained-chat")
             agent.active_window.set_option(MARK_THREAD, "term_x")
     launcher = Launcher(agent="eve", _server=cast(Any, server), _pane=cast(Any, source))
     argv = [
