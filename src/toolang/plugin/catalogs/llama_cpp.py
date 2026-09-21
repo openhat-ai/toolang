@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
+from urllib.parse import urlencode
 
 import httpx
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
-    Model,
-    ModelCatalogSnapshot,
-    ModelToolang,
+    CatalogModel,
+    CatalogSnapshot,
 )
 
 from toolang.plugin.values import (
@@ -25,6 +25,9 @@ from toolang.plugin.values import (
 from ._local import (
     LOCAL_ZERO_COST,
     config_environ,
+    config_endpoint,
+    config_headers,
+    positive_count,
     config_timeout,
     local_snapshot,
     model_entries,
@@ -42,22 +45,32 @@ class LlamaCppModelCatalog(ModelCatalog):
     endpoint: str | None = None
     timeout: float = 2.0
     name: str = "llama_cpp"
+    headers: Mapping[str, str] = field(default_factory=dict)
 
-    async def snapshot(self) -> ModelCatalogSnapshot:
+    async def snapshot(self) -> CatalogSnapshot:
         endpoint = _llama_cpp_endpoint(self.endpoint, self.environ)
         entries: tuple[tuple[str, dict[str, object]], ...] = ()
-        props: dict[str, object] = {}
+        models: tuple[CatalogModel, ...] = ()
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, headers=self.headers
+            ) as client:
                 response = await client.get(f"{endpoint}/models")
                 response.raise_for_status()
                 payload = response.json()
                 raw_models = payload.get("data") if isinstance(payload, dict) else None
                 if isinstance(raw_models, list):
                     entries = model_entries(raw_models)
-                props = await _optional_json(
-                    client, f"{_llama_cpp_host(endpoint)}/props"
-                )
+                discovered: list[CatalogModel] = []
+                for model_id, entry in entries:
+                    url = f"{_llama_cpp_host(endpoint)}/props"
+                    props = await _optional_json(
+                        client,
+                        f"{url}?{urlencode({'model': model_id, 'autoload': 'false'})}",
+                        fallback=url if len(entries) == 1 else None,
+                    )
+                    discovered.append(_llama_cpp_model(model_id, entry, props))
+                models = tuple(discovered)
         except httpx.HTTPError as exc:
             logger.debug(
                 "catalog.llama_cpp.unreachable endpoint=%s error=%s",
@@ -68,16 +81,8 @@ class LlamaCppModelCatalog(ModelCatalog):
             logger.warning(
                 "catalog.llama_cpp.invalid_response endpoint=%s error=%s",
                 endpoint,
-                exc,
+                type(exc).__name__,
             )
-        models = tuple(
-            _llama_cpp_model(
-                model_id,
-                entry,
-                props if _props_match(model_id, entries, props) else {},
-            )
-            for model_id, entry in entries
-        )
         return local_snapshot(
             provider_id="llama_cpp",
             provider_name="llama.cpp",
@@ -90,51 +95,73 @@ def _llama_cpp_model(
     model_id: str,
     entry: Mapping[str, object],
     props: Mapping[str, object],
-) -> Model:
+) -> CatalogModel:
     meta = mapping(entry.get("meta"))
     settings = mapping(props.get("default_generation_settings"))
     params = mapping(settings.get("params"))
-    context = optional_int(settings.get("n_ctx"), minimum=1) or optional_int(
-        meta.get("n_ctx_train"), minimum=1
+    context = positive_count(settings.get("n_ctx"), name="n_ctx") or positive_count(
+        meta.get("n_ctx"), name="meta.n_ctx"
     )
-    output = optional_int(params.get("n_predict"), minimum=1) or optional_int(
-        params.get("max_tokens"), minimum=1
+    if (
+        "n_predict" in params
+        and "max_tokens" in params
+        and params["n_predict"] != params["max_tokens"]
+    ):
+        logger.debug("catalog.llama_cpp.prediction_alias_conflict model=%s", model_id)
+    output = positive_count(
+        params.get("n_predict", params.get("max_tokens")), name="n_predict"
     )
-    modalities = _llama_cpp_modalities(props.get("modalities"))
-    caps = mapping(props.get("chat_template_caps"))
-    tool_call = _true_capability(caps, "supports_tools", "supports_tool_calls")
+    architecture = mapping(entry.get("architecture"))
+    raw_modalities = props.get("modalities", architecture.get("input_modalities"))
+    modalities = _llama_cpp_modalities(raw_modalities)
+    caps = mapping(props.get("chat_template_caps", entry.get("chat_template_caps")))
+    tool_call = _tool_capability(caps)
     reasoning = _true_capability(
         caps,
+        "supports_reasoning_effort",
         "supports_thinking",
         "supports_reasoning",
         "supports_reasoning_content",
     )
     limit = compact_mapping({"context": context, "output": output})
-    return Model(
+    return CatalogModel(
         id=model_id,
-        _toolang=ModelToolang(provider="llama_cpp"),
+        provider_id="llama_cpp",
         name=model_id,
         description=_llama_cpp_description(meta),
         family=optional_text(meta.get("architecture"))
         or optional_text(meta.get("general_architecture")),
-        attachment="image" in modalities
-        if props.get("modalities") is not None
-        else None,
+        attachment=len(modalities) > 1 if raw_modalities is not None else None,
         reasoning=reasoning,
+        reasoning_options=({"type": "effort", "exhaustive": False},)
+        if caps.get("supports_reasoning_effort") is True
+        else None,
         tool_call=tool_call,
         structured_output=True,
         temperature=True,
-        modalities={"input": modalities, "output": ("text",)},
+        modalities={
+            "input": modalities,
+            "output": _llama_cpp_modalities(architecture.get("output_modalities")),
+        },
         limit={key: value for key, value in limit.items() if isinstance(value, int)},
         cost=dict(LOCAL_ZERO_COST),
     )
 
 
-async def _optional_json(client: httpx.AsyncClient, url: str) -> dict[str, object]:
+async def _optional_json(
+    client: httpx.AsyncClient, url: str, *, fallback: str | None = None
+) -> dict[str, object]:
     try:
         response = await client.get(url)
         response.raise_for_status()
         payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        if fallback is not None and exc.response.status_code in {404, 405}:
+            return await _optional_json(client, fallback)
+        logger.debug(
+            "catalog.llama_cpp.props_unavailable status=%s", exc.response.status_code
+        )
+        return {}
     except httpx.HTTPError as exc:
         logger.debug(
             "catalog.llama_cpp.props_unavailable url=%s error=%s",
@@ -153,8 +180,9 @@ def create_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
 
     return LlamaCppModelCatalog(
         config_environ(config),
-        endpoint=optional_text(config.get("endpoint")),
+        endpoint=config_endpoint(config),
         timeout=config_timeout(config),
+        headers=config_headers(config),
     )
 
 
@@ -175,24 +203,22 @@ def _llama_cpp_modalities(value: object) -> tuple[str, ...]:
     return tuple(modalities)
 
 
-def _props_match(
-    model_id: str,
-    entries: tuple[tuple[str, dict[str, object]], ...],
-    props: Mapping[str, object],
-) -> bool:
-    if not props:
+def _tool_capability(caps: Mapping[str, object]) -> bool | None:
+    values = [caps.get(name) for name in ("supports_tools", "supports_tool_calls")]
+    if any(value is False for value in values):
         return False
-    if len(entries) == 1:
-        return True
-    model_path = optional_text(props.get("model_path"))
-    return model_path == model_id
+    return True if all(value is True for value in values) else None
 
 
 def _true_capability(caps: Mapping[str, object], *names: str) -> bool | None:
-    values = [caps[name] for name in names if name in caps]
-    if not values:
-        return None
-    return any(value is True for value in values)
+    if any(caps.get(name) is True for name in names):
+        return True
+    explicit = [
+        caps[name]
+        for name in names
+        if name != "supports_reasoning_effort" and type(caps.get(name)) is bool
+    ]
+    return False if explicit else None
 
 
 def _llama_cpp_description(meta: Mapping[str, object]) -> str:

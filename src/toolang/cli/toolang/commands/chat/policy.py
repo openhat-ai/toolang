@@ -87,6 +87,8 @@ def validate_model_reasoning_request(
         else {}
     )
     if reasoning.effort is not None:
+        if reasoning.effort == "none" or metadata.get("exhaustive") is not True:
+            return
         raw_efforts = metadata.get("effort")
         if not isinstance(raw_efforts, list | tuple):
             return

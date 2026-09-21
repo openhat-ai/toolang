@@ -40,7 +40,7 @@ from .cache import (
     environment_identity,
     model_projection_key,
 )
-from .catalog import MergedModelCatalog
+from .catalog import MergedModelCatalog, assemble_catalog
 from .config import (
     load_agent_config,
     load_setup_config,
@@ -437,7 +437,7 @@ class SetupWatcher:
         additional = tuple(
             await asyncio.gather(
                 *(
-                    self._probe_revision(catalog.name, probe)
+                    self._probe_revision(catalog.name, assemble_catalog(probe))
                     for catalog, probe in zip(ordered, probes, strict=True)
                 )
             )

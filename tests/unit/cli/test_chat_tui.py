@@ -3077,7 +3077,11 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
                 "name": "GPT-5",
                 "provider": "openai",
                 "parameters": {
-                    "reasoning": {"effort": ["low", "high"], "applicable": True}
+                    "reasoning": {
+                        "effort": ["low", "high"],
+                        "exhaustive": True,
+                        "applicable": True,
+                    }
                 },
             },
             {
@@ -5619,7 +5623,9 @@ class FakeClient(ChatClient):
                     "ref": "openai/gpt-5",
                     "name": "GPT-5",
                     "provider": "openai",
-                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                    "parameters": {
+                        "reasoning": {"effort": ["low", "high"], "exhaustive": True}
+                    },
                 }
             ],
         }

@@ -124,8 +124,13 @@ Catalog plugins use the `toolang.model_catalog` entry-point group and implement:
 class ModelCatalog(Protocol):
     name: str
 
-    async def snapshot(self) -> ModelCatalogSnapshot: ...
+    async def snapshot(self) -> CatalogSnapshot | ModelCatalogSnapshot: ...
 ```
+
+`CatalogSnapshot`, `CatalogProvider`, and `CatalogModel` are neutral plugin
+declarations. `CatalogModel.provider_id` associates the model with its provider;
+no `_toolang` data is required. Setup translates them into internal records.
+The existing `ModelCatalogSnapshot` return type remains supported for compatibility.
 
 Built-in catalog plugins live in `toolang.plugin.catalogs`:
 
@@ -308,25 +313,23 @@ effort     = auto | LEVEL | TOKENS
 max_output = auto | TOKENS
 ```
 
-`auto` imposes no extra restriction: the model or provider applies its native
-reasoning behavior or output allowance. `effort = TOKENS` is a reasoning-token
-budget and is valid only where the model advertises budget support;
-`max_output = TOKENS` caps one call's output and must exceed an explicit
-reasoning budget. An omitted control inherits the value in effect, while `auto`
-restores native behavior and cancels an inherited value. `effort = none`
-disables reasoning, including for models that only advertise a toggle.
+Omitted controls inherit; `auto` cancels the inherited control. Automatic reasoning
+sends no control. Explicit effort, `none`, and token budgets may be attempted even
+when `reasoning_options` is missing. Enforce known constraints and exhaustive
+enumerations; adapters reject controls they cannot encode. Never silently
+downgrade a request after provider rejection.
 
-Catalog `reasoning_options` map to the canonical controls: an `effort` option
-advertises `LEVEL`, a `budget_tokens` option advertises `TOKENS`, and a `toggle`
-option advertises `none`. A toggle-only model therefore reports `none`, and
-reasoning control applies whenever the model advertises any of the three. `auto`
-is always available and never derives from the catalog.
+Explicit `max_output` takes precedence over an authored provider output option,
+clamped to the catalog route's `limit.output` when known. Otherwise start at 4096,
+cap at one quarter of known context, raise to explicit reasoning tokens + 1024,
+then clamp to the known output limit. Output must be positive and exceed explicit
+reasoning tokens. These are host policy values, never inferred service defaults
+or catalog fields. **Behavior change:** automatic cloud calls also use this policy
+instead of the advertised maximum; set `max_output` explicitly for longer output.
 
-The enumerations are evidence rather than authority: an unlisted effort level is
-rejected locally only when the source marks its enumeration exhaustive;
-otherwise it passes through and the provider decides. An output allowance of
-`auto` resolves to the catalog maximum, or is omitted when the provider treats
-omission as that same allowance.
+Adapters can implement `ModelOutputOptions.output_allowance(options)` to normalize
+authored output aliases before admission. They send the resolved allowance unchanged. Known context/input limits reserve output and an estimation
+margin; existing compaction handles input overflow. Unknown context remains unknown.
 
 Adapters translate `effort` and `budget_tokens` to their wire protocol and
 reject unsupported or conflicting combinations. A provider-native reasoning
@@ -341,18 +344,31 @@ users can also select the adapter explicitly in provider configuration.
 
 ## Local Providers
 
-Ollama and llama.cpp are catalog plugins using the same `Provider` and `Model`
-types as the static source. They publish what their endpoint reports and
-publish nothing when it cannot be reached, so every local model that appears is
-usable. An unreachable local runtime therefore has no provider row. Local models
-have explicit zero API token prices; host compute cost is outside model token
-accounting.
+Ollama and llama.cpp publish neutral catalog declarations for the configured
+service route. Confirmed positive generation allowances become `limit.output`,
+even when the API permits overrides. Unlimited or unknown values remain absent;
+training context never substitutes for deployed context.
+
+Ollama uses `/api/tags`, optionally `/api/show` and `/api/ps`: matching loaded
+`context_length` takes precedence over configured `num_ctx`; positive configured
+`num_predict` provides output allowance. llama.cpp uses `/v1/models` and optional
+model-specific `/props` with `autoload=false`: context comes from serving `n_ctx`,
+not `n_ctx_train`. Prediction settings are used only when established; the default
+`n_predict=-1` placeholder in b10566 does not reveal global server configuration.
+
+Optional detail failures retain list facts. Discovery never loads models or
+changes settings. Local models retain zero API token prices; compute cost is
+outside token accounting. Endpoint changes obtain fresh facts through existing
+setup refresh; running calls keep their published snapshot.
 
 Configure discovery independently from the resolved provider call route:
 
 ```toml
 [plugin.model_catalog.ollama]
 endpoint = "http://127.0.0.1:11434"
+timeout = 2.0
+# Optional headers authenticate discovery; they are never exported in catalog data.
+# headers = { Authorization = "Bearer ..." }
 
 [plugin.model_catalog.llama_cpp]
 endpoint = "http://127.0.0.1:8080/v1"

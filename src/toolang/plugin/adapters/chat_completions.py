@@ -24,7 +24,7 @@ from toolang.base.types.message import (
     message_summary,
 )
 from toolang.base.types.model import Model, Reasoning
-from ._payload import request_options
+from ._payload import clear_options, output_allowance, request_options
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -56,6 +56,17 @@ class ChatCompletionsModelAdapter(ModelAdapter):
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
     default_api: str | None = None
+
+    def output_allowance(self, options: Mapping[str, object]) -> int | None:
+        """Normalize this protocol's explicitly authored output allowance."""
+
+        return output_allowance(
+            options,
+            "max_completion_tokens",
+            "max_tokens",
+            "n_predict",
+            sdk_extensions=True,
+        )
 
     async def invoke(
         self,
@@ -305,10 +316,14 @@ def chat_completion_payload(
             "max_completion_tokens"
             if model._toolang.provider == "openai"
             or "max_completion_tokens" in model._toolang.route.options
+            or "max_completion_tokens" in options.get("extra_body", {})
             else "max_tokens"
         )
-        payload.pop("max_completion_tokens", None)
-        payload.pop("max_tokens", None)
+        # These compatible APIs use max_tokens, including when authored generic
+        # options were normalized from another alias before admission.
+        if model._toolang.provider in {"ollama", "llama_cpp"}:
+            field = "max_tokens"
+        clear_options(payload, "max_completion_tokens", "max_tokens", "n_predict")
         payload[field] = request.max_output_tokens
     payload["stream"] = stream
     if stream and "stream_options" not in payload:
@@ -360,6 +375,11 @@ def _apply_reasoning(
             "disabled Chat Completions reasoning conflicts with a budget"
         )
     provider = provider.lower()
+    clear_options(payload, "reasoning_effort")
+    if provider == "ollama":
+        clear_options(payload, "reasoning")
+    if provider == "llama_cpp":
+        clear_options(payload, "reasoning_budget_tokens", "thinking_budget_tokens")
     if provider == "openrouter":
         payload.pop("reasoning", None)
         payload.pop("reasoning_effort", None)
@@ -391,6 +411,11 @@ def _apply_reasoning(
         if isinstance(effort, str) and not disabled:
             payload["reasoning_effort"] = effort
         return
+    if provider == "llama_cpp" and budget is not None:
+        payload.pop("thinking_budget_tokens", None)
+        payload.pop("reasoning_effort", None)
+        payload["reasoning_budget_tokens"] = budget
+        return
     if budget is not None:
         raise ToolangError(
             f"{provider} Chat Completions does not support token budgets"
@@ -414,6 +439,7 @@ def _openai_sdk_payload(
     extension_fields = {
         "openrouter": ("reasoning",),
         "deepseek": ("thinking",),
+        "llama_cpp": ("reasoning_budget_tokens", "thinking_budget_tokens"),
     }.get(model._toolang.provider.lower(), ())
     extensions = {
         field: result.pop(field) for field in extension_fields if field in result

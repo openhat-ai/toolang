@@ -8,7 +8,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from toolang.base.protocols.model import ModelAdapter
+from toolang.base.protocols.model import ModelAdapter, ModelOutputOptions
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     Message,
@@ -117,10 +117,14 @@ def build_agic_frame(
         else None
     )
     max_output = request.max_output if request is not None else None
-    # A run that does not state a control inherits the configured default for
-    # the same model. The default request is authored policy, not catalog data.
+    # A materialized request already includes inheritance and explicit auto resets.
+    # Only legacy bindings without a request fall back to the setup default.
     default_request = run.setup.defaults.model
-    if default_request is not None and default_request.ref == resolved_model.ref:
+    if (
+        request is None
+        and default_request is not None
+        and default_request.ref == resolved_model.ref
+    ):
         if (
             reasoning is None
             and default_request.reasoning is not None
@@ -171,7 +175,16 @@ def build_agic_frame(
         for name in env_names(route.env)
         if name in run.setup.envs
     }
-    output = output_budget(resolved_model, demand=max_output, reasoning=reasoning)
+    authored_output = (
+        adapter.output_allowance(route.options)
+        if isinstance(adapter, ModelOutputOptions)
+        else None
+    )
+    output = output_budget(
+        resolved_model.limit,
+        demand=max_output if max_output is not None else authored_output,
+        reasoning=reasoning,
+    )
 
     inputs = prompting.PromptInputs(
         run.state,
@@ -213,8 +226,8 @@ def build_agic_frame(
         ),
         reasoning=reasoning,
         output_budget=output,
-        input_budget=input_budget(resolved_model, output),
-        context_capacity=context_capacity(resolved_model),
+        input_budget=input_budget(resolved_model.limit, output),
+        context_capacity=context_capacity(resolved_model.limit),
         input_overhead=text_tokens(dumps(route.options, indent=None))
         if route.options
         else 0,

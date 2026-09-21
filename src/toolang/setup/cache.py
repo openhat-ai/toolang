@@ -40,6 +40,7 @@ from toolang.common.json import dumps
 _SNAPSHOT_DECODER = msgspec.json.Decoder(ModelCatalogSnapshot)
 
 _CATALOG_KIND = "catalog"
+_CATALOG_SCHEMA = 2
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -108,10 +109,13 @@ class ModelCatalogCache:
         if not path.is_file():
             return None
         try:
-            return load_document(
+            document = load_document(
                 path,
                 kind=_CATALOG_KIND,
                 key=_file_name(name),
+            )
+            return (
+                document if document.get("catalog_schema") == _CATALOG_SCHEMA else None
             )
         except Exception:
             return None
@@ -122,7 +126,7 @@ class ModelCatalogCache:
             self._path(name),
             kind=_CATALOG_KIND,
             key=_file_name(name),
-            document=document,
+            document={**document, "catalog_schema": _CATALOG_SCHEMA},
         )
 
 
@@ -174,6 +178,7 @@ def model_projection_key(
 
     payload = {
         "schema": CACHE_SCHEMA,
+        "catalog_schema": _CATALOG_SCHEMA,
         "kind": kind,
         "scope": scope,
         "catalogs": [list(item) for item in catalog_revisions],
@@ -227,7 +232,16 @@ def _snapshot_from_document(
     require_fields(
         document,
         frozenset(
-            {"schema", "kind", "key", "revision", "providers", "models", "local"}
+            {
+                "schema",
+                "catalog_schema",
+                "kind",
+                "key",
+                "revision",
+                "providers",
+                "models",
+                "local",
+            }
         ),
         label="model context",
     )

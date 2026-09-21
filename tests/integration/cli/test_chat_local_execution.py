@@ -295,7 +295,7 @@ def test_local_chat_queries_resources_and_reconciles_model_ceiling(
         model_items = session.list_models(("test/*",))["items"]
         assert [item["ref"] for item in model_items] == [TEST_MODEL_REF]
         assert model_items[0]["price"] == {"input": None, "output": None}
-        assert model_items[0]["parameters"]["reasoning"]["applicable"] is False
+        assert model_items[0]["parameters"]["reasoning"]["applicable"] is True
         assert session.list_models(("missing/*",))["items"] == []
         assert session.list_models(("missing/*",))["default"] is None
         assert session.list_models(()) == {"default": None, "items": []}

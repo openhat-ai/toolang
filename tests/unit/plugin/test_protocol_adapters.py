@@ -1605,3 +1605,75 @@ def test_http_adapters_allow_explicit_no_auth_routes(build_headers, auth_header)
         build_headers(required, environ={"TEST_API_KEY": "secret"})[auth_header]
         == "secret"
     )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_llama_explicit_budget_and_output_replace_native_aliases(stream):
+    model = _model(provider="llama_cpp").with_route(
+        _route(
+            options={
+                "extra_body": {"n_predict": 9000, "thinking_budget_tokens": 128},
+            }
+        )
+    )
+    request = ModelCall(
+        "",
+        [Message.user("hello")],
+        max_output_tokens=4096,
+        reasoning=Reasoning(budget_tokens=2048),
+    )
+    payload = chat_completions.chat_completion_payload(model, request, stream=stream)
+    wire = chat_completions._openai_sdk_payload(model, payload)
+    assert wire["max_tokens"] == 4096
+    assert wire["extra_body"] == {"reasoning_budget_tokens": 2048}
+
+
+@pytest.mark.parametrize("effort", ["high", "none"])
+def test_ollama_explicit_effort_overrides_nested_native_reasoning(effort):
+    model = _model(provider="ollama").with_route(
+        _route(options={"extra_body": {"reasoning": {"effort": "low"}}})
+    )
+    payload = chat_completions.chat_completion_payload(
+        model, ModelCall("", [], reasoning=Reasoning(effort)), stream=False
+    )
+    assert payload["reasoning_effort"] == effort
+    assert "reasoning" not in payload["extra_body"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"max_tokens": 1000, "max_completion_tokens": 2000},
+        {"max_tokens": 1000, "extra_body": {"n_predict": 2000}},
+    ],
+)
+def test_conflicting_authored_output_aliases_fail_before_admission(options):
+    with pytest.raises(ValueError, match="conflicting"):
+        chat_completions.ChatCompletionsModelAdapter().output_allowance(options)
+
+
+def test_explicit_output_cannot_be_overridden_by_sdk_extra_body():
+    model = _model(provider="openai").with_route(
+        _route(options={"extra_body": {"max_output_tokens": 9999}})
+    )
+    payload = responses.response_payload(
+        model, ModelCall("", [], max_output_tokens=4096), stateful=False
+    )
+    assert payload["max_output_tokens"] == 4096
+    assert "max_output_tokens" not in payload["extra_body"]
+
+
+@pytest.mark.parametrize("provider", ["ollama", "llama_cpp"])
+def test_local_chat_routes_encode_output_with_the_supported_wire_field(provider):
+    model = _model(provider=provider).with_route(
+        _route(options={"extra_body": {"max_completion_tokens": 8192}})
+    )
+    adapter = chat_completions.ChatCompletionsModelAdapter()
+    allowance = adapter.output_allowance(model._toolang.route.options)
+    assert allowance == 8192
+    payload = chat_completions.chat_completion_payload(
+        model, ModelCall("", [], max_output_tokens=allowance), stream=False
+    )
+    assert payload["max_tokens"] == 8192
+    assert "max_completion_tokens" not in payload
+    assert "max_completion_tokens" not in payload["extra_body"]

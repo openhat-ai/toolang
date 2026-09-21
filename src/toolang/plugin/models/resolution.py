@@ -37,10 +37,19 @@ def model_reasoning_efforts(model: Model) -> tuple[str, ...]:
     return tuple(values)
 
 
+def model_reasoning_effort_exhaustive(model: Model) -> bool:
+    """Return whether the source explicitly closes its effort enumeration."""
+
+    return any(
+        option.get("type") == "effort" and option.get("exhaustive") is True
+        for option in model_reasoning_controls(model)
+    )
+
+
 def model_reasoning_effort_applicable(model: Model) -> bool:
     """Return whether input-level reasoning control applies to one model."""
 
-    return any(
+    return model.reasoning is not False or any(
         option.get("type") in {"effort", "budget_tokens", "toggle"}
         for option in model_reasoning_controls(model)
     )
@@ -58,7 +67,7 @@ def resolve_model_reasoning(
     budget = reasoning.budget_tokens
     if effort is None and budget is None:
         return None
-    if not model_reasoning_effort_applicable(model):
+    if model.reasoning is False and not model_reasoning_controls(model):
         raise ToolangError(f"model {model.ref} does not advertise reasoning controls")
     request: dict[str, object] = {}
     if effort is not None:
@@ -98,9 +107,7 @@ def _validate_reasoning_request(
                     allowed.append(value)
         # Catalog enumerations are evidence: they reject locally only when the
         # source marks them exhaustive. Otherwise the provider decides.
-        exhaustive = any(option.get("exhaustive") is True for option in effort_options)
-        if not options:
-            raise ToolangError(f"model {model.ref} does not advertise reasoning")
+        exhaustive = model_reasoning_effort_exhaustive(model)
         if effort != "none" and exhaustive and effort not in allowed:
             joined = ", ".join(allowed) or "none"
             raise ToolangError(
@@ -112,12 +119,7 @@ def _validate_reasoning_request(
         budget_options = tuple(
             option for option in options if option.get("type") == "budget_tokens"
         )
-        if (
-            isinstance(budget, bool)
-            or not isinstance(budget, int)
-            or budget < 0
-            or not budget_options
-        ):
+        if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
             raise ToolangError(
                 f"model {model.ref} does not advertise this reasoning token budget"
             )
@@ -130,4 +132,14 @@ def _validate_reasoning_request(
         if minimums and budget < min(minimums):
             raise ToolangError(
                 f"model {model.ref} reasoning budget must be at least {min(minimums)}"
+            )
+        maximums = tuple(
+            value
+            for option in budget_options
+            for value in (option.get("max"),)
+            if type(value) is int
+        )
+        if maximums and budget > max(maximums):
+            raise ToolangError(
+                f"model {model.ref} reasoning budget must be at most {max(maximums)}"
             )

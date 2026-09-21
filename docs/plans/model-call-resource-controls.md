@@ -42,8 +42,8 @@ Configuration is a three-way choice:
 - `auto`: send no explicit reasoning constraint. Toolang must not substitute a
   level such as `medium`.
 - `LEVEL`: pass the provider-native effort name through.
-- `TOKENS`: a reasoning token budget. It is valid only when the model
-  advertises reasoning-budget support.
+- `TOKENS`: an explicit reasoning budget; missing catalog support information
+  permits an attempt when the adapter can encode it.
 - `none` disables reasoning. For a model that only advertises a reasoning
   toggle, `none` maps to that toggle. There is no separate `enabled` control.
 - An unsupported level or an unsupported token-budget mode is an explicit
@@ -51,15 +51,13 @@ Configuration is a three-way choice:
 
 ## max_output
 
-- `auto` (the default): use the model's native maximum output allowance.
-  Resolution is `model.max_output`. If the provider treats an omitted output
-  parameter as that same allowance, the adapter omits it; otherwise the adapter
-  sends `model.max_output` explicitly.
-- `TOKENS`: a hard cap on this call's output.
-- An explicit `max_output` must leave room for an explicit reasoning budget.
-  A contradictory pair is an error, never a silent clamp.
-- Toolang does not pre-compute `min(model.max_output, remaining_context)`. A
-  call's output control never depends on the current prompt size.
+- Explicit `TOKENS` or an authored provider output option selects the allowance,
+  clamped to the known catalog route output limit.
+- Otherwise start at 4096, cap at one quarter of known context, raise to explicit
+  reasoning tokens + 1024, then clamp to the route output limit. These constants
+  are host policy, not service defaults or catalog facts.
+- Require positive output exceeding explicit reasoning tokens. Never reduce a
+  reasoning budget or adjust output silently as the prompt grows.
 
 ## Context Handling
 
@@ -76,12 +74,11 @@ ModelCall            intent only
         -> Adapter         provider mapping and provider-specific rules
 ```
 
-- When the runtime can compute the input token count reliably, it clips
-  `max_output` to satisfy the provider's context constraint, or fails when the
-  input alone exceeds capacity.
-- When it cannot, it does not invent a character-based estimate. The request
-  goes to the provider, which enforces its own context limit.
-- Adapters never implement a token-estimation heuristic.
+- Reserve the resolved output allowance and existing estimation margin against
+  known context/input limits. Compact and recheck input overflow.
+- Without context/input metadata, omit local input admission and retain bounded
+  output; the provider enforces its actual context.
+- Adapters send the admitted output allowance unchanged.
 
 ## Provider Abstraction
 
@@ -191,17 +188,16 @@ Excluded:
 
 1. `effort = auto` sends no reasoning constraint and is not mapped to a level.
 2. An inherited `effort = high` is cancelled by a call-level `effort = auto`.
-3. `effort = 8192` on a model without budget support fails explicitly.
+3. Missing budget metadata permits explicit `effort = 8192`; known restrictions
+   and unencodable controls fail explicitly.
 4. An effort level absent from a non-exhaustive catalog enumeration reaches the
    adapter unchanged; the same level is rejected when the enumeration is
    exhaustive.
 5. `effort = none` disables reasoning for both effort and toggle models.
-6. `max_output = auto` resolves to `model.max_output` or is omitted when the
-   provider treats omission as equivalent.
+6. `max_output = auto` resolves through the host policy and is sent explicitly.
 7. `max_output = 8192` caps the call; a value below the explicit reasoning
    budget fails.
-8. When the runtime has `input_tokens`, it clips `max_output` to the context
-   constraint; when it does not, the request is sent unchanged.
+8. Known input overflow triggers compaction and recheck without changing output.
 9. No run-level output limit exists in `RunLimits`, CLI, HTTP, or setup config.
 10. A terminal model step with no visible content fails with
     `EmptyModelOutput`.
@@ -212,8 +208,8 @@ Excluded:
 - Passing an unlisted effort level through moves the failure to the provider.
   That is the intended trade-off; providers whose enumeration is complete
   declare it exhaustive and keep local rejection.
-- Omission semantics differ per provider. Each adapter must state which form it
-  sends, and tests must pin it.
+- Automatic output now uses host policy for cloud routes too; longer replies
+  may require an explicit output setting.
 - Removing the run-level `output` limit changes the CLI, HTTP, and setup limit
   surfaces. The limit was never released, so no compatibility path is needed.
 - Reliable input token counts are not always available before the first call;

@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from collections.abc import Mapping
 
-from ..types.model import Model, ModelCatalogSnapshot
+from ..types.model import CatalogSnapshot, Model, ModelCatalogSnapshot
 from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
@@ -16,7 +16,7 @@ class ModelCatalog(Protocol):
 
     name: str
 
-    async def snapshot(self) -> ModelCatalogSnapshot:
+    async def snapshot(self) -> CatalogSnapshot | ModelCatalogSnapshot:
         """Return the source's current immutable snapshot."""
 
 
@@ -46,3 +46,11 @@ class ModelAdapter(Protocol):
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming model turn."""
+
+
+@runtime_checkable
+class ModelOutputOptions(Protocol):
+    """Optional adapter normalization of explicitly authored output controls."""
+
+    def output_allowance(self, options: Mapping[str, object]) -> int | None:
+        """Return the canonical explicit output allowance, rejecting conflicts."""

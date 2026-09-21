@@ -21,7 +21,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import Model, Reasoning
-from ._payload import request_options
+from ._payload import output_allowance, request_options
 from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
@@ -46,6 +46,11 @@ class MessagesModelAdapter(ModelAdapter):
     name: str = "messages"
     description: str | None = "Use the Anthropic Messages API shape."
     default_api: str | None = "https://api.anthropic.com/v1"
+
+    def output_allowance(self, options: Mapping[str, object]) -> int | None:
+        """Normalize this protocol's explicitly authored output allowance."""
+
+        return output_allowance(options, "max_tokens")
 
     async def invoke(
         self,
