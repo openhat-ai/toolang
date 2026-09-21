@@ -361,7 +361,6 @@ def serve(
 
     from toolang.up.server import resolve_serve, serve as serve_agent
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
-    from ...common import process_title
 
     launch_id = os.environ.pop(HOST_LAUNCH_ENV, None)
     layout = AgentLayout.resident(context_root(ctx), agent)
@@ -389,7 +388,6 @@ def serve(
             environ=environ,
             sandbox=sandbox,
             launch_id=launch_id,
-            on_registered=process_title.apply,
         )
     )
 

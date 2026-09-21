@@ -1,8 +1,9 @@
 # Process titles and server discovery
 
-Status: approved for implementation on 2026-09-21. Use actual command names and
-one sandbox reference. Native macOS job-name replacement remains outside this
-implementation; retain the documented platform limitation.
+Status: server discovery implemented. Process-title rewriting was withdrawn on
+2026-09-21: the CLI now preserves the interpreter's name and argv. The title
+design below is historical; sandbox identity, registration, and discovery remain
+in effect. Native executable naming is deferred to a future implementation.
 
 ## Goal and scope
 
@@ -25,7 +26,7 @@ Do not introduce a second PID registry or a separate server-management service.
   Stop uses the same lock; foreground cleanup conditionally clears the exact ref.
   Direct `_serve` currently bypasses sandbox registration.
 
-## Process title contract
+## Withdrawn process title contract
 
 Use `too[:agent] <actual-command> [arguments]` for both `too` and `toolang`,
 including module invocation. The separate `caps` executable is out of scope.

@@ -260,7 +260,6 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
         environ: Mapping[str, str],
         sandbox: str,
         launch_id: str | None = None,
-        on_registered: Any = None,
     ) -> int:
         captured["spec"] = spec
         captured["environ"] = environ

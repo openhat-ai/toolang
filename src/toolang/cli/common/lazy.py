@@ -19,8 +19,6 @@ from .help import CliCommand
 class LazyCommand(TyperCommand):
     """Expose command metadata without loading its implementation."""
 
-    on_context: Callable[[Context, list[str]], None] | None = None
-
     def __init__(
         self,
         name: str,
@@ -64,11 +62,7 @@ class LazyCommand(TyperCommand):
         """Parse one invocation with the real command."""
 
         command = inherit_ui(self.load(), parent)
-        original = list(args)
-        context = command.make_context(info_name, args, parent=parent, **extra)
-        if self.on_context is not None and not context.resilient_parsing:
-            self.on_context(context, original)
-        return context
+        return command.make_context(info_name, args, parent=parent, **extra)
 
     def shell_complete(
         self,

@@ -601,12 +601,8 @@ AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the execution core
 is shared across sandboxes.
 
-Process titles use `too[:agent] <command> [arguments]`: for example,
-`too:alice chat`, `too:alice _serve`, `too:alice serve`, and `too run task.too`.
-The actual server uses `_serve`; `serve` identifies its foreground launcher.
-Both `too` and `toolang` use this format, including non-interactive invocations.
-On macOS, the displayed command line changes, but terminals reading the native
-process name may still show `python` or `python3`.
+The CLI preserves the interpreter's process name and command-line arguments.
+Terminal conversation titles continue to use OSC independently of process names.
 
 Server discovery uses the sandbox reference under the Toolang root, independently
 of process titles. Host references validate PID and process creation time;

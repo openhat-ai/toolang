@@ -42,7 +42,6 @@ from toolang.lang.input import CallInput, parse_input
 from toolang.lang.types import display_runnable_ref
 
 from ...common.context import load_runtime_environ
-from ...common import process_title
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
 from ...common.parameters import DEVELOPMENT_WHEEL_HELP, AllowOptions, LimitOptions
@@ -352,7 +351,6 @@ def dispatch(
 ) -> int:
     """Dispatch one path-based runnable invocation."""
 
-    process_title.select(None, ["run", *argv])
     if global_args:
         echo_error(f"{prog_name} <path>.too does not support global CLI options")
         return 1
