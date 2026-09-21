@@ -28,7 +28,7 @@ PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
         "headers": {
             "HTTP-Referer": "https://toolang.ai",
             "X-OpenRouter-Title": "Toolang",
-            "X-OpenRouter-Categories": "cli-agent",
+            "X-OpenRouter-Categories": "cli-agent,personal-agent",
         },
     },
 }
