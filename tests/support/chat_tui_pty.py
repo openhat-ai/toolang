@@ -86,6 +86,17 @@ class ChatTuiPtySession:
     def send(self, value: bytes) -> None:
         os.write(self.master, value)
 
+    def wait_for_bytes(self, value: bytes, *, timeout: float = 10) -> None:
+        """Wait for terminal control bytes that the readable view strips."""
+
+        deadline = time.monotonic() + timeout
+        while value not in self.data and time.monotonic() < deadline:
+            self._read(timeout=min(0.1, max(deadline - time.monotonic(), 0)))
+            if self.process.poll() is not None:
+                self._read(timeout=0)
+                break
+        assert value in self.data, f"PTY output did not contain {value!r}"
+
     def wait_for(self, *values: str, timeout: float = 10) -> str:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:

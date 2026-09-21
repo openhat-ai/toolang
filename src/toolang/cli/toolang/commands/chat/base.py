@@ -49,6 +49,15 @@ class RunAccepted:
 
 
 @dataclass(frozen=True, slots=True)
+class ThreadTitle:
+    """A background title lookup correlated with its presentation generation."""
+
+    thread_id: str
+    generation: int
+    title: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunDisconnected:
     """The live stream was lost after the root run was accepted."""
 

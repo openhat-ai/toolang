@@ -434,67 +434,76 @@ Thread and run detail endpoints are inspection surfaces used to:
 
 They are not the primary source for the in-flight assistant reply.
 
-## Tmux Marks
+## Terminal Titles and Tmux Metadata
 
-Chat running inside a tmux pane records what it hosts, each value at the scope it
-belongs to, so a tmux-side view can read it without knowing anything about Toolang:
+Interactive chat publishes the thread title with OSC 0. In iTerm2 this sets the
+session name and window title; the tab title follows the session name by default.
+In tmux it sets `pane_title`, independently of `window_name`.
+For iTerm2, include **Session Name** in **Settings > Profiles > General > Title**
+and leave the tab title override unset to display the chat title.
+The title has no role prefix. Before the title is available, chat shows the thread
+id, or `new_chat` before the thread exists. Titles are single-line, limited to 60
+display columns, and stripped of terminal control characters.
+
+A resumed chat reads its title at startup. A new thread reads its title once the
+first run is accepted, with run end as a retry opportunity. Queries run outside
+the UI event loop; title output is flushed through the TUI's terminal output.
+Normal exit clears the title. Abrupt termination can leave the last title behind.
+
+OSC output requires TTY stdin and stdout. Files, pipes, scripted chat, and JSON
+receive no title sequences. No iTerm2 user variables or tmux passthrough are sent;
+nested terminal configurations are outside this feature's scope.
+
+In an interactive tmux pane, chat also publishes identity metadata:
 
 | option | scope | value | written |
 | --- | --- | --- | --- |
-| `@toolang_agent` | session | agent name | when `too <agent> chat` determines the agent's session |
-| `@toolang_thread_id` | window | full thread id, e.g. `term_6xp42qxg` | as soon as the thread exists: at start with `--thread`, otherwise when chat creates it |
-| `@toolang_thread_title` | window | thread title, single line, at most 60 display columns | as soon as the thread has its first run, whose input supplies the title |
-| `@toolang_pad` | pane | `chat` | when chat starts |
+| `@toolang_agent` | session | agent name | when placement determines the agent's session |
+| `@toolang_thread` | window | full thread id, e.g. `term_6xp42qxg` | once the thread exists |
+| `@toolang_pad` | pane | `chat` | when chat starts; cleared on normal exit |
 
-Each value lives at exactly one scope, because tmux inherits user options: a window
-with no value of its own reads its session's, and a pane with none reads its
-window's. The agent is session metadata, so every window in the agent's session
-reports it; the thread marks stay on the one window that shows that thread; the pad
-mark names what the pane runs. A pad is a readable and writable thread view — `chat`
-today, later `shell`, `logs` and friends, all in the same window under the same
-thread id.
+Each option has one scope. Session and window metadata survive chat exit and
+remain the source of identity, so renaming a session or window does not break
+lookup. Default names remain the agent name for sessions and the thread id for
+windows (`new_chat` until an id exists).
 
-The names follow the same convention: the agent's session is named after the agent,
-and a thread's window after its thread id — `new_chat` while a new chat has no id yet,
-the full id once chat knows it. Names and options are container state: they outlive
-chat and are never restored, because the next chat reuses the same session and window.
+Tmux placement, naming, and metadata require TTY stdin and stdout plus `TMUX` and
+`TMUX_PANE`. `TOOLANG_TMUX=0` disables all three; `false`, `no`, and `off` also
+disable them, case-insensitively. OSC titles remain enabled on a TTY independently
+of that switch. Interactive metadata writes and window renaming run in order on
+a background worker; exit skips queued writes and makes a bounded wait for pad
+cleanup. A failing tmux call does not reach the UI; `TOOLANG_TMUX_DEBUG=1` reports
+failures on stderr.
 
-Marks are best-effort, and only the pad mark ends with chat: the pane stops claiming
-to be a chat while the container keeps its name and thread. They are written only when
-the process runs inside a pane (`TMUX` and `TMUX_PANE` are set), and a failing tmux
-call never reaches the UI. `TOOLANG_TMUX_MARKS=0` disables the feature entirely, and
-`TOOLANG_TMUX_DEBUG=1` reports skipped writes on stderr.
-
-The values are not read back by the CLI: they exist for tmux. A status line can show
-the current window's thread with `#{@toolang_thread_title}`, and
-`tmux list-windows -a -F '#{window_name} #{@toolang_thread_id}'` finds the windows
-that host chat.
+`@toolang_thread_id` and `TOOLANG_TMUX_MARKS` are no longer recognized. Thread
+discovery reads only `@toolang_thread`. Chat no longer writes
+`@toolang_thread_title`; existing legacy options are left untouched.
 
 ### Recommended Configuration
 
-tmux reads none of these options by default, so `prefix w` shows only the container
-names (`term_xxx`, or `new_chat` before the thread exists). This window line keeps the
-default tree and reads the marks instead — the thread title once it exists, the thread
-id until a run has named it, the pad kind for a pane that hosts a pad, and the window
-name for anything else:
+Display the native pane title in window entries:
 
 ```tmux
-# ~/.tmux.conf
-bind -N 'Choose a window' w choose-tree -Zw -F '#{?pane_format,#{pane_index}: #{pane_current_command}#{pane_flags},#{?window_format,#{window_index}: #{?@toolang_thread_title,#{@toolang_thread_title},#{?@toolang_thread_id,#{@toolang_thread_id},#{?@toolang_pad,[#{@toolang_pad}],#{window_name}}}}#{window_flags},#{session_windows} windows#{?session_attached, (attached),}}}'
+set -g window-status-format '#I:#{pane_title}'
+set -g window-status-current-format '#I:#{pane_title}'
 ```
 
-```text
-a: 3 windows (attached)
-  0: hello world
-  1: shell
-  2: [chat]
+For a title-based `prefix w` list:
+
+```tmux
+bind -N 'Choose a window' w choose-tree -Zw -F '#{?pane_format,#{pane_index}: #{pane_title},#{?window_format,#{window_index}: #{pane_title}#{window_flags},#{session_windows} windows}}'
 ```
 
-A window line reads the active pane's pad, so `[chat]` appears before the thread
-exists. A status line reads the same values from the current window, for example
-`set -g status-right '#{?@toolang_thread_title,#{@toolang_thread_title},#{?@toolang_agent,#{@toolang_agent},}}'`;
-prefixing the session branch with `#{?@toolang_agent,#{@toolang_agent} · ,}` shows the
-agent beside the session name.
+A window displays its active pane's title. Selecting a shell pane can therefore
+change the displayed title while `@toolang_thread` still identifies the same
+thread. `allow-set-title` must be enabled for tmux to accept OSC 0. Toolang does
+not change that setting or write the user's tmux configuration.
+
+Identity lookup still uses metadata, for example:
+
+```sh
+tmux list-windows -a -F '#{window_name} #{@toolang_thread}'
+```
 
 ## Tmux Agent Sessions
 
@@ -545,6 +554,6 @@ destroyed, and the agent's session with it when that was the only window; placem
 turns `detach-on-destroy` off on the sessions it creates, so the client returns to
 the session it came from instead of being detached.
 
-Placement is best-effort and shares the marks kill switch: outside tmux, with
-`TOOLANG_TMUX_MARKS=0`, or when a tmux call fails, chat runs in the current
+Placement is best-effort: outside a TTY or tmux, with
+`TOOLANG_TMUX=0`, or when a tmux call fails, chat runs in the current
 terminal.

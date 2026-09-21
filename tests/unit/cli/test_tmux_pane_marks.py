@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import threading
+from threading import Event
 from typing import Any, cast
 
 import pytest
-from wcwidth import wcswidth
 
 from toolang.cli.common import tmux
 from toolang.cli.toolang.commands.chat.marks import ChatMarks
@@ -71,38 +70,6 @@ def _boom() -> tmux.TmuxPane:
     raise AssertionError("pane factory must not be called")
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    (
-        ("hello world", "hello world"),
-        ("  hello \n\t world  ", "hello world"),
-        ("one\n\ntwo", "one two"),
-        ("", ""),
-    ),
-)
-def test_clip_title_collapses_whitespace(text: str, expected: str) -> None:
-    assert tmux.clip_title(text) == expected
-
-
-def test_clip_title_keeps_a_title_that_fits() -> None:
-    text = "x" * tmux.TITLE_WIDTH
-
-    assert tmux.clip_title(text) == text
-
-
-def test_clip_title_counts_wide_characters_as_two_columns() -> None:
-    text = "整理思路" * 40
-
-    clipped = tmux.clip_title(text)
-
-    assert clipped.endswith(tmux.ELLIPSIS)
-    assert wcswidth(clipped) <= tmux.TITLE_WIDTH
-
-
-def test_clip_title_handles_a_zero_width() -> None:
-    assert tmux.clip_title("anything", width=0) == ""
-
-
 def test_resolve_marks_without_tmux_reads_no_pane() -> None:
     assert tmux.resolve_marks(environment={}, pane_factory=_boom) is None
 
@@ -115,7 +82,7 @@ def test_resolve_marks_without_a_pane_variable_reads_no_pane() -> None:
 
 
 def test_resolve_marks_honours_the_disable_switch() -> None:
-    environment = {**TMUX_ENV, tmux.MARKS_ENV: "0"}
+    environment = {**TMUX_ENV, tmux.ENABLED_ENV: "0"}
 
     assert tmux.resolve_marks(environment=environment, pane_factory=_boom) is None
 
@@ -176,8 +143,8 @@ def test_mark_scopes_are_disjoint() -> None:
     """Each mark belongs to exactly one scope."""
 
     assert tmux.MARK_PAD in tmux.PANE_MARKS
-    assert tmux.MARK_THREAD_ID in tmux.WINDOW_MARKS
-    assert tmux.MARK_THREAD_TITLE in tmux.WINDOW_MARKS
+    assert tmux.MARK_THREAD in tmux.WINDOW_MARKS
+    assert tmux.WINDOW_MARKS == {"@toolang_thread"}
     assert tmux.MARK_AGENT not in tmux.PANE_MARKS | tmux.WINDOW_MARKS
 
 
@@ -187,11 +154,11 @@ def test_marks_write_once_per_value_at_its_own_scope() -> None:
 
     marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
     marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
-    marks.set(tmux.MARK_THREAD_ID, "")
-    marks.set(tmux.MARK_THREAD_ID, "term_x")
+    marks.set(tmux.MARK_THREAD, "")
+    marks.set(tmux.MARK_THREAD, "term_x")
 
     assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
-    assert pane.window.writes == [(tmux.MARK_THREAD_ID, "term_x")]
+    assert pane.window.writes == [(tmux.MARK_THREAD, "term_x")]
 
 
 def test_marks_clear_only_what_they_wrote_at_its_scope() -> None:
@@ -199,12 +166,12 @@ def test_marks_clear_only_what_they_wrote_at_its_scope() -> None:
     marks = _marks(pane)
 
     marks.set(tmux.MARK_PAD, tmux.PAD_CHAT)
-    marks.set(tmux.MARK_THREAD_ID, "term_x")
-    marks.clear(tmux.MARK_PAD, tmux.MARK_THREAD_ID)
+    marks.set(tmux.MARK_THREAD, "term_x")
+    marks.clear(tmux.MARK_PAD, tmux.MARK_THREAD)
 
     assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
     assert pane.unset == [tmux.MARK_PAD]
-    assert pane.window.unset == [tmux.MARK_THREAD_ID]
+    assert pane.window.unset == [tmux.MARK_THREAD]
 
 
 def test_marks_name_the_container_window_once_per_name() -> None:
@@ -306,162 +273,128 @@ def test_marks_survive_a_failing_clear() -> None:
     assert attempted == [tmux.MARK_PAD]
 
 
-def test_chat_marks_publish_pad_thread_and_title() -> None:
+def test_chat_marks_publish_identity_and_clear_only_the_pad() -> None:
     pane = RecordingPane()
-    marks = ChatMarks(
-        marks=_marks(pane),
-        title_lookup=lambda thread_id: "hello world",
-    )
-
+    marks = ChatMarks(marks=_marks(pane))
     marks.start("term_x")
-
-    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
-    assert pane.window.writes == [
-        (tmux.MARK_THREAD_ID, "term_x"),
-        (tmux.MARK_THREAD_TITLE, "hello world"),
-    ]
-    assert pane.window.renames == ["term_x"]
-
-
-def test_chat_marks_publish_a_new_thread_id_before_its_title() -> None:
-    pane = RecordingPane()
-    lookups: list[str] = []
-
-    def lookup(thread_id: str) -> str | None:
-        lookups.append(thread_id)
-        return "hello world"
-
-    marks = ChatMarks(marks=_marks(pane), title_lookup=lookup)
-
-    marks.start(None)
-    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
-    assert lookups == []
-
-    marks.set_thread("term_new")
-    assert pane.window.writes[-1] == (tmux.MARK_THREAD_ID, "term_new")
-    assert pane.window.renames == ["term_new"]
-    assert lookups == []
-
-    marks.refresh_title()
-    assert pane.window.writes[-1] == (tmux.MARK_THREAD_TITLE, "hello world")
-
-    marks.refresh_title()
-    assert lookups == ["term_new"]
-
-
-def test_chat_marks_retry_a_title_that_is_not_there_yet() -> None:
-    pane = RecordingPane()
-    titles: list[str | None] = [None, "hello world"]
-    marks = ChatMarks(
-        marks=_marks(pane),
-        title_lookup=lambda thread_id: titles.pop(0),
-    )
-
-    marks.set_thread("term_new")
-    marks.refresh_title()
-    marks.refresh_title()
-
-    assert [
-        value for name, value in pane.window.writes if name == tmux.MARK_THREAD_TITLE
-    ] == ["hello world"]
-
-
-def test_chat_marks_ignore_a_failing_title_lookup() -> None:
-    pane = RecordingPane()
-
-    def lookup(thread_id: str) -> str | None:
-        raise RuntimeError("store unavailable")
-
-    marks = ChatMarks(marks=_marks(pane), title_lookup=lookup)
-
     marks.set_thread("term_x")
-    marks.refresh_title()
-
-    assert pane.window.writes == [(tmux.MARK_THREAD_ID, "term_x")]
-
-
-def test_chat_marks_clear_only_the_pad_on_exit() -> None:
-    pane = RecordingPane()
-    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda thread_id: "hello world")
-
-    marks.start("term_x")
-    marks.clear()
-
-    # the thread marks and the container name outlive chat
-    assert pane.unset == [tmux.MARK_PAD]
-    assert pane.window.unset == []
+    assert marks.active
+    assert marks.thread_id == "term_x"
+    assert pane.writes == [("@toolang_pad", "chat")]
+    assert pane.window.writes == [("@toolang_thread", "term_x")]
     assert pane.window.renames == ["term_x"]
-
-
-def test_chat_marks_rename_the_container_for_a_new_thread() -> None:
-    pane = RecordingPane()
-    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda _id: None)
-
-    marks.start("term_x")
     marks.clear()
-    marks.set_thread("term_y")
+    marks.clear()
+    marks.set_thread("term_after_exit")
+    assert pane.unset == ["@toolang_pad"]
+    assert pane.window.unset == []
+    assert pane.window.writes == [("@toolang_thread", "term_x")]
+    assert marks.thread_id is None
 
-    assert [
-        value
-        for name, value in pane.window.writes
-        if name == tmux.MARK_THREAD_ID and value
-    ] == ["term_x", "term_y"]
-    assert pane.window.renames == ["term_x", "term_y"]
+
+def test_chat_marks_publish_thread_identity_only_when_it_exists() -> None:
+    pane = RecordingPane()
+    marks = ChatMarks(marks=_marks(pane))
+    marks.start(None)
+    assert pane.writes == [("@toolang_pad", "chat")]
+    assert pane.window.writes == []
+    marks.set_thread("term_new")
+    marks.set_thread("term_other")
+    assert pane.window.writes == [
+        ("@toolang_thread", "term_new"),
+        ("@toolang_thread", "term_other"),
+    ]
+    assert pane.window.renames == ["term_new", "term_other"]
+    marks.clear()
 
 
 def test_disabled_chat_marks_do_nothing() -> None:
     marks = ChatMarks.disabled()
-
+    marks.start_background()
     marks.start("term_x")
     marks.set_thread("term_y")
-    marks.refresh_title()
     marks.clear()
-
     assert marks.active is False
     assert marks.thread_id is None
 
 
-def test_chat_marks_expose_their_state() -> None:
-    pane = RecordingPane()
-    marks = ChatMarks(marks=_marks(pane), title_lookup=lambda _id: None)
-
-    assert marks.active is True
-    marks.set_thread("term_x")
-
-    assert marks.thread_id == "term_x"
-
-
 @pytest.mark.parametrize("value", ("1", "true", "yes"))
-def test_marks_enabled_accepts_truthy_values(value: str) -> None:
-    environment: dict[str, Any] = {tmux.MARKS_ENV: value}
+def test_tmux_enabled_accepts_truthy_values(value: str) -> None:
+    environment: dict[str, Any] = {tmux.ENABLED_ENV: value}
 
-    assert tmux.marks_enabled(environment) is True
+    assert tmux.tmux_enabled(environment) is True
 
 
 @pytest.mark.parametrize("value", ("0", "false", "no", "off", "OFF"))
-def test_marks_enabled_rejects_falsy_values(value: str) -> None:
-    environment: dict[str, Any] = {tmux.MARKS_ENV: value}
+def test_tmux_enabled_rejects_falsy_values(value: str) -> None:
+    environment: dict[str, Any] = {tmux.ENABLED_ENV: value}
 
-    assert tmux.marks_enabled(environment) is False
+    assert tmux.tmux_enabled(environment) is False
 
 
-def test_scripted_chat_publishes_and_clears_the_marks(monkeypatch: Any) -> None:
-    """The non-tty chat path marks exactly like the TUI does."""
+def test_old_tmux_switch_is_not_supported() -> None:
+    assert tmux.tmux_enabled({"TOOLANG_TMUX_MARKS": "0"})
+    assert not tmux.tmux_enabled({"TOOLANG_TMUX": "0", "TOOLANG_TMUX_MARKS": "1"})
+
+
+def test_background_metadata_cleanup_follows_an_inflight_write() -> None:
+    entered, released, cleaned = Event(), Event(), Event()
+    writes: list[tuple[str, str]] = []
+
+    def set_pane(name: str, value: str) -> None:
+        entered.set()
+        assert released.wait(5)
+        writes.append((name, value))
+
+    def unset_pane(name: str) -> None:
+        writes.append((name, "unset"))
+        cleaned.set()
+
+    marks = ChatMarks(
+        marks=tmux.Marks(
+            pane_id="%1",
+            window_id="@1",
+            _set_pane=set_pane,
+            _set_window=lambda name, value: writes.append((name, value)),
+            _unset_pane=unset_pane,
+        )
+    )
+    try:
+        marks.start_background()
+        marks.start("term_x")
+        assert entered.wait(5)
+        marks.set_thread("term_y")
+        # Exit is bounded even though the worker cannot finish this write yet.
+        marks.clear()
+        assert not cleaned.is_set()
+        marks.start("term_after_exit")
+        marks.set_thread("term_after_exit")
+    finally:
+        released.set()
+        marks.clear()
+    assert cleaned.wait(5)
+    assert writes == [("@toolang_pad", "chat"), ("@toolang_pad", "unset")]
+
+
+@pytest.mark.parametrize(
+    "input_tty, output_tty", [(False, False), (True, False), (False, True)]
+)
+def test_scripted_chat_never_publishes_metadata(
+    monkeypatch: Any, input_tty: bool, output_tty: bool, capsys: Any
+) -> None:
+    """Redirected input or output must bypass tmux even inside a pane."""
 
     from contextlib import contextmanager
 
     from toolang.cli.toolang.commands.chat import main
     from toolang.execution.types import SessionSetting
 
-    pane = RecordingPane()
-    marks = _marks(pane)
-
     class Client:
         def initial_setting(self) -> SessionSetting:
             return SessionSetting(model=None, runnable=None)
 
         def thread_title(self, thread_id: str) -> str | None:
-            return "hello world"
+            raise AssertionError("scripted chat must not read terminal titles")
 
     class Layout:
         name = "c"
@@ -475,106 +408,19 @@ def test_scripted_chat_publishes_and_clears_the_marks(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(main, "context_layout", lambda _ctx: Layout())
     monkeypatch.setattr(main, "_chat_runtime", runtime)
-    monkeypatch.setattr(main, "resolve_marks", lambda **_kwargs: marks)
+    monkeypatch.setenv("TMUX", TMUX_ENV["TMUX"])
+    monkeypatch.setenv("TMUX_PANE", TMUX_ENV["TMUX_PANE"])
+
+    def no_marks(**_kwargs: Any) -> None:
+        raise AssertionError("scripted chat must not resolve tmux marks")
+
+    monkeypatch.setattr(main, "resolve_marks", no_marks)
     monkeypatch.setattr(main, "load_runtime_environ", lambda *_a, **_k: {})
     monkeypatch.setattr(main, "resolve_progress_max_width", lambda _environ: 80)
-    monkeypatch.setattr(main.sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(main.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(main.sys.stdin, "isatty", lambda: input_tty)
+    monkeypatch.setattr(main.sys.stdout, "isatty", lambda: output_tty)
     monkeypatch.setattr("builtins.input", end_input)
 
     main._chat_interactive(cast(Any, None), thread_id="term_x")
 
-    assert pane.writes == [(tmux.MARK_PAD, tmux.PAD_CHAT)]
-    assert pane.window.writes == [
-        (tmux.MARK_THREAD_ID, "term_x"),
-        (tmux.MARK_THREAD_TITLE, "hello world"),
-    ]
-    assert pane.unset == [tmux.MARK_PAD]
-    assert pane.window.unset == []
-    assert pane.window.renames == ["term_x"]
-
-
-def test_scripted_chat_publishes_the_thread_title_before_the_run_ends(
-    monkeypatch: Any,
-) -> None:
-    """A long first run must not delay the tmux thread title."""
-
-    from toolang.base.types.policy import RunPolicy
-    from toolang.cli.toolang.commands.chat import main
-    from toolang.cli.toolang.commands.chat.base import RunAccepted
-    from toolang.execution.schemas import RunRequest, RunnableRequest
-    from toolang.execution.types import SessionSetting
-
-    pane = RecordingPane()
-    accepted = threading.Event()
-    released = threading.Event()
-
-    class Client:
-        def initial_setting(self) -> SessionSetting:
-            return SessionSetting(model=None, runnable=None)
-
-        def create_thread(self) -> str:
-            return "term_new"
-
-        def thread_title(self, thread_id: str) -> str | None:
-            return "hello world"
-
-        def build_request(
-            self,
-            thread_id: str,
-            override: Any,
-            input: Any,
-            setting: SessionSetting,
-        ) -> RunRequest:
-            return RunRequest(
-                thread_id=thread_id,
-                request_id="term_request",
-                runnable=RunnableRequest("agic:chat", input),
-                model=setting.model,
-                policy=RunPolicy(),
-            )
-
-        def run(
-            self,
-            request: RunRequest,
-            on_event: Any,
-            on_error: Any,
-            on_state: Any = None,
-        ) -> None:
-            del request, on_event, on_error
-            if on_state is not None:
-                on_state(RunAccepted("run_1"))
-            accepted.set()
-            released.wait(timeout=5)
-
-    client = Client()
-    marks = ChatMarks(marks=_marks(pane), title_lookup=client.thread_title)
-    inputs = iter(("hello",))
-
-    def read(_prompt: str) -> str:
-        try:
-            return next(inputs)
-        except StopIteration:
-            raise EOFError from None
-
-    monkeypatch.setattr("builtins.input", read)
-
-    worker = threading.Thread(
-        target=main._chat_interactive_scripted_local,
-        kwargs={
-            "client": client,
-            "thread_id": None,
-            "setting": SessionSetting(model=None, runnable=None),
-            "marks": marks,
-        },
-        daemon=True,
-    )
-    worker.start()
-    try:
-        assert accepted.wait(timeout=5)
-        # the first run is still active, so its thread title must already be set
-        assert (tmux.MARK_THREAD_TITLE, "hello world") in pane.window.writes
-    finally:
-        released.set()
-        worker.join(timeout=5)
-    assert not worker.is_alive()
+    assert "\x1b]" not in capsys.readouterr().out

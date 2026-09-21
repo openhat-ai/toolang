@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
+import os
 import threading
 from typing import TypeGuard, cast
 from uuid import uuid4
@@ -66,6 +67,7 @@ from .base import (
     RunRecovered,
     SteerError,
     SteerReceipt,
+    ThreadTitle,
     as_text,
     friendly_error,
 )
@@ -82,6 +84,7 @@ from .input import (
 )
 from .policy import run_override_error, validate_model_reasoning_request
 from .presenter import ChatRunPresenter
+from .title import ChatTitle
 
 _RUN_EVENT_TYPES = (
     RunBegin,
@@ -172,6 +175,7 @@ class ChatTuiAppContext:
         if self._app.thread_id is None:
             self._app.thread_id = self._app.client.create_thread()
             self._app.marks.set_thread(self._app.thread_id)
+            self._app.title.set_thread(self._app.thread_id)
         thread_id = self._app.thread_id
         if thread_id is None:
             raise RuntimeError("failed to create chat thread")
@@ -326,6 +330,22 @@ class ChatTuiApp:
         )
         self.app.key_processor.after_key_press += self._clear_status_error_on_escape
         self.app_context: AppContext = ChatTuiAppContext(self)
+        try:
+            terminal_is_tty = os.isatty(self.app.output.fileno()) and os.isatty(
+                self.app.input.fileno()
+            )
+        except (OSError, ValueError, NotImplementedError):
+            terminal_is_tty = False
+        if not terminal_is_tty:
+            self.marks = ChatMarks.disabled()
+        self.title = ChatTitle(
+            output=self.app.output,
+            enabled=terminal_is_tty,
+            lookup=lambda thread_id: self.client.thread_title(thread_id),
+            on_result=lambda result: self._enqueue_ui_event_from_thread(
+                ChatUIEvent("thread_title", result)
+            ),
+        )
 
     def _live_blocks_container(self) -> Window:
         return Window(
@@ -446,7 +466,8 @@ class ChatTuiApp:
 
     def _enqueue_ui_event_from_thread(self, event: ChatUIEvent) -> None:
         if self.loop is not None:
-            self.loop.call_soon_threadsafe(self.ui_events.put_nowait, event)
+            with suppress(RuntimeError):
+                self.loop.call_soon_threadsafe(self.ui_events.put_nowait, event)
 
     def _invalidate_ui(self) -> None:
         if hasattr(self, "app"):
@@ -462,13 +483,16 @@ class ChatTuiApp:
             ).render(),
             hide_cursor=False,
         )
+        self.marks.start_background()
         self.marks.start(self.thread_id)
+        self.title.start(self.thread_id)
         self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
         self.status_elapsed_task = asyncio.create_task(self._refresh_status_elapsed())
         try:
             with patch_stdout(raw=True):
                 await self.app.run_async()
         finally:
+            self.title.clear()
             self.marks.clear()
             self._stop_status_activity()
             if self.status_elapsed_task is not None:
@@ -761,6 +785,8 @@ class ChatTuiApp:
             self._handle_run_error(str(event.value or "run failed"))
         elif kind == "run_state" and _is_run_state(event.value):
             self._handle_run_state(event.value)
+        elif kind == "thread_title" and isinstance(event.value, ThreadTitle):
+            self.title.accept(event.value)
         elif kind == "cancel_error":
             self._handle_cancel_error(str(event.value or "cancel request failed"))
         elif kind == "steer_error" and isinstance(event.value, SteerError):
@@ -1034,7 +1060,7 @@ class ChatTuiApp:
             self.status_bar.set_active_runnable(event.runnable)
         events.handle_run_event(event, self.app_context)
         if isinstance(event, RunEnd):
-            self.marks.refresh_title()
+            self.title.refresh()
 
     def _handle_run_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunAccepted):
@@ -1050,7 +1076,7 @@ class ChatTuiApp:
             self.active_run_id = state.run_id
             # the run is durable now, so a thread's first title can be read back
             # without waiting for the run to finish; the end-of-run read stays
-            self.marks.refresh_title()
+            self.title.refresh()
             return
         if isinstance(state, RunDisconnected):
             self.active_run_id = state.run_id

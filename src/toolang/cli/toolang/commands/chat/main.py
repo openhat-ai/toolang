@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 import os
@@ -68,7 +68,6 @@ from .base import (
     AppContext,
     ChatClient,
     ChatRunState,
-    RunAccepted,
     RunBlocked,
     RunRecovered,
     friendly_error as chat_friendly_error,
@@ -135,6 +134,8 @@ def _place_chat(
     caller must return, because the client points at another window.
     """
 
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return True
     agent = context_layout(ctx).name
     launcher = resolve_launcher(agent=agent)
     if launcher is None:
@@ -222,41 +223,30 @@ def _chat_interactive(
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
             setting = replace(setting, runnable=None)
-        marks = _chat_marks(client)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
-            marks.start(thread_id)
-            try:
-                _chat_interactive_scripted_local(
-                    client=client,
-                    thread_id=thread_id,
-                    setting=setting,
-                    marks=marks,
-                    progress_max_width=user_call(
-                        resolve_progress_max_width,
-                        load_runtime_environ(
-                            context_layout(ctx), base_environ=os.environ
-                        ),
-                    ),
-                )
-            finally:
-                marks.clear()
+            _chat_interactive_scripted_local(
+                client=client,
+                thread_id=thread_id,
+                setting=setting,
+                progress_max_width=user_call(
+                    resolve_progress_max_width,
+                    load_runtime_environ(context_layout(ctx), base_environ=os.environ),
+                ),
+            )
             return
         _chat_interactive_prompt_toolkit(
             ctx,
             thread_id=thread_id,
             setting=setting,
             client=client,
-            marks=marks,
+            marks=_chat_marks(),
         )
 
 
-def _chat_marks(client: ChatClient) -> ChatMarks:
+def _chat_marks() -> ChatMarks:
     """Marks for one chat session; disabled outside tmux."""
 
-    return ChatMarks(
-        marks=resolve_marks(),
-        title_lookup=client.thread_title,
-    )
+    return ChatMarks(marks=resolve_marks())
 
 
 @contextmanager
@@ -420,25 +410,15 @@ def _chat_interactive_scripted_local(
     client: ChatClient,
     thread_id: str | None,
     setting: SessionSetting,
-    marks: ChatMarks | None = None,
     progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
 ) -> None:
-    marks = marks if marks is not None else ChatMarks.disabled()
-    renderer = _ScriptedRunRenderer(on_run_end=marks.refresh_title)
+    renderer = _ScriptedRunRenderer()
     context = _ScriptedAppContext(
         client,
         setting=setting,
         thread_id=thread_id,
-        marks=marks,
         progress_max_width=progress_max_width,
     )
-
-    def handle_state(state: ChatRunState) -> None:
-        if isinstance(state, RunAccepted):
-            # the run is durable now, so a thread's first title can be read
-            # back without waiting for the run to finish
-            marks.refresh_title()
-        renderer.handle_state(state)
 
     def ensure_thread_id() -> str:
         existing = context.get_thread_id()
@@ -519,7 +499,7 @@ def _chat_interactive_scripted_local(
             detail = exc.message if isinstance(exc, ClickException) else str(exc)
             typer.echo(chat_friendly_error(detail), err=True)
             continue
-        client.run(request, renderer.render, errors.append, handle_state)
+        client.run(request, renderer.render, errors.append, renderer.handle_state)
         failure = errors[-1] if errors else renderer.failure
         if failure:
             typer.echo(chat_friendly_error(failure), err=True)
@@ -534,13 +514,11 @@ class _ScriptedAppContext(AppContext):
         *,
         setting: SessionSetting,
         thread_id: str | None,
-        marks: ChatMarks,
         progress_max_width: int,
     ) -> None:
         self.client = client
         self.setting = setting
         self.thread_id = thread_id
-        self.marks = marks
         self.live_blocks: list[MutableBlock] = []
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.exit_requested = False
@@ -563,7 +541,6 @@ class _ScriptedAppContext(AppContext):
     def ensure_thread_id(self) -> str:
         if self.thread_id is None:
             self.thread_id = self.client.create_thread()
-            self.marks.set_thread(self.thread_id)
         return self.thread_id
 
     def set_active_run(self, run_id: str | None) -> None:
@@ -612,8 +589,7 @@ def _echo_scripted_outcome(
 class _ScriptedRunRenderer:
     """Render assistant text from one directly traced run."""
 
-    def __init__(self, *, on_run_end: Callable[[], None] | None = None) -> None:
-        self._on_run_end = on_run_end
+    def __init__(self) -> None:
         self._assistant_open = False
         self._text_delta_steps: set[StepRef] = set()
         self._terminal: RunEnd | None = None
@@ -659,8 +635,6 @@ class _ScriptedRunRenderer:
         if isinstance(event, RunEnd):
             self._terminal = event
             self._close()
-            if self._on_run_end is not None:
-                self._on_run_end()
 
     def handle_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunBlocked):
