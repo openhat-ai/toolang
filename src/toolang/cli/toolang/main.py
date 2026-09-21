@@ -13,8 +13,9 @@ from typing import Annotated, Any
 import typer
 from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
+from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException
-from typer.core import TyperGroup
+from typer.core import TyperGroup, TyperOption
 
 from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
@@ -24,6 +25,7 @@ from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
+from ..common import process_title
 from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
@@ -226,7 +228,9 @@ def _registered_command(name: str, target: str, **kwargs: Any) -> None:
         raise RuntimeError(f"top-level command registered more than once: {name}")
 
     def create() -> LazyCommand:
-        return lazy_typer_command(name, target, **kwargs)
+        command = lazy_typer_command(name, target, **kwargs)
+        command.on_context = _title_context
+        return command
 
     _REGISTERED_COMMANDS[name] = create
 
@@ -237,9 +241,61 @@ def _registered_group(target: str, *, name: str, **kwargs: Any) -> None:
         raise RuntimeError(f"top-level command registered more than once: {name}")
 
     def create() -> LazyCommand:
-        return lazy_typer_group(name, target, **kwargs)
+        command = lazy_typer_group(name, target, **kwargs)
+        command.on_context = _title_context
+        return command
 
     _REGISTERED_COMMANDS[name] = create
+
+
+def _title_context(ctx: Context, args: list[str]) -> None:
+    """Use the already parsed command and scope, preserving its argument tail."""
+
+    state = ctx.obj
+    if not isinstance(state, CliContext) or ctx.info_name is None:
+        return
+    name = ctx.info_name
+    spec = routing.command_spec(name)
+    agent = state.layout.name if state.layout is not None else state.agent
+    if "after" in spec.targets and isinstance(ctx.params.get("agent"), str):
+        agent = agent or ctx.params["agent"]
+        # Skip known option operands to find the consumed positional selector.
+        options = {
+            opt: param
+            for param in ctx.command.get_params(ctx)
+            if isinstance(param, TyperOption)
+            for opt in (*param.opts, *param.secondary_opts)
+        }
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--":
+                index += 1
+                break
+            if token.startswith("-"):
+                option = options.get(token)
+                operands = option.nargs if option and not option.is_flag else 0
+                if (
+                    option is not None
+                    and isinstance(ctx.command, OptionalValueCommand)
+                    and ctx.command.is_optional_value(option.name or "")
+                    and (
+                        index + 1 == len(args)
+                        or (
+                            len(args[index + 1]) > 1 and args[index + 1].startswith("-")
+                        )
+                    )
+                ):
+                    operands = 0
+                index += 1 + operands
+                continue
+            break
+        if index < len(args):
+            args = [*args[:index], *args[index + 1 :]]
+    root = ctx.find_root()
+    if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
+        args = [*args, "--root", str(root.params["toolang_root"])]
+    process_title.select(agent, [name, *args], publish=name != "_serve")
 
 
 @app.callback()
@@ -613,6 +669,11 @@ routing.validate_command_registration(set(_REGISTERED_COMMANDS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    with process_title.invocation():
+        return _main(argv)
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     prog_name = _prog_name(sys.argv[0] if sys.argv else "")
     if routing.is_script_invocation(raw_args):

@@ -8,8 +8,6 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
-import shlex
-import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -26,6 +24,7 @@ from toolang.common.github import (
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
+from toolang.up.records import SandboxState
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
 
@@ -222,6 +221,7 @@ class AgentStatus:
     api_url: str | None
     webui_url: str | None
     sandbox: str | None
+    message: str | None = None
 
     @property
     def port(self) -> int | None:
@@ -241,44 +241,89 @@ class AgentProcess:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
 
+    @property
+    def reference(self) -> SandboxState | None:
+        return SandboxState.snapshot(self.layout.sandbox_state)
+
     def state(self) -> dict[str, object] | None:
-        return _load_runtime_state(self.layout.runtime_status)
+        """Return descriptive data only for the referenced workload."""
+
+        return self._report(self.reference)
+
+    def _report(self, reference: SandboxState | None) -> dict[str, object] | None:
+        report = _load_runtime_state(self.layout.runtime_status)
+        if report is None or reference is None:
+            return report
+        ref = reference.ref
+        if ref.runtime_kind == "process":
+            matches = (
+                str(report.get("pid")) == ref.runtime_id
+                and report.get("process_created") == ref.meta.get("created")
+                and isinstance(ref.meta.get("created"), (int, float))
+            )
+        else:
+            instance = report.get("sandbox_instance")
+            matches = isinstance(instance, str) and instance in {
+                ref.runtime_id,
+                ref.runtime_name,
+            }
+            if reference.sandbox.partition(":")[0] == "docker" and isinstance(
+                instance, str
+            ):
+                # Docker's guest bootstrap reports its default short hostname.
+                matches = matches or (
+                    len(instance) == 12
+                    and all(char in "0123456789abcdef" for char in instance)
+                    and ref.runtime_id.startswith(instance)
+                )
+        return report if matches else None
 
     def status(self, *, ui_base_url: str) -> AgentStatus | None:
         if not self.layout.home.is_dir():
             return None
-        runtime_state = self.state()
-        raw_endpoint = runtime_state.get("endpoint") if runtime_state else None
-        raw_status = runtime_state.get("status") if runtime_state else None
-        pid = runtime_state.get("pid") if runtime_state else None
-        sandbox = _runtime_sandbox_label(runtime_state)
-        endpoint = (
-            raw_endpoint
-            if isinstance(raw_endpoint, str) and raw_endpoint.strip()
-            else None
-        )
-        pid_alive = isinstance(pid, int) and sandbox == "host" and _pid_alive(pid)
-        scan = runtime_state is not None and raw_status == "stopped" and not pid_alive
-        process_alive = pid_alive or bool(self.pids() if scan else ())
-        status = _runtime_status_label(
-            raw_status,
-            pid_alive=process_alive,
-            sandbox_alive=_sandbox_running(self.layout),
-        )
-        if self.layout.legacy_sandbox_state.is_file():
-            status = "failed"
-        active = status in {"running", "preparing", "starting"}
+        from toolang.up.sandbox import load_state_sandbox, _health_ready
+
+        endpoint = None
+        sandbox = None
+        message = None
+        status = "stopped"
+        try:
+            reference = self.reference
+            report = self._report(reference) or {}
+            if reference is not None:
+                sandbox = reference.sandbox
+                implementation = load_state_sandbox(self.layout, reference)
+                alive = asyncio.run(implementation.running(reference.ref))
+                if alive:
+                    endpoint = reference.ref.endpoint
+                    status = (
+                        "running"
+                        if report.get("status") == "running"
+                        or _health_ready(f"{endpoint.rstrip('/')}/healthz")
+                        else "starting"
+                    )
+                elif report.get("status") == "failed":
+                    status = "failed"
+            elif report.get("status") in {"preparing", "starting", "running"}:
+                raise ValueError("active runtime report has no sandbox reference")
+            elif report.get("status") == "failed":
+                status = "failed"
+            raw_message = report.get("message")
+            message = raw_message if isinstance(raw_message, str) else None
+            if self.layout.legacy_sandbox_state.is_file():
+                raise ValueError("legacy sandbox state requires manual cleanup")
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            status, message = "failed", str(exc)
         return AgentStatus(
             name=self.layout.name,
             status=status,
-            endpoint=endpoint if active else None,
-            api_url=_api_docs_url(endpoint) if active else None,
-            webui_url=(
-                _webui_url(endpoint, ui_base_url=ui_base_url)
-                if status == "running"
-                else None
-            ),
-            sandbox=_runtime_sandbox_label(runtime_state),
+            endpoint=endpoint,
+            api_url=_api_docs_url(endpoint) if endpoint else None,
+            webui_url=_webui_url(endpoint, ui_base_url=ui_base_url)
+            if endpoint and status == "running"
+            else None,
+            sandbox=sandbox,
+            message=message,
         )
 
     @classmethod
@@ -291,9 +336,6 @@ class AgentProcess:
             for home in sorted(item for item in agents_dir.iterdir() if item.is_dir())
         )
         return tuple(status for status in statuses if status is not None)
-
-    def pids(self) -> tuple[int, ...]:
-        return _agent_runtime_process_pids(self.layout)
 
 
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
@@ -564,6 +606,7 @@ def write_runtime_state(
     started_at: str,
     pid: int | None,
     sandbox: str = "host",
+    process_created: object = None,
     sandbox_description: str | None = None,
     sandbox_instance: str | None = None,
     models: Sequence[str] | None = None,
@@ -580,6 +623,7 @@ def write_runtime_state(
         "started_at": started_at,
         "updated_at": started_at,
         "pid": pid,
+        "process_created": process_created,
         "sandbox": sandbox,
         "models": list(models or ()),
         "message": message,
@@ -673,12 +717,8 @@ def runtime_identity_row(
 ) -> tuple[str, str] | None:
     """Return one human-readable workload identity for runtime info output."""
 
-    if runtime_state is None:
-        return None
     if layout is not None:
-        from toolang.up.sandbox import SandboxState
-
-        state = SandboxState.load(layout.sandbox_state)
+        state = SandboxState.snapshot(layout.sandbox_state)
         if state is not None:
             ref = state.ref
             if ref.runtime_kind == "process":
@@ -706,51 +746,11 @@ def runtime_identity_row(
                 )
                 return "Container", value
             return "Runtime", f"{ref.runtime_kind}:{ref.runtime_id}"
-    pid = runtime_state.get("pid")
+        return None
+    pid = (runtime_state or {}).get("pid")
     if isinstance(pid, int) and pid > 0:
         return "PID", str(pid)
     return None
-
-
-def _agent_runtime_process_pids(layout: AgentLayout) -> tuple[int, ...]:
-    """Return live local runtime process ids for one agent.
-
-    Runtime state is the normal source of truth, but older or interrupted
-    remove flows can leave an orphan runtime process that continues to recreate
-    prepared files. Detect those processes before deleting or recreating homes.
-    """
-
-    try:
-        completed = subprocess.run(
-            ("ps", "-axo", "pid=,command="),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return ()
-
-    expected_root = _resolved_path_text(layout.root)
-    pids: list[int] = []
-    for raw_line in completed.stdout.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        pid_text, _, command = line.partition(" ")
-        try:
-            pid = int(pid_text)
-        except ValueError:
-            continue
-        if pid == os.getpid() or not _pid_alive(pid):
-            continue
-        if _runtime_command_matches(
-            command,
-            root=expected_root,
-            agent_name=layout.name,
-        ):
-            pids.append(pid)
-    return tuple(sorted(set(pids)))
 
 
 def _load_runtime_state(path: Path) -> dict[str, object] | None:
@@ -773,94 +773,6 @@ def _save_runtime_state(path: Path, payload: dict[str, object]) -> None:
         path,
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
-
-
-def _runtime_status_label(
-    raw_status: object, *, pid_alive: bool, sandbox_alive: bool
-) -> str:
-    if sandbox_alive:
-        return "running"
-    if isinstance(raw_status, str) and raw_status in {"preparing", "starting"}:
-        if pid_alive:
-            return raw_status
-        return "failed"
-    if pid_alive:
-        return "running"
-    if isinstance(raw_status, str) and raw_status == "failed":
-        return "failed"
-    return "stopped"
-
-
-def _runtime_sandbox_label(runtime_state: dict[str, object] | None) -> str | None:
-    if runtime_state is None:
-        return None
-    sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, str) and sandbox.strip():
-        return sandbox.strip()
-    return "host"
-
-
-def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> bool:
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
-    if not tokens:
-        return False
-
-    raw_root = _option_value(tokens, "--root")
-    if raw_root is None or _resolved_path_text(Path(raw_root)) != root:
-        return False
-
-    raw_agent = _option_value(tokens, "--agent")
-    if raw_agent == agent_name:
-        return True
-
-    for index, token in enumerate(tokens[:-1]):
-        # Recognize server processes started before the internal command rename.
-        if token in {"_serve", "serve"} and tokens[index + 1] == agent_name:
-            return True
-    return False
-
-
-def _option_value(tokens: Sequence[str], option: str) -> str | None:
-    prefix = f"{option}="
-    for index, token in enumerate(tokens):
-        if token.startswith(prefix):
-            return token.removeprefix(prefix)
-        if token == option and index + 1 < len(tokens):
-            return tokens[index + 1]
-    return None
-
-
-def _resolved_path_text(path: Path) -> str:
-    return str(path.expanduser().resolve())
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def _sandbox_running(layout: AgentLayout) -> bool:
-    from toolang.up.sandbox import SandboxState, load_state_sandbox
-
-    try:
-        state = SandboxState.load(layout.sandbox_state)
-    except ValueError:
-        return False
-    if state is None:
-        return False
-    try:
-        implementation = load_state_sandbox(layout, state)
-        return asyncio.run(implementation.running(state.ref))
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return False
 
 
 def _webui_url(endpoint: str | None, *, ui_base_url: str) -> str | None:

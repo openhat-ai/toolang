@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+import os
 import threading
 import time
 from typing import Protocol, runtime_checkable
@@ -28,6 +29,8 @@ from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_write_lock
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout
+from toolang.catalog.agent import LocalAgents
+from toolang.plugin.sandboxes.host import process_ref
 from toolang.plugin.config import (
     merge_plugin_configs,
     resolve_sandbox_binding,
@@ -47,6 +50,7 @@ from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
+HOST_ACK_TIMEOUT_SEC = 5.0
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -182,6 +186,8 @@ async def _launch_locked(
     )
     try:
         await _release_stopped_locked(spec.serve.layout)
+        if not spec.serve.layout.home.is_dir():
+            raise FileNotFoundError(f"agent not found: {spec.serve.layout.name}")
 
         name, raw_spec = _split_sandbox(spec.sandbox)
         implementation = create_sandbox(name, config=spec.config)
@@ -476,6 +482,8 @@ async def _recover_failed_launch(
     with suppress(BaseException):
         await implementation.stop(ref, force=True)
     try:
+        if await implementation.running(ref):
+            return
         await implementation.release(ref)
     except BaseException:
         return
@@ -749,13 +757,56 @@ def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
     with file_write_lock(path.with_suffix(".lock")):
         current = SandboxState.load(path)
         if current == expected:
+            from toolang.up.process import _load_runtime_state, stop_runtime_state
+
+            report = _load_runtime_state(layout.runtime_status)
+            if report and report.get("status") in {"running", "preparing", "starting"}:
+                stop_runtime_state(layout)
             path.unlink(missing_ok=True)
 
 
-async def release_for_removal(layout: AgentLayout) -> None:
-    """Release stopped sandbox resources before removing an agent home."""
+async def register_host_server(
+    layout: AgentLayout, *, endpoint: str, launch_id: str | None
+) -> SandboxRef:
+    """Confirm a managed launch, or register a direct server before preparation."""
 
-    await release_stopped(layout)
+    own = process_ref(os.getpid(), endpoint)
+    if launch_id is not None:
+        deadline = time.monotonic() + HOST_ACK_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            # The parent holds state.lock until readiness: only read atomic snapshots.
+            state = SandboxState.snapshot(layout.sandbox_state)
+            if state is not None:
+                ref = state.ref
+                if (
+                    state.sandbox == "host"
+                    and ref.runtime_id == own.runtime_id
+                    and ref.meta.get("created") == own.meta.get("created")
+                    and ref.meta.get("launch_id") == launch_id
+                ):
+                    return ref
+                raise ValueError("host launch reference does not match this server")
+            await asyncio.sleep(0.02)
+        raise TimeoutError("host launcher did not register the server")
+
+    lock_path = layout.sandbox_state.with_suffix(".lock")
+    async with _task_lock(lock_path):
+        with file_write_lock(lock_path):
+            await _release_stopped_locked(layout)
+            if not layout.home.is_dir():
+                raise FileNotFoundError(f"agent not found: {layout.name}")
+            SandboxState(sandbox="host", ref=own).save(layout.sandbox_state)
+    return own
+
+
+async def remove_agent(layout: AgentLayout) -> None:
+    """Keep the final stopped check and home deletion in one management operation."""
+
+    lock_path = layout.sandbox_state.with_suffix(".lock")
+    async with _task_lock(lock_path):
+        with file_write_lock(lock_path):
+            await _release_stopped_locked(layout)
+            LocalAgents(layout.root / "agents").remove(layout.name)
 
 
 async def release_stopped(layout: AgentLayout) -> None:
@@ -772,6 +823,13 @@ async def _release_stopped_locked(layout: AgentLayout) -> None:
     state = SandboxState.load(layout.sandbox_state)
     if state is None:
         _reject_unreferenced_staging(layout)
+        from toolang.up.process import _load_runtime_state
+
+        report = _load_runtime_state(layout.runtime_status)
+        if report and report.get("status") in {"running", "preparing", "starting"}:
+            raise ValueError(
+                "active runtime report has no sandbox reference; stop the unregistered workload first"
+            )
         return
     implementation = load_state_sandbox(layout, state)
     if await implementation.running(state.ref):

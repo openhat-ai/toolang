@@ -598,8 +598,22 @@ Behavior:
 `toolang serve` and `toolang start` resolve the same `LaunchSpec` and call the
 same sandbox lifecycle. A hidden `toolang _serve` command is the only
 AgentServer process entrypoint. The sandbox implementation launches that
-entrypoint locally, in Docker, or in another environment; the server and
-executor do not branch on sandbox.
+entrypoint locally, in Docker, or in another environment; the execution core
+is shared across sandboxes.
+
+Process titles use `too[:agent] <command> [arguments]`: for example,
+`too:alice chat`, `too:alice _serve`, `too:alice serve`, and `too run task.too`.
+The actual server uses `_serve`; `serve` identifies its foreground launcher.
+Both `too` and `toolang` use this format, including non-interactive invocations.
+On macOS, the displayed command line changes, but terminals reading the native
+process name may still show `python` or `python3`.
+
+Server discovery uses the sandbox reference under the Toolang root, independently
+of process titles. Host references validate PID and process creation time;
+container references use adapter-owned instance IDs. `info` shows the referenced
+PID or instance even during startup and ignores status reports from another
+workload. Missing or unverifiable control state produces a diagnostic instead of
+adopting a process by name. Stop unregistered legacy servers before upgrading.
 
 Both commands report the same ordered operational work on stderr: preparing the
 sandbox, creating the runtime, and connecting to the Agent API. Docker adds

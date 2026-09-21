@@ -41,12 +41,18 @@ class SandboxState:
     @classmethod
     def load(cls, path: Path) -> SandboxState | None:
         with file_write_lock(path.with_suffix(".lock")):
-            if not path.is_file():
-                return None
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(f"invalid sandbox state: {path}") from exc
+            return cls.snapshot(path)
+
+    @classmethod
+    def snapshot(cls, path: Path) -> SandboxState | None:
+        """Read an atomic reference without waiting on the launcher lock."""
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid sandbox state: {path}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"invalid sandbox state: {path}")
         version = payload.get("version")

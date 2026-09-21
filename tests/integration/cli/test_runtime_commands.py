@@ -259,6 +259,8 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
         *,
         environ: Mapping[str, str],
         sandbox: str,
+        launch_id: str | None = None,
+        on_registered: Any = None,
     ) -> int:
         captured["spec"] = spec
         captured["environ"] = environ
@@ -785,15 +787,14 @@ def test_remove_releases_sandbox_resources_before_deleting_agent(
     layout = _create_agent(root)
     calls: list[AgentLayout] = []
 
-    async def release_for_removal(target: AgentLayout) -> None:
+    original = sandbox_runtime._release_stopped_locked
+
+    async def release(target: AgentLayout) -> None:
         assert target.home.is_dir()
         calls.append(target)
+        await original(target)
 
-    monkeypatch.setattr(
-        sandbox_runtime,
-        "release_for_removal",
-        release_for_removal,
-    )
+    monkeypatch.setattr(sandbox_runtime, "_release_stopped_locked", release)
 
     result = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
 
@@ -918,3 +919,32 @@ def test_bare_dev_preserves_host_and_missing_wheel_errors(
         if sandbox == "host"
         else "No Toolang wheels found"
     ) in error
+
+
+def test_info_shows_starting_identity_without_stale_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.plugin.sandboxes.host import process_ref
+    from toolang.up.records import SandboxState
+    from toolang.up.process import write_runtime_state
+
+    root = tmp_path / "toolang"
+    layout = _create_agent(root)
+    ref = process_ref(os.getpid(), "http://localhost:8123")
+    SandboxState("host", ref).save(layout.sandbox_state)
+    write_runtime_state(
+        layout,
+        endpoint="http://stale.invalid:9999",
+        started_at="2000-01-01T00:00:00Z",
+        pid=os.getpid(),
+        process_created=0.0,
+    )
+    monkeypatch.setattr(sandbox_runtime, "_health_ready", lambda _url: False)
+    result = runner.invoke(cli.app, ["--root", str(root), "info", "alice"])
+    assert result.exit_code == 0, result.stderr
+    assert "starting" in result.stdout
+    assert "PID" in result.stdout and str(os.getpid()) in result.stdout
+    assert ref.endpoint in result.stdout
+    assert "stale.invalid" not in result.stdout
+    assert "2000-01-01" not in result.stdout
+    assert "Started" not in result.stdout and "WebUI" not in result.stdout

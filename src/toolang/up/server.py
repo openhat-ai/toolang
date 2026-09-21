@@ -173,9 +173,24 @@ def serve(
     *,
     environ: Mapping[str, str],
     sandbox: str,
+    launch_id: str | None = None,
+    on_registered: Callable[[], None] | None = None,
 ) -> int:
     """Run one AgentServer as the current process's primary workload."""
 
+    from toolang.up.sandbox import register_host_server
+
+    host_ref = (
+        asyncio.run(
+            register_host_server(
+                spec.layout, endpoint=spec.endpoint, launch_id=launch_id
+            )
+        )
+        if sandbox == "host"
+        else None
+    )
+    if on_registered is not None:
+        on_registered()
     _restore_termination_signal_defaults()
     runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
     configure_logging(spec=runtime_log_spec, environ=environ)
@@ -225,6 +240,9 @@ def serve(
                 pid=os.getpid(),
                 models=current_setup().models.refs(),
                 sandbox=sandbox,
+                process_created=host_ref.meta.get("created")
+                if host_ref is not None
+                else None,
                 sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                 sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
             )

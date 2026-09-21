@@ -258,6 +258,61 @@ def test_host_launch_cancellation_waits_for_creation_and_stops_the_process(
     assert stopped == [process.pid]
 
 
+def test_host_launch_identity_failure_stops_created_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True,
+    )
+    output = tmp_path / "output.log"
+    output.touch()
+    workload = host_sandbox._HostWorkload(process, output)
+    monkeypatch.setattr(host_sandbox, "_launch", lambda _plan: workload)
+
+    def fail(*args: object, **kwargs: object) -> SandboxRef:
+        raise ValueError("cannot inspect host process")
+
+    monkeypatch.setattr(host_sandbox, "_process_ref", fail)
+    sandbox = create_sandbox("host", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    try:
+        with pytest.raises(ValueError, match="cannot inspect"):
+            asyncio.run(sandbox.launch(plan))
+        assert process.poll() is not None
+        assert not output.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("operation", ["running", "stop", "release"])
+def test_host_cached_workload_rejects_stale_reference(
+    tmp_path: Path, operation: str
+) -> None:
+    sandbox = host_sandbox.HostSandbox({})
+    plan = replace(
+        sandbox.prepare(None, _request(tmp_path, foreground=True)),
+        command=(sys.executable, "-c", "import time; time.sleep(30)"),
+    )
+    ref = asyncio.run(sandbox.launch(plan))
+    stale = replace(ref, meta={**ref.meta, "created": 0.0})
+    workload = sandbox._processes[int(ref.runtime_id)]
+    try:
+        if operation == "running":
+            assert not asyncio.run(sandbox.running(stale))
+        elif operation == "stop":
+            asyncio.run(sandbox.stop(stale, force=True))
+            assert asyncio.run(sandbox.running(ref))
+        else:
+            asyncio.run(sandbox.release(stale))
+            assert workload.output_path is not None and workload.output_path.exists()
+    finally:
+        asyncio.run(sandbox.stop(ref, force=True))
+        asyncio.run(sandbox.release(ref))
+
+
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

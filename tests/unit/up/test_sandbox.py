@@ -328,17 +328,19 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
         lambda _layout, _state: implementation,
     )
     layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
     sandbox.SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
     ).save(layout.sandbox_state)
 
-    asyncio.run(sandbox.release_for_removal(layout))
+    asyncio.run(sandbox.remove_agent(layout))
 
     assert ("release", SandboxRef("toolang-alice-test", "http://localhost:8123")) in (
         implementation.calls
     )
     assert sandbox.SandboxState.load(layout.sandbox_state) is None
+    assert not layout.home.exists()
 
 
 def test_release_stopped_rejects_a_workload_that_became_active(
@@ -480,7 +482,7 @@ def test_stop_handle_does_not_stop_without_current_ownership(
     )
 
 
-def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(
+def test_sandbox_status_reports_plugin_recovery_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -496,7 +498,9 @@ def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(
 
     monkeypatch.setattr(sandbox, "load_state_sandbox", fail_recovery)
 
-    assert process_runtime._sandbox_running(layout) is False
+    status = process_runtime.AgentProcess(layout).status(ui_base_url="")
+    assert status is not None and status.status == "failed"
+    assert status.message == "plugin is unavailable"
 
 
 def test_launch_delegates_complete_spec_and_stop_releases_state(
@@ -862,7 +866,7 @@ def test_legacy_guest_state_blocks_launch_stop_and_removal(
     for operation in (
         lambda: sandbox.launch(spec),
         lambda: sandbox.stop(spec.serve.layout),
-        lambda: sandbox.release_for_removal(spec.serve.layout),
+        lambda: sandbox.remove_agent(spec.serve.layout),
     ):
         with pytest.raises(ValueError, match="legacy guest-writable sandbox state"):
             asyncio.run(operation())
@@ -885,7 +889,7 @@ def test_unreferenced_staging_blocks_launch_and_removal(
 
     for operation in (
         lambda: sandbox.launch(spec),
-        lambda: sandbox.release_for_removal(spec.serve.layout),
+        lambda: sandbox.remove_agent(spec.serve.layout),
     ):
         with pytest.raises(ValueError, match="unreferenced sandbox staging"):
             asyncio.run(operation())

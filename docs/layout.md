@@ -152,6 +152,14 @@ Key paths:
 | `tools/`       | Per-toolset plugin working directories                       |
 | `channels/`    | Per-channel plugin working directories                       |
 
+Server ownership lives separately in
+`${TOOLANG_ROOT}/.sandbox/<agent>/state.json`, the authoritative sandbox
+reference. Host references contain PID, process creation time, and signal scope;
+guest references retain the sandbox adapter's instance identity. `status.json`
+is a descriptive report and does not establish ownership. The adjacent
+`state.lock` serializes management operations and remains outside the agent home
+so removal cannot replace a lock held by another operation.
+
 
 ## Agent State
 

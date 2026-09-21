@@ -16,6 +16,9 @@ import tempfile
 import threading
 import time
 from typing import Any
+from uuid import uuid4
+
+import psutil
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
@@ -27,6 +30,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 
+HOST_LAUNCH_ENV = "TOOLANG_HOST_LAUNCH"
 HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
 _OUTPUT_POLL_SECONDS = 0.02
 _OUTPUT_CHUNK_BYTES = 64 * 1024
@@ -37,6 +41,7 @@ class _HostWorkload:
     process: subprocess.Popen[bytes]
     output_path: Path | None = None
     follow_stop: threading.Event = field(default_factory=threading.Event)
+    ref: SandboxRef | None = None
 
 
 @dataclass(slots=True)
@@ -60,6 +65,7 @@ class HostSandbox:
             raise ValueError("host sandbox does not accept a spec")
         envs = dict(request.envs)
         envs[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
+        envs[HOST_LAUNCH_ENV] = uuid4().hex
         return SandboxPlan(
             sandbox=self.name,
             command=_local_command(request.command),
@@ -77,7 +83,7 @@ class HostSandbox:
         except asyncio.CancelledError as exc:
             workload = await worker
             process = workload.process
-            ref = _process_ref(process, plan.endpoint)
+            ref = await _capture_reference(workload, plan)
             try:
                 stopped = await asyncio.to_thread(_stop_process, process, force=True)
                 if not stopped:
@@ -92,8 +98,9 @@ class HostSandbox:
             _remove_output(workload.output_path)
             raise
         process = workload.process
+        ref = await _capture_reference(workload, plan)
         self._processes[process.pid] = workload
-        return _process_ref(process, plan.endpoint)
+        return ref
 
     async def attach(
         self,
@@ -109,7 +116,7 @@ class HostSandbox:
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             return workload.process.poll() is None
         return _ref_process_running(ref, pid)
@@ -118,7 +125,7 @@ class HostSandbox:
         """Forward buffered foreground output, then wait for the process."""
 
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             if workload.output_path is not None:
                 return await _follow_workload_output(workload)
@@ -129,7 +136,7 @@ class HostSandbox:
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             stopped = await asyncio.to_thread(
                 _stop_process,
@@ -137,21 +144,20 @@ class HostSandbox:
                 force=force,
             )
         else:
-            if _pid_running(pid) and not _ref_process_running(ref, pid):
-                raise ValueError(f"host sandbox reference no longer matches pid: {pid}")
-            stopped = await asyncio.to_thread(
-                _stop_pid,
-                pid,
-                force=force,
-            )
+            stopped = await asyncio.to_thread(_stop_ref, ref, force=force)
         if not stopped:
             raise ValueError(f"agent process did not stop: {pid}; retry with --force")
 
     async def release(self, ref: SandboxRef) -> None:
-        workload = self._processes.pop(_pid(ref), None)
+        workload = self._owned_workload(ref)
         if workload is not None:
+            self._processes.pop(_pid(ref))
             workload.follow_stop.set()
             _remove_output(workload.output_path)
+
+    def _owned_workload(self, ref: SandboxRef) -> _HostWorkload | None:
+        workload = self._processes.get(_pid(ref))
+        return workload if workload is not None and workload.ref == ref else None
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -300,15 +306,57 @@ def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:
     return (sys.executable, "-m", "toolang.cli.toolang", *command[1:])
 
 
-def _process_ref(process: subprocess.Popen[bytes], endpoint: str) -> SandboxRef:
-    identity = _process_identity(process.pid)
+async def _capture_reference(workload: _HostWorkload, plan: SandboxPlan) -> SandboxRef:
+    try:
+        workload.ref = _process_ref(
+            workload.process, plan.endpoint, launch_id=plan.envs.get(HOST_LAUNCH_ENV)
+        )
+        return workload.ref
+    except (OSError, ValueError) as exc:
+        try:
+            stopped = await asyncio.to_thread(
+                _stop_process, workload.process, force=True
+            )
+        except (OSError, ValueError):
+            stopped = False
+        if stopped:
+            _remove_output(workload.output_path)
+            raise
+        # Preserve the unverified target for diagnostics; it cannot authorize a signal.
+        raise SandboxLaunchError(
+            f"Could not identify or stop host process {workload.process.pid}: {exc}",
+            ref=SandboxRef(
+                str(workload.process.pid), plan.endpoint, runtime_kind="process"
+            ),
+        ) from exc
+
+
+def _process_ref(
+    process: subprocess.Popen[bytes], endpoint: str, *, launch_id: str | None = None
+) -> SandboxRef:
+    return process_ref(process.pid, endpoint, group=True, launch_id=launch_id)
+
+
+def process_ref(
+    pid: int, endpoint: str, *, group: bool = False, launch_id: str | None = None
+) -> SandboxRef:
+    """Capture identity independently of the process's mutable command line."""
+
+    try:
+        created = psutil.Process(pid).create_time()
+    except psutil.NoSuchProcess:
+        created = None
+    except psutil.Error as exc:
+        raise ValueError(f"cannot inspect host process {pid}: {exc}") from exc
     return SandboxRef(
-        runtime_id=str(process.pid),
+        runtime_id=str(pid),
         endpoint=endpoint,
         runtime_kind="process",
         meta={
-            "pid": process.pid,
-            **({"identity": identity} if identity is not None else {}),
+            "pid": pid,
+            "created": created,
+            "signal_scope": "process_group" if group else "process",
+            **({"launch_id": launch_id} if launch_id is not None else {}),
         },
     )
 
@@ -325,19 +373,33 @@ def _pid(ref: SandboxRef) -> int:
 
 def _pid_running(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
-    except OSError:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
         return False
-    return True
+    except psutil.Error as exc:
+        raise ValueError(f"cannot inspect host process {pid}: {exc}") from exc
 
 
 def _ref_process_running(ref: SandboxRef, pid: int) -> bool:
     if not _pid_running(pid):
         return False
+    created = ref.meta.get("created")
+    if isinstance(created, (int, float)) and not isinstance(created, bool):
+        try:
+            return psutil.Process(pid).create_time() == created
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.Error as exc:
+            raise ValueError(f"cannot inspect host process {pid}: {exc}") from exc
     expected = ref.meta.get("identity")
     if not isinstance(expected, str) or not expected:
-        return True
-    return _process_identity(pid) == expected
+        raise ValueError(f"host sandbox reference lacks process identity: {pid}")
+    actual = _process_identity(pid)
+    if actual is None:
+        if not _pid_running(pid):
+            return False
+        raise ValueError(f"cannot inspect host process identity: {pid}")
+    return actual == expected
 
 
 def _process_identity(pid: int) -> str | None:
@@ -356,32 +418,32 @@ def _process_identity(pid: int) -> str | None:
     return value or None
 
 
-def _stop_pid(pid: int, *, force: bool) -> bool:
-    if not _pid_running(pid):
-        return True
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    except PermissionError as exc:
-        raise ValueError(f"permission denied while stopping pid {pid}") from exc
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_running(pid):
+def _stop_ref(ref: SandboxRef, *, force: bool) -> bool:
+    pid = _pid(ref)
+    scope = ref.meta.get("signal_scope", "process_group")
+    if scope not in {"process", "process_group"}:
+        raise ValueError(f"invalid host signal scope: {scope}")
+    signals = [signal.SIGTERM, signal.SIGKILL] if force else [signal.SIGTERM]
+    for sig in signals:
+        if not _ref_process_running(ref, pid):
             return True
-        time.sleep(0.05)
-    if not force:
-        return False
-    try:
-        os.killpg(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-    except ProcessLookupError:
-        return True
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_running(pid):
+        try:
+            if scope == "process_group":
+                if os.getpgid(pid) != pid:
+                    raise ValueError(f"host process no longer owns its group: {pid}")
+                os.killpg(pid, sig)
+            else:
+                os.kill(pid, sig)
+        except ProcessLookupError:
             return True
-        time.sleep(0.05)
-    return not _pid_running(pid)
+        except PermissionError as exc:
+            raise ValueError(f"permission denied while stopping pid {pid}") from exc
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if not _ref_process_running(ref, pid):
+                return True
+            time.sleep(0.05)
+    return not _ref_process_running(ref, pid)
 
 
 def _stop_process(
