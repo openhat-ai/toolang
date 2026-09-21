@@ -30,7 +30,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "agic:chat",
             "scripted",
         )
-        session.wait_for_bytes(b"\x1b]2;new_chat\x07")
+        session.wait_for_bytes(b"\x1b]0;new_chat\x07")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\r")
@@ -42,13 +42,13 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
 
         assert "run_" in output
         assert "Traceback" not in output
-        session.wait_for_bytes(b"\x1b]2;hello from user\x07")
+        session.wait_for_bytes(b"\x1b]0;hello from user\x07")
 
         exit_started = time.monotonic()
         session.send(b"\x04")
         return_code = session.wait_for_exit()
         assert return_code == 0, session.output
-        assert b"\x1b]2;\x07" in session.data
+        assert b"\x1b]0;\x07" in session.data
         assert time.monotonic() - exit_started < 0.75
     finally:
         session.close()
@@ -68,7 +68,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
             "scripted",
         )
         assert "embedded" not in banner
-        session.wait_for_bytes(b"\x1b]2;new_chat\x07")
+        session.wait_for_bytes(b"\x1b]0;new_chat\x07")
 
         session.send(b"hello remote\r")
         output = session.wait_for(
@@ -78,7 +78,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
         )
         assert "run_" in output
         assert "Traceback" not in output
-        session.wait_for_bytes(b"\x1b]2;hello remote\x07")
+        session.wait_for_bytes(b"\x1b]0;hello remote\x07")
 
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output

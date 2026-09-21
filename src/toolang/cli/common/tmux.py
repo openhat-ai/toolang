@@ -8,7 +8,7 @@ no value of its own reads its session's, so the agent is visible across the whol
 session while the thread marks stay on the one window that shows it.
 
 Identity marks are user options. Terminal titles are published separately by
-chat through OSC 2; tmux views can display the native ``pane_title``.
+chat through OSC 0; tmux views can display the native ``pane_title``.
 
 Detection and targeting are delegated to ``libtmux``, which reads ``TMUX`` and
 ``TMUX_PANE`` from the environment, so this module carries no socket or protocol

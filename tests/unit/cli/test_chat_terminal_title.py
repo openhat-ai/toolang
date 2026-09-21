@@ -41,7 +41,7 @@ def test_title_clips_display_columns() -> None:
     assert clip_title("long", width=0) == ""
 
 
-def test_title_emits_only_osc_2_and_deduplicates_until_exit() -> None:
+def test_title_updates_tab_and_window_with_osc_0_until_exit() -> None:
     stream = StringIO()
     results: Queue[ThreadTitle] = Queue()
     lookups: list[str] = []
@@ -63,7 +63,7 @@ def test_title_emits_only_osc_2_and_deduplicates_until_exit() -> None:
     title.clear()
     title.refresh()
     assert stream.getvalue() == (
-        "\x1b]2;new_chat\x07\x1b]2;term_x\x07\x1b]2;修复登录问题\x07\x1b]2;\x07"
+        "\x1b]0;new_chat\x07\x1b]0;term_x\x07\x1b]0;修复登录问题\x07\x1b]0;\x07"
     )
     assert lookups == ["term_x"]
     assert results.empty()
@@ -106,10 +106,10 @@ def test_title_retries_at_next_lifecycle_event(
     )
     title.start("term_x")
     title.accept(results.get(timeout=5))
-    assert stream.getvalue() == "\x1b]2;term_x\x07"
+    assert stream.getvalue() == "\x1b]0;term_x\x07"
     title.refresh()
     title.accept(results.get(timeout=5))
-    assert stream.getvalue().endswith("\x1b]2;ready\x07")
+    assert stream.getvalue().endswith("\x1b]0;ready\x07")
     title.clear()
 
 
@@ -138,7 +138,7 @@ def test_refresh_during_a_pending_lookup_retries_after_empty_result() -> None:
         title.accept(results.get(timeout=5))
         title.accept(results.get(timeout=5))
         assert attempts == ["term_x", "term_x"]
-        assert stream.getvalue().endswith("\x1b]2;accepted\x07")
+        assert stream.getvalue().endswith("\x1b]0;accepted\x07")
     finally:
         released.set()
         title.clear()
@@ -191,5 +191,5 @@ def test_terminal_write_failure_does_not_prevent_retry() -> None:
     stream.fails = False
     title.refresh()
     title.accept(results.get(timeout=5))
-    assert stream.getvalue().endswith("\x1b]2;ready\x07")
+    assert stream.getvalue().endswith("\x1b]0;ready\x07")
     title.clear()

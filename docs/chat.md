@@ -436,8 +436,11 @@ They are not the primary source for the in-flight assistant reply.
 
 ## Terminal Titles and Tmux Metadata
 
-Interactive chat publishes the thread title with OSC 2. In iTerm2 this sets the
-terminal title; in tmux it sets `pane_title`, independently of `window_name`.
+Interactive chat publishes the thread title with OSC 0. In iTerm2 this sets the
+session name and window title; the tab title follows the session name by default.
+In tmux it sets `pane_title`, independently of `window_name`.
+For iTerm2, include **Session Name** in **Settings > Profiles > General > Title**
+and leave the tab title override unset to display the chat title.
 The title has no role prefix. Before the title is available, chat shows the thread
 id, or `new_chat` before the thread exists. Titles are single-line, limited to 60
 display columns, and stripped of terminal control characters.
@@ -493,7 +496,7 @@ bind -N 'Choose a window' w choose-tree -Zw -F '#{?pane_format,#{pane_index}: #{
 
 A window displays its active pane's title. Selecting a shell pane can therefore
 change the displayed title while `@toolang_thread` still identifies the same
-thread. `allow-set-title` must be enabled for tmux to accept OSC 2. Toolang does
+thread. `allow-set-title` must be enabled for tmux to accept OSC 0. Toolang does
 not change that setting or write the user's tmux configuration.
 
 Identity lookup still uses metadata, for example:

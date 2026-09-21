@@ -6415,7 +6415,7 @@ def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) 
             released.set()
             result = await asyncio.to_thread(results.get, True, 5)
             app.handle_ui_event(ChatUIEvent("thread_title", result))
-            assert stream.getvalue().endswith("\x1b]2;hello world\x07")
+            assert stream.getvalue().endswith("\x1b]0;hello world\x07")
             app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
             assert results.empty()
         finally:
@@ -6441,13 +6441,13 @@ def test_terminal_title_requires_tty_but_not_tmux(
 
     class Output(DummyOutput):
         def __init__(self) -> None:
-            self.titles: list[str] = []
+            self.writes: list[str] = []
 
         def fileno(self) -> int:
             return 1
 
-        def set_title(self, title: str) -> None:
-            self.titles.append(title)
+        def write_raw(self, data: str) -> None:
+            self.writes.append(data)
 
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.delenv("TMUX_PANE", raising=False)
@@ -6466,5 +6466,7 @@ def test_terminal_title_requires_tty_but_not_tmux(
         )
         app.title.start(None)
         app.title.clear()
-    assert output.titles == (["new_chat", ""] if input_tty and output_tty else [])
+    assert output.writes == (
+        ["\x1b]0;new_chat\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
+    )
     assert not app.marks.active

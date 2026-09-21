@@ -4,7 +4,7 @@ Status: approved for implementation in the accompanying pull request.
 
 ## Goal
 
-Publish chat titles through OSC 2 for direct iTerm2 use and ordinary tmux use.
+Publish chat titles through OSC 0 for direct iTerm2 use and ordinary tmux use.
 Keep existing tmux identity metadata and placement so user-renamed sessions and
 windows remain discoverable. Replace title metadata with OSC output to simplify
 display configuration. Title publication must not block TUI event processing.
@@ -16,10 +16,12 @@ This replaces only the title publication design in
 
 ### Terminal title
 
-- Send only OSC 2 (`ESC ] 2 ; title BEL`), through the terminal output owned by
+- Send only OSC 0 (`ESC ] 0 ; title BEL`), through the terminal output owned by
   the TUI, followed by a flush. Do not use patched `print()` or open `/dev/tty`.
 - Enable only for interactive chat with a TTY output. Scripted output, files,
   pipes, and JSON receive no OSC bytes. No terminal-brand detection is needed.
+- OSC 0 updates the iTerm2 session name (the default tab title) and window
+  title, and the tmux pane title. OSC 2 updates only the iTerm2 window title.
 - Emit the thread title alone, without a `[chat]` prefix or appended metadata.
   Until the title is available, use the thread id, or `new_chat` before a thread
   exists. The pane role is represented separately by `@toolang_pad=chat`.
@@ -75,7 +77,7 @@ This replaces only the title publication design in
   prevent stale queued operations from changing another thread's window.
 - Keep existing names after exit. Preserve existing command forwarding,
   placement notice, failure fallback, and `detach-on-destroy` behavior.
-- Stop publishing `@toolang_thread_title`; use OSC 2 and native `pane_title` for
+- Stop publishing `@toolang_thread_title`; use OSC 0 and native `pane_title` for
   display instead. Leave legacy title options untouched and unused. Preserve
   agent/thread metadata after chat exits; clear only the pane role marker.
 - Use `TOOLANG_TMUX=0` as the switch for tmux placement,
@@ -94,14 +96,14 @@ This replaces only the title publication design in
   and typed UI events. Keep existing local/remote title semantics.
 - `docs/chat.md`: document the three retained metadata options and use
   `pane_title` for display instead of `@toolang_thread_title`. Explain that
-  window display uses its active pane's title, OSC 2 does not rename windows,
+  window display uses its active pane's title, OSC 0 does not rename windows,
   and requires tmux `allow-set-title`; do not change user tmux configuration.
 - Existing tmux, title, TUI, and PTY tests: replace obsolete mark expectations
   and add the acceptance coverage below.
 
 ## Acceptance
 
-1. Direct iTerm2 and ordinary tmux receive the same OSC 2 payload. A tmux PTY
+1. Direct iTerm2 and ordinary tmux receive the same OSC 0 payload. A tmux PTY
    smoke check reads the new `pane_title` while `window_name` stays the thread id.
    Assert the unprefixed thread title, thread id, and `new_chat` exactly;
    normal-exit clearing emits an empty title.

@@ -131,7 +131,9 @@ class ChatTitle:
         if title == self._written:
             return True
         try:
-            self._output.set_title(title)
+            # OSC 0 updates iTerm2 tabs and windows, and tmux pane titles.
+            # Output.set_title() sends OSC 2, which leaves iTerm2 tabs unchanged.
+            self._output.write_raw(f"\x1b]0;{title}\x07")
             self._output.flush()
         except (OSError, ValueError):
             return False
