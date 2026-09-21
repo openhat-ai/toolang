@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
-import shlex
+import sqlite3
 import sys
 from typing import cast
 
@@ -23,6 +23,11 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
+from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
+from toolang.execution.store import RunStore
+from toolang.execution.threads import ThreadManager
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
@@ -35,6 +40,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
     StepRef,
+    ThreadPrefix,
 )
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
@@ -44,7 +50,8 @@ from toolang.cli.common.context import (
     ui_base_url,
     user_call,
 )
-from toolang.cli.common.execution import open_execution
+from toolang.cli.common.execution import open_execution, run_store_schema_error
+from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.agent_server import (
     AgentServerAcquisitionError,
     acquire_agent_server,
@@ -55,15 +62,10 @@ from toolang.cli.common.execution_progress.config import (
 )
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
-from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.tmux import (
-    WINDOW_NAME_FALLBACK,
-    Launcher,
-    TmuxPane,
-    TmuxWindow,
     resolve_launcher,
     resolve_marks,
 )
@@ -96,10 +98,6 @@ from .rendering import terminal_width
 from .tui import ChatTuiApp
 
 
-# A child consumes this hint before starting Chat; it must match its actual pane.
-_PLACED_PANE_ENV = "_TOOLANG_CHAT_PANE"
-
-
 def chat_command(
     ctx: typer.Context,
     thread: str | None = None,
@@ -112,8 +110,30 @@ def chat_command(
     compact_model: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    if not _place_chat(ctx, thread_id=thread_id, argv=sys.argv):
-        return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        layout = context_layout(ctx)
+        launcher = resolve_launcher(agent=layout.name)
+        if launcher is not None:
+            thread_id = user_call(_tmux_thread, layout, thread_id)
+            argv = _chat_argv(
+                layout,
+                thread_id=thread_id,
+                model_catalog=model_catalog,
+                allows=allows,
+                defaults=defaults,
+                sandbox=sandbox,
+                dev=dev,
+                limits=limits,
+                compact_model=compact_model,
+            )
+            try:
+                run_here = launcher.place_chat(
+                    thread_id=thread_id, argv=argv, directory=os.getcwd()
+                )
+            except TmuxPlacementError as exc:
+                raise ClickException(str(exc)) from exc
+            if not run_here:
+                return
     _chat_interactive(
         ctx,
         thread_id=thread_id,
@@ -127,91 +147,78 @@ def chat_command(
     )
 
 
-def _place_chat(
-    ctx: typer.Context,
-    *,
-    thread_id: str | None,
-    argv: Sequence[str],
-) -> bool:
-    """Prepare a chat target and select it only within the invoking session.
+def _tmux_thread(layout: AgentLayout, thread_id: str | None) -> str:
+    """Resolve durable identity before the launcher starts another process.
 
-    Return True to run Chat here, or False when a target elsewhere was prepared.
-    A prepared target survives skipped or failed selection.
+    Execution state is shared with hosted runtimes, just as for the other local
+    thread commands. Allocating a thread does not start an agent or model.
     """
 
-    placed_pane = os.environ.pop(_PLACED_PANE_ENV, "")
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return True
-    agent = context_layout(ctx).name
-    launcher = resolve_launcher(agent=agent)
-    if launcher is None or launcher.is_current_pane(placed_pane):
-        return True
-    # Expansion happens in the newly created pane's shell, not this process.
-    # The child enters its assigned pane directly instead of routing recursively.
-    command = f'exec env {_PLACED_PANE_ENV}="$TMUX_PANE" {shlex.join(list(argv))}'
-    directory = os.getcwd()
+    if thread_id is not None and not layout.run_store.is_file():
+        raise ClickException(f"thread not found: {thread_id}")
     try:
-        session = launcher.agent_session()
-        window = (
-            launcher.thread_window(session, thread_id)
-            if session is not None and thread_id is not None
-            else None
-        )
-        if window is not None:
-            pad = launcher.chat_pad(window)
-            created = pad is None
-            if pad is None:
-                pad = launcher.open_pad(window, command=command, directory=directory)
-            elif launcher.is_current_pane(pad.pane_id):
-                return True
-        else:
-            if session is not None and launcher.is_current(session):
-                return True
-            session, window = launcher.ensure_session(
-                command=command, directory=directory
-            )
-            if window is None:
-                window = launcher.open_window(
-                    session, command=command, directory=directory
-                )
-            if thread_id is not None:
-                launcher.mark_thread(window, thread_id)
-            launcher.name_window(window, thread_id or WINDOW_NAME_FALLBACK)
-            pad = window.panes[0]
-            created = True
-    except Exception as exc:
-        raise ClickException(f"Could not prepare tmux chat target: {exc}") from exc
-
-    _select_chat_target(launcher, window, pad, created=created)
-    return False
-
-
-def _select_chat_target(
-    launcher: Launcher, window: TmuxWindow, pane: TmuxPane, *, created: bool
-) -> None:
-    """Report a prepared target even when selection is skipped or fails."""
-
-    try:
-        session = window.session
-        location = (
-            f"session {session.session_name} ({session.session_id}), "
-            f"window {window.window_name} ({window.window_id}), pane {pane.pane_id}"
-        )
-    except Exception as exc:
+        store = RunStore(layout.run_store, read_only=thread_id is not None)
+    except RunStoreSchemaError as exc:
         raise ClickException(
-            f"Could not inspect prepared tmux chat target: {exc}"
+            run_store_schema_error(exc, path=layout.run_store)
         ) from exc
-    error: TmuxPlacementError | None = None
+    except sqlite3.Error as exc:
+        raise ClickException(f"Could not open thread store: {exc}") from exc
     try:
-        selected = launcher.select_target(window, pane=pane)
-    except TmuxPlacementError as exc:
-        selected = False
-        error = exc
-    action = "created chat pane" if created else "reused chat pane"
-    selection = "selected" if selected else "not selected"
-    print(f"↪ {action} in tmux {location}; {selection}")
-    if error is not None:
-        raise ClickException(f"{error}. The target was kept.") from error
+        if thread_id is not None:
+            if RunHistory(store).get_thread(thread_id, run_limit=0) is None:
+                raise ClickException(f"thread not found: {thread_id}")
+            return thread_id
+        return ThreadManager(store, IdIssuer(layout.id_state)).create(
+            prefix=ThreadPrefix.TERM
+        )
+    except sqlite3.Error as exc:
+        raise ClickException(f"Could not prepare chat thread: {exc}") from exc
+    finally:
+        store.close()
+
+
+def _chat_argv(
+    layout: AgentLayout,
+    *,
+    thread_id: str,
+    model_catalog: Path | None,
+    allows: list[str] | None,
+    defaults: list[str] | None,
+    sandbox: str | None,
+    dev: Path | None,
+    limits: list[str] | None,
+    compact_model: str | None,
+) -> list[str]:
+    """Re-enter Chat for the prepared layout using already parsed CLI options."""
+
+    argv = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        "--root",
+        str(layout.root),
+        f"agent:{layout.name}",
+        "chat",
+        "--thread",
+        thread_id,
+    ]
+    for option, value in (
+        ("--catalog", model_catalog),
+        ("--sandbox", sandbox),
+        ("--dev", dev),
+        ("--compact-model", compact_model),
+    ):
+        if value is not None:
+            argv.append(f"{option}={value}")
+    for option, values in (
+        ("--allow", allows),
+        ("--default", defaults),
+        ("--limit", limits),
+    ):
+        for value in values or ():
+            argv.append(f"{option}={value}")
+    return argv
 
 
 def _chat_interactive(

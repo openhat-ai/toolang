@@ -14,14 +14,12 @@ import subprocess
 import sys
 import tempfile
 import time
-from types import SimpleNamespace
 from typing import Any, cast
 
 import libtmux
 import pytest
 
-from toolang.cli.common.tmux import Launcher, MARK_AGENT, MARK_THREAD
-from toolang.cli.toolang.commands.chat import main as chat
+from toolang.cli.common.tmux import Launcher, MARK_AGENT, MARK_THREAD, MARK_PAD
 
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="tmux is not installed"
@@ -184,7 +182,6 @@ def test_same_session_selection_uses_session_id_for_a_linked_window(
         )
         assert origin.active_window.window_id == target.window_id
         assert other.active_window.window_id == other_before
-        assert not launcher.select_target(cast(Any, other.active_window))
         assert (
             tmux(server, "list-clients", "-F", "#{client_name}:#{session_id}")
             == clients_before
@@ -197,7 +194,7 @@ def test_same_session_selection_uses_session_id_for_a_linked_window(
     "missing,same_session",
     [("session", False), ("window", False), ("pane", False), ("pane", True)],
 )
-def test_missing_chat_target_starts_once_without_client_switch(
+def test_missing_chat_target_starts_once_and_enters_target(
     server: libtmux.Server,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -221,36 +218,30 @@ def test_missing_chat_target_starts_once_without_client_switch(
     assert source_session is not None
     source = source_session.active_pane
     assert source is not None
-    source_before = (source_session.active_window.window_id, source.pane_id)
-    agent_before = agent.active_window.window_id if agent else None
     before = len(tmux(server, "list-panes", "-a", "-F", "#{pane_id}"))
     monkeypatch.setenv(
         "TMUX", f"{server.socket_path},1,{str(source_session.session_id)[1:]}"
     )
     monkeypatch.setenv("TMUX_PANE", str(source.pane_id))
-    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(
-        chat, "context_layout", lambda _ctx: SimpleNamespace(name="eve")
-    )
     result = tmp_path / "child.json"
     child = tmp_path / "child.py"
     child.write_text("""import json, os, sys, time
 from pathlib import Path
 from types import SimpleNamespace
 from toolang.cli.toolang.commands.chat import main as chat
+from toolang.cli.common.tmux import resolve_marks
 chat.context_layout = lambda ctx: SimpleNamespace(name="eve")
-run_here = chat._place_chat(None, thread_id="term_x", argv=[sys.executable, *sys.argv])
-Path(sys.argv[1] + ".tmp").write_text(json.dumps({"run_here": run_here, "pane": os.environ["TMUX_PANE"], "hint_removed": chat._PLACED_PANE_ENV not in os.environ}))
+ran = []
+chat._chat_interactive = lambda *args, **kwargs: ran.append(True)
+chat.chat_command(None)
+Path(sys.argv[1] + ".tmp").write_text(json.dumps({"run_here": bool(ran), "pane": os.environ["TMUX_PANE"], "tmux": os.environ["TOOLANG_TMUX"], "marks_disabled": resolve_marks() is None}))
 Path(sys.argv[1] + ".tmp").replace(sys.argv[1])
 time.sleep(60)
 """)
+    launcher = Launcher(agent="eve", _server=cast(Any, server), _pane=cast(Any, source))
     with control_client(server, source_session) as client:
-        clients_before = tmux(
-            server, "list-clients", "-F", "#{client_name}:#{session_id}"
-        )
-        assert not chat._place_chat(
-            cast(Any, None),
+        assert not launcher.place_chat(
+            directory=str(tmp_path),
             thread_id="term_x",
             argv=[sys.executable, str(child), str(result)],
         )
@@ -261,22 +252,199 @@ time.sleep(60)
             server, "list-panes", "-a", "-F", "#{pane_id}:#{pane_current_command}"
         )
         payload = json.loads(result.read_text())
-        assert payload["run_here"] and payload["hint_removed"]
+        assert payload["run_here"] and payload["marks_disabled"]
+        assert payload["tmux"] == "0"
         assert len(tmux(server, "list-panes", "-a", "-F", "#{pane_id}")) == before + 1
-        assert (
-            tmux(server, "list-clients", "-F", "#{client_name}:#{session_id}")
-            == clients_before
+        target_session = next(
+            s
+            for s in server.sessions
+            if tmux(
+                server,
+                "display-message",
+                "-p",
+                "-t",
+                str(s.session_id),
+                "#{@toolang_agent}",
+            )
+            == ["eve"]
         )
-        assert "%session-changed" not in events(client)
-        if same_session:
-            assert source_session.active_pane is not None
-            assert source_session.active_pane.pane_id == payload["pane"]
-        else:
-            assert source_session.active_pane is not None
-            assert (
-                source_session.active_window.window_id,
-                source_session.active_pane.pane_id,
-            ) == source_before
-            if agent is not None:
-                assert agent.active_window.window_id == agent_before
+        target_window = next(
+            w
+            for w in target_session.windows
+            if tmux(
+                server,
+                "display-message",
+                "-p",
+                "-t",
+                str(w.window_id),
+                "#{@toolang_thread}",
+            )
+            == ["term_x"]
+        )
+        assert target_session.active_window.window_id == target_window.window_id
+        target_pane = target_window.active_pane
+        assert target_pane is not None
+        assert target_pane.pane_id == payload["pane"]
+        assert target_pane.show_option(MARK_PAD) == "chat"
+        assert tmux(server, "list-clients", "-F", "#{session_id}") == [
+            target_session.session_id
+        ]
+        assert ("%session-changed" in events(client)) is not same_session
         assert "created chat pane" in capsys.readouterr().out
+
+
+def wait_for_pane_exit(server: libtmux.Server, pane_id: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if tmux(server, "display-message", "-p", "-t", pane_id, "#{pane_dead}") == [
+            "1"
+        ]:
+            return
+        time.sleep(0.02)
+    pytest.fail(f"pane {pane_id} did not exit")
+
+
+@pytest.mark.parametrize("missing", ["session", "window", "pane"])
+@pytest.mark.parametrize("delay", [0, 0.2])
+def test_failed_child_retains_error_and_explicit_retry_reuses_pane(
+    server: libtmux.Server, tmp_path: Path, missing: str, delay: float
+) -> None:
+    origin = server.sessions[0]
+    source = origin.active_pane
+    assert source is not None
+    if missing != "session":
+        agent = server.new_session(
+            session_name="eve", attach=False, window_command="sleep 60"
+        )
+        agent.set_option(MARK_AGENT, "eve")
+        if missing == "pane":
+            agent.active_window.set_option(MARK_THREAD, "term_x")
+    launcher = Launcher(agent="eve", _server=cast(Any, server), _pane=cast(Any, source))
+    argv = [
+        sys.executable,
+        "-c",
+        f"import sys,time; time.sleep({delay}); print('chat-startup-failed', flush=True); sys.exit(7)",
+    ]
+    with control_client(server, origin):
+        assert not launcher.place_chat(
+            thread_id="term_x", argv=argv, directory=str(tmp_path)
+        )
+        agent = launcher.agent_session()
+        assert agent is not None
+        window = launcher.thread_window(agent, "term_x")
+        assert window is not None
+        pane = next(
+            p
+            for p in window.panes
+            if tmux(server, "display-message", "-p", "-t", p.pane_id, "#{@toolang_pad}")
+            == ["chat"]
+        )
+        wait_for_pane_exit(server, pane.pane_id)
+        assert tmux(
+            server, "display-message", "-p", "-t", pane.pane_id, "#{pane_dead_status}"
+        ) == ["7"]
+        assert "chat-startup-failed" in "\n".join(
+            tmux(server, "capture-pane", "-p", "-S", "-", "-t", pane.pane_id)
+        )
+        assert launcher.chat_pad(window) is None
+        count = len(tmux(server, "list-panes", "-a"))
+        assert not launcher.place_chat(
+            thread_id="term_x", argv=argv, directory=str(tmp_path)
+        )
+        wait_for_pane_exit(server, pane.pane_id)
+        assert len(tmux(server, "list-panes", "-a")) == count
+
+
+def test_successful_child_closes_its_pane(
+    server: libtmux.Server, tmp_path: Path
+) -> None:
+    origin = server.sessions[0]
+    source = origin.active_pane
+    assert source is not None
+    launcher = Launcher(agent="eve", _server=cast(Any, server), _pane=cast(Any, source))
+    marker = tmp_path / "exit"
+    argv = [
+        sys.executable,
+        "-c",
+        f"import pathlib,time; p=pathlib.Path({str(marker)!r});\nwhile not p.exists(): time.sleep(.02)",
+    ]
+    with control_client(server, origin) as client:
+        assert not launcher.place_chat(
+            thread_id="term_x", argv=argv, directory=str(tmp_path)
+        )
+        marker.touch()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if tmux(server, "list-sessions", "-F", "#{session_name}") == ["origin"]:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("successful Chat did not close its pane/session")
+        assert client.poll() is None
+        assert tmux(server, "list-clients", "-F", "#{session_id}") == [
+            origin.session_id
+        ]
+
+
+def test_retention_setup_failure_is_visible_and_does_not_start_chat(
+    server: libtmux.Server, tmp_path: Path
+) -> None:
+    import shlex
+
+    stub = tmp_path / "tmux"
+    stub.write_text("#!/bin/sh\necho 'retention refused' >&2\nexit 1\n")
+    stub.chmod(0o755)
+    marker = tmp_path / "started"
+    command = Launcher.chat_command(
+        [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; Path({str(marker)!r}).touch()",
+        ]
+    )
+    origin = server.sessions[0]
+    window = origin.new_window(
+        attach=False, window_shell=f"env PATH={shlex.quote(str(tmp_path))} {command}"
+    )
+    pane = window.active_pane
+    assert pane is not None
+    deadline = time.monotonic() + 5
+    output = ""
+    while time.monotonic() < deadline:
+        output = "\n".join(tmux(server, "capture-pane", "-p", "-t", str(pane.pane_id)))
+        if "press Enter to close" in output:
+            break
+        time.sleep(0.02)
+    assert "retention refused" in output and "press Enter to close" in output
+    assert not marker.exists()
+
+
+def test_cross_session_navigation_switches_only_one_shared_client(
+    server: libtmux.Server,
+) -> None:
+    origin = server.sessions[0]
+    source = origin.active_pane
+    assert source is not None
+    target = server.new_session(
+        session_name="eve", attach=False, window_command="sleep 60"
+    )
+    target.set_option(MARK_AGENT, "eve")
+    window = target.active_window
+    window.set_option(MARK_THREAD, "term_x")
+    pane = window.active_pane
+    assert pane is not None
+    pane.set_option(MARK_PAD, "chat")
+    launcher = Launcher(agent="eve", _server=cast(Any, server), _pane=cast(Any, source))
+    with (
+        control_client(server, origin) as first,
+        control_client(server, origin) as second,
+    ):
+        assert not launcher.place_chat(
+            thread_id="term_x", argv=["must-not-start"], directory="/tmp"
+        )
+        sessions = tmux(server, "list-clients", "-F", "#{session_id}")
+        assert sorted(sessions) == sorted(
+            [str(origin.session_id), str(target.session_id)]
+        )
+        notifications = [events(first), events(second)]
+        assert sum("%session-changed" in output for output in notifications) == 1

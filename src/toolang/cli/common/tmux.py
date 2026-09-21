@@ -17,7 +17,7 @@ mid-session, callers keep working and publication errors stay out of the UI.
 
 The same module also decides where a chat run happens: ``Launcher``
 resolves the agent's session in the user's server and reuses an open window.
-It selects targets only within the invoking session, without switching clients.
+It selects targets within the invoking session and switches clients across sessions.
 Placement shares the marks kill switch; creation and selection errors reach the
 launcher so it can report them at the invoking terminal.
 """
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -123,6 +124,10 @@ class TmuxPane(Protocol):
 
     def select(self) -> object: ...
 
+    def respawn(
+        self, *, shell: str | None = ..., start_directory: str | None = ...
+    ) -> object: ...
+
 
 class TmuxSession(Protocol):
     """The slice of ``libtmux.Session`` placement depends on."""
@@ -169,6 +174,8 @@ class TmuxServer(Protocol):
         start_directory: str | None = ...,
         window_command: str | None = ...,
     ) -> TmuxSession: ...
+
+    def switch_client(self, target_session: str) -> object: ...
 
 
 @dataclass(slots=True)
@@ -294,6 +301,7 @@ def resolve_marks(
             _unset_pane=_optional(pane, "unset_option"),
             _unset_window=_optional(window, "unset_option"),
             _rename_window=_optional(window, "rename_window"),
+            _named=_text(_option(window, MARK_THREAD)),
         )
     except Exception as exc:  # a pane without a usable window cannot carry marks
         _debug(f"not publishing marks: {exc}")
@@ -322,11 +330,112 @@ def sanitize_session_name(agent: str) -> str:
 
 @dataclass(slots=True)
 class Launcher:
-    """Prepare a chat target and select it only within the invoking session."""
+    """Own chat placement, target identity, process startup, and navigation."""
 
     agent: str
     _server: TmuxServer
     _pane: TmuxPane
+
+    def place_chat(
+        self, *, thread_id: str, argv: Sequence[str], directory: str
+    ) -> bool:
+        """Ensure and enter one target; return True only to run in this pane."""
+
+        command = self.chat_command(argv)
+        try:
+            session = self.agent_session()
+            window = self.thread_window(session, thread_id) if session else None
+            action = "reused"
+            if window is not None:
+                pad = self.chat_pad(window)
+                if pad is not None and self.is_current_pane(pad.pane_id):
+                    return True
+                if pad is None:
+                    # The exact thread window can use the invoking shell pane.
+                    current = next(
+                        (p for p in window.panes if self.is_current_pane(p.pane_id)),
+                        None,
+                    )
+                    if current is not None and not _text(_option(current, MARK_PAD)):
+                        return True
+                    pad = self._failed_chat_pad(window)
+                    if pad is not None:
+                        pad.respawn(shell=command, start_directory=directory)
+                        action = "restarted"
+                    else:
+                        pad = self.open_pad(
+                            window, command=command, directory=directory
+                        )
+                        action = "created"
+            else:
+                session, window = self.ensure_session(
+                    command=command, directory=directory
+                )
+                if window is None:
+                    window = self.open_window(
+                        session, command=command, directory=directory
+                    )
+                window.set_option(MARK_THREAD, thread_id)
+                window.rename_window(thread_id)
+                pad = window.panes[0]
+                action = "created"
+            pad.set_option(MARK_PAD, PAD_CHAT)
+        except Exception as exc:
+            raise TmuxPlacementError(
+                f"Could not prepare tmux chat target: {exc}"
+            ) from exc
+
+        self._enter_target(window, pad, action=action)
+        return False
+
+    @staticmethod
+    def chat_command(argv: Sequence[str]) -> str:
+        """Install failure retention in the new pane before executing Chat.
+
+        The pane ID is expanded by the new pane's shell, never by the caller.
+        Child Chat disables both placement and publication; this launcher owns
+        its identity. The process exit status remains visible to tmux.
+        """
+
+        script = (
+            'if ! tmux set-option -p -t "$TMUX_PANE" remain-on-exit failed; then '
+            "printf '%s\\n' 'Could not configure chat pane; press Enter to close.' >&2; "
+            "read -r reply; exit 1; fi; "
+            f"exec env {ENABLED_ENV}=0 {shlex.join(argv)}"
+        )
+        # Explicit POSIX shell also works when tmux's default-shell is fish.
+        return shlex.join(["/bin/sh", "-c", script])
+
+    def _enter_target(self, window: TmuxWindow, pane: TmuxPane, *, action: str) -> None:
+        try:
+            session = window.session
+            location = (
+                f"session {session.session_name} ({session.session_id}), "
+                f"window {window.window_name} ({window.window_id}), pane {pane.pane_id}"
+            )
+        except Exception as exc:
+            raise TmuxPlacementError(
+                f"Could not inspect prepared tmux chat target: {exc}"
+            ) from exc
+        try:
+            self.select_target(window, pane=pane)
+        except TmuxPlacementError as exc:
+            raise TmuxPlacementError(
+                f"{action.capitalize()} chat pane in tmux {location}; not selected. "
+                f"{exc}. The target was kept."
+            ) from exc
+        print(f"↪ {action} chat pane in tmux {location}; selected")
+
+    def _failed_chat_pad(self, window: TmuxWindow) -> TmuxPane | None:
+        return next(
+            (
+                pane
+                for pane in window.panes
+                if _text(_option(pane, MARK_PAD)) == PAD_CHAT
+                and getattr(pane, "pane_dead", "0") == "1"
+            ),
+            None,
+        )
 
     def agent_session(self) -> TmuxSession | None:
         """The agent's session: its ``@toolang_agent`` mark first, name second.
@@ -357,7 +466,7 @@ class Launcher:
         return self._current_session_id() == _text(getattr(session, "session_id", None))
 
     def is_current_pane(self, pane_id: str) -> bool:
-        """Check a child placement hint against the resolved pane."""
+        """Whether the target is the invoking pane."""
 
         return bool(pane_id) and pane_id == self._pane.pane_id
 
@@ -385,9 +494,8 @@ class Launcher:
     def chat_pad(self, window: TmuxWindow) -> TmuxPane | None:
         """The pane of ``window`` that runs a chat pad, if any.
 
-        The pad mark is cleared when chat exits, so this tells a live chat apart
-        from a thread container that outlived it. Every pane is checked, not only
-        the active one: a chat running in a background pane still means the
+        A retained failed pane keeps its mark but is not live. Every pane is
+        checked: a chat running in a background pane still means the
         thread is open, and starting a second chat there would be wrong.
         """
 
@@ -397,7 +505,10 @@ class Launcher:
             _debug(f"window panes not listed: {exc}")
             return None
         for pane in panes:
-            if _text(_option(pane, MARK_PAD)) == PAD_CHAT:
+            if (
+                _text(_option(pane, MARK_PAD)) == PAD_CHAT
+                and getattr(pane, "pane_dead", "0") != "1"
+            ):
                 return pane
         return None
 
@@ -475,7 +586,7 @@ class Launcher:
     def select_target(
         self, window: TmuxWindow, *, pane: TmuxPane | None = None
     ) -> bool:
-        """Select only within this session; never change a client's attachment.
+        """Select the target, switching one client only across sessions.
 
         A skipped or failed selection does not invalidate the prepared target.
         Qualify the window with its session so linked windows are unambiguous.
@@ -483,11 +594,18 @@ class Launcher:
 
         try:
             session = window.session
-            if not self.is_current(session):
-                return False
-            session.select_window(window.window_id)
+            if pane is not None and self.is_current_pane(pane.pane_id):
+                return True
+            current_window = getattr(self._pane, "window", None)
+            if (
+                not self.is_current(session)
+                or getattr(current_window, "window_id", None) != window.window_id
+            ):
+                session.select_window(window.window_id)
             if pane is not None:
                 pane.select()
+            if not self.is_current(session):
+                self._server.switch_client(session.session_id)
         except Exception as exc:
             raise TmuxPlacementError(
                 f"Could not select tmux chat target: {exc}"
@@ -534,7 +652,9 @@ class Launcher:
         try:
             session.set_option(SESSION_AGENT, self.agent)
         except Exception as exc:
-            _debug(f"session not marked: {exc}")
+            raise TmuxPlacementError(
+                f"Could not mark tmux agent session: {exc}"
+            ) from exc
 
     def _stay_attached(self, session: TmuxSession) -> None:
         """Keep the client in tmux when this session is destroyed.

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from toolang.cli.common import tmux
 from toolang.cli.common.errors import TmuxPlacementError
+from toolang.common.layout import AgentLayout
+from toolang.execution.inspection.history import RunHistory
+from toolang.execution.store import RunStore
 from typer._click.exceptions import ClickException
 from toolang.cli.toolang.commands.chat import main as chat
 
@@ -24,6 +27,15 @@ class FakePad:
         self.window = window
         self.options: dict[str, str] = {}
         self.selected = False
+        self.pane_dead = "0"
+        self.respawned: list[str | None] = []
+
+    def respawn(
+        self, *, shell: str | None = None, start_directory: str | None = None
+    ) -> object:
+        self.respawned.append(shell)
+        self.pane_dead = "0"
+        return self
 
     def show_option(self, option: str) -> Any:
         return self.options.get(option)
@@ -228,15 +240,16 @@ def _place(
 ) -> bool:
     """Run the chat placement decision with one fixed launcher."""
 
-    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
-    monkeypatch.setattr(chat, "resolve_launcher", lambda **_kwargs: launcher)
-    return chat._place_chat(
-        cast(Any, None),
-        thread_id=thread_id,
-        argv=["too", "eve", "chat"] if argv is None else argv,
-    )
+    if launcher is None:
+        return True
+    try:
+        return launcher.place_chat(
+            thread_id=thread_id or "term_new",
+            directory="/work",
+            argv=["too", "eve", "chat"] if argv is None else argv,
+        )
+    except TmuxPlacementError as exc:
+        raise ClickException(str(exc)) from exc
 
 
 @pytest.mark.parametrize(
@@ -427,9 +440,8 @@ def test_non_tty_chat_does_not_resolve_a_launcher(
         raise AssertionError("non-TTY chat must not resolve or mutate tmux")
 
     monkeypatch.setattr(chat, "resolve_launcher", forbidden)
-    assert chat._place_chat(
-        cast(Any, None), thread_id="term_x", argv=["too", "eve", "chat"]
-    )
+    monkeypatch.setattr(chat, "_chat_interactive", lambda *_args, **_kwargs: None)
+    chat.chat_command(cast(Any, None))
 
 
 def test_ensure_session_creates_the_agent_session_with_its_chat_window() -> None:
@@ -517,17 +529,17 @@ def test_open_window_reports_a_refused_window() -> None:
 
 
 @pytest.mark.parametrize("same_session", [True, False])
-def test_select_target_never_switches_clients(same_session: bool) -> None:
+def test_select_target_switches_only_across_sessions(same_session: bool) -> None:
     session = FakeSession("$0", "user-renamed")
     window = session.add_window(FakeWindow("@1", "renamed-thread"))
     pad = window.panes[0]
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$0" if same_session else "$9"))
 
-    assert launcher.select_target(window, pane=pad) is same_session
-    assert window.selected is same_session
-    assert pad.selected is same_session
-    assert server.switched == []
+    assert launcher.select_target(window, pane=pad) is True
+    assert window.selected is True
+    assert pad.selected is True
+    assert server.switched == ([] if same_session else ["$0"])
     assert server.attached == []
 
 
@@ -551,22 +563,23 @@ def test_place_chat_runs_in_place_outside_tmux(
     assert capsys.readouterr().out == ""
 
 
-def test_place_chat_runs_in_place_in_the_agent_session(
+def test_new_chat_creates_a_window_even_in_the_agent_session(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     session = FakeSession("$0", "eve")
     server = FakeServer([session])
     launcher = _launcher(server, FakePane(session_id="$0"))
 
-    assert _place(monkeypatch, launcher) is True
+    assert _place(monkeypatch, launcher) is False
     assert server.switched == []
     assert server.created == []
-    assert capsys.readouterr().out == ""
+    assert len(session.opened) == 1
+    assert "created chat pane" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("same_session", [True, False])
 @pytest.mark.parametrize("live_pad", [True, False])
-def test_place_chat_reuses_or_creates_pad_without_switching_clients(
+def test_place_chat_reuses_or_creates_pad_and_enters_target(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     same_session: bool,
@@ -586,13 +599,14 @@ def test_place_chat_reuses_or_creates_pad_without_switching_clients(
     assert server.created == []
     assert session.opened == []
     assert len(window.pads) == (0 if live_pad else 1)
-    assert window.selected is same_session
-    assert window.panes[-1].selected is same_session
-    assert not server.switched and not server.attached
+    assert window.selected
+    assert window.panes[-1].selected
+    assert server.switched == ([] if same_session else ["$0"])
+    assert not server.attached
     out = capsys.readouterr().out
     assert ("reused chat pane" if live_pad else "created chat pane") in out
     assert "renamed-agent ($0), window renamed-thread (@1)" in out
-    assert ("; selected" if same_session else "; not selected") in out
+    assert "; selected" in out
 
 
 @pytest.mark.parametrize("session_exists", [True, False])
@@ -615,10 +629,12 @@ def test_place_chat_creates_missing_target_detached(
     window = target.windows[-1]
     assert len(server.created) == (0 if session_exists else 1)
     assert len(target.opened) == (1 if session_exists else 0)
-    assert window.window_name == (thread_id or tmux.WINDOW_NAME_FALLBACK)
-    assert window.options.get(tmux.MARK_THREAD) == thread_id
-    assert not window.selected and not window.killed
-    assert not server.switched and not server.attached
+    assert window.window_name == (thread_id or "term_new")
+    assert window.options.get(tmux.MARK_THREAD) == (thread_id or "term_new")
+    assert window.selected and not window.killed
+    assert server.switched == [target.session_id]
+    assert not server.attached
+    assert window.panes[0].options[tmux.MARK_PAD] == tmux.PAD_CHAT
     assert "created chat pane" in capsys.readouterr().out
 
 
@@ -664,24 +680,8 @@ def test_failed_selection_keeps_prepared_target_and_reports_location(
     assert window.killed is False
     assert not server.created and not server.switched and not server.attached
     captured = capsys.readouterr()
-    assert "window term_x (@1), pane" in captured.out
+    assert "window term_x (@1), pane" in captured.err
     assert "selection refused" in captured.err
-
-
-@pytest.mark.parametrize("hint", ["%3", "%other"])
-def test_child_placement_hint_is_consumed_and_checked_against_actual_pane(
-    monkeypatch: pytest.MonkeyPatch,
-    hint: str,
-) -> None:
-    session = FakeSession("$0", "eve")
-    window = session.add_window(FakeWindow("@1"))
-    window.set_option(tmux.MARK_THREAD, "term_x")
-    launcher = _launcher(FakeServer([session]), FakePane())
-    monkeypatch.setenv(chat._PLACED_PANE_ENV, hint)
-
-    assert _place(monkeypatch, launcher, thread_id="term_x") is (hint == "%3")
-    assert len(window.pads) == (0 if hint == "%3" else 1)
-    assert chat._PLACED_PANE_ENV not in os.environ
 
 
 def test_place_chat_runs_in_its_current_marked_pad(
@@ -725,3 +725,167 @@ def test_place_chat_displays_window_or_pane_creation_failure(
     assert captured.out == ""
     assert "no space for a new pane" in captured.err
     assert not window.killed and not window.pads and not session.opened
+
+
+def test_cli_allocates_thread_before_launch_and_preserves_parsed_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = AgentLayout.resident(tmp_path / "root with spaces", "chat")
+    captured: dict[str, Any] = {}
+
+    class RecordingLauncher:
+        def place_chat(self, **kwargs: Any) -> bool:
+            store = RunStore(layout.run_store, read_only=True)
+            try:
+                detail = RunHistory(store).get_thread(kwargs["thread_id"], run_limit=0)
+                assert detail is not None and detail.run_count == 0
+            finally:
+                store.close()
+            captured.update(kwargs)
+            return False
+
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "resolve_launcher", lambda **_kwargs: RecordingLauncher())
+    monkeypatch.setattr(
+        chat,
+        "_chat_interactive",
+        lambda *_args, **_kwargs: pytest.fail("must hand off"),
+    )
+    chat.chat_command(
+        cast(Any, None),
+        sandbox="docker:cfg",
+        dev=Path("my wheel"),
+        model_catalog=Path("catalog.toml"),
+        allows=["tools=a,b"],
+        defaults=["runnable=agic:chat"],
+        limits=["steps=5"],
+        compact_model="provider/model",
+    )
+    assert captured["thread_id"].startswith("term_")
+    assert captured["argv"] == [
+        chat.sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        "--root",
+        str(layout.root),
+        "agent:chat",
+        "chat",
+        "--thread",
+        captured["thread_id"],
+        "--catalog=catalog.toml",
+        "--sandbox=docker:cfg",
+        "--dev=my wheel",
+        "--compact-model=provider/model",
+        "--allow=tools=a,b",
+        "--default=runnable=agic:chat",
+        "--limit=steps=5",
+    ]
+
+
+@pytest.mark.parametrize("environment", [{}, {**TMUX_ENV, "TOOLANG_TMUX": "0"}])
+def test_direct_chat_does_not_allocate_thread_or_touch_tmux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: dict[str, str]
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "eve")
+    for key in ("TMUX", "TMUX_PANE", "TOOLANG_TMUX"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(
+        tmux, "_libtmux_server", lambda: pytest.fail("must not query tmux")
+    )
+    calls: list[str | None] = []
+    monkeypatch.setattr(
+        chat,
+        "_chat_interactive",
+        lambda _ctx, **kwargs: calls.append(kwargs["thread_id"]),
+    )
+    chat.chat_command(cast(Any, None))
+    assert calls == [None]
+    assert not layout.run_store.exists()
+    assert tmux.resolve_marks() is None
+
+
+def test_tmux_thread_reuses_validates_and_keeps_empty_threads(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "eve")
+    first = chat._tmux_thread(layout, None)
+    assert chat._tmux_thread(layout, first) == first
+    second = chat._tmux_thread(layout, None)
+    assert second != first
+    with pytest.raises(ClickException, match="thread not found"):
+        chat._tmux_thread(layout, "term_missing")
+    store = RunStore(layout.run_store, read_only=True)
+    try:
+        threads = RunHistory(store).list_threads()
+        assert {thread.id for thread in threads} == {first, second}
+        assert all(thread.run_count == 0 for thread in threads)
+    finally:
+        store.close()
+
+
+def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window() -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1", "custom"))
+    window.options[tmux.MARK_THREAD] = "term_x"
+    source = window.panes[0]
+    launcher = _launcher(FakeServer([session]), cast(Any, source))
+    assert launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
+    assert not window.pads and not session.opened and not window.selected
+    assert window.window_name == "custom"
+
+
+def test_failed_chat_is_restarted_without_replacing_a_live_process() -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1"))
+    window.options[tmux.MARK_THREAD] = "term_x"
+    failed = window.panes[0]
+    failed.options[tmux.MARK_PAD] = "chat"
+    failed.pane_dead = "1"
+    server = FakeServer([session])
+    launcher = _launcher(server, FakePane(session_id="$9"))
+    assert launcher.chat_pad(window) is None
+    assert not launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
+    assert failed.respawned == [launcher.chat_command(["too"])]
+    assert not window.pads
+    assert server.switched == ["$0"]
+
+
+def test_same_window_navigation_only_selects_the_pane() -> None:
+    session = FakeSession("$0", "eve")
+    window = session.add_window(FakeWindow("@1"))
+    target = window.split()
+    launcher = _launcher(FakeServer([session]), cast(Any, window.panes[0]))
+    assert launcher.select_target(window, pane=target)
+    assert target.selected and not window.selected
+
+
+def test_in_place_publication_preserves_a_renamed_thread_window() -> None:
+    window = FakeWindow("@1", "user title")
+    window.options[tmux.MARK_THREAD] = "term_x"
+    marks = tmux.resolve_marks(
+        environment=TMUX_ENV, pane_factory=lambda: window.panes[0]
+    )
+    lifecycle = chat.ChatMarks(marks=marks)
+    lifecycle.start("term_x")
+    assert window.window_name == "user title"
+    assert window.panes[0].options[tmux.MARK_PAD] == "chat"
+    lifecycle.clear()
+    assert tmux.MARK_PAD not in window.panes[0].options
+    assert window.options[tmux.MARK_THREAD] == "term_x"
+
+
+def test_launcher_reports_identity_publication_failure() -> None:
+    class Unmarkable(FakeSession):
+        def set_option(self, option: str, value: str) -> object:
+            raise RuntimeError("session mark refused")
+
+    session = Unmarkable("$0", "eve")
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"))
+    with pytest.raises(TmuxPlacementError, match="session mark refused"):
+        launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
+    assert not session.opened
