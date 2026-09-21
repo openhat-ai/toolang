@@ -381,7 +381,7 @@ class Launcher:
                         start_directory=directory,
                         window_command=command,
                     )
-                    operation = "configure"
+                    operation = "mark"
                     self._own(session)
                     session.set_option(DETACH_ON_DESTROY, "off")
                     window = session.active_window
@@ -391,12 +391,12 @@ class Launcher:
                     window = session.new_window(
                         start_directory=directory, window_shell=command, attach=False
                     )
-                operation = "configure"
+                operation = "mark"
                 window.set_option(MARK_THREAD, thread_id)
                 window.rename_window(thread_id)
                 pad = window.panes[0]
                 action = "created"
-            operation = "configure"
+            operation = "mark"
             pad.set_option(MARK_PAD, PAD_CHAT)
         except Exception as exc:
             raise TmuxPlacementError(f"failed to {operation} chat pane: {exc}") from exc

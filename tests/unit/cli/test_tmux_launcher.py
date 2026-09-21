@@ -479,7 +479,7 @@ def test_place_chat_reports_creation_error_here(
 
 
 @pytest.mark.parametrize("level", ["session", "window", "pane"])
-def test_configuration_failure_does_not_report_creation_failure(
+def test_mark_failure_does_not_report_creation_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     level: str,
@@ -501,9 +501,7 @@ def test_configuration_failure_does_not_report_creation_failure(
 
     monkeypatch.setattr(target_class, "set_option", refuse)
     launcher = _launcher(server, FakePane(session_id="$9"))
-    with pytest.raises(
-        ClickException, match="^failed to configure chat pane:"
-    ) as error:
+    with pytest.raises(ClickException, match="^failed to mark chat pane:") as error:
         _place(monkeypatch, launcher, thread_id="term_x")
 
     assert "metadata refused" in str(error.value)
