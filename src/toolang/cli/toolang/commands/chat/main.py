@@ -55,11 +55,15 @@ from toolang.cli.common.execution_progress.config import (
 )
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
+from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.tmux import (
     WINDOW_NAME_FALLBACK,
+    Launcher,
+    TmuxPane,
+    TmuxWindow,
     resolve_launcher,
     resolve_marks,
 )
@@ -90,6 +94,10 @@ from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
 from .rendering import terminal_width
 from .tui import ChatTuiApp
+
+
+# A child consumes this hint before starting Chat; it must match its actual pane.
+_PLACED_PANE_ENV = "_TOOLANG_CHAT_PANE"
 
 
 def chat_command(
@@ -125,73 +133,85 @@ def _place_chat(
     thread_id: str | None,
     argv: Sequence[str],
 ) -> bool:
-    """Send this chat run to the agent's tmux session when tmux can host it.
+    """Prepare a chat target and select it only within the invoking session.
 
-    An existing container for ``--thread`` is resolved first, so a thread that is
-    already open is reused even when chat was started inside the agent's own
-    session. Returns ``True`` when chat keeps running in this process. ``False``
-    means the run now lives in the agent's session: the notice is printed and the
-    caller must return, because the client points at another window.
+    Return True to run Chat here, or False when a target elsewhere was prepared.
+    A prepared target survives skipped or failed selection.
     """
 
+    placed_pane = os.environ.pop(_PLACED_PANE_ENV, "")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return True
     agent = context_layout(ctx).name
     launcher = resolve_launcher(agent=agent)
-    if launcher is None:
+    if launcher is None or launcher.is_current_pane(placed_pane):
         return True
-    command = shlex.join(list(argv))
+    # Expansion happens in the newly created pane's shell, not this process.
+    # The child enters its assigned pane directly instead of routing recursively.
+    command = f'exec env {_PLACED_PANE_ENV}="$TMUX_PANE" {shlex.join(list(argv))}'
     directory = os.getcwd()
-    session = launcher.agent_session()
-    if session is not None and thread_id is not None:
-        window = launcher.thread_window(session, thread_id)
+    try:
+        session = launcher.agent_session()
+        window = (
+            launcher.thread_window(session, thread_id)
+            if session is not None and thread_id is not None
+            else None
+        )
         if window is not None:
             pad = launcher.chat_pad(window)
-            if pad is not None:
-                # the thread is already open, so move to its chat rather than
-                # start a second one; when the client cannot move, chat runs
-                # here instead of adding another view of the thread
-                if not launcher.switch_client(window, pane=pad):
-                    return True
-                _announce_session(agent)
-                return False
-            # the container outlived its chat, so give it a fresh chat pad; the
-            # pad runs either way, and the notice is printed even when the
-            # client cannot be moved
-            if launcher.open_pad(window, command=command, directory=directory):
-                launcher.switch_client(window)
-                _announce_session(agent)
-                return False
-            return True
-    if session is not None and launcher.is_current(session):
-        return True
-    session, window = launcher.ensure_session(command=command, directory=directory)
-    if session is None:
-        return True
-    if window is None:
-        window = launcher.open_window(session, command=command, directory=directory)
-    if window is None:
-        return True
-    if thread_id is not None:
-        # the thread is known before chat starts, so the container is named and
-        # addressable by its option right away
-        launcher.mark_thread(window, thread_id)
-        launcher.name_window(window, thread_id)
-    else:
-        # a new thread id only exists after the first submit; chat renames the
-        # window once it knows the id
-        launcher.name_window(window, WINDOW_NAME_FALLBACK)
-    if not launcher.switch_client(window):
-        launcher.close_window(window)
-        return True
-    _announce_session(agent)
+            created = pad is None
+            if pad is None:
+                pad = launcher.open_pad(window, command=command, directory=directory)
+            elif launcher.is_current_pane(pad.pane_id):
+                return True
+        else:
+            if session is not None and launcher.is_current(session):
+                return True
+            session, window = launcher.ensure_session(
+                command=command, directory=directory
+            )
+            if window is None:
+                window = launcher.open_window(
+                    session, command=command, directory=directory
+                )
+            if thread_id is not None:
+                launcher.mark_thread(window, thread_id)
+            launcher.name_window(window, thread_id or WINDOW_NAME_FALLBACK)
+            pad = window.panes[0]
+            created = True
+    except Exception as exc:
+        raise ClickException(f"Could not prepare tmux chat target: {exc}") from exc
+
+    _select_chat_target(launcher, window, pad, created=created)
     return False
 
 
-def _announce_session(agent: str) -> None:
-    """Tell the user where chat went: one line on stdout."""
+def _select_chat_target(
+    launcher: Launcher, window: TmuxWindow, pane: TmuxPane, *, created: bool
+) -> None:
+    """Report a prepared target even when selection is skipped or fails."""
 
-    print(f"\u21aa opened in tmux session {agent}")
+    try:
+        session = window.session
+        location = (
+            f"session {session.session_name} ({session.session_id}), "
+            f"window {window.window_name} ({window.window_id}), pane {pane.pane_id}"
+        )
+    except Exception as exc:
+        raise ClickException(
+            f"Could not inspect prepared tmux chat target: {exc}"
+        ) from exc
+    error: TmuxPlacementError | None = None
+    try:
+        selected = launcher.select_target(window, pane=pane)
+    except TmuxPlacementError as exc:
+        selected = False
+        error = exc
+    action = "created chat pane" if created else "reused chat pane"
+    selection = "selected" if selected else "not selected"
+    print(f"↪ {action} in tmux {location}; {selection}")
+    if error is not None:
+        raise ClickException(f"{error}. The target was kept.") from error
 
 
 def _chat_interactive(

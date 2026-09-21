@@ -472,8 +472,9 @@ Tmux placement, naming, and metadata require TTY stdin and stdout plus `TMUX` an
 disable them, case-insensitively. OSC titles remain enabled on a TTY independently
 of that switch. Interactive metadata writes and window renaming run in order on
 a background worker; exit skips queued writes and makes a bounded wait for pad
-cleanup. A failing tmux call does not reach the UI; `TOOLANG_TMUX_DEBUG=1` reports
-failures on stderr.
+cleanup. Metadata publication failures stay out of the UI;
+`TOOLANG_TMUX_DEBUG=1` reports them on stderr. Placement failures are reported
+in the invoking terminal.
 
 `@toolang_thread_id` and `TOOLANG_TMUX_MARKS` are no longer recognized. Thread
 discovery reads only `@toolang_thread`. Chat no longer writes
@@ -524,16 +525,30 @@ instead.
 | situation | behaviour |
 | --- | --- |
 | not inside tmux | chat runs in the current terminal |
-| `--thread` container with a live chat pad | the client switches to that window, focusing the chat pane |
-| `--thread` container without a live chat pad | a chat pad opens in that window and the client switches to it |
-| the current session is the agent's session | chat runs in this pane |
-| otherwise | the agent's session is ensured, a window opens running `too <agent> chat …`, and the client switches to it |
+| `--thread` container with a live chat pad | reuse that pane without starting another chat |
+| `--thread` container without a live chat pad | create a detached chat pane in that window |
+| the current session is the agent's session, with no existing thread target | chat runs in this pane |
+| otherwise | ensure the agent's session and create a detached chat window |
 
-The `--thread` rows come first: an open thread is reused even when chat was started
-inside the agent's session, so one thread never gets a second chat.
+The `--thread` rows come first: an existing chat is reused even when Chat was
+started inside the agent's session. A spawned child starts directly in its
+prepared pane rather than repeating placement.
 
-A run that is moved elsewhere prints one line, `↪ opened in tmux session <agent>`,
-and exits 0; the pane it started in returns to its shell.
+After creation or reuse, Toolang selects the window and chat pane **only when the
+target belongs to the invoking session**. For another session it leaves selection
+unchanged. It never switches or attaches a client automatically. This rule applies
+equally to ordinary tmux and iTerm2 Control Mode, including shared sessions.
+
+The invoking terminal reports the target's actual session/window names and IDs,
+the pane ID, whether it was created or reused, and whether it was selected. It
+then returns to the shell. A creation failure prints the tmux error here and exits
+nonzero. A selection failure also reports an error and exits nonzero, but keeps
+the prepared target and does not start a duplicate chat locally. A creation
+success confirms the tmux pane was created, not that Chat's later startup finished.
+
+Detached creation avoids selecting the new target. If iTerm2 is already attached
+to its session, a new window or split can still appear in the GUI. Existing GUI
+windows are not reopened by redundant `switch-client` calls.
 
 The agent's session is found by its `@toolang_agent` session option first and by
 its derived name second; determining it records the option, so the name is only a
@@ -544,16 +559,17 @@ renamed.
 A thread's window is a container: the launcher creates it and names it after the
 thread (`new_chat` until the id exists, then `term_xxx`). Chat only adds or removes its
 pad, so a window whose chat exited is reused: `--thread` finds it by the window mark,
-switches when a live chat pad is anywhere in it — focusing that pane — and otherwise
-opens a fresh chat pad there instead of opening a second window for the thread.
+reuses a live chat pad anywhere in it and otherwise opens a fresh chat pad there
+instead of opening a second window for the thread. Selection follows the
+same-session rule above.
 
 An opened window runs the chat command under tmux's own environment, like any
 other tmux window, so it does not inherit variables that only the calling shell
 exported. Exiting a chat closes its pane: a window whose only pane it was is
 destroyed, and the agent's session with it when that was the only window; placement
-turns `detach-on-destroy` off on the sessions it creates, so the client returns to
-the session it came from instead of being detached.
+turns `detach-on-destroy` off on the sessions it creates, so an attached client can
+fall back to another session instead of being detached.
 
-Placement is best-effort: outside a TTY or tmux, with
-`TOOLANG_TMUX=0`, or when a tmux call fails, chat runs in the current
-terminal.
+Outside a TTY or tmux, with `TOOLANG_TMUX=0`, or when the initial tmux lookup
+is unavailable, chat runs in the current terminal. Once target creation is
+attempted, failures are surfaced rather than silently running elsewhere.

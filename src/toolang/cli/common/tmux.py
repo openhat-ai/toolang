@@ -12,14 +12,14 @@ chat through OSC 0; tmux views can display the native ``pane_title``.
 
 Detection and targeting are delegated to ``libtmux``, which reads ``TMUX`` and
 ``TMUX_PANE`` from the environment, so this module carries no socket or protocol
-code. Every call is best-effort: outside tmux, or when tmux disappears mid
-session, callers keep working and nothing reaches the UI.
+code. Metadata publication is best-effort: outside tmux, or when tmux disappears
+mid-session, callers keep working and publication errors stay out of the UI.
 
 The same module also decides where a chat run happens: ``Launcher``
-resolves the agent's session in the user's server, reuses an open window,
-and switches the client, so ``too <agent> chat`` lands where the user
-expects it. Placement is best-effort in the same way, and shares the marks
-kill switch.
+resolves the agent's session in the user's server and reuses an open window.
+It selects targets only within the invoking session, without switching clients.
+Placement shares the marks kill switch; creation and selection errors reach the
+launcher so it can report them at the invoking terminal.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+from toolang.cli.common.errors import TmuxPlacementError
 
 MARK_AGENT = "@toolang_agent"
 MARK_THREAD = "@toolang_thread"
@@ -78,16 +80,15 @@ class TmuxWindow(Protocol):
     def window_id(self) -> str: ...
 
     @property
+    def window_name(self) -> str: ...
+
+    @property
     def session(self) -> "TmuxSession": ...
 
     @property
     def panes(self) -> Sequence["TmuxPane"]: ...
 
     def show_option(self, option: str) -> Any: ...
-
-    def select(self) -> object: ...
-
-    def kill_window(self) -> object: ...
 
     def set_option(self, option: str, value: str) -> object: ...
 
@@ -100,6 +101,7 @@ class TmuxWindow(Protocol):
         *,
         start_directory: str | None = ...,
         shell: str | None = ...,
+        attach: bool = ...,
     ) -> "TmuxPane": ...
 
 
@@ -141,12 +143,15 @@ class TmuxSession(Protocol):
 
     def set_option(self, option: str, value: str) -> object: ...
 
+    def select_window(self, target_window: str) -> object: ...
+
     def new_window(
         self,
         window_name: str | None = ...,
         *,
         start_directory: str | None = ...,
         window_shell: str | None = ...,
+        attach: bool = ...,
     ) -> TmuxWindow: ...
 
 
@@ -164,10 +169,6 @@ class TmuxServer(Protocol):
         start_directory: str | None = ...,
         window_command: str | None = ...,
     ) -> TmuxSession: ...
-
-    def switch_client(self, target_session: str) -> object: ...
-
-    def attach_session(self, target_session: str) -> object: ...
 
 
 @dataclass(slots=True)
@@ -303,8 +304,8 @@ def resolve_marks(
 #
 # Marks describe a chat that is already running. Placement decides where a chat
 # runs at all: one session per agent, one window per chat, in the server the
-# user is already in. Every operation stays best-effort, so a missing or broken
-# tmux only ever means "run chat in place".
+# user is already in. Creation and selection failures are reported to the caller;
+# they must not launch a duplicate chat or invalidate a prepared target.
 
 
 def sanitize_session_name(agent: str) -> str:
@@ -321,7 +322,7 @@ def sanitize_session_name(agent: str) -> str:
 
 @dataclass(slots=True)
 class Launcher:
-    """Best-effort placement of one chat run in the user's tmux server."""
+    """Prepare a chat target and select it only within the invoking session."""
 
     agent: str
     _server: TmuxServer
@@ -354,6 +355,11 @@ class Launcher:
         """Whether ``session`` is the session this process runs inside."""
 
         return self._current_session_id() == _text(getattr(session, "session_id", None))
+
+    def is_current_pane(self, pane_id: str) -> bool:
+        """Check a child placement hint against the resolved pane."""
+
+        return bool(pane_id) and pane_id == self._pane.pane_id
 
     def list_windows(self, session: TmuxSession) -> Sequence[TmuxWindow]:
         """One session's windows in tmux order, oldest first."""
@@ -410,22 +416,17 @@ class Launcher:
 
     def open_pad(
         self, window: TmuxWindow, *, command: str, directory: str | None = None
-    ) -> bool:
-        """Open a chat pad in an existing thread window."""
+    ) -> TmuxPane:
+        """Open a detached chat pad in an existing thread window."""
 
-        splitter = getattr(window, "split", None)
-        if not callable(splitter):
-            return False
         try:
-            splitter(start_directory=directory, shell=command)
+            return window.split(start_directory=directory, shell=command, attach=False)
         except Exception as exc:
-            _debug(f"chat pad not opened: {exc}")
-            return False
-        return True
+            raise TmuxPlacementError(f"Could not create tmux chat pane: {exc}") from exc
 
     def ensure_session(
         self, *, command: str, directory: str | None = None
-    ) -> tuple[TmuxSession | None, TmuxWindow | None]:
+    ) -> tuple[TmuxSession, TmuxWindow | None]:
         """The agent's session, created with ``command`` when it is missing.
 
         A session this call creates already runs the chat command in its first
@@ -445,74 +446,53 @@ class Launcher:
                 window_command=command,
             )
         except Exception as exc:
-            _debug(f"session {name} not created: {exc}")
-            return None, None
+            raise TmuxPlacementError(
+                f"Could not create tmux session {name}: {exc}"
+            ) from exc
         self._own(session)
         self._stay_attached(session)
-        return session, _active_window(session)
+        window = _active_window(session)
+        if window is None:
+            raise TmuxPlacementError(
+                f"Tmux session {name} was created but its chat window is unavailable"
+            )
+        return session, window
 
     def open_window(
         self, session: TmuxSession, *, command: str, directory: str | None = None
-    ) -> TmuxWindow | None:
+    ) -> TmuxWindow:
         """Open one chat window in an existing session."""
 
         try:
-            return session.new_window(start_directory=directory, window_shell=command)
-        except Exception as exc:
-            _debug(f"chat window not opened: {exc}")
-            return None
-
-    def switch_client(
-        self, window: TmuxWindow, *, pane: TmuxPane | None = None
-    ) -> bool:
-        """Point the attached client at ``window``, focusing ``pane`` when given.
-
-        Returns ``False`` when neither could be done, because the caller then
-        has to keep the chat where it started.
-        """
-
-        if pane is not None:
-            select_pane = getattr(pane, "select", None)
-            if callable(select_pane):
-                try:
-                    select_pane()
-                except Exception as exc:
-                    _debug(f"pane not selected: {exc}")
-        try:
-            name = _text(
-                getattr(getattr(window, "session", None), "session_name", None)
+            return session.new_window(
+                start_directory=directory, window_shell=command, attach=False
             )
         except Exception as exc:
-            _debug(f"window session not resolved: {exc}")
-            name = ""
+            raise TmuxPlacementError(
+                f"Could not create tmux chat window: {exc}"
+            ) from exc
+
+    def select_target(
+        self, window: TmuxWindow, *, pane: TmuxPane | None = None
+    ) -> bool:
+        """Select only within this session; never change a client's attachment.
+
+        A skipped or failed selection does not invalidate the prepared target.
+        Qualify the window with its session so linked windows are unambiguous.
+        """
+
         try:
-            window.select()
+            session = window.session
+            if not self.is_current(session):
+                return False
+            session.select_window(window.window_id)
+            if pane is not None:
+                pane.select()
         except Exception as exc:
-            _debug(f"window not selected: {exc}")
-        if not name:
-            return False
-        try:
-            self._server.switch_client(name)
-            return True
-        except Exception as exc:
-            _debug(f"client not switched to {name}: {exc}")
-        try:
-            self._server.attach_session(name)
-        except Exception as exc:
-            _debug(f"client not attached to {name}: {exc}")
-            return False
+            raise TmuxPlacementError(
+                f"Could not select tmux chat target: {exc}"
+            ) from exc
         return True
-
-    def close_window(self, window: TmuxWindow) -> None:
-        """Discard a chat window this run opened and could not move to."""
-
-        closer = getattr(window, "kill_window", None)
-        if not callable(closer):
-            return
-        try:
-            closer()
-        except Exception as exc:
-            _debug(f"chat window not closed: {exc}")
 
     def _sessions(self) -> Sequence[TmuxSession]:
         try:
