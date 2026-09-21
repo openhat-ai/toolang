@@ -41,6 +41,7 @@ class _HostWorkload:
     process: subprocess.Popen[bytes]
     output_path: Path | None = None
     follow_stop: threading.Event = field(default_factory=threading.Event)
+    ref: SandboxRef | None = None
 
 
 @dataclass(slots=True)
@@ -115,7 +116,7 @@ class HostSandbox:
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             return workload.process.poll() is None
         return _ref_process_running(ref, pid)
@@ -124,7 +125,7 @@ class HostSandbox:
         """Forward buffered foreground output, then wait for the process."""
 
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             if workload.output_path is not None:
                 return await _follow_workload_output(workload)
@@ -135,7 +136,7 @@ class HostSandbox:
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         pid = _pid(ref)
-        workload = self._processes.get(pid)
+        workload = self._owned_workload(ref)
         if workload is not None:
             stopped = await asyncio.to_thread(
                 _stop_process,
@@ -148,10 +149,15 @@ class HostSandbox:
             raise ValueError(f"agent process did not stop: {pid}; retry with --force")
 
     async def release(self, ref: SandboxRef) -> None:
-        workload = self._processes.pop(_pid(ref), None)
+        workload = self._owned_workload(ref)
         if workload is not None:
+            self._processes.pop(_pid(ref))
             workload.follow_stop.set()
             _remove_output(workload.output_path)
+
+    def _owned_workload(self, ref: SandboxRef) -> _HostWorkload | None:
+        workload = self._processes.get(_pid(ref))
+        return workload if workload is not None and workload.ref == ref else None
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -302,9 +308,10 @@ def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:
 
 async def _capture_reference(workload: _HostWorkload, plan: SandboxPlan) -> SandboxRef:
     try:
-        return _process_ref(
+        workload.ref = _process_ref(
             workload.process, plan.endpoint, launch_id=plan.envs.get(HOST_LAUNCH_ENV)
         )
+        return workload.ref
     except (OSError, ValueError) as exc:
         try:
             stopped = await asyncio.to_thread(

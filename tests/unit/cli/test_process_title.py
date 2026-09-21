@@ -18,6 +18,10 @@ from toolang.cli.toolang.routing import normalize
         (["alice", "start"], "too:alice start"),
         (["start", "alice"], "too:alice start"),
         (["start", "--host", "alice", "alice"], "too:alice start --host alice"),
+        (
+            ["start", "--dev", "--host", "127.0.0.1", "alice"],
+            "too:alice start --dev --host 127.0.0.1",
+        ),
         (["new", "psyche"], "too new psyche"),
         (
             ["run", "task.too", "main", "--agent", "alice"],

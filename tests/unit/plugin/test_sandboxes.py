@@ -287,6 +287,32 @@ def test_host_launch_identity_failure_stops_created_process(
         process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("operation", ["running", "stop", "release"])
+def test_host_cached_workload_rejects_stale_reference(
+    tmp_path: Path, operation: str
+) -> None:
+    sandbox = host_sandbox.HostSandbox({})
+    plan = replace(
+        sandbox.prepare(None, _request(tmp_path, foreground=True)),
+        command=(sys.executable, "-c", "import time; time.sleep(30)"),
+    )
+    ref = asyncio.run(sandbox.launch(plan))
+    stale = replace(ref, meta={**ref.meta, "created": 0.0})
+    workload = sandbox._processes[int(ref.runtime_id)]
+    try:
+        if operation == "running":
+            assert not asyncio.run(sandbox.running(stale))
+        elif operation == "stop":
+            asyncio.run(sandbox.stop(stale, force=True))
+            assert asyncio.run(sandbox.running(ref))
+        else:
+            asyncio.run(sandbox.release(stale))
+            assert workload.output_path is not None and workload.output_path.exists()
+    finally:
+        asyncio.run(sandbox.stop(ref, force=True))
+        asyncio.run(sandbox.release(ref))
+
+
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

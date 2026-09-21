@@ -274,7 +274,20 @@ def _title_context(ctx: Context, args: list[str]) -> None:
                 break
             if token.startswith("-"):
                 option = options.get(token)
-                index += 1 + (option.nargs if option and not option.is_flag else 0)
+                operands = option.nargs if option and not option.is_flag else 0
+                if (
+                    option is not None
+                    and isinstance(ctx.command, OptionalValueCommand)
+                    and ctx.command.is_optional_value(option.name or "")
+                    and (
+                        index + 1 == len(args)
+                        or (
+                            len(args[index + 1]) > 1 and args[index + 1].startswith("-")
+                        )
+                    )
+                ):
+                    operands = 0
+                index += 1 + operands
                 continue
             break
         if index < len(args):
