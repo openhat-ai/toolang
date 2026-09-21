@@ -8,161 +8,126 @@ A description language and runtime for agents.
 
 Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to build, run, and share.
 
+Use `too`, an alias for `toolang`, for all commands below. Both names provide
+the same CLI.
+
+Toolang requires Python 3.11+ and supports macOS and Linux. Windows is not
+supported yet.
+
 ## Try Now
 
-Start with a shared agent, no installation required:
+Run a shared agent without installing Toolang permanently:
 
 ```bash
-uvx toolang serve https://toolang.ai/dev.too
+uvx --from toolang too serve https://toolang.ai/dev.too
 ```
 
 Or use a GitHub shorthand:
 
 ```bash
-uvx toolang serve briceyan/dev
+uvx --from toolang too serve briceyan/dev
 ```
+
+Model calls require a configured provider API key or a running local model
+service. See [model configuration](./docs/models.md) for setup and selection.
 
 ## Get Started
 
-Install Toolang to build and run your own agents:
+Install Toolang:
 
 ```bash
 uv tool install toolang
 ```
 
-To try a small script with an already configured model:
+### Run a Script
+
+Create a starter script and inspect its available runnables:
 
 ```bash
 too init demo
-too demo/work.too info
-too demo/work.too --help
-too demo/work.too
-too demo/work.too chat
+too demo/aide.too info
+too demo/aide.too --help
 ```
 
-The default entry greets you without input. The same file includes a chat agic,
-a rewrite agic with a named parameter, and a flow that combines a named agic
-with an inline agic:
+Run the default greeting or start an interactive chat:
 
 ```bash
-too run demo/work.too polish tone=professional -- "Can you send the notes?"
+too demo/aide.too
+too demo/aide.too chat
 ```
 
-Use `--model` to select another configured model. `too demo/work.too` remains a
-shorthand for Script execution. The generated file is executable, so
-`./demo/work.too` also works.
-
-Create a local agent:
+The generated file includes a rewrite agic with a named parameter and a flow
+that rewrites text and checks the result:
 
 ```bash
-toolang new alice
+too run demo/aide.too polish tone=professional -- "Can you send the notes?"
 ```
 
-Or clone a shared agent:
+Use `--model` to select another configured model. `too demo/aide.too` is
+shorthand for `too run demo/aide.too`. The generated file is executable, so
+`./demo/aide.too` also works.
+
+### Run an Agent
+
+Create a local agent or clone a shared one:
 
 ```bash
-toolang clone briceyan/dev bob
+too new alice
+too clone briceyan/dev bob
 ```
 
-Extend your agents with caps — composable agent primitives:
+Run an agent in the foreground. Press `Ctrl+C` to stop:
 
 ```bash
-caps alice skill add briceyan/codebase-navigation
-caps alice psyche add briceyan/senior-engineer
-caps alice service add briceyan/github
+too serve alice
 ```
 
-Caps are typically Markdown files. To create your own cap, start one locally:
+Or start and stop it in the background:
 
 ```bash
-caps alice skill new reviewer
+too start alice
+too stop alice
 ```
-
-Run in the foreground to watch the logs. Press `Ctrl+C` to stop. Use `PY_LOG` for more detail:
-
-```bash
-toolang serve alice
-PY_LOG=debug toolang serve alice
-```
-
-Or start it in the background:
-
-```bash
-toolang start alice
-```
-
-In either case, open the printed WebUI link to connect to the agent:
-
-```text
-Started agent alice: https://too.run/7001
-```
-
-To stop a background agent:
-
-```bash
-toolang stop alice
-```
-
-Format, inspect, and highlight source without agent setup using the
-[source commands](./docs/source-commands.md).
 
 ## Common Commands
 
 ```bash
 # Agents
-toolang new <agent>                  # Create a local agent
-toolang clone <ref> <agent>          # Clone a shared agent
-toolang serve <agent-or-ref>         # Run an agent in the foreground
-toolang start <agent>                # Start an agent in the background
-toolang stop <agent>                 # Stop a running agent
+too new <agent>                       # Create a local agent
+too clone <ref> <agent>               # Clone a shared agent
+too serve <agent-or-ref>              # Run an agent in the foreground
+too start <agent>                     # Start an agent in the background
+too stop <agent>                      # Stop a running agent
 
 # Scripts
-toolang init <dir>                   # Create aide.too without overwriting files
-toolang run <file.too> [runnable]     # Execute authored main or a named runnable
+too init <dir>                        # Create aide.too without overwriting files
+too run <file.too> [runnable]         # Execute the default or a named runnable
 
 # Source development (offline)
-too parse work.too --cst --json       # Inspect the complete concrete syntax tree
-too fmt work.too --check              # Check formatting without writing files
-too fmt work.too --highlight          # Preview formatted source in color
-too highlight work.too                # Highlight original source
+too parse demo/aide.too --cst --json  # Inspect the concrete syntax tree
+too fmt demo/aide.too --check         # Check formatting without writing files
+too fmt demo/aide.too --highlight     # Preview formatted source in color
+too highlight demo/aide.too           # Highlight original source
 
 # Inspection
-toolang models                       # List model catalog entries and availability
-toolang <agent> models                # Inspect models using a resident agent's config
-toolang providers                    # List catalog providers
-toolang tools                        # List root-configured available tools
-toolang <agent> tools                # Apply the agent configuration and allow policy
-toolang <agent> tools --all          # Include internal and allow-excluded tools
-toolang catalogs                     # List installed model catalogs
-toolang adapters                     # List installed model adapters
-toolang toolsets                     # List installed toolsets
-toolang sandboxes                    # List installed sandboxes
+too models                            # List available, allowed models
+too alice models                      # Inspect models using alice's configuration
+too providers                         # List available, allowed providers
+too tools                             # List available, allowed tools
+too alice tools --all                 # Include internal and allow-excluded tools
 
-# Caps
-caps [agent] psyche add <ref>        # Add a psyche
-caps [agent] skill add <ref>         # Add a skill
-caps [agent] service add <ref>       # Add an MCP server
-caps [agent] prompt add <ref>        # Add a slash command
-caps [agent] skill list              # List skills
-caps [agent] list                    # List allowed caps in root or agent scope
-caps [agent] list --all              # Include allow-excluded caps and their status
+# Help
+too --help                            # Show the main commands
+too more                              # Discover additional commands
 ```
 
-The preferred model catalog is models.dev `catalog.json`; Toolang consumes its
-`providers` member and also accepts the provider map from `api.json`. Download
-the combined catalog with
-`curl -fsSL https://models.dev/catalog.json -o catalog.json`. Commands that
-expose `--catalog` use that override first, followed by
-`TOOLANG_MODEL_CATALOG`, agent-home `catalog.json`, root `catalog.json`, and the
-packaged catalog. Provider-agnostic `models.json` is not a valid execution
-catalog, and implicit discovery ignores that filename.
-`toolang models` is inspection-only and never downloads during startup.
+See [source commands](./docs/source-commands.md) for offline formatting,
+parsing, and highlighting, and [model configuration](./docs/models.md) for
+provider setup and catalog overrides.
 
 ## Links
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
+- [Repository documentation](./docs/index.md)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
-- [Changelog](https://github.com/openhat-ai/toolang/blob/main/CHANGELOG.md)
-- [Release notes](https://github.com/openhat-ai/toolang/blob/main/RELEASE_NOTES.md)
-- [Known limitations](https://github.com/openhat-ai/toolang/blob/main/KNOWN_LIMITATIONS.md)
