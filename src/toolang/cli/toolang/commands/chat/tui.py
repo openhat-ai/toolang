@@ -15,6 +15,7 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition, has_completions, has_focus
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
@@ -282,6 +283,10 @@ class ChatTuiApp:
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
         marks: ChatMarks | None = None,
     ) -> None:
+        # Focus reports can arrive when switching iTerm2/tmux tabs. Consume
+        # them as whole events before Escape bindings or text insertion run.
+        ANSI_SEQUENCES.setdefault("\x1b[I", Keys.Ignore)
+        ANSI_SEQUENCES.setdefault("\x1b[O", Keys.Ignore)
         self.thread_id = thread_id
         self.marks = marks if marks is not None else ChatMarks.disabled()
         self.home = home

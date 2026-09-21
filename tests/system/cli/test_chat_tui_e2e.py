@@ -101,6 +101,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         session.wait_for_bytes(b"\x1b]0;new_chat\x07")
         session.send(b"hello from user")
         session.wait_for("hello from user")
+        session.send(b"\x1b[O\x1b[I" * 3)
         session.send(b"\r")
         output = session.wait_for(
             "hello from user",
@@ -110,6 +111,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
 
         assert "run_" in output
         assert "Traceback" not in output
+        assert "[O[I" not in output
         session.wait_for_bytes(b"\x1b]0;hello from user\x07")
 
         exit_started = time.monotonic()

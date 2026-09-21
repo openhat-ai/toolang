@@ -6543,3 +6543,40 @@ def test_terminal_title_requires_tty_but_not_tmux(
         ["\x1b]0;new_chat\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
     )
     assert not app.marks.active
+
+
+@pytest.mark.parametrize("fragmented", [False, True])
+def test_terminal_focus_reports_preserve_chat_draft_and_status(
+    fragmented: bool,
+) -> None:
+    from prompt_toolkit.input.vt100_parser import Vt100Parser
+
+    async def exercise() -> None:
+        app = tui.ChatTuiApp(
+            thread_id="term_x",
+            setting=FakeClient().initial_setting(),
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        app.app.timeoutlen = None
+        app.prompt.buffer.document = Document("keep draft", cursor_position=4)
+        app.status_bar.set_error("keep status")
+        app.interrupt_exit_pending = True
+        parser = Vt100Parser(app.app.key_processor.feed)
+        reports = "\x1b[O\x1b[I" * 3
+        with set_app(app.app):
+            for chunk in reports if fragmented else [reports]:
+                parser.feed(chunk)
+                app.app.key_processor.process_keys()
+            assert app.prompt.buffer.text == "keep draft"
+            assert app.prompt.buffer.cursor_position == 4
+            assert app.status_bar.error_message == "keep status"
+            assert app.interrupt_exit_pending
+            assert app.ui_events.empty()
+            parser.feed("[O[I")
+            app.app.key_processor.process_keys()
+            assert app.prompt.buffer.text == "keep[O[I draft"
+            await app.app.cancel_and_wait_for_background_tasks()
+
+    asyncio.run(exercise())
