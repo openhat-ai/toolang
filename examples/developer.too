@@ -1,4 +1,4 @@
-#@ A coding agent you can run or share directly.
+# A coding agent you can run or share directly.
 
 service context7:
   description = Look up current library and framework documentation.

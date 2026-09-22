@@ -1,4 +1,4 @@
-#@ Extract meeting action items as structured output.
+# Extract meeting action items as structured output.
 
 struct ActionItem:
   task: Text

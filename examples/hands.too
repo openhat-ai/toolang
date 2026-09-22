@@ -1,4 +1,4 @@
-#@ Delegate two review perspectives to hands and merge their findings.
+# Delegate two review perspectives to hands and merge their findings.
 
 agic:
   recall = none

@@ -1,48 +1,56 @@
-#@ Show the runnable signature forms Toolang accepts. Flows accept the same forms.
+# Show the runnable signature forms Toolang accepts. Flows accept the same forms.
 
-## Omitted name and parameters: the unnamed entry takes Part[] input.
+# Omitted name and parameters: the unnamed entry takes Part[] input.
+
 agic:
   Reply to the request.
 
   {{_}}
 
-## Empty parameter list: no primary input and no arguments.
+# Empty parameter list: no primary input and no arguments.
+
 agic version():
   Reply with the Toolang version and model you are running on.
 
-## Explicit primary input with the default Part[] type.
+# Explicit primary input with the default Part[] type.
+
 agic echo(_):
   Repeat this input unchanged:
 
   {{_}}
 
-## Primary input with an explicit type.
+# Primary input with an explicit type.
+
 agic slug(_: Text) -> Text:
   Convert this title into a lowercase slug with hyphens between words.
   Return only the slug.
 
   {{_}}
 
-## Required argument with the default Text type.
+# Required argument with the default Text type.
+
 agic rewrite(_, tone):
   Rewrite this text in a {{tone}} tone. Return only the rewrite.
 
   {{_}}
 
-## Optional argument, which stays empty when the caller omits it.
+# Optional argument, which stays empty when the caller omits it.
+
 agic summarize(_, length?):
   Summarize this text in {{length}}. When no length is given, use two
   sentences.
 
   {{_}}
 
-## Explicit argument types and a structured numeric result.
+# Explicit argument types and a structured numeric result.
+
 agic score(_: Json, name: Text) -> Number:
   Score the record supplied as {{name}} from 0 to 10. Return only the number.
 
   {{_}}
 
-## A declared struct as the output contract.
+# A declared struct as the output contract.
+
 agic report(_: Text) -> Report:
   Turn this text into a short report with a title, a summary, and the word
   count of the original.

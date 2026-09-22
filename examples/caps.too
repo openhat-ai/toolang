@@ -1,4 +1,4 @@
-#@ Attach caps inline and by reference, then use them from one agic.
+# Attach caps inline and by reference, then use them from one agic.
 
 with skill briceyan/review
 

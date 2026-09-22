@@ -1,4 +1,4 @@
-#@ Turn a rough project idea into an execution-ready delivery plan.
+# Turn a rough project idea into an execution-ready delivery plan.
 
 agic decompose(_, constraints?) -> Text[]:
   recall = none
@@ -149,7 +149,6 @@ agic improve_plan(_, project: Part[], constraints?):
   dependencies, and exit criteria explicit.
   Return only the complete improved plan.
 
-## Build, challenge, and improve an execution-ready delivery plan.
 flow(_: Text, constraints?):
   let project =
     {{_}}
