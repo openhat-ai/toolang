@@ -10,7 +10,6 @@ type annotations, and documentation comments.
 ## Program Constructs
 
 ```text
-agent      optional program header
 with       external cap reference
 struct     named structured type
 context    reusable context template
