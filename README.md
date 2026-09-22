@@ -4,150 +4,144 @@
 
 # Toolang
 
-A description language and runtime for agents.
+A language and runtime for agents and humans.
 
-Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to build, run, and share.
+The language expresses agent loops with fine-grained control using a small subset of natural language — readable by humans and agents, precise enough for the runtime to execute.
 
-## Share agents, not setup guides
+## Getting started
 
-Describe an agent in a `.too` file using near-natural language. The same file
-can be read, run, and shared, so others can use your agent and build on it.
+Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** support is coming soon.
 
-## Run shared agents in seconds
-
-Start with an agent from your team or the community. With `uvx` and a model API
-key, you can try it without a permanent installation.
-
-The examples use `too`, an alias for `toolang`. Both names provide the same CLI:
+Install Toolang with `uv` or `pip`; the main command is `toolang`, with `too` as a shorter alias:
 
 ```bash
-uvx --from toolang too serve https://toolang.ai/dev.too
+uv tool install toolang  # or: pip install toolang
+too --version            # same as: toolang --version
 ```
 
-Or use a GitHub shorthand:
+Toolang supports **Anthropic**, **DeepSeek**, **Google**, **OpenAI** and **OpenRouter** out of the box, along with local models through **Ollama** and **llama.cpp**. To inspect all configured providers and list available models, run:
 
 ```bash
-uvx --from toolang too serve briceyan/dev
+too providers --all
+too models
 ```
 
-See [model configuration](./docs/models.md) to connect a provider or use a
-local model service.
-
-## Get started
-
-Toolang requires Python 3.11+ and supports macOS and Linux. Windows is not
-supported yet.
-
-Install Toolang to create and run your own agents:
+To load additional providers and models, replace the bundled catalog with the full [models.dev](https://models.dev/) catalog:
 
 ```bash
-uv tool install toolang
+curl -fsSL https://models.dev/catalog.json -o ~/.toolang/catalog.json
 ```
 
-### Create your own agent
+## Remote agents
 
-Start from scratch, or clone a shared agent and make it your own:
+Run a shared agent locally by referencing its URL or GitHub shorthand. Toolang fetches the definition and starts a terminal chat using your model configuration:
 
 ```bash
-too new alice
-too clone briceyan/dev bob
+too https://toolang.ai/dev.too chat
+too briceyan/dev chat
 ```
 
-### Chat with your agents
+In remote-agent chat mode, the agent responds only to your messages; it does not start tasks or chores on its own.
 
-Work with an agent interactively in your terminal:
+## Local agents
+
+Create an agent from scratch, or clone a shared one as a starting point:
 
 ```bash
-too alice chat
+too new NAME
+too clone https://toolang.ai/dev.too NAME
 ```
 
-To keep the agent running as a service, start it in the foreground. Press
-`Ctrl+C` to stop:
+Once created, the agent is ready for a conversation:
 
 ```bash
-too serve alice
+too NAME chat
 ```
 
-Or start and stop it in the background:
+You can then configure the agent's capabilities and add tasks or recurring chores. Use the CLI help to see the available commands:
 
 ```bash
-too start alice
-too stop alice
+too --help
 ```
 
-## Go beyond chat
+## Scripts
 
-Give agents work without starting a conversation each time. Use
-[tasks](./docs/tasks.md) for one-off jobs, chores for recurring work, and scripts
-to bring agent procedures into Makefiles, GitHub Actions, and other workflows.
-
-### Run a script
-
-Create a starter script and explore its commands:
+Toolang also runs agents as scripts. Here is hello world in Toolang:
 
 ```bash
-too init demo
-too demo/aide.too info
-too demo/aide.too --help
+cat > hello-world.too <<'EOF'
+agic():
+  Say hello to the world.
+EOF
+
+too hello-world.too
 ```
 
-Run the default greeting or start an interactive chat:
+Use `too init` to generate `aide.too` as a starting point. Read the source or use `--help` to see its available runnables:
 
 ```bash
-too demo/aide.too
-too demo/aide.too chat
+too init DIR
+too DIR/aide.too --help
 ```
 
-The starter includes a writing workflow that rewrites text in the requested
-tone and checks the result:
+You can rename the file or modify the code to suit your needs, then call it from Makefiles, CI jobs, or other scripts to add agent capabilities to existing automation.
+
+To execute a runnable, pass its name and the arguments defined by its signature. If you omit the name, Toolang calls the entry runnable, as in the hello-world script above:
 
 ```bash
-too run demo/aide.too polish tone=professional -- "Can you send the notes?"
+too DIR/aide.too polish tone=professional -- "Can you send the notes?"
 ```
 
-Use `--model` to select another configured model. `too demo/aide.too` is
-shorthand for `too run demo/aide.too`. The generated file is executable, so
-`./demo/aide.too` also works.
+The same script can also run interactively:
+
+```bash
+too DIR/aide.too chat
+```
+
+## Language
+
+The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
+
+Explore Toolang through the examples in this repository:
+
+| Example | Description |
+| --- | --- |
+| [alice.too](./examples/alice.too) | Define an assistant with an imported skill, an MCP service, and agent instructions. |
+| [script-playground.too](./examples/script-playground.too) | Explore prose execution and collection operations with `scatter` and `gather`. |
+| [deep_search.too](./examples/deep_search.too) | Expand a research question into queries, search concurrently, filter and rank findings, and assemble a report. |
+| [delivery_plan.too](./examples/delivery_plan.too) | Plan workstreams concurrently, combine them into a delivery plan, and apply reviews sequentially. |
+| [proposal_workshop.too](./examples/proposal_workshop.too) | Draft a proposal and revise it through three review cycles. |
+| [script.fixed-model.too](./examples/script.fixed-model.too) | Restrict a runnable to one model and check CLI model overrides. |
+| [script.priority.too](./examples/script.priority.too) | Compare model selection order when a runnable allows multiple models. |
+| [script.openrouter-smoke.too](./examples/script.openrouter-smoke.too) | Check text generation with several models through OpenRouter. |
+| [script.simulated-history.none.too](./examples/script.simulated-history.none.too) | Supply explicit conversation messages while excluding stored history. |
+| [script.simulated-history.memory.too](./examples/script.simulated-history.memory.too) | Supply explicit conversation messages with `recall = far` to allow memory retrieval. |
 
 ## Common commands
 
+Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
+
 ```bash
-# Agents
 too new <agent>                       # Create a local agent
-too clone <ref> <agent>               # Clone a shared agent
-too serve <agent-or-ref>              # Run an agent in the foreground
-too start <agent>                     # Start an agent in the background
-too stop <agent>                      # Stop a running agent
+too clone <ref> <agent>               # Clone an agent definition
+too serve <ref>                       # Run an agent service in the foreground
+too start <agent>                     # Start a local agent service in the background
+too stop <agent>                      # Stop a running agent service
 
-# Scripts
-too init <dir>                        # Create aide.too without overwriting files
-too run <file.too> [runnable]         # Execute the default or a named runnable
+too init <dir>                        # Create aide.too in a directory
+too [run] <script> [runnable]         # Execute a script; run is optional
 
-# Source development (offline)
-too parse demo/aide.too --cst --json  # Inspect the concrete syntax tree
-too fmt demo/aide.too --check         # Check formatting without writing files
-too fmt demo/aide.too --highlight     # Preview formatted source in color
-too highlight demo/aide.too           # Highlight original source
+too caps                              # List available capabilities
+too tools                             # List available tools
+too models                            # List available models
+too providers                         # List available providers
 
-# Inspection
-too models                            # List available, allowed models
-too alice models                      # Inspect models using alice's configuration
-too providers                         # List available, allowed providers
-too tools                             # List available, allowed tools
-too alice tools --all                 # Include internal and allow-excluded tools
-
-# Help
-too --help                            # Show the main commands
-too more                              # Discover additional commands
+too --help                            # Show common commands
+too more                              # Show additional commands
 ```
-
-See [source commands](./docs/source-commands.md) for offline formatting,
-parsing, and highlighting, and [model configuration](./docs/models.md) for
-provider setup and catalog overrides.
 
 ## Links
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
-- [Repository documentation](./docs/index.md)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)

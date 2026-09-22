@@ -1,7 +1,8 @@
-# Toolang
+# Repository Guidelines
 
-Toolang is a description language and runtime for agents. It supports Python
-3.11+ and its implementation lives in `src/toolang`.
+These instructions govern work in the Toolang repository.
+The implementation lives in `src/toolang` and requires Python 3.11+.
+See [README.md](README.md) for the product overview and getting started.
 
 ## Work Types
 
@@ -70,6 +71,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 
 ### Public Documentation
 
+- Keep README prose factual and concrete. Reserve product positioning for the
+  tagline; describe requirements, behavior, and usage without marketing claims.
 - Prefer `too` in command examples and explain that it is an alias for `toolang`.
 - Keep the README focused on installation, scripts, agents, and common commands;
   do not document the standalone `caps` command there.
