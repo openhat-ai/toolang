@@ -15,12 +15,13 @@ from toolang.lang import Program, format_source
 from toolang.common.query import MatchUnion
 from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.state.runnable_collections import runnable_dataset
-from toolang.state.state import program_runnable_index
+from toolang.state.state import flow_export, program_runnable_index
 
 
 EXAMPLES_ROOT = PROJECT_ROOT / "examples"
 # Direct scripts at the top level plus direct flow modules under flows/.
 # Both levels are explicit so generated state under .toolang/ stays out.
+FLOW_MODULE_PATHS = tuple(sorted((EXAMPLES_ROOT / "flows").glob("*.too")))
 EXAMPLE_PATHS = tuple(
     sorted(
         example
@@ -80,3 +81,23 @@ def test_example_route_directives_resolve(path: Path) -> None:
                         f"{path.name}: {directive.name} = {query} does not resolve "
                         f"{match.identity_pattern!r}"
                     )
+
+
+@pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=_example_id)
+def test_example_resolves_a_default_entry(path: Path) -> None:
+    """Every example must run both as a script and as an agent surface."""
+
+    program = Program.from_source(_source(path))
+    names = program_runnable_index(program)
+
+    assert any(name.startswith("<entry:") or name == "chat" for name in names)
+
+
+@pytest.mark.parametrize("path", FLOW_MODULE_PATHS, ids=_example_id)
+def test_flow_module_exports_exactly_one_flow(path: Path) -> None:
+    """A flow module must export one flow, named by its filename stem."""
+
+    program = Program.from_source(_source(path))
+
+    # Raises when the module does not export exactly one qualifying flow.
+    flow_export(path.name, program)
