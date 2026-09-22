@@ -1,7 +1,8 @@
-# Toolang
+# Repository Guidelines
 
-Toolang is a description language and runtime for agents. It supports Python
-3.11+ and its implementation lives in `src/toolang`.
+These instructions govern work in the Toolang repository.
+The implementation lives in `src/toolang` and requires Python 3.11+.
+See [README.md](README.md) for the product overview and getting started.
 
 ## Work Types
 
@@ -55,13 +56,35 @@ applies, raise the ambiguity and ask the human before proceeding.
   definitions.
 - `reference/`: generated code reference; `tests/`: automated tests.
 
-## Convention
+## Conventions
 
 - Write code and documentation in English.
 - Keep plans and documentation concise and decision-complete. Avoid repeated
   context, unnecessary prose, and oversized sections; include only the explicit
   decisions, acceptance criteria, risks, examples, and implementation
   touchpoints needed to execute the work.
+- Keep diffs minimal, composable, and limited to one concern.
+- Prefer simple, explicit designs and mature libraries over unnecessary layers.
+- Use `types.py` for vocabulary, `records.py` for persistence, `events.py` for
+  events, `errors.py` for exceptions, `schemas.py` for protocol types, and
+  `config.py` for package-owned configuration formats.
+
+### Public Documentation
+
+- Keep README prose factual and concrete. Reserve product positioning for the
+  tagline; describe requirements, behavior, and usage without marketing claims.
+- Prefer `too` in command examples and explain that it is an alias for `toolang`.
+- Keep the README focused on installation, scripts, agents, and common commands;
+  do not document the standalone `caps` command there.
+- Keep platform support in the README: macOS and Linux are supported; Windows
+  is not supported yet.
+- For the first public release, do not maintain a changelog, release notes, or
+  a separate known-limitations document.
+- Verify examples against current CLI behavior and bundled templates. Link to
+  focused documentation for detailed configuration and reference material.
+
+### Git and Pull Requests
+
 - Use semantic commit messages and PR titles; open ready PRs by default.
 - Use the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
 - Always create or reuse a dedicated Git worktree for repository changes; never
@@ -70,11 +93,6 @@ applies, raise the ambiguity and ask the human before proceeding.
   `origin/main`, rerun verification, and push rebased history with
   `--force-with-lease`.
 - Resolve every pull request review thread before final handoff.
-- Keep diffs minimal, composable, and limited to one concern.
-- Prefer simple, explicit designs and mature libraries over unnecessary layers.
-- Use `types.py` for vocabulary, `records.py` for persistence, `events.py` for
-  events, `errors.py` for exceptions, `schemas.py` for protocol types, and
-  `config.py` for package-owned configuration formats.
 
 ### Issue and Pull Request Titles
 
@@ -106,7 +124,11 @@ applies, raise the ambiguity and ask the human before proceeding.
 
 ## Verification
 
-Run the default verification before every commit:
+For documentation-only changes, verify accuracy against the implementation,
+validate relevant links and examples, and run `git diff --check`. The default
+code checks and full test suite are not required.
+
+For code or test changes, run the default verification before every commit:
 
 ```sh
 uv run ruff check .

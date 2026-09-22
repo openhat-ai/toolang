@@ -4,165 +4,144 @@
 
 # Toolang
 
-A description language and runtime for agents.
+A language and runtime for agents and humans.
 
-Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to build, run, and share.
+The language expresses agent loops with fine-grained control using a small subset of natural language — readable by humans and agents, precise enough for the runtime to execute.
 
-## Try Now
+## Getting started
 
-Start with a shared agent, no installation required:
+Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** support is coming soon.
 
-```bash
-uvx toolang serve https://toolang.ai/dev.too
-```
-
-Or use a GitHub shorthand:
+Install Toolang with `uv` or `pip`; the main command is `toolang`, with `too` as a shorter alias:
 
 ```bash
-uvx toolang serve briceyan/dev
+uv tool install toolang  # or: pip install toolang
+too --version            # same as: toolang --version
 ```
 
-## Get Started
-
-Install Toolang to build and run your own agents:
+Toolang supports **Anthropic**, **DeepSeek**, **Google**, **OpenAI** and **OpenRouter** out of the box, along with local models through **Ollama** and **llama.cpp**. To inspect all configured providers and list available models, run:
 
 ```bash
-uv tool install toolang
+too providers --all
+too models
 ```
 
-To try a small script with an already configured model:
+To load additional providers and models, replace the bundled catalog with the full [models.dev](https://models.dev/) catalog:
 
 ```bash
-too init demo
-too demo/work.too info
-too demo/work.too --help
-too demo/work.too
-too demo/work.too chat
+curl -fsSL https://models.dev/catalog.json -o ~/.toolang/catalog.json
 ```
 
-The default entry greets you without input. The same file includes a chat agic,
-a rewrite agic with a named parameter, and a flow that combines a named agic
-with an inline agic:
+## Remote agents
+
+Run a shared agent locally by referencing its URL or GitHub shorthand. Toolang fetches the definition and starts a terminal chat using your model configuration:
 
 ```bash
-too run demo/work.too polish tone=professional -- "Can you send the notes?"
+too https://toolang.ai/dev.too chat
+too briceyan/dev chat
 ```
 
-Use `--model` to select another configured model. `too demo/work.too` remains a
-shorthand for Script execution. The generated file is executable, so
-`./demo/work.too` also works.
+In remote-agent chat mode, the agent responds only to your messages; it does not start tasks or chores on its own.
 
-Create a local agent:
+## Local agents
+
+Create an agent from scratch, or clone a shared one as a starting point:
 
 ```bash
-toolang new alice
+too new NAME
+too clone https://toolang.ai/dev.too NAME
 ```
 
-Or clone a shared agent:
+Once created, the agent is ready for a conversation:
 
 ```bash
-toolang clone briceyan/dev bob
+too NAME chat
 ```
 
-Extend your agents with caps — composable agent primitives:
+You can then configure the agent's capabilities and add tasks or recurring chores. Use the CLI help to see the available commands:
 
 ```bash
-caps alice skill add briceyan/codebase-navigation
-caps alice psyche add briceyan/senior-engineer
-caps alice service add briceyan/github
+too --help
 ```
 
-Caps are typically Markdown files. To create your own cap, start one locally:
+## Scripts
+
+Toolang also runs agents as scripts. Here is hello world in Toolang:
 
 ```bash
-caps alice skill new reviewer
+cat > hello-world.too <<'EOF'
+agic():
+  Say hello to the world.
+EOF
+
+too hello-world.too
 ```
 
-Run in the foreground to watch the logs. Press `Ctrl+C` to stop. Use `PY_LOG` for more detail:
+Use `too init` to generate `aide.too` as a starting point. Read the source or use `--help` to see its available runnables:
 
 ```bash
-toolang serve alice
-PY_LOG=debug toolang serve alice
+too init DIR
+too DIR/aide.too --help
 ```
 
-Or start it in the background:
+You can rename the file or modify the code to suit your needs, then call it from Makefiles, CI jobs, or other scripts to add agent capabilities to existing automation.
+
+To execute a runnable, pass its name and the arguments defined by its signature. If you omit the name, Toolang calls the entry runnable, as in the hello-world script above:
 
 ```bash
-toolang start alice
+too DIR/aide.too polish tone=professional -- "Can you send the notes?"
 ```
 
-In either case, open the printed WebUI link to connect to the agent:
-
-```text
-Started agent alice: https://too.run/7001
-```
-
-To stop a background agent:
+The same script can also run interactively:
 
 ```bash
-toolang stop alice
+too DIR/aide.too chat
 ```
 
-Format, inspect, and highlight source without agent setup using the
-[source commands](./docs/source-commands.md).
+## Language
 
-## Common Commands
+The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
+
+Explore Toolang through the examples in this repository:
+
+| Example | Description |
+| --- | --- |
+| [alice.too](./examples/alice.too) | Define an assistant with an imported skill, an MCP service, and agent instructions. |
+| [script-playground.too](./examples/script-playground.too) | Explore prose execution and collection operations with `scatter` and `gather`. |
+| [deep_search.too](./examples/deep_search.too) | Expand a research question into queries, search concurrently, filter and rank findings, and assemble a report. |
+| [delivery_plan.too](./examples/delivery_plan.too) | Plan workstreams concurrently, combine them into a delivery plan, and apply reviews sequentially. |
+| [proposal_workshop.too](./examples/proposal_workshop.too) | Draft a proposal and revise it through three review cycles. |
+| [script.fixed-model.too](./examples/script.fixed-model.too) | Restrict a runnable to one model and check CLI model overrides. |
+| [script.priority.too](./examples/script.priority.too) | Compare model selection order when a runnable allows multiple models. |
+| [script.openrouter-smoke.too](./examples/script.openrouter-smoke.too) | Check text generation with several models through OpenRouter. |
+| [script.simulated-history.none.too](./examples/script.simulated-history.none.too) | Supply explicit conversation messages while excluding stored history. |
+| [script.simulated-history.memory.too](./examples/script.simulated-history.memory.too) | Supply explicit conversation messages with `recall = far` to allow memory retrieval. |
+
+## Common commands
+
+Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
 
 ```bash
-# Agents
-toolang new <agent>                  # Create a local agent
-toolang clone <ref> <agent>          # Clone a shared agent
-toolang serve <agent-or-ref>         # Run an agent in the foreground
-toolang start <agent>                # Start an agent in the background
-toolang stop <agent>                 # Stop a running agent
+too new <agent>                       # Create a local agent
+too clone <ref> <agent>               # Clone an agent definition
+too serve <ref>                       # Run an agent service in the foreground
+too start <agent>                     # Start a local agent service in the background
+too stop <agent>                      # Stop a running agent service
 
-# Scripts
-toolang init <dir>                   # Create aide.too without overwriting files
-toolang run <file.too> [runnable]     # Execute authored main or a named runnable
+too init <dir>                        # Create aide.too in a directory
+too [run] <script> [runnable]         # Execute a script; run is optional
 
-# Source development (offline)
-too parse work.too --cst --json       # Inspect the complete concrete syntax tree
-too fmt work.too --check              # Check formatting without writing files
-too fmt work.too --highlight          # Preview formatted source in color
-too highlight work.too                # Highlight original source
+too caps                              # List available capabilities
+too tools                             # List available tools
+too models                            # List available models
+too providers                         # List available providers
 
-# Inspection
-toolang models                       # List model catalog entries and availability
-toolang <agent> models                # Inspect models using a resident agent's config
-toolang providers                    # List catalog providers
-toolang tools                        # List root-configured available tools
-toolang <agent> tools                # Apply the agent configuration and allow policy
-toolang <agent> tools --all          # Include internal and allow-excluded tools
-toolang catalogs                     # List installed model catalogs
-toolang adapters                     # List installed model adapters
-toolang toolsets                     # List installed toolsets
-toolang sandboxes                    # List installed sandboxes
-
-# Caps
-caps [agent] psyche add <ref>        # Add a psyche
-caps [agent] skill add <ref>         # Add a skill
-caps [agent] service add <ref>       # Add an MCP server
-caps [agent] prompt add <ref>        # Add a slash command
-caps [agent] skill list              # List skills
-caps [agent] list                    # List allowed caps in root or agent scope
-caps [agent] list --all              # Include allow-excluded caps and their status
+too --help                            # Show common commands
+too more                              # Show additional commands
 ```
-
-The preferred model catalog is models.dev `catalog.json`; Toolang consumes its
-`providers` member and also accepts the provider map from `api.json`. Download
-the combined catalog with
-`curl -fsSL https://models.dev/catalog.json -o catalog.json`. Commands that
-expose `--catalog` use that override first, followed by
-`TOOLANG_MODEL_CATALOG`, agent-home `catalog.json`, root `catalog.json`, and the
-packaged catalog. Provider-agnostic `models.json` is not a valid execution
-catalog, and implicit discovery ignores that filename.
-`toolang models` is inspection-only and never downloads during startup.
 
 ## Links
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
-- [Changelog](https://github.com/openhat-ai/toolang/blob/main/CHANGELOG.md)
-- [Release notes](https://github.com/openhat-ai/toolang/blob/main/RELEASE_NOTES.md)
-- [Known limitations](https://github.com/openhat-ai/toolang/blob/main/KNOWN_LIMITATIONS.md)
