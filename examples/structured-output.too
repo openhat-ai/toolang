@@ -1,4 +1,4 @@
-#@ Extract action items from meeting notes into typed records.
+#@ Extract meeting action items as structured output.
 
 struct ActionItem:
   task: Text
