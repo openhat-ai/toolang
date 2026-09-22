@@ -101,9 +101,9 @@ toolang list
 toolang init demo
 toolang run demo/work.too
 toolang run demo/work.too main --help
-PY_LOG=toolang.execution=info too ./examples/proposal_workshop.too workshop -- "Propose a weekly release process"
-too ./examples/proposal_workshop.too --help
-too ./examples/proposal_workshop.too workshop -- "Propose a weekly release process"
+PY_LOG=toolang.execution=info too ./examples/flows/proposal_workshop.too -- "Propose a weekly release process"
+too ./examples/flows/proposal_workshop.too --help
+too ./examples/flows/proposal_workshop.too -- "Propose a weekly release process"
 toolang serve alice
 toolang serve alice --sandbox docker
 toolang serve brice/alice
@@ -114,7 +114,7 @@ toolang start alice --sandbox docker
 toolang stop alice
 toolang info alice
 toolang alice info
-toolang ./examples/deep_search.too info
+toolang ./examples/flows/deep_search.too info
 toolang alice chat
 toolang alice chat --thread
 toolang alice chat --thread term_3nprht9x
