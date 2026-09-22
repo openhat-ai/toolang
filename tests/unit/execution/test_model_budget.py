@@ -45,9 +45,16 @@ def test_context_capacity_tracks_the_joint_window() -> None:
     assert context_capacity({"context": 32000}) == 32000
 
 
-def test_output_allowance_defaults_to_host_policy() -> None:
+def test_output_allowance_keeps_the_host_floor_without_a_route_limit() -> None:
     assert output_budget(MODEL.limit) == 4096
-    assert output_budget({"output": 100_000}) == 4096
+    assert output_budget({"context": 100_000}) == 4096
+
+
+def test_output_allowance_claims_a_confirmed_route_limit() -> None:
+    assert output_budget({"output": 100_000}) == 100_000
+    assert output_budget({"output": 100_000, "context": 131_072}) == 32_768
+    # A published allowance below the floor is still honoured as published.
+    assert output_budget({"output": 2_048}) == 2_048
 
 
 def test_explicit_max_output_is_clamped_by_the_model_limit() -> None:
@@ -65,7 +72,19 @@ def test_output_allowance_must_exceed_an_explicit_reasoning_budget() -> None:
         output_budget(model.limit, demand=4096, reasoning=reasoning)
 
     assert output_budget(model.limit, demand=16_384, reasoning=reasoning) == 16_384
-    assert output_budget(model.limit, demand=None, reasoning=reasoning) == 9024
+    assert output_budget(model.limit, demand=None, reasoning=reasoning) == 20_000
+    assert output_budget({"context": 32_768}, reasoning=reasoning) == 9_024
+
+
+def test_unbudgeted_reasoning_raises_the_automatic_floor() -> None:
+    assert output_budget(MODEL.limit, reasoning_capable=True) == 8_192
+    assert output_budget({"context": 32_768}, reasoning_capable=True) == 8_192
+    assert output_budget({"context": 16_384}, reasoning_capable=True) == 4_096
+    assert output_budget({"output": 2_048}, reasoning_capable=True) == 2_048
+    disabled = Reasoning(effort="none")
+    assert (
+        output_budget(MODEL.limit, reasoning=disabled, reasoning_capable=True) == 4_096
+    )
 
 
 def test_output_allowance_rejects_a_nonpositive_value() -> None:
@@ -298,9 +317,13 @@ def test_continuation_changes_count_new_content_without_recounting_retained_cont
         ({"context": 4096}, None, 1024, 2048),
         ({"context": 32768}, Reasoning(budget_tokens=8192), 9216, 21913),
         ({"output": 2048}, None, 2048, None),
+        ({"output": 100000}, None, 100000, None),
+        ({"context": 131072, "output": 65536}, None, 32768, 91750),
+        ({"context": 1048576, "output": 65536}, None, 65536, 930611),
+        ({"context": 1000000, "output": 384000}, None, 250000, 700000),
     ],
 )
-def test_automatic_policy_with_partial_catalog_limits(
+def test_automatic_policy_across_catalog_limit_completeness(
     limits, reasoning, expected, input_expected
 ):
     before = dict(limits)

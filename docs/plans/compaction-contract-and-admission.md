@@ -32,9 +32,9 @@ CompactionResult(thread: str, begin: str, end: str, summary: str)
 ## Model-call rules
 
 1. Resolve output allowance `O` from explicit controls or the host automatic
-   policy (4096, context-quarter cap, explicit reasoning headroom), clamped to
-   the catalog route output limit. Adapters normalize authored options before
-   admission and send the admitted allowance unchanged.
+   policy (route output limit, context-quarter cap, reasoning floor and
+   headroom), clamped to the catalog route output limit. Adapters normalize
+   authored options before admission and send the admitted allowance unchanged.
 2. `O` includes reasoning. Explicit reasoning budget `R` requires `O > R`;
    do not double-count reasoning, translate effort labels into token counts,
    or silently shrink the selected output/reasoning allowance.

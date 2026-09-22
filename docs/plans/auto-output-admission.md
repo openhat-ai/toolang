@@ -1,6 +1,7 @@
 # Route capabilities and call budgets
 
-Status: approved for implementation.
+Status: implemented. The automatic output allowance is revised by
+[Model output budget](model-output-budget.md).
 
 ## Contract
 
@@ -55,9 +56,11 @@ wire-option normalization and encoding; budget code never checks provider names.
 
 - Explicit `max_output`, otherwise an authored supported output option, wins;
   reject conflicting aliases and clamp to known route output limit H.
-- Otherwise choose O=4096, cap at `floor(C/4)` for known context C, raise to at
-  least R+1024 for explicit reasoning tokens R, then clamp to H. Require O>0 and
-  O>R. These are proposed host constants, never catalog facts or service defaults.
+- Otherwise choose O=H for a known route output limit H, else the host floor
+  4096; raise to at least 8192 when the route can reason without an explicit
+  token budget; cap at `floor(C/4)` for known context C; raise to at least R+1024
+  for explicit reasoning tokens R; then clamp to H. Require O>0 and O>R. These
+  are host constants, never catalog facts or service defaults.
 - `auto` clears inherited caps but preserves authored provider options. Send and
   record the same O; prompt growth uses existing compaction, not output reduction.
 - Preserve input admission: M=`max(1024, ceil(min(known C, known L)/20))`;

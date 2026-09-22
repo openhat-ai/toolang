@@ -186,6 +186,7 @@ def build_agic_frame(
         resolved_model.limit,
         demand=max_output if max_output is not None else authored_output,
         reasoning=reasoning,
+        reasoning_capable=resolved_model.reasoning is True,
     )
 
     inputs = prompting.PromptInputs(

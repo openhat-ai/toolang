@@ -1316,9 +1316,15 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
             assert run.status == "succeeded", run.error
             (invocation,) = harness.adapter.invocations
             assert invocation.call.reasoning == reasoning
-            assert invocation.call.max_output_tokens == (
-                9216 if control == 8192 else 4096
-            )
+            # Unbudgeted reasoning raises the automatic floor; an explicit
+            # token control keeps its own exceeding allowance.
+            if control == "none":
+                expected_output = 4096
+            elif control == 8192:
+                expected_output = 9216
+            else:
+                expected_output = 8192
+            assert invocation.call.max_output_tokens == expected_output
             (step,) = harness.store.list_steps(run_id=run.id)
             assert harness.store.rebuild_model_call(step) == invocation.call
             assert "output" not in invocation.model.limit
