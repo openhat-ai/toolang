@@ -1,4 +1,4 @@
-#@ Transfer a support request to the specialist that owns it.
+#@ Transfer a support request to a specialist with handoffs.
 
 agic:
   recall = none
