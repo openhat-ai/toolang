@@ -23,7 +23,7 @@ surface.
 The canonical one-shot invocation is:
 
 ```sh
-too examples/workflows/deep_search.too research \
+too examples/deep_search.too research \
   --model 'deepseek/deepseek-v4-flash effort=high' \
   -- hello kitty
 ```

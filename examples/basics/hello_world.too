@@ -1,8 +1,0 @@
-##! Run your first Toolang program.
-
-# Requires a configured model. From the repository root:
-#   uv run too examples/basics/hello_world.too
-# Expected response: Hello, world!
-
-agic():
-  Reply with exactly: Hello, world!

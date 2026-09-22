@@ -69,12 +69,12 @@ too --help
 Toolang also runs agents as scripts. Here is hello world in Toolang:
 
 ```bash
-cat > hello-world.too <<'EOF'
+cat > hello_world.too <<'EOF'
 agic():
   Say hello to the world.
 EOF
 
-too hello-world.too
+too hello_world.too
 ```
 
 Use `too init` to generate `aide.too` as a starting point. Read the source or use `--help` to see its available runnables:
@@ -102,20 +102,9 @@ too DIR/aide.too chat
 
 The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
 
-Explore Toolang through the examples in this repository:
-
-| Example | Description |
-| --- | --- |
-| [alice.too](./examples/alice.too) | Define an assistant with an imported skill, an MCP service, and agent instructions. |
-| [script-playground.too](./examples/script-playground.too) | Explore prose execution and collection operations with `scatter` and `gather`. |
-| [deep_search.too](./examples/deep_search.too) | Expand a research question into queries, search concurrently, filter and rank findings, and assemble a report. |
-| [delivery_plan.too](./examples/delivery_plan.too) | Plan workstreams concurrently, combine them into a delivery plan, and apply reviews sequentially. |
-| [proposal_workshop.too](./examples/proposal_workshop.too) | Draft a proposal and revise it through three review cycles. |
-| [script.fixed-model.too](./examples/script.fixed-model.too) | Restrict a runnable to one model and check CLI model overrides. |
-| [script.priority.too](./examples/script.priority.too) | Compare model selection order when a runnable allows multiple models. |
-| [script.openrouter-smoke.too](./examples/script.openrouter-smoke.too) | Check text generation with several models through OpenRouter. |
-| [script.simulated-history.none.too](./examples/script.simulated-history.none.too) | Supply explicit conversation messages while excluding stored history. |
-| [script.simulated-history.memory.too](./examples/script.simulated-history.memory.too) | Supply explicit conversation messages with `recall = far` to allow memory retrieval. |
+Start with the [examples guide](./examples/README.md) for a minimal module,
+an agent definition, and three workflows covering loops, parallel execution,
+and web research.
 
 ## Common commands
 

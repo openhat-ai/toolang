@@ -933,11 +933,7 @@ def test_repo_program_fixtures_parse_cleanly() -> None:
 
 def test_example_programs_parse_cleanly() -> None:
     examples = PROJECT_ROOT / "examples"
-    sources = sorted(
-        path
-        for path in examples.rglob("*.too")
-        if ".toolang" not in path.relative_to(examples).parts
-    )
+    sources = sorted(examples.glob("*.too"))
     assert sources
     for source_path in sources:
         program = Program.from_source(source_path.read_text(encoding="utf-8"))

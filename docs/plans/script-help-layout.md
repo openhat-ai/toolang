@@ -14,9 +14,9 @@ Supersede only the help layout and common-option placement sections of
 ## Root Help
 
 ```text
-Usage: too examples/workflows/deep_search.too [OPTIONS] RUNNABLE
+Usage: too examples/deep_search.too [OPTIONS] RUNNABLE
 
-Run runnables from examples/workflows/deep_search.too.
+Run runnables from examples/deep_search.too.
 
 Runnables
   agic:expand_queries  Agic expand_queries.

@@ -104,15 +104,15 @@ Excluded:
 ## Workflow And Grammar
 
 ```sh
-too examples/workflows/deep_search.too inspect runs
-too examples/workflows/deep_search.too inspect script_root runs
-too examples/workflows/deep_search.too inspect run_root
-too examples/workflows/deep_search.too inspect run_root tree
-too examples/workflows/deep_search.too inspect run_root.2 call
-too examples/workflows/deep_search.too inspect run_root.2 runs
-too examples/workflows/deep_search.too inspect run_search_a steps
-too examples/workflows/deep_search.too inspect run_search_a.0 call
-too examples/workflows/deep_search.too inspect run_search_a.1 call
+too examples/deep_search.too inspect runs
+too examples/deep_search.too inspect script_root runs
+too examples/deep_search.too inspect run_root
+too examples/deep_search.too inspect run_root tree
+too examples/deep_search.too inspect run_root.2 call
+too examples/deep_search.too inspect run_root.2 runs
+too examples/deep_search.too inspect run_search_a steps
+too examples/deep_search.too inspect run_search_a.0 call
+too examples/deep_search.too inspect run_search_a.1 call
 ```
 
 New forms:
