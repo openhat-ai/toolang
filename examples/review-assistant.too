@@ -1,0 +1,14 @@
+#@ Reuse a parameterized prompt to review a proposed code change.
+
+prompt review-change:
+  Review this proposed change for {{focus}}:
+
+  {{change}}
+
+  Identify concrete risks and suggest checks. Distinguish demonstrated
+  problems from assumptions; do not invent code that was not supplied.
+
+agic:
+  tools = none
+
+  {{_}}

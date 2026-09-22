@@ -150,7 +150,7 @@ agic improve_plan(_, project: Part[], constraints?):
   Return only the complete improved plan.
 
 ## Build, challenge, and improve an execution-ready delivery plan.
-flow plan(_: Text, constraints?):
+flow(_: Text, constraints?):
   let project =
     {{_}}
 

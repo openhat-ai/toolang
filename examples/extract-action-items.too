@@ -1,0 +1,18 @@
+#@ Turn meeting notes into structured action items.
+
+struct ActionItem:
+  task: Text
+  owner?: Text
+  due?: Text
+
+agic extract -> ActionItem[]:
+  recall = none
+  tools = none
+
+  Extract explicit action items from these meeting notes.
+  Each item must have a concrete task. Include owner and due only when stated;
+  omit those fields when unknown. Keep relative dates as written.
+  Do not turn suggestions or completed work into commitments.
+  Return an empty array when there are no action items.
+
+  {{_}}

@@ -69,7 +69,7 @@ agic revise_draft(_, feedback: Part[], request: Part[], audience?, criteria?):
   Return only the complete revised proposal.
 
 ## Draft and improve a proposal through three review-revision cycles.
-flow workshop(_: Text, audience?, criteria?):
+flow(_: Text, audience?, criteria?):
   let request =
     {{_}}
 

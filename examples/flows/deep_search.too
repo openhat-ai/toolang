@@ -55,7 +55,7 @@ agic synthesize_report(_, topic: Part[]):
   - Source notes
   - Next search directions
 
-flow research(_: Text):
+flow(_: Text):
   let topic =
     {{_}}
 

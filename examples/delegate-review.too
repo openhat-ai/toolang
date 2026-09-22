@@ -1,0 +1,33 @@
+#@ Delegate two review perspectives and combine their findings.
+
+agic review:
+  recall = none
+  tools = none
+  hands = correctness_review, maintainability_review
+
+  Review this code or diff. Use correctness_review and maintainability_review
+  as hands, passing the complete input to each. Wait for both results and
+  combine them into a short, prioritized review without duplicate findings.
+  Mark assumptions and list useful checks. Do not claim tests were run.
+
+  {{_}}
+
+agic correctness_review:
+  recall = none
+  tools = none
+
+  Review this code or diff for incorrect behavior, missed edge cases, and
+  missing error handling. Return only actionable findings supported by the
+  supplied text, or state that no concrete issue was found.
+
+  {{_}}
+
+agic maintainability_review:
+  recall = none
+  tools = none
+
+  Review this code or diff for unnecessary complexity, unclear ownership,
+  and fragile coupling. Return only actionable findings supported by the
+  supplied text, or state that no concrete issue was found.
+
+  {{_}}
