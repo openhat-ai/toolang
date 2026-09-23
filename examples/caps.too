@@ -1,4 +1,4 @@
-# Attach caps inline and by reference, then use them from one agic.
+# Example: Define and use caps in agics.
 
 with skill briceyan/review
 
@@ -15,10 +15,8 @@ service context7:
 
 prompt change-summary:
   Summarize this change for {{audience}}.
-
   {{change}}
 
 agic(_: Text, audience: Text):
   Review the change, then summarize it for the audience.
-
   $change-summary audience={{audience}} change="{{_}}"

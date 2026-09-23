@@ -1,4 +1,4 @@
-# A coding agent you can run or share directly.
+# Example: Define a complete coding agent.
 
 service context7:
   description = Look up current library and framework documentation.
@@ -9,7 +9,7 @@ service context7:
   framework behavior. Prefer it over recollection, and cite what you verified.
 
 psyche developer:
-  Work from evidence in the repository and in verified sources.
+  Work from evidence in the repository and verified sources.
   Prefer the smallest change that fits the surrounding code.
   State uncertainty instead of guessing, and never report a check you did not run.
 

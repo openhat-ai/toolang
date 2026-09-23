@@ -1,4 +1,4 @@
-# Extract meeting action items as structured output.
+# Example: Define a struct and use it for structured output.
 
 struct ActionItem:
   task: Text
@@ -6,9 +6,6 @@ struct ActionItem:
   due?: Text
 
 agic -> ActionItem[]:
-  recall = none
-  tools = none
-
   Extract the explicit action items from this text.
 
   Every item needs one concrete task. Include an owner or due date only when

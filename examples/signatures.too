@@ -1,63 +1,59 @@
-# Show the runnable signature forms Toolang accepts. Flows accept the same forms.
+# Example: Agic signature forms, from shorthand to fully typed.
+# Flows accept the same forms.
 
-# Omitted name and parameters: the unnamed entry takes Part[] input.
-
+# Shorthand: omit the name and parameter list.
+# The unnamed entry takes one Part[] primary input.
 agic:
   Reply to the request.
 
   {{_}}
 
-# Empty parameter list: no primary input and no arguments.
-
+# No-input form: `()` explicitly declares no input or arguments.
 agic version():
   Reply with the Toolang version and model you are running on.
 
-# Explicit primary input with the default Part[] type.
-
+# Default-input form: `_` declares the primary input.
+# Its type defaults to Part[].
 agic echo(_):
   Repeat this input unchanged:
 
   {{_}}
 
-# Primary input with an explicit type.
-
+# Typed-input form: declare the primary input and result types.
 agic slug(_: Text) -> Text:
   Convert this title into a lowercase slug with hyphens between words.
   Return only the slug.
 
   {{_}}
 
-# Required argument with the default Text type.
-
+# Required-argument form: add named arguments after the primary input.
+# Their types default to Text.
 agic rewrite(_, tone):
   Rewrite this text in a {{tone}} tone. Return only the rewrite.
 
   {{_}}
 
-# Optional argument, which stays empty when the caller omits it.
-
+# Optional-argument form: `?` makes a named argument optional.
 agic summarize(_, length?):
   Summarize this text in {{length}}. When no length is given, use two
   sentences.
 
   {{_}}
 
-# Explicit argument types and a structured numeric result.
-
+# Fully typed form: type the primary input, arguments, and result.
 agic score(_: Json, name: Text) -> Number:
   Score the record supplied as {{name}} from 0 to 10. Return only the number.
 
   {{_}}
 
-# A declared struct as the output contract.
+# Structured-result form: use a declared struct as the result type.
+struct Report:
+  title: Text
+  summary: Text
+  words: Number
 
 agic report(_: Text) -> Report:
   Turn this text into a short report with a title, a summary, and the word
   count of the original.
 
   {{_}}
-
-struct Report:
-  title: Text
-  summary: Text
-  words: Number

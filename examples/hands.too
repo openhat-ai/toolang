@@ -1,9 +1,7 @@
-# Delegate two review perspectives to hands and merge their findings.
+# Example: Delegate work to multiple hands and merge their results.
 
 agic:
-  recall = none
-  tools = none
-  hands = agic:review_correctness, agic:review_maintainability
+  hands = review_correctness, review_maintainability
 
   Review this code or diff. Call both hands with the complete input, wait for
   both results, and merge them into one short, prioritized review with no
@@ -12,9 +10,9 @@ agic:
 
   {{_}}
 
+# Hand: review behavior, edge cases, and error handling.
 agic review_correctness:
   recall = none
-  tools = none
 
   Review this code or diff for incorrect behavior, missed edge cases, and
   missing error handling. Return only actionable findings supported by the
@@ -22,9 +20,9 @@ agic review_correctness:
 
   {{_}}
 
+# Hand: review complexity, ownership, and coupling.
 agic review_maintainability:
   recall = none
-  tools = none
 
   Review this code or diff for unclear ownership, unnecessary complexity, and
   fragile coupling. Return only actionable findings supported by the supplied
