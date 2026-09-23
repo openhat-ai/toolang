@@ -257,6 +257,10 @@ def _limits(value: object, *, label: str) -> dict[str, int]:
             raise TypeError(f"{label} limit keys must be strings")
         if isinstance(item, bool) or not isinstance(item, int) or item < 0:
             raise TypeError(f"{label} limit.{key} must be a non-negative integer")
+        if item == 0:
+            # models.dev reports zero for an unknown or not-applicable limit.
+            # Toolang represents an unknown limit by the absence of the key.
+            continue
         result[key] = item
     return result
 

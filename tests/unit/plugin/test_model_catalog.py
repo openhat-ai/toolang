@@ -176,6 +176,44 @@ def test_catalog_import_validates_combined_top_level_members(
         read_model_catalog_snapshot(path)
 
 
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    (
+        ({"context": 0, "output": 8192}, {"output": 8192}),
+        ({"context": 200_000, "output": 0}, {"context": 200_000}),
+        ({"context": 0, "output": 0}, {}),
+    ),
+)
+def test_catalog_import_treats_zero_limits_as_unknown(
+    tmp_path: Path,
+    limit: dict[str, int],
+    expected: dict[str, int],
+) -> None:
+    path = tmp_path / "models.json"
+    payload = _catalog_data()
+    payload["test"]["models"]["one"]["limit"] = limit
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    model = read_model_catalog_snapshot(path).find("test", "one")
+
+    assert model is not None
+    assert model.limit == expected
+
+
+@pytest.mark.parametrize("value", ["8192", 1.5, True, -1])
+def test_catalog_import_rejects_limits_that_are_not_counts(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    path = tmp_path / "models.json"
+    payload = _catalog_data()
+    payload["test"]["models"]["one"]["limit"] = {"context": value}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(TypeError, match=r"model test/one limit\.context"):
+        read_model_catalog_snapshot(path)
+
+
 def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     path = tmp_path / "models.json"
     payload = _catalog_data()

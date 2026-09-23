@@ -79,7 +79,9 @@ session or sandbox.
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top
 level, drops unmodelled additive fields, parses prices as finite floats, and
-rejects an invalid complete snapshot. Canonical model metadata from the
+rejects an invalid complete snapshot. A zero `limit` value is the external
+format's unknown marker: the importer omits it, because Toolang represents an
+unknown limit by the absence of the key. Canonical model metadata from the
 combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
 --json` remains a round-trippable filtered catalog export.

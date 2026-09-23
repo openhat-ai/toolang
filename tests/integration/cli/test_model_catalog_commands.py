@@ -229,6 +229,73 @@ def test_models_query_accepts_combined_models_dev_catalog(
     )
 
 
+def test_models_loads_catalog_limits_that_models_dev_reports_as_zero(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    providers = _catalog_data()
+    provider_models = cast(
+        dict[str, dict[str, object]],
+        cast(dict[str, object], providers["test"])["models"],
+    )
+    provider_models["one"]["limit"] = {"context": 0, "output": 8192}
+    catalog.write_text(
+        json.dumps(
+            {
+                "models": {"test/one": {"id": "test/one", "name": "One"}},
+                "providers": providers,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _disable_local_discovery(monkeypatch)
+
+    table = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--all",
+            "--catalog",
+            str(catalog),
+            "--query",
+            "test/one",
+        ],
+        env={},
+    )
+
+    assert table.exit_code == 0, table.stderr
+    stdout = strip_ansi(table.stdout)
+    header = next(line for line in stdout.splitlines() if "CONTEXT" in line)
+    row = next(line for line in stdout.splitlines() if "test/one" in line)
+    context = header.index("CONTEXT")
+    output = header.index("OUTPUT")
+    assert row[context : context + len("CONTEXT")].strip() == "-"
+    assert row[output : output + len("OUTPUT")].strip() == "8_192"
+
+    exported = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--all",
+            "--catalog",
+            str(catalog),
+            "--query",
+            "test/one",
+            "--json",
+        ],
+        env={},
+    )
+
+    assert exported.exit_code == 0, exported.stderr
+    data = json.loads(exported.stdout, parse_float=float)
+    assert data["test"]["models"]["one"]["limit"] == {"output": 8192}
+
+
 def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
     tmp_path: Path,
     monkeypatch,
