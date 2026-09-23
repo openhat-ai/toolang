@@ -69,12 +69,12 @@ too --help
 Toolang also runs agents as scripts. Here is hello world in Toolang:
 
 ```bash
-cat > hello_world.too <<'EOF'
+cat > hello-world.too <<'EOF'
 agic():
   Say hello to the world.
 EOF
 
-too hello_world.too
+too hello-world.too
 ```
 
 Use `too init` to generate `aide.too` as a starting point. Read the source or use `--help` to see its available runnables:
