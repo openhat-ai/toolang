@@ -31,7 +31,8 @@ contracts. Constraints apply to both. `T` means any supported value type.
 | keep / drop predicate | Must include `_` | Boolean | Boolean |
 | sort scorer | Must include `_` | Number | Number |
 | gather | Must include `_` | Text | T |
-| settle | Must include `_` | Text | T; initial value must also satisfy T |
+| settle with from | Must include `_` | Text | T; initial value must also satisfy T |
+| settle without from | Must include `_` | Text | Must match the source element type |
 | until | May include or omit `_` | Boolean | Boolean |
 
 - Validate required arguments, input types, output types, and runtime context.
@@ -65,15 +66,22 @@ settle:
     No findings yet.
 ```
 
-- The main body processes each element; the final `from:` clause supplies initial Content.
+- The main body processes elements; an optional final `from:` clause supplies initial Content.
 - Infer the adhoc signature from the main body only. Resolve `from` references
   against the surrounding flow context; they are initializer dependencies.
-- The body's output type T determines the type of `_1`. Render and convert the
-  initializer to T before the first child call; validate every later result as T.
-- Evaluate `from:` once before processing, using the surrounding context and
-  let's Content rules. Its value belongs to settle state; flow locals stay unchanged.
+- With `from`, the body's output type T determines the type of `_1`. Render and
+  convert the initializer to T before the first child call; validate later results as T.
+- Evaluate `from:` once before entering settle's iteration scope, using the
+  surrounding context and let's Content rules. Outer iteration history remains
+  visible during initialization. Its value belongs to settle state; flow locals stay unchanged.
 - Each call receives the current element as `_` and the previous result as `_1`.
-  The initial value supplies the first `_1`; N elements require N calls.
+- With `from`, the initial value supplies the first `_1`; N elements require N calls.
+- Without `from`, the first element supplies the initial `_1`; iterate from the
+  second element, requiring N-1 calls. A singleton returns its element after
+  contract validation; empty input still fails.
+- Without `from`, require the body and final output to have the source element
+  type. Validate the locally determined signature against that type; use an
+  explicit output annotation when the default Text does not match.
 - Settle exposes only the preceding result, including that initial value.
 
 ## 5. Retain Iteration History
@@ -122,6 +130,7 @@ Proposed root/child policy:
 - Proposed caps configuration: one union of psyches/skills/services/prompts,
   using existing selection operations and scope rules.
 - Lane precedence: statement clause > enclosing flow directive > built-in default.
+- The built-in lane count is 4.
 - `lanes = N`: one positive integer per flow; statement lane clauses are optional.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
   Repeat bodies use their enclosing flow's setting; named flows use their own.
@@ -138,11 +147,8 @@ Proposed root/child policy:
 
 ## 9. Open Decisions
 
-- Built-in lane count; proposed 4.
 - Final runtime spellings and migration of bare far/near references.
 - Root-only automatic recall and history behavior across compaction updates.
-- Whether `from:` is required, its omission behavior, and the named-reducer form.
-- Initializer access to outer iteration history; proposed evaluation before
-  entering settle's own iteration scope.
+- The named-reducer form when supplying `from:`.
 - Repeat history window N, its configuration, and insufficient-history checks.
 - Caps-key migration and removal of existing flow resource directives.
