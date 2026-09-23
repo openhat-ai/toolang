@@ -102,9 +102,18 @@ too DIR/aide.too chat
 
 The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
 
-Start with the [examples](./examples) directory for a minimal module,
-agents with reusable caps, agic input/output and delegation examples, and
-workflows for proposals, delivery planning, and web research.
+See [examples](./examples) for runnable Toolang programs:
+
+| Example | Description |
+| --- | --- |
+| [`hello-world.too`](./examples/hello-world.too) | Hello world in Toolang. |
+| [`signatures.too`](./examples/signatures.too) | Agic signature forms, from shorthand to fully typed. |
+| [`structured-output.too`](./examples/structured-output.too) | Define a struct and use it for structured output. |
+| [`caps.too`](./examples/caps.too) | Define and use caps in agics. |
+| [`hands.too`](./examples/hands.too) | Delegate work to multiple hands. |
+| [`handoffs.too`](./examples/handoffs.too) | Transfer work to one of several specialist handoffs. |
+| [`minimal.too`](./examples/minimal.too) | A minimal agent in 11 characters. |
+| [`developer.too`](./examples/developer.too) | Define a complete coding agent with reusable caps. |
 
 ## Common commands
 
