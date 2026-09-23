@@ -112,7 +112,7 @@ See [examples](./examples) for runnable Toolang programs:
 | [`caps.too`](./examples/caps.too) | Define and use caps in agics. |
 | [`hands.too`](./examples/hands.too) | Delegate work to multiple hands. |
 | [`handoffs.too`](./examples/handoffs.too) | Transfer work to one of several specialist handoffs. |
-| [`minimal.too`](./examples/minimal.too) | A minimal agent in 11 characters. |
+| [`minimal.too`](./examples/minimal.too) | A minimal agent. |
 | [`developer.too`](./examples/developer.too) | Define a complete coding agent with reusable caps. |
 
 ## Common commands
