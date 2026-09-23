@@ -102,7 +102,7 @@ too DIR/aide.too chat
 
 The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
 
-Start with the [examples guide](./examples/README.md) for a minimal module,
+Start with the [examples](./examples) directory for a minimal module,
 agents with reusable caps, agic input/output and delegation examples, and
 workflows for proposals, delivery planning, and web research.
 
