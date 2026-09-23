@@ -157,10 +157,12 @@ print(json.dumps("toolang.up.core" in sys.modules))
 @pytest.mark.parametrize(
     ("arguments", "status", "expected"),
     [
-        ([], 0, "Runnables:"),
         (["--help"], 0, "Runnables:"),
-        (["research", "--help"], 0, "The flow proceeds as follows:"),
-        (["research"], 2, "The flow proceeds as follows:"),
+        # The unnamed flow is the script's default runnable, so a bare
+        # invocation runs it instead of printing group help.
+        ([], 2, "The flow proceeds as follows:"),
+        (["<entry>", "--help"], 0, "The flow proceeds as follows:"),
+        (["<entry>"], 2, "The flow proceeds as follows:"),
     ],
 )
 def test_script_help_does_not_load_execution_dependencies(
@@ -171,7 +173,7 @@ import json
 import sys
 from toolang.cli.toolang.main import main
 
-status = main(["examples/deep_search.too", *sys.argv[1:]])
+status = main(["examples/flows/deep_search.too", *sys.argv[1:]])
 prefixes = (
     "fastapi", "httpx", "toolang.execution.executor", "toolang.execution.schemas",
     "toolang.execution.remote", "toolang.execution.store", "toolang.setup",

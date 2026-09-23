@@ -1,4 +1,4 @@
-##! Turn a rough idea into a decision-ready proposal through bounded review.
+# Turn a rough idea into a decision-ready proposal through bounded review.
 
 agic draft_proposal(_, audience?, criteria?):
   recall = none
@@ -68,8 +68,7 @@ agic revise_draft(_, feedback: Part[], request: Part[], audience?, criteria?):
   Keep the complete revision under 600 words.
   Return only the complete revised proposal.
 
-## Draft and improve a proposal through three review-revision cycles.
-flow workshop(_: Text, audience?, criteria?):
+flow(_: Text, audience?, criteria?):
   let request =
     {{_}}
 

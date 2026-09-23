@@ -1,0 +1,34 @@
+# Example: Transfer a run to one of several specialist handoffs.
+
+agic:
+  handoffs = agic:billing_support, agic:technical_support
+
+  Read the request and transfer the run exactly once:
+
+  - billing_support for invoices, payments, refunds, or plan changes
+  - technical_support for errors, outages, or configuration problems
+
+  Pass the complete request to the specialist you choose. Answer directly
+  only when no specialist owns the request, and say why.
+
+  {{_}}
+
+# Handoff: handle billing and account-related requests.
+agic billing_support:
+  recall = none
+
+  Answer this billing request from the supplied text. Separate what the text
+  confirms from what needs account access, and name the smallest next step
+  the customer should take.
+
+  {{_}}
+
+# Handoff: handle technical issues and diagnostics.
+agic technical_support:
+  recall = none
+
+  Answer this technical request from the supplied text. Separate confirmed
+  causes from hypotheses, and give the smallest diagnostic step that would
+  tell them apart.
+
+  {{_}}

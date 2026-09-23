@@ -1,0 +1,22 @@
+# Example: Define and use caps in agics.
+
+with skill briceyan/review
+
+psyche careful:
+  Work from evidence and state what you could not verify.
+
+service context7:
+  description = Look up current library and framework documentation.
+  protocol = http
+  target = https://mcp.context7.com/mcp
+
+  Use it when the answer depends on current library or framework behavior,
+  and prefer it over recollection.
+
+prompt change-summary:
+  Summarize this change for {{audience}}.
+  {{change}}
+
+agic(_: Text, audience: Text):
+  Review the change, then summarize it for the audience.
+  $change-summary audience={{audience}} change="{{_}}"

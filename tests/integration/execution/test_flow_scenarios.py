@@ -1237,9 +1237,9 @@ flow mapped(_: Text) -> Text[]:
 def test_deep_search_example_uses_explicit_flow_reshaping(
     tmp_path: Path,
 ) -> None:
-    source = (Path(__file__).parents[3] / "examples" / "deep_search.too").read_text(
-        encoding="utf-8"
-    )
+    source = (
+        Path(__file__).parents[3] / "examples" / "flows" / "deep_search.too"
+    ).read_text(encoding="utf-8")
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -1277,7 +1277,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
-                    runnable="research",
+                    runnable="<entry>",
                     primary=resolve_input_parts("agent framework/sdk"),
                 )
             )

@@ -102,20 +102,18 @@ too DIR/aide.too chat
 
 The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
 
-Explore Toolang through the examples in this repository:
+See [examples](./examples) for runnable Toolang programs:
 
 | Example | Description |
 | --- | --- |
-| [alice.too](./examples/alice.too) | Define an assistant with an imported skill, an MCP service, and agent instructions. |
-| [script-playground.too](./examples/script-playground.too) | Explore prose execution and collection operations with `scatter` and `gather`. |
-| [deep_search.too](./examples/deep_search.too) | Expand a research question into queries, search concurrently, filter and rank findings, and assemble a report. |
-| [delivery_plan.too](./examples/delivery_plan.too) | Plan workstreams concurrently, combine them into a delivery plan, and apply reviews sequentially. |
-| [proposal_workshop.too](./examples/proposal_workshop.too) | Draft a proposal and revise it through three review cycles. |
-| [script.fixed-model.too](./examples/script.fixed-model.too) | Restrict a runnable to one model and check CLI model overrides. |
-| [script.priority.too](./examples/script.priority.too) | Compare model selection order when a runnable allows multiple models. |
-| [script.openrouter-smoke.too](./examples/script.openrouter-smoke.too) | Check text generation with several models through OpenRouter. |
-| [script.simulated-history.none.too](./examples/script.simulated-history.none.too) | Supply explicit conversation messages while excluding stored history. |
-| [script.simulated-history.memory.too](./examples/script.simulated-history.memory.too) | Supply explicit conversation messages with `recall = far` to allow memory retrieval. |
+| [`hello-world.too`](./examples/hello-world.too) | Hello world in Toolang. |
+| [`signatures.too`](./examples/signatures.too) | Agic signature forms, from shorthand to fully typed. |
+| [`structured-output.too`](./examples/structured-output.too) | Define a struct and use it for structured output. |
+| [`caps.too`](./examples/caps.too) | Define and use caps in agics. |
+| [`hands.too`](./examples/hands.too) | Delegate work to multiple hands. |
+| [`handoffs.too`](./examples/handoffs.too) | Transfer work to one of several specialist handoffs. |
+| [`minimal.too`](./examples/minimal.too) | A minimal agent. |
+| [`developer.too`](./examples/developer.too) | Define a complete coding agent with reusable caps. |
 
 ## Common commands
 

@@ -1,3 +1,5 @@
+# Research a question through query expansion, concurrent search, and synthesis.
+
 agic expand_queries -> Text[]:
   recall = none
   tools = none
@@ -8,7 +10,6 @@ agic expand_queries -> Text[]:
   Turn this research question into 6 diverse web search queries.
   Return a JSON array containing exactly 6 query strings.
 
-## Search the web for one query and return a compact evidence bundle.
 agic search_web:
   recall = none
   tools = web/*
@@ -53,7 +54,7 @@ agic synthesize_report(_, topic: Part[]):
   - Source notes
   - Next search directions
 
-flow research(_: Text):
+flow(_: Text):
   let topic =
     {{_}}
 

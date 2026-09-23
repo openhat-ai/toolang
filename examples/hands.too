@@ -1,0 +1,31 @@
+# Example: Delegate work to multiple hands and merge their results.
+
+agic:
+  hands = review_correctness, review_maintainability
+
+  Review this code or diff. Call both hands with the complete input, wait for
+  both results, and merge them into one short, prioritized review with no
+  duplicate findings. Mark assumptions explicitly and close with the checks
+  worth running. Do not claim that any test was run.
+
+  {{_}}
+
+# Hand: review behavior, edge cases, and error handling.
+agic review_correctness:
+  recall = none
+
+  Review this code or diff for incorrect behavior, missed edge cases, and
+  missing error handling. Return only actionable findings supported by the
+  supplied text, or state that no concrete issue was found.
+
+  {{_}}
+
+# Hand: review complexity, ownership, and coupling.
+agic review_maintainability:
+  recall = none
+
+  Review this code or diff for unclear ownership, unnecessary complexity, and
+  fragile coupling. Return only actionable findings supported by the supplied
+  text, or state that no concrete issue was found.
+
+  {{_}}
