@@ -1,27 +1,20 @@
 # Flow Rules Outline
 
-Design outline for implementation preparation. Scope: runnable contracts, flow
-execution, and runtime context. Resolve the open decisions before implementing
-the affected behavior.
-Success: determine signatures locally, validate operation contracts before calls,
-and provide bounded, unambiguous iteration and thread context.
-tree-sitter-toolang is outside this scope.
+Goal: local signatures, validated operation contracts, and bounded iteration/thread
+context. This is a design outline; resolve open decisions before implementation.
+tree-sitter-toolang is outside scope.
 
 ## 1. Determine the Signature
 
-- Agic / flow declarations: explicit fields take precedence; restore omitted
-  fields using declaration defaults: parameters `(_)`, output `Text`.
-- Adhoc agics: infer parameters from their own template references; use the
-  enclosing operation's output default when the output is omitted.
+- Agic / flow declarations: explicit fields take precedence; omitted fields use
+  declaration defaults: parameters `(_)`, output `Text`.
+- Adhoc agics: infer parameters from their own scoped template references; omitted
+  output uses the operation default. Runtime references are not parameters.
 - Explicit `()` declares no parameters. Declared/inferred `_` is required.
 - Parameter type defaults: `_` is `Part[]`; other parameters are `Text`.
-- User-declared parameters and locals cannot start or end with `_`, except for
-  the primary binding `_`. Internal underscores remain allowed. Boundary
-  underscores are reserved for runtime names; reject unknown reserved references
-  rather than inferring ordinary parameters. This restriction concerns binding
-  names, not fields inside data values.
-- Inference includes ordinary external references and respects template scope.
-  Runtime variables are supplied by execution rather than inferred as parameters.
+- Parameter/local names cannot start or end with `_`, except primary `_`.
+  Internal underscores and data-field names are unrestricted by this rule.
+  Reject unknown reserved references rather than inferring parameters.
 - Determine the signature locally, then check its compatibility at each use.
 
 ## 2. Check the Operation Contract
@@ -59,38 +52,17 @@ contracts. Constraints apply to both. `T` means any supported value type.
   gather/settle report an error before child calls.
 - Empty map results use the child's output type; sort/keep/drop preserve the
   source element type. Positional keep/drop follows the same empty-input rule.
-- Validate known contracts before calls and bind results after successful completion.
+- Bind results only after successful completion.
 
 ## 4. Initialize and Execute Settle
 
 ```too
 settle:
   Incorporate {{_}} into {{_1._}}.
-  Preserve the report structure.
 
   from:
-    Research report
-    No findings yet.
+    Initial report.
 ```
-
-- The main body processes elements; an optional final `from:` clause supplies initial Content.
-- Infer the adhoc signature from the main body only. Resolve `from` references
-  against the surrounding flow context; they are initializer dependencies.
-- With `from`, the body's output type T determines the type of `_1._`. Render and
-  convert the initializer to T before the first child call; validate later results as T.
-- Evaluate `from:` once before entering settle's iteration scope, using the
-  surrounding context and let's Content rules. Outer iteration history remains
-  visible during initialization. Its value belongs to settle state; flow locals stay unchanged.
-- Each call receives the current element as `_` and the previous result as `_1._`.
-- With `from`, the initial value supplies the first `_1._`; N elements require N calls.
-- Without `from`, the first element supplies the initial `_1._`; iterate from the
-  second element, requiring N-1 calls. A singleton returns its element after
-  contract validation; empty input still fails.
-- Without `from`, require the body and final output to have the source element
-  type. Validate the locally determined signature against that type; use an
-  explicit output annotation when the default Text does not match.
-- Named reducers accept the same trailing initializer, without changing their
-  signature. Omit the block when no initializer is needed:
 
 ```too
 settle using merge:
@@ -98,33 +70,38 @@ settle using merge:
     Initial report.
 ```
 
+- Each call receives the current element as `_` and the previous result as `_1._`.
+- Optional trailing `from:` supplies one initial value, even when that value is
+  an array. Named reducers use the same clause; omit the block when unused.
+- Determine the reducer signature independently of `from`. Evaluate the
+  initializer once using let's Content rules and the outer context, before
+  entering settle's iteration scope. Outer history remains visible; no local is created.
+- With `from`: convert the seed to reducer output type T before calls; every
+  result must satisfy T. N elements require N calls.
+- Without `from`: use the first element as seed and make N-1 calls. Reducer
+  output must match the source element type; declaration/operation defaults
+  remain unchanged. A singleton returns its element after validation; `[]` fails.
+
 ## 5. Retain Iteration History
 
-Retention and entry/exit snapshot rules:
-
 ```too
-repeat 10 times holding 3:
+repeat 5 times windowing 3:
   run: Improve {{_}}.
   until:
     Current result: {{_}}
     {{#_2}}
     Return true only if the current result, {{_1._}}, and {{_2._}} are equivalent.
     {{/_2}}
-    {{^_2}}
-    Return false.
-    {{/_2}}
+    {{^_2}}Return false.{{/_2}}
 ```
 
-- Repeat accepts optional `holding N`, default 3; N is a positive integer.
-  Capacity counts prior frames, excluding the current iteration, independently
-  of the iteration limit. Nested repeats use their own setting/default.
-- Settle has no retention clause. For an agic reducer, infer capacity as
-  `max(1, highest referenced history index)`: `_1` needs 1; `_1` and `_3` need 3.
-  With no history references, retain the single accumulator frame.
-- Derive that requirement locally for both named and adhoc agics from their own
-  resolved templates, including section guards and authored instruct/context.
-  Keep it separate from the parameter/output signature. Do not scan callees or
-  settle's `from`, whose history references belong to the surrounding scope.
+- Repeat: optional `windowing N`, default 3; N is a positive integer counting
+  prior frames, excluding the current round. The iteration limit is independent;
+  nested repeats use their own setting/default.
+- Settle: no window clause. For named/adhoc agic reducers, infer capacity as
+  `max(1, highest referenced history index)` from their own resolved templates,
+  including guards and authored instruct/context. This is separate from the
+  signature; exclude callees and `from`.
 - `_1`, `_2`, ... select historical frames, nearest first. Each completed frame
   contains entry and exit snapshots; the pair occupies one window slot.
 
@@ -135,35 +112,29 @@ repeat 10 times holding 3:
 | `_k._` | Primary output at that iteration's end |
 | `_k.__` | Primary value at that iteration's entry |
 
-- Repeat captures entry locals before its first statement. Current locals update
-  after each statement; history remains fixed throughout the body and `until`.
+- Repeat: capture entry -> execute body, updating locals after each statement ->
+  evaluate until -> save entry/exit snapshots -> stop or continue. History stays
+  fixed throughout the body and `until`.
 - Settle captures entry locals after binding the current element as `_`, before
   invoking the reducer. Its exit snapshot replaces `_` with the cumulative
   output of type T; reducer-private state is excluded.
-- Settle's seed has an exit `_` only, with no entry snapshot. `from` supplies one
-  seed even when T is an array. After the first call, `_1.__` is the processed
-  element, `_1._` is the result, and `_2._` is the seed if retained.
-- Prefix a local's name with `_` to select entry state immediately after `_k`;
-  nested access such as `_2._report.title` follows that value. Both entry and exit
-  references contribute the same history index to retention inference.
+- Repeat starts without history; settle starts with one seed frame containing
+  exit `_` only. After its first call, `_1.__` is the processed element, `_1._`
+  is the result, and `_2._` is the seed if retained. Never pad missing history.
+- Snapshot selection applies to the first field after `_k`; later fields read
+  data, as in `_2._report.title`. Entry/exit access requires the same history depth.
 - Missing bindings remain absent: a local first created during a round has no
   entry value. Direct reads fail; do not substitute exit values or outer locals.
-- Repeat starts with no prior frames; settle starts with its single seed frame.
-  Keep only actual entries; never pad by repeating a seed/output or inventing values.
 - An absent `_k` within the window can be guarded with a template section;
   reading it in a rendered branch is an error. References beyond the configured
   window, or without an iteration scope, are errors even in guards.
 - History-frame section guards test presence, independent of empty/false/zero
   output values. Existing template section scoping applies: render the current
   `_` outside a history-frame section; use qualified `_k.field` inside it.
-- Until evaluates normally with the available history. Guard comparisons that
-  need more frames and return false during warm-up, as above. Conditions based
-  only on current values can still terminate immediately.
-- Repeat order: capture entry -> execute body -> evaluate until against current
-  locals and prior frames -> save entry/exit snapshots -> stop or continue.
-  Settle saves the pair after a successful reducer call.
-- Save unchanged values too. Failed iterations add nothing; retries preserve one
-  entry/exit pair per completed iteration.
+- Until can terminate before the window fills; guard history-dependent comparisons
+  and return false during warm-up, as above.
+- Save one pair per successful round, including unchanged values. Failed rounds
+  add nothing; retries do not duplicate entries. Settle saves after each reducer call.
 - Capture only ordinary locals and the primary `_` on both entry and exit.
   Exclude injected runtime bindings such as `_1`, `_2`, `_f`, `_n`, and `_h`,
   even when present in iteration input; generate entry selectors only for the
@@ -173,7 +144,6 @@ repeat 10 times holding 3:
   refreshes live thread variables, not saved frame values.
 - Nested iterations replace the history family and restore it on exit. Resolve
   history exclusively within the active iteration scope; concurrent runs are isolated.
-- Runtime history references are reserved, read-only execution values.
 
 ## 6. Select Thread History
 
@@ -183,38 +153,22 @@ repeat 10 times holding 3:
 | `_n` | Ordered recent messages with roles/content; empty array when absent |
 | `_h` | Combined messages: summary followed by recent messages |
 
-Read history:
-
-| Execution | History behavior |
-| --- | --- |
-| Root agic | Use runtime history variables; automatically include messages selected by recall |
-| Child agic | Use runtime history variables explicitly; accumulate its own model/tool conversation |
-| Root flow | Use runtime history variables; descendant agics follow the child rule |
-| Child flow | Use runtime history variables; descendants follow the child rule |
-
-- Root execution establishes the shared historical boundary. Recall controls
-  automatic message inclusion independently of variable availability.
-- Flow Content and until can read `_f`, `_n`, and `_h`. The runtime supplies them
-  from one shared history version across the active root and its descendants.
-- Successful compaction atomically publishes a new version. Subsequent model
-  calls and flow frame evaluations acquire that version; automatic recall,
-  `_f`, `_n`, and `_h` within one evaluation all use the same version.
-- In-flight evaluations keep their acquired version. Record the selected version
-  for replay; failed compaction leaves the previous version active.
-- Pass current execution progress through `_`, named arguments, or iteration
-  frames. Compaction changes the representation of prior thread history; it does
-  not publish the active run's intermediate work into that history.
-- Nested iterations retain the thread-history context while replacing `_1` etc.
-
-Contribute history:
-
-- Only root runnables contribute a thread-history exchange. Root agics preserve
-  their existing model/tool exchange and terminal reply behavior.
-- Proposed root flow policy: retain the entry `_` as a user message when present,
-  followed by the final output as an assistant message. Keep existing control
-  and failure/cancellation handling; do not manufacture a successful output.
-- Child transcripts and intermediate flow frames remain execution records;
-  they do not become independent thread-history exchanges.
+- All runnables, including flow Content and until, can read runtime-supplied
+  `_f/_n/_h`. Only root agics automatically include messages selected by recall;
+  child agics reference history explicitly and keep their own model/tool conversation.
+- The root and descendants share a historical boundary and version. Recall
+  controls automatic inclusion, not variable availability; nested loops preserve
+  thread context while replacing iteration history.
+- Successful compaction atomically publishes a new version for subsequent model
+  calls and flow frame evaluations. Each evaluation's recall and `_f/_n/_h` use
+  one version. In-flight evaluations keep theirs; failed compaction keeps the old
+  version. Record the selected version for replay.
+- Current progress travels through `_`, named arguments, or iteration frames;
+  compaction does not add active-run intermediates to prior thread history.
+- Only roots contribute thread exchanges. Root agics keep their existing
+  model/tool exchange and terminal reply. Child transcripts remain execution records.
+- Proposed root flow exchange: entry `_` as user message when present, then final
+  output as assistant message. Preserve control/failure/cancellation handling.
 
 ## 7. Configure Execution
 
@@ -223,8 +177,7 @@ Contribute history:
 - `instruct:` and `context:` retain their existing setting forms.
 - Proposed caps configuration: one union of psyches/skills/services/prompts,
   using existing selection operations and scope rules.
-- Lane precedence: statement clause > enclosing flow directive > built-in default.
-- The built-in lane count is 4.
+- Lane precedence: statement clause > enclosing flow directive > built-in 4.
 - `lanes = N`: one positive integer per flow; statement lane clauses are optional.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
   Repeat bodies use their enclosing flow's setting; named flows use their own.
@@ -234,37 +187,27 @@ Contribute history:
 
 - Validate signatures, arguments, types/shapes, operation contracts, configuration,
   counts, lanes, and runtime availability; report known failures before model calls.
-- Acceptance coverage: defaults, adhoc inference, use-site compatibility, empty
-  inputs, lane precedence, initializer timing, and history scope/isolation;
-  repeat retention defaults/overrides, settle's local depth inference (including
-  guarded references and excluding the initializer), entry/exit values, locals
-  created mid-round, seed entry absence, eviction, warm-up with empty/false/zero
-  values, retry/resume, nested scopes, and compaction during concurrent calls.
-- Cover leading/trailing underscore rejection, allowed internal underscores, and
-  the primary `_` exception; entry/exit
-  exclusion of injected history/thread bindings, absence of generated aliases
-  for them, and preservation of underscore-prefixed fields inside ordinary data.
+- Acceptance: signature defaults/inference and use-site contracts; empty inputs;
+  lane precedence; initializer timing; window defaults/overrides and inferred
+  settle depth; entry/exit values and missing bindings; eviction and warm-up with
+  empty/false/zero values; nested isolation, retry/resume, and concurrent compaction.
+- Verify reserved names, primary `_` and internal-underscore exceptions; filter
+  injected bindings before entry projection while preserving ordinary data fields.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
-- Use `_f`, `_n`, `_h`, and numbered history variables as the runtime names.
-  Remove the old runtime bindings; provide no compatibility aliases. Reserve
-  runtime names against user bindings and exclude them from signature inference.
-  Migrate runtime uses of bare `far`/`near` and settle's `item` without rewriting
-  unrelated user-defined names.
+- Use the new runtime names without compatibility aliases. Migrate runtime uses
+  of bare `far`/`near` and settle's `item`; preserve unrelated user-defined names.
 - Documentation check: `git diff --check`. Implementation: repository default checks.
 - Touchpoints: `src/toolang/lang/{ast,lower,input,format,validate}.py`, template
-  runtime-variable resolution, execution
-  `executor/stmts/{repeat,settle}.py`, runnable frames, `assembly/{history,prompting}.py`,
-  and store projections. Main risks: contract migration, frame retention, and
-  mixing history versions during concurrent evaluation.
+  resolution, execution `executor/stmts/{repeat,settle}.py`, runnable frames,
+  `assembly/{history,prompting}.py`, and store projections.
+- Risks: contract migration, frame retention, and mixed history versions.
 
 ## 9. Open Decisions
 
 - Confirm the root flow input-plus-final-output history policy.
-- Confirm repeat's `holding N` (default 3), inferred settle retention for agic
-  reducers, and guarded warm-up behavior. The proposal treats `from` as one seed,
-  not prefilled history.
+- Confirm inferred settle retention and guarded warm-up behavior.
 - Define settle retention for flow reducers and indirect/dynamic history
   dependencies; local agic inference does not determine callee requirements.
 - Caps-key migration and removal of existing flow resource directives.
