@@ -31,11 +31,7 @@ PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
             "X-OpenRouter-Categories": "cli-agent,personal-agent",
         },
     },
-}
-
-# Provider packages that expose app attribution on their shared Gateway route.
-_PACKAGE_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
-    "@ai-sdk/gateway": {
+    "vercel": {
         "headers": {
             "http-referer": "https://toolang.ai",
             "x-title": "Toolang",
@@ -126,11 +122,6 @@ def resolve_provider(
     adapter_name = provider_adapter(provider)
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
     conventions = _convention_block(provider.id)
-    default_headers = dict(cast(Mapping[str, str], conventions["headers"]))
-    _merge_headers(
-        default_headers,
-        _PACKAGE_CONVENTIONS.get(provider.npm or "", {}).get("headers"),
-    )
     default_route = ModelRoute(
         adapter=adapter_name if adapter is not None else None,
         api=_resolve_api(
@@ -141,7 +132,7 @@ def resolve_provider(
             ),
         ),
         env=satisfied,
-        headers=default_headers,
+        headers=cast(Mapping[str, str], conventions["headers"]),
         options=cast(Mapping[str, object], conventions["options"]),
     )
     return replace(provider, _toolang=replace(provider._toolang, route=default_route))
@@ -233,8 +224,6 @@ def model_headers(
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
-    provider_npm = provider.npm or ""
-    _merge_headers(headers, _PACKAGE_CONVENTIONS.get(provider_npm, {}).get("headers"))
     override = model.provider or ModelProvider()
     _merge_headers(headers, override.headers)
     for mode_block in mode_blocks:

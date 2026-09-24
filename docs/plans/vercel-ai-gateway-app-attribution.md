@@ -8,7 +8,7 @@ Success means Gateway requests carry `http-referer: https://toolang.ai` and `x-t
 
 ## Scope and decisions
 
-- Identify the Vercel AI Gateway route by its `@ai-sdk/gateway` catalog package declaration, not by a URL match or generic OpenAI-compatible protocol.
+- Identify Vercel by the catalog provider ID `vercel`, matching the existing provider-ID convention used for OpenRouter. Do not infer attribution from an SDK package name or generic OpenAI-compatible protocol.
 - Add the two Vercel-documented attribution headers using the existing Toolang attribution URL and app name. Do not add a Vercel-specific app ID, secret, or new user configuration.
 - Keep existing OpenRouter attribution unchanged. Do not add support for other routers or change provider catalog contents.
 - Let existing route header merging preserve normal per-model and mode overrides.
@@ -20,14 +20,14 @@ Success means Gateway requests carry `http-referer: https://toolang.ai` and `x-t
 
 ## Acceptance tests
 
-1. A provider using `@ai-sdk/gateway` resolves with `http-referer` and `x-title` attribution headers.
-2. A non-Gateway provider, including an OpenRouter provider, receives no Vercel-specific headers and retains its current behavior.
+1. Provider ID `vercel` resolves with `http-referer` and `x-title` attribution headers.
+2. A different provider ID receives no Vercel-specific headers, even when it uses `@ai-sdk/gateway`; OpenRouter retains its existing conventions.
 3. Explicit model headers continue to override convention headers case-insensitively.
 4. The default verification suite passes.
 
 ## Risks
 
-- Attribution applies only where the catalog identifies the provider with the official Gateway package; a manually configured compatible endpoint under another package is intentionally not inferred to be Vercel.
+- Attribution applies only when the catalog provider ID is `vercel`; custom provider IDs are not inferred to be Vercel based on an SDK package or endpoint.
 - Vercel attribution is optional; header use does not guarantee public featuring or leaderboard inclusion.
 
 ## References
