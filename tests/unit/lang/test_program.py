@@ -10,7 +10,7 @@ import pytest
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang.validate import _validate
-from toolang.lang.errors import ToolangValidationError
+from toolang.lang.errors import ToolangSyntaxError, ToolangValidationError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import (
     LetStmt,
@@ -51,8 +51,8 @@ instruct concise:
   Be concise.
 
 agic review(_: Text, focus?) -> Review:
-  context: default
-  instruct: concise
+  context = default
+  instruct = concise
   user: Review {{_}}.
 
 flow main:
@@ -364,7 +364,7 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter 2 using action
+  scatter using action
   storm 3 using action in 2 lanes
   gather using action
   settle using action
@@ -462,7 +462,7 @@ flow expand(_: Text, topic: Text) -> Text[]:
     {{_}}
   let prepared = run prepare
 
-  scatter 3 using -> Text[]:
+  scatter using -> Text[]:
     Return distinct pieces of {{source}} about {{topic}} and {{prepared}}.
     {{#source}}{{detail}}{{/source}}
 """
@@ -484,7 +484,7 @@ flow expand(_: Text, topic: Text) -> Text[]:
 
 def test_inline_scatter_defaults_to_text_array() -> None:
     program = Program.from_source(
-        "flow expand:\n  scatter 2 using:\n    Return distinct pieces.\n"
+        "flow expand:\n  scatter using:\n    Return distinct pieces.\n"
     )
 
     statement = program.flows[0].stmts[0]
@@ -528,26 +528,30 @@ flow evaluate:
         ]
 
 
-def test_inline_prompting_is_flattened_and_referenced() -> None:
+def test_explicit_prompt_declarations_are_referenced() -> None:
     program = Program.from_source(
-        """
+        """context answer_context:
+  Local context.
+
+instruct answer_instruct:
+  Local instruct.
+
+
 agic answer:
-  context:
-    Local context.
-  instruct:
-    Local instruct.
+  context = answer_context
+  instruct = answer_instruct
   Answer.
 """
     )
     agic = program.agics[0]
 
-    assert agic.context == "<context:3>"
-    assert agic.instruct == "<instruct:5>"
+    assert agic.context == "answer_context"
+    assert agic.instruct == "answer_instruct"
     assert [(item.name, item.body) for item in program.contexts] == [
-        ("<context:3>", "Local context.")
+        ("answer_context", "Local context.")
     ]
     assert [(item.name, item.body) for item in program.instructs] == [
-        ("<instruct:5>", "Local instruct.")
+        ("answer_instruct", "Local instruct.")
     ]
 
 
@@ -573,7 +577,7 @@ agic configured:
 @pytest.mark.parametrize(
     ("source_value", "expected"),
     [
-        ("auto", ("auto",)),
+        ("default", ("default",)),
         ("none", ("none",)),
         ("far", ("far",)),
         ("near", ("near",)),
@@ -597,7 +601,7 @@ def test_flow_accepts_recall_directive() -> None:
     assert program.flows[0].directives[0].values == ("near",)
 
 
-def test_agic_routing_directives_preserve_collection_queries() -> None:
+def test_agic_routing_directives_preserve_csv_references() -> None:
     program = Program.from_source(
         """
 agic coordinate:
@@ -609,7 +613,7 @@ agic coordinate:
     )
 
     assert [(item.name, item.values) for item in program.agics[0].directives] == [
-        ("hands", ("research, agic:review, flow:verify",)),
+        ("hands", ("research", "agic:review", "flow:verify")),
         ("handoffs", ("flow:deliver",)),
     ]
 
@@ -633,7 +637,7 @@ def test_model_directive_treats_at_as_identity_data() -> None:
 def test_agic_routing_directives_reject_invalid_query_or_set_operation(
     directive: str,
 ) -> None:
-    with pytest.raises(ToolangValidationError):
+    with pytest.raises(ToolangSyntaxError):
         Program.from_source(f"agic coordinate:\n  {directive}\n\n  Coordinate.\n")
 
 
@@ -641,17 +645,20 @@ def test_agic_routing_directives_reject_invalid_query_or_set_operation(
     "query",
     [
         "research, research",
-        "flow:*",
-        "team/research",
-        "*[kind in (agic,flow);module=agent]",
+        "flow:verify",
+        "team::research",
+        "none",
+        "*",
     ],
 )
-def test_agic_routing_directives_accept_collection_queries(query: str) -> None:
+def test_agic_routing_directives_accept_csv_references(query: str) -> None:
     program = Program.from_source(
         f"agic coordinate:\n  hands = {query}\n\n  Coordinate.\n"
     )
 
-    assert program.agics[0].directives[0].values == (query,)
+    assert program.agics[0].directives[0].values == tuple(
+        part.strip() for part in query.split(",")
+    )
 
 
 @pytest.mark.parametrize("name", ["hands", "handoffs"])

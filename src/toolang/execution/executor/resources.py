@@ -352,10 +352,15 @@ def _directives(
 def _query_operations(
     directives: tuple[Directive, ...],
 ) -> tuple[tuple[SetOperator, tuple[str, ...]], ...]:
+    # The query parser requires a nonempty query. Clear via exclusion of all;
+    # adding or subtracting the empty set leaves the active selection unchanged.
     return tuple(
         (
-            cast(SetOperator, directive.operator),
-            tuple(value for value in directive.values if value),
+            "-="
+            if directive.values == ("none",)
+            else cast(SetOperator, directive.operator),
+            ("*",) if directive.values == ("none",) else directive.values,
         )
         for directive in directives
+        if directive.values != ("none",) or directive.operator == "="
     )

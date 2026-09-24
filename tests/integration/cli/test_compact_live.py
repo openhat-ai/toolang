@@ -28,16 +28,20 @@ from toolang.state.builtin import prepare_builtin_state
 
 pytestmark = pytest.mark.live_provider
 
-_SOURCE = """agic note(_: Text) -> Text:
+_SOURCE = """instruct note_instruct: Acknowledge the fictional project update in one short sentence.
+
+instruct check_instruct: Use the supplied history only. Later corrections supersede old facts. Never invent missing facts.
+
+agic note(_: Text) -> Text:
   tools = none
-  context: none
-  instruct: Acknowledge the fictional project update in one short sentence.
+  context = none
+  instruct = note_instruct
   user: {{_}}
 
 agic check(_: Text) -> Json:
   tools = none
-  context: none
-  instruct: Use the supplied history only. Later corrections supersede old facts. Never invent missing facts.
+  context = none
+  instruct = check_instruct
   user: {{_}}
 """
 
@@ -226,16 +230,20 @@ def test_live_compaction_owns_terminal_replies_by_root(tmp_path, request, mode):
         maximum = catalog_model.limit.get("output", 0)
         if maximum < 32000:
             pytest.skip("live boundary probe needs a large inclusive output allowance")
-        state = prepare_builtin_state("""agic note(_: Text) -> Text:
+        state = prepare_builtin_state("""instruct note_instruct: Reply with exactly the acknowledgment requested in the current message.
+
+instruct check_instruct: Use the supplied history. Return null for unknown values.
+
+agic note(_: Text) -> Text:
   tools = none
-  context: none
-  instruct: Reply with exactly the acknowledgment requested in the current message.
+  context = none
+  instruct = note_instruct
   {{_}}
 
 agic check(_: Text) -> Json:
   tools = none
-  context: none
-  instruct: Use the supplied history. Return null for unknown values.
+  context = none
+  instruct = check_instruct
   {{_}}
 """)
         with closing(RunStore(layout.run_store)) as store:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import re
 from typing import TypeVar, cast
 
 from tree_sitter import Node as CstNode
@@ -15,7 +14,6 @@ from .errors import ToolangValidationError
 from .text import dedent_text_lines, source_lines
 from .validate import _validate_cap_source
 
-_DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _TRIVIA = {
     "blank_line",
     "plain_comment",
@@ -344,20 +342,17 @@ class _Lowerer:
             if child.type in _TRIVIA:
                 continue
             if child.type == "directive":
-                directives.append(self._lower_directive(child))
-                continue
-            if child.type == "settings":
-                for setting in child.named_children:
-                    if setting.type == "context_setting":
-                        context = self._lower_setting(setting, target="context")
-                    elif setting.type == "instruct_setting":
-                        instruct = self._lower_setting(setting, target="instruct")
-                continue
-            if child.type == "context_setting":
-                context = self._lower_setting(child, target="context")
-                continue
-            if child.type == "instruct_setting":
-                instruct = self._lower_setting(child, target="instruct")
+                directive = self._lower_directive(child)
+                if directive.name == "context":
+                    if context is not None:
+                        raise ToolangValidationError("Duplicate context directive.")
+                    context = directive.values[0]
+                elif directive.name == "instruct":
+                    if instruct is not None:
+                        raise ToolangValidationError("Duplicate instruct directive.")
+                    instruct = directive.values[0]
+                else:
+                    directives.append(directive)
                 continue
             if child.type == "messages":
                 messages.extend(self._lower_messages(child))
@@ -385,33 +380,6 @@ class _Lowerer:
             span=self._span(node),
             doc=doc,
         )
-
-    def _lower_setting(self, node: CstNode, *, target: str) -> str:
-        if ref := self._child_of_type(node, "text_ref"):
-            return self._text(ref).strip()
-        body = self._child_of_type(node, "text_inline")
-        if body is None:
-            raise RuntimeError(
-                f"Missing inline {target} body at line {self._line(node)}."
-            )
-        text = self._block_text(body)
-        if self._child_of_type(body, "text_line") and _DECL_REF_RE.fullmatch(text):
-            return text
-        if target == "context":
-            decl = ast.ContextDecl(
-                name=self._generated_name("context", node),
-                body=text,
-                span=self._span(node),
-            )
-            self.contexts.append(decl)
-            return decl.name
-        decl = ast.InstructDecl(
-            name=self._generated_name("instruct", node),
-            body=text,
-            span=self._span(node),
-        )
-        self.instructs.append(decl)
-        return decl.name
 
     def _lower_messages(self, node: CstNode) -> list[ast.Message]:
         messages: list[ast.Message] = []
@@ -456,20 +424,17 @@ class _Lowerer:
             if child.type in _TRIVIA:
                 continue
             if child.type == "directive":
-                directives.append(self._lower_directive(child))
-                continue
-            if child.type == "settings":
-                for setting in child.named_children:
-                    if setting.type == "context_setting":
-                        context = self._lower_setting(setting, target="context")
-                    elif setting.type == "instruct_setting":
-                        instruct = self._lower_setting(setting, target="instruct")
-                continue
-            if child.type in {"context_setting", "instruct_setting"}:
-                if child.type == "context_setting":
-                    context = self._lower_setting(child, target="context")
+                directive = self._lower_directive(child)
+                if directive.name == "context":
+                    if context is not None:
+                        raise ToolangValidationError("Duplicate context directive.")
+                    context = directive.values[0]
+                elif directive.name == "instruct":
+                    if instruct is not None:
+                        raise ToolangValidationError("Duplicate instruct directive.")
+                    instruct = directive.values[0]
                 else:
-                    instruct = self._lower_setting(child, target="instruct")
+                    directives.append(directive)
                 continue
             if child.type == "statements":
                 stmts.extend(self._lower_statements(child))
@@ -543,7 +508,6 @@ class _Lowerer:
             )
         if node.type == "scatter_statement":
             return ast.ScatterStmt(
-                count=self._required_int(node, "count"),
                 runnable=self._runnable(node, default_output="Text[]"),
                 span=span,
                 doc=doc,
@@ -787,8 +751,6 @@ class _Lowerer:
                 "skills",
                 "services",
                 "prompts",
-                "hands",
-                "handoffs",
             }
             and raw.strip()
             else tuple(
@@ -847,9 +809,6 @@ class _Lowerer:
 
     def _optional_int(self, node: CstNode | None) -> int | None:
         return int(self._text(node).strip()) if node is not None else None
-
-    def _generated_name(self, kind: str, node: CstNode) -> str:
-        return f"<{kind}:{self._line(node)}>"
 
     def _span(self, node: CstNode) -> ast.Span:
         return ast.Span(line=self._line(node))

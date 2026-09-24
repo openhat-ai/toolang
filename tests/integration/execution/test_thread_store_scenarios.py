@@ -73,8 +73,8 @@ def test_run_store_reopens_with_replayable_model_calls_and_history(
         tmp_path,
         source="""
 agic chat(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("answer"))],
@@ -124,8 +124,8 @@ def test_typed_primary_input_is_projected_into_history_and_summaries(
         tmp_path,
         source="""
 agic chat(_: Text) -> Text:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -185,8 +185,8 @@ def test_thread_history_supports_followup_fork_and_rewind(
         tmp_path,
         source="""
 agic chat(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -279,8 +279,8 @@ def test_reopened_store_rebuilds_stateful_tool_loop_without_duplicate_blobs(
         source="""
 agic calculate(_: Text) -> Boolean:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[

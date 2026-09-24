@@ -35,7 +35,7 @@ agic score(_: Text) -> Number:
   {{_}}
 
 flow work(_: Text) -> Text[]:
-  scatter 3 using split
+  scatter using split
 """
 
 

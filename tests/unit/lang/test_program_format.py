@@ -33,7 +33,7 @@ flow work:
   let run action
   seek reviewer action
   ask: Continue?
-  scatter 2 using pieces
+  scatter using pieces
   storm 3 using action in 2 lanes
   gather using action
   settle using action
@@ -57,7 +57,7 @@ flow work:
         "let run action",
         "seek reviewer action",
         "ask",
-        "scatter 2 using pieces",
+        "scatter using pieces",
         "storm 3 in 2 lanes using action",
         "gather using action",
         "settle using action",
@@ -193,15 +193,25 @@ agic review(_:Part[]):
 
 
 def test_format_source_expands_tabs_using_configured_tab_size() -> None:
-    source = "agic followup:\n\tcontext:\n\t\trepo context\n\tuser:\n\t\thello\n"
+    source = """context followup_context:
+  repo context
+
+agic followup:
+	context = followup_context
+	user:
+		hello
+"""
 
     assert format_source(source, tab_size=8) == (
-        "agic followup:\n"
-        "        context:\n"
-        "                repo context\n"
-        "\n"
-        "        user:\n"
-        "                hello\n"
+        """context followup_context:
+        repo context
+
+agic followup:
+        context = followup_context
+
+        user:
+                hello
+"""
     )
 
 
@@ -279,23 +289,23 @@ agic followup:
     models = deepseek/*
     recall = none
 
-    context: none
+    context = none
 
     user:
         My name is Ada.
 """.lstrip()
 
     assert format_source(source) == (
-        "#!/usr/bin/env toolang\n"
-        "\n"
-        "agic followup:\n"
-        "  models = deepseek/*\n"
-        "  recall = none\n"
-        "\n"
-        "  context: none\n"
-        "\n"
-        "  user:\n"
-        "    My name is Ada.\n"
+        """#!/usr/bin/env toolang
+
+agic followup:
+  models = deepseek/*
+  recall = none
+  context = none
+
+  user:
+    My name is Ada.
+"""
     )
 
 
@@ -307,9 +317,9 @@ agic review(_:Part[]):
 
 
     tools = shell
-    context: repo
+    context = repo
 
-    instruct: strict_json
+    instruct = strict_json
     user:
         Review it.
     assistant: Ready.
@@ -318,134 +328,151 @@ agic review(_:Part[]):
 """.strip()
 
     assert format_source(source) == (
-        "agic review(_: Part[]):\n"
-        "  models = gpt-5\n"
-        "  tools = shell\n"
-        "\n"
-        "  context: repo\n"
-        "  instruct: strict_json\n"
-        "\n"
-        "  user:\n"
-        "    Review it.\n"
-        "\n"
-        "  assistant: Ready.\n"
-        "\n"
-        "  user:\n"
-        "    Continue.\n"
+        """agic review(_: Part[]):
+  models = gpt-5
+  tools = shell
+  context = repo
+  instruct = strict_json
+
+  user:
+    Review it.
+
+  assistant: Ready.
+
+  user:
+    Continue.
+"""
     )
 
 
 def test_format_source_keeps_instruct_block_body_attached() -> None:
-    source = """
+    source = """instruct followup_instruct:
+  abc
+
+
 agic followup:
   models = deepseek/*
   recall = none
 
-  context: none
-  instruct:
-      abc
-
+  context = none
+  instruct = followup_instruct
   user:
     My name is Ada.
 """.strip()
 
     assert format_source(source) == (
-        "agic followup:\n"
-        "  models = deepseek/*\n"
-        "  recall = none\n"
-        "\n"
-        "  context: none\n"
-        "\n"
-        "  instruct:\n"
-        "    abc\n"
-        "\n"
-        "  user:\n"
-        "    My name is Ada.\n"
+        """instruct followup_instruct:
+  abc
+
+agic followup:
+  models = deepseek/*
+  recall = none
+  context = none
+  instruct = followup_instruct
+
+  user:
+    My name is Ada.
+"""
     )
 
 
 def test_format_source_keeps_inline_controls_together() -> None:
     source = """
 agic followup:
-  instruct: strict
+  instruct = strict
 
-  context: none
+  context = none
 
   user: hello
 """.strip()
 
     assert format_source(source) == (
-        "agic followup:\n  instruct: strict\n  context: none\n\n  user: hello\n"
+        """agic followup:
+  instruct = strict
+  context = none
+
+  user: hello
+"""
     )
 
 
-def test_format_source_orders_inline_controls_before_block_controls() -> None:
-    source = """
-agic followup:
-  context:
-      repo context
+def test_format_source_preserves_prompt_directive_order() -> None:
+    source = """context followup_context:
+  repo context
 
-  instruct: strict
+
+agic followup:
+  context = followup_context
+  instruct = strict
   user: hello
 """.strip()
 
     assert format_source(source) == (
-        "agic followup:\n"
-        "  instruct: strict\n"
-        "\n"
-        "  context:\n"
-        "    repo context\n"
-        "\n"
-        "  user: hello\n"
+        """context followup_context:
+  repo context
+
+agic followup:
+  context = followup_context
+  instruct = strict
+
+  user: hello
+"""
     )
 
 
 def test_format_source_does_not_absorb_implicit_message_after_control_block() -> None:
-    source = """
+    source = """context slug_context:
+  abcdef sdfss
+
+
 agic slug(title) -> Text:
     models = sss
 
-    instruct: hello
+    instruct = hello
 
-    context:
-        abcdef sdfss
-
+    context = slug_context
     Convert the provided title into a concise lowercase slug.
     Use hyphens between words and return only the slug text.
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "agic slug(title) -> Text:\n"
-        "    models = sss\n"
-        "\n"
-        "    instruct: hello\n"
-        "\n"
-        "    context:\n"
-        "        abcdef sdfss\n"
-        "\n"
-        "    Convert the provided title into a concise lowercase slug.\n"
-        "    Use hyphens between words and return only the slug text.\n"
+        """context slug_context:
+    abcdef sdfss
+
+agic slug(title) -> Text:
+    models = sss
+    instruct = hello
+    context = slug_context
+
+    Convert the provided title into a concise lowercase slug.
+    Use hyphens between words and return only the slug text.
+"""
     )
 
 
 def test_format_source_does_not_absorb_same_indent_implicit_message_after_control_block() -> (
     None
 ):
-    source = """
+    source = """context slug_context:
+  abcdef sdfss
+
+
 agic slug(title) -> Text:
-    context:
-        abcdef sdfss
+    context = slug_context
     Convert the provided title into a concise lowercase slug.
     Use hyphens between words and return only the slug text.
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "agic slug(title) -> Text:\n"
-        "    context:\n"
-        "        abcdef sdfss\n"
-        "\n"
-        "    Convert the provided title into a concise lowercase slug.\n"
-        "    Use hyphens between words and return only the slug text.\n"
+        """context slug_context:
+    abcdef sdfss
+
+agic slug(title) -> Text:
+    context = slug_context
+
+    Convert the provided title into a concise lowercase slug.
+    Use hyphens between words and return only the slug text.
+"""
     )
 
 
@@ -536,7 +563,7 @@ def test_format_source_keeps_comment_separators_between_agic_sections() -> None:
 agic split:
   models = gpt-5
   # directive comment
-  context: repo
+  context = repo
   # control comment
   user: hi
   # role comment
@@ -544,18 +571,19 @@ agic split:
 """.strip()
 
     assert format_source(source) == (
-        "agic split:\n"
-        "  models = gpt-5\n"
-        "  # directive comment\n"
-        "\n"
-        "  context: repo\n"
-        "  # control comment\n"
-        "\n"
-        "  user: hi\n"
-        "\n"
-        "  # role comment\n"
-        "\n"
-        "  assistant: ok\n"
+        """agic split:
+  models = gpt-5
+  # directive comment
+
+  context = repo
+  # control comment
+
+  user: hi
+
+  # role comment
+
+  assistant: ok
+"""
     )
 
 
@@ -671,14 +699,14 @@ instruct concise:
 
 agic review( _,focus ? : Text)->Result[]:
     models= gpt-5,claude
-    context: repo
-    instruct: concise
+    context = repo
+    instruct = concise
     user:
         Review {{ _ }}.
 
 flow pipeline( _:Part[])->Result:
     tools+= shell,fs
-    let drafts= scatter   2 using review
+    let drafts= scatter   using review
     repeat 2 times:
         run review
         until:
@@ -712,16 +740,15 @@ instruct concise:
 
 agic review(_, focus?: Text) -> Result[]:
   models = gpt-5, claude
-
-  context: repo
-  instruct: concise
+  context = repo
+  instruct = concise
 
   user:
     Review {{ _ }}.
 
 flow pipeline(_: Part[]) -> Result:
   tools += shell, fs
-  let drafts = scatter 2 using review
+  let drafts = scatter using review
   repeat 2 times:
     run review
     until:
@@ -804,7 +831,7 @@ def test_format_source_preserves_inline_content_binding_text(content: str) -> No
 
 
 @pytest.mark.parametrize("blank_lines", [1, 2, 3, 5])
-@pytest.mark.parametrize("header", ["flow work:\n  run:", "agic work:\n  context:"])
+@pytest.mark.parametrize("header", ["flow work:\n  run:", "context notes:"])
 def test_format_source_preserves_all_blank_lines_inside_explicit_text(
     header: str, blank_lines: int
 ) -> None:
@@ -824,6 +851,8 @@ def test_format_source_does_not_interpret_markdown_fences(role: str) -> None:
         f"agic work:\n  {role}:\n"
         "    Here is an example: ```\n"
         "      content\n    ```\n    Last.\n"
+        if role == "user"
+        else f"{role} notes:\n  Here is an example: ```\n    content\n  ```\n  Last.\n"
     )
     formatted = format_source(source)
     assert formatted == source
@@ -872,8 +901,8 @@ def test_format_source_does_not_attach_detached_documentation(
     [
         ("flow work:\n  run:", "    "),
         ("agic work:\n  user:", "    "),
-        ("agic work:\n  context:", "    "),
-        ("agic work:\n  instruct:", "    "),
+        ("context notes:", "  "),
+        ("instruct rules:", "  "),
         ("context notes:", "  "),
         ("instruct rules:", "  "),
         ("prompt review:", "  "),
@@ -1068,7 +1097,7 @@ def test_format_source_keeps_later_shebang_as_an_item_doc_separator():
         "  Work before.\n",
         "  user: Before.\n",
         "  user:\n    Before.\n",
-        "  context: Context.\n",
+        "  context = default\n",
         "  tools += shell\n",
     ],
 )

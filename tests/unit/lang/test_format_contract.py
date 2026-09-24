@@ -66,22 +66,20 @@ def test_unicode_text_does_not_shift_documentation_or_diagnostics() -> None:
         format_source(invalid)
 
 
-def test_control_headers_use_cst_body_shape() -> None:
-    source = (
-        "agic work:\n"
-        "  context: # Literal context follows.\n"
-        "    First.\n\n    Second.\n"
-        "  instruct: Keep this:\n"
-        "  Work.\n"
-    )
+def test_prompt_declarations_preserve_literal_content_and_selections() -> None:
+    source = """context notes: # Literal context follows.
+  First.
+
+  Second.
+instruct rules: Keep this:
+agic work:
+  context = notes
+  instruct = rules
+  Work.
+"""
     formatted = format_source(source)
-    assert formatted == (
-        "agic work:\n"
-        "  instruct: Keep this:\n\n"
-        "  context: # Literal context follows.\n"
-        "    First.\n\n    Second.\n\n"
-        "  Work.\n"
-    )
+    assert "  First.\n\n  Second." in formatted
+    assert "instruct rules: Keep this:" in formatted
     assert _semantics(formatted) == _semantics(source)
     assert format_source(formatted) == formatted
 
@@ -96,8 +94,6 @@ def test_control_headers_use_cst_body_shape() -> None:
         ("flow work:\n  let note =", 4),
         ("flow work:\n  ask:", 4),
         ("agic work:\n  user:", 4),
-        ("agic work:\n  context:", 4),
-        ("agic work:\n  instruct:", 4),
         ("context notes:", 2),
         ("instruct notes:", 2),
         ("task work:", 2),
@@ -333,10 +329,10 @@ def test_directive_grouping_supports_every_current_agic_directive_key() -> None:
     assert format_source(formatted) == formatted
 
 
-def test_directive_grouping_does_not_reclassify_keyword_looking_prose() -> None:
-    source = "agic work:\n  models = first\n  prompts = literal prose.\n  user: Work.\n"
+def test_explicit_message_preserves_directive_looking_prose() -> None:
+    source = "agic work:\n  models = first\n  user: prompts = literal prose.\n"
     formatted = format_source(source)
-    assert "  prompts = literal prose.\n" in formatted
+    assert "  user: prompts = literal prose.\n" in formatted
     agic = Program.from_source(formatted).agics[0]
     assert [directive.name for directive in agic.directives] == ["models"]
     assert agic.messages[0].content == "prompts = literal prose."

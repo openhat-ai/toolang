@@ -10,12 +10,14 @@ from toolang.lang import Program
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.state import AgentState, agent_state_revision
 
-LIVE_PROVIDER_SOURCE = """
+LIVE_PROVIDER_SOURCE = """instruct smoke_instruct: Return the requested text exactly, without explanation.
+
+
 agic smoke(_: Text) -> Text:
   tools = none
   recall = none
-  context: none
-  instruct: Return the requested text exactly, without explanation.
+  context = none
+  instruct = smoke_instruct
   user: Return exactly this text: TOOLANG_RESPONSE {{_}}
 
 flow relay(_: Text) -> Text:

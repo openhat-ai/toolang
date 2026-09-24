@@ -39,13 +39,13 @@ from toolang.state.prepare import prepare_agent_state
 
 SOURCE = """
 agic seed(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic chat(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 
@@ -88,25 +88,26 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
         ),
         pytest.param(
             "context: Private context for {{agent.name}}.\n",
-            "  context: default\n",
+            "  context = default\n",
             "Private context for alice.",
             id="explicit-default",
         ),
         pytest.param(
             "context: Unselected context.\ncontext report: Private context for {{agent.name}}.\n",
-            "  context: report\n",
+            """  context = report
+""",
             "Private context for alice.",
             id="named",
         ),
         pytest.param(
-            "context: Unselected context.\n",
-            "  context:\n    Private context for {{agent.name}}.\n",
+            "context: Unselected context.\ncontext selected:\n  Private context for {{agent.name}}.\n",
+            "  context = selected\n",
             "Private context for alice.",
-            id="inline",
+            id="named-block",
         ),
         pytest.param(
             "context: Unselected context.\n",
-            "  context: none\n",
+            "  context = none\n",
             None,
             id="none",
         ),
@@ -240,8 +241,8 @@ def test_history_keeps_consecutive_flow_outputs_without_child_internals(
         + """
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Private worker input: {{_}}
 
 flow job(_: Part[]) -> Part[]:
@@ -317,8 +318,8 @@ def test_execution_reset_uses_the_surviving_horizon(
         )
         + """
 agic next() -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Next task.
 """
     )
@@ -487,8 +488,9 @@ def test_each_call_records_context_without_rerendering_history(
     tool = RecordingTool("lookup__item", output={})
     harness = ExecutionHarness.create(
         tmp_path,
-        source=SOURCE.replace(
-            "  context: none\n", f"  context: {context}\n" if context else ""
+        source=(f"context selected: {context}\n" if context else "")
+        + SOURCE.replace(
+            "  context = none\n", "  context = selected\n" if context else ""
         ),
         tools={tool.name: tool},
         responses=[
@@ -655,7 +657,7 @@ def test_recall_none_provides_empty_thread_variables(
         + """
 agic describe() -> Text:
   recall = none
-  context: none
+  context = none
   user: Summary: {{_far}}; detail: {{_near}}
 """
     )
@@ -811,14 +813,16 @@ def test_parent_compact_changes_shared_history_without_automatic_child_recall(
 ) -> None:
     source = (
         SOURCE
-        + """
+        + """context child_context: Snapshot: {{_far}}
+
+
 agic parent(_: Part[]) -> Part[]:
   hands = agic:child
-  context: none
+  context = none
   user: {{_}}
 
 agic child() -> Text:
-  context: Snapshot: {{_far}}
+  context = child_context
   user: Child.
 """
     )
@@ -909,7 +913,9 @@ agic child() -> Text:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-@pytest.mark.parametrize("recall", [None, "auto", "none", "far", "near", "far, near"])
+@pytest.mark.parametrize(
+    "recall", [None, "default", "none", "far", "near", "far, near"]
+)
 def test_initial_horizon_and_recall_selection(
     tmp_path: Path, recall: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -933,7 +939,10 @@ def test_initial_horizon_and_recall_selection(
             first = await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(
-                harness, thread, second.id, begin=first.id if recall == "auto" else None
+                harness,
+                thread,
+                second.id,
+                begin=first.id if recall == "default" else None,
             )
             reads = []
             original = harness.store.list_steps_for_runs
@@ -952,7 +961,7 @@ def test_initial_horizon_and_recall_selection(
             assert run.status == "succeeded", run.error
             selected = (
                 ("far", "near")
-                if recall in {None, "auto"}
+                if recall in {None, "default"}
                 else tuple(recall.split(", "))
             )
             assert without_route_snapshots(

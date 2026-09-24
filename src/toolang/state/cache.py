@@ -30,7 +30,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 9
+LAYER_SCHEMA = 10
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"

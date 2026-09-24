@@ -65,8 +65,8 @@ def main() -> None:
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow relay(_: Part[]) -> Part[]:

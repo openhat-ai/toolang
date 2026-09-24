@@ -34,14 +34,14 @@ SOURCE = """
 agic parent() -> Text:
   recall = none
   hands = agic:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Parent task.
 
 agic child() -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Child task.
 """
 

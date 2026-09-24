@@ -26,7 +26,11 @@ def resolve_settings(
         )
 
     return RunnableSettings(
-        lanes=int(directives["lanes"][0]) if "lanes" in directives else base.lanes,
+        lanes=(
+            4 if directives["lanes"] == ("default",) else int(directives["lanes"][0])
+        )
+        if "lanes" in directives
+        else base.lanes,
         recall=directives.get("recall", base.recall),
         hands=directives.get("hands", base.hands),
         handoffs=directives.get("handoffs", base.handoffs),

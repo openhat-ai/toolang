@@ -99,8 +99,8 @@ def test_flat_input_contract_across_direct_and_authored_http(tmp_path: Path) -> 
         source="""
 agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, args: Text, items: Text[]) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -227,8 +227,8 @@ def test_direct_http_rejects_invalid_parts_before_acceptance(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -273,8 +273,8 @@ struct Packet:
 
 agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: ready
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -358,14 +358,14 @@ prompt review:
 
 agic chat(_: Part[], tone: Text) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{tone}} {{_}}
 
 agic selected(_: Part[], tone: Text) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{tone}} {{_}}
 """,
         responses=[
@@ -575,8 +575,8 @@ def test_authored_retry_and_rerun_streams_subscribe_at_acceptance(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -674,8 +674,8 @@ def test_http_controls_accept_pending_run_and_empty_steer(tmp_path: Path) -> Non
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("finished"))],

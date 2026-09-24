@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 import json
 from xml.etree import ElementTree
@@ -51,6 +52,37 @@ def _state(source: str) -> AgentState:
 
 def _render(state: AgentState, routes: AgicRoutes) -> str:
     return _render_routes(runnable_descriptions(state, routes))
+
+
+@pytest.mark.parametrize("name", ["DeepSearch", "deep-search", "_review"])
+@pytest.mark.parametrize("qualified", [False, True])
+@pytest.mark.parametrize(
+    "directive,action", [("hands", "run"), ("handoffs", "execute")]
+)
+def test_routes_resolve_portable_exported_flow_names(
+    name, qualified, directive, action
+):
+    module = f"flows::{name}"
+    reference = f"{module}::flow:{name}" if qualified else name
+    state = _state(f"agic caller:\n  {directive} = {reference}\n  Work.\n")
+    source = "flow:\n  pass\n"
+    state = replace(
+        state,
+        modules={**state.modules, module: Program.from_source(source)},
+        module_sources={**state.module_sources, module: f"flows/{name}.too"},
+        module_digests={
+            **state.module_digests,
+            module: sha256(source.encode()).hexdigest(),
+        },
+        module_caps={**state.module_caps, module: ()},
+    )
+    caller = state.modules["agent"].agics[0]
+    routes = resolve_agic_routes(state, caller)
+    assert len(routes.resolved) == 1
+    target = routes.resolved[0]
+    assert target.runnable.name == name
+    assert target.runnable.module == module
+    assert target.actions == (action,)
 
 
 def _document(rendered: str) -> list[dict[str, Any]]:
@@ -166,7 +198,7 @@ def test_protocol_requires_explicit_delegation_intent() -> None:
     assert 'a text part can be {"type":"text","text":"..."}' in instruction
 
 
-def test_authored_runnable_query_filters_typed_fields() -> None:
+def test_authored_routes_select_exact_csv_references() -> None:
     state = _state(
         """
 agic inspect(_: Text):
@@ -176,7 +208,7 @@ flow verify:
   pass
 
 agic caller:
-  hands = ins*[kind=agic;parameters=_], flow:*
+  hands = agic:inspect, flow:verify
 
   Call.
 """

@@ -4,12 +4,6 @@ This document defines the flow surface syntax in one place. It covers authored
 statements and their observable semantics; executor, trace, and lowering
 details remain in their owning documents.
 
-The installed grammar still requires `scatter N` and does not yet expose
-`settle from`, `repeat windowing N`, `lanes = N`, flow prompt settings, or empty
-route selectors. Toolang implements their AST/runtime contracts; the separate
-[grammar follow-up](./plans/flow-usability.md#9-syntax-requirements) enables those
-source forms. Until then, repeat retains 3 prior frames and settle retains 1.
-
 
 ## Notation
 
@@ -95,8 +89,8 @@ seek AGENT [-> T]: BODY
 ask: BODY
 
 # Expand one item into a list
-scatter N using EXPANDER
-scatter N using [-> T]: BODY
+scatter using EXPANDER
+scatter [using] [-> T]: BODY
 storm N [in P lanes] using MAPPER
 storm N [in P lanes] using [-> T]: BODY
 
@@ -104,7 +98,14 @@ storm N [in P lanes] using [-> T]: BODY
 gather using MERGER
 gather using [-> T]: BODY
 settle using REDUCER
-settle using [-> T]: BODY
+settle [using] [-> T]: BODY
+
+settle using REDUCER:
+  from: BODY
+
+settle [using] [-> T]:
+  TEXT
+  [from: BODY]
 
 # Transform every list item
 map [in P lanes] using MAPPER
@@ -123,11 +124,11 @@ sort ascending|descending [in P lanes] by SCORER
 sort ascending|descending [in P lanes] by [-> Number]: BODY
 
 # Repeat statements
-repeat N times:
+repeat N times [windowing P]:
   STMTS
   [until: BODY]
 
-repeat:
+repeat [windowing P]:
   STMTS
   until: BODY
 ```
@@ -225,10 +226,15 @@ bind their complete result once.
 - `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
   sends its body to the target agent.
 - `scatter` and `gather` each start one child run, then reshape its result.
-- The current `scatter N` surface retains `N`, but execution uses the returned
-  array length and neither validates nor truncates it.
+- Scatter has no count; its child must return an array, whose length determines
+  the output length.
 - `storm` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `sort` start one child run per item.
+- Settle accepts an optional trailing `from:` initializer, evaluated once in the
+  outer frame before entering its own iteration scope. The initializer introduces
+  no local. In an adhoc multiline body, only baseline `from:` ends reducer text;
+  deeper occurrences remain literal. A named reducer's colon block contains only
+  the `from:` clause. Settle retains one prior frame and has no window clause.
 - Settle without an initializer uses the first element as the cumulative seed
   and invokes the reducer N-1 times. Each call receives the current element as
   `_` and the previous result as `_1._`; output must match the source element
@@ -259,6 +265,8 @@ bind their complete result once.
   committed. Inspection shows a `par` Step followed by a `value` Step.
 - Counts are non-negative integer literals. Use `repeat 1 time`, including
   numeric value `01`; other values require `times`.
+- Repeat retains 3 prior frames by default. `windowing P` overrides that positive
+  capacity independently of the iteration count.
 - Every `repeat` has `N`, `until`, or both. When both are present, the first
   stopping condition reached ends the loop. `until` is always final, reads the
   latest locals after the iteration, and does not bind its Boolean result. A
@@ -288,7 +296,7 @@ verb -> count/direction -> lanes -> using/if/by -> runnable or inline body
 
 ```too
 flow research(_, topic) -> Report:
-  scatter 8 using -> Text[]:
+  scatter using -> Text[]:
     Generate distinct research directions for {{_}}.
 
   keep in 4 lanes if:

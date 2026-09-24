@@ -35,8 +35,8 @@ from toolang.lang.types import Array
 _CHAT_SOURCE = """
 agic chat(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 

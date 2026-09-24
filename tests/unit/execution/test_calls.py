@@ -167,8 +167,8 @@ def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> No
         source="""
 agic worker(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow hello_flow(_: Text) -> Text:
@@ -205,14 +205,14 @@ def test_root_runnable_query_is_removed_from_recalled_history(tmp_path) -> None:
         source="""
 agic worker(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic chat(_: Text) -> Text:
   recall = near
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow hello_flow(_: Text) -> Text:

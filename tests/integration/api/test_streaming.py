@@ -120,8 +120,8 @@ def test_run_stream_emits_complete_canonical_event_sequence(tmp_path: Path) -> N
         source="""
 agic answer(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
@@ -224,8 +224,8 @@ def test_run_detail_exposes_one_structured_step_error(tmp_path: Path) -> None:
         source="""
 agic answer(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[RuntimeError("provider unavailable")],
@@ -276,8 +276,8 @@ def test_chat_client_can_create_thread_then_use_canonical_run_stream(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("chat reply"))],
@@ -398,8 +398,8 @@ def test_retry_and_rerun_api_accept_partial_limit_overrides(tmp_path: Path) -> N
         source="""
 agic answer(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[

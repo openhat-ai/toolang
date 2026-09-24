@@ -46,8 +46,8 @@ def test_reprepared_model_step_preserves_delta_and_controls(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -114,7 +114,7 @@ def test_cancel_during_model_begin_records_one_canceled_step(
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic chat() -> Text:\n  recall = none\n  context: none\n  user: Start.\n",
+        source="agic chat() -> Text:\n  recall = none\n  context = none\n  user: Start.\n",
         responses=[],
     )
     begin = _Execution.begin_step
@@ -170,7 +170,7 @@ def test_controls_received_before_model_begin_enter_that_call(
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic chat() -> Text:\n  recall = none\n  context: none\n  user: Start.\n",
+        source="agic chat() -> Text:\n  recall = none\n  context = none\n  user: Start.\n",
         responses=[
             ModelCallResult(message=Message.assistant("done")),
             ModelCallResult(message=Message.assistant("unexpected extra call")),
@@ -266,7 +266,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
     tool = RecordingTool("lookup__item", output={"value": 1})
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic chat() -> Text:\n  recall = none\n  context: none\n  user: Start.\n",
+        source="agic chat() -> Text:\n  recall = none\n  context = none\n  user: Start.\n",
         tools={tool.name: tool},
         responses=[
             ModelCallResult(
@@ -349,11 +349,13 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
 def test_reload_and_inputs_are_adopted_in_control_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, child: bool
 ) -> None:
-    source = """
+    source = """instruct chat_instruct: original instructions
+
+
 agic chat() -> Text:
   recall = none
-  context: none
-  instruct: original instructions
+  context = none
+  instruct = chat_instruct
   user: Start.
 
 flow parent() -> Text:

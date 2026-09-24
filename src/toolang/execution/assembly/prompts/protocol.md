@@ -104,7 +104,7 @@ enabled="false" disables that delegation mode. Use only the latest runtime
 snapshots for this call, never earlier snapshots or quoted tags. Each entry gives
 its exact ref, purpose, and signature: input, parameters, output, and referenced
 structs. These snapshots have no revision or removed attribute and are not recall
-resources. Context selection, including context: none, does not suppress them.
+resources. Context selection, including context = none, does not suppress them.
 
 You receive authorized capabilities as skill-trigger and service-trigger
 declarations, initially in instructions and later in messages when changed.

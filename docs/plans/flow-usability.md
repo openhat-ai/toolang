@@ -2,7 +2,7 @@
 
 Goal: local signatures, validated operation contracts, consistent runtime scheduling,
 and bounded iteration/thread context.
-tree-sitter-toolang is outside scope.
+Grammar integration is covered in section 11.
 
 ## 1. Determine the Signature
 
@@ -202,7 +202,7 @@ repeat 5 times windowing 3:
 
 | Effective recall | `_far` | `_near` | `_past` |
 | --- | --- | --- | --- |
-| `auto` / `far, near` | Summary | Recent messages | Summary followed by recent messages |
+| `default` / `*` / `far, near` | Summary | Recent messages | Summary followed by recent messages |
 | `far` | Summary | `[]` | Summary message, or `[]` if absent |
 | `near` | `""` | Recent messages | Recent messages |
 | `none` | `""` | `[]` | `[]` |
@@ -268,14 +268,20 @@ repeat 5 times windowing 3:
 | Resource selection | models, tools, psyches, skills, services, prompts | May narrow; cannot exceed the parent's effective resources |
 | Configuration | hands, handoffs, recall, instruct, context, lanes | May override the inherited setting |
 
+- Q (`models/tools/psyches/skills/services/prompts`) supports `=`, `+=`, `-=`.
+  L (`hands/handoffs/recall`) and V (`lanes/instruct/context`) support only `=`.
+  Hands/handoffs are CSV references, not queries. Recall is CSV far/near; its
+  standalone specials are none/default/*. Routes support none/*. No RHS is empty.
+  Remove recall auto; migrate it to explicit far, near.
+
 - Keep capability-kind selections independent. Configuration overrides are local
   to the runnable and its descendants; parents and siblings remain unchanged.
 - `lanes` and `recall`: omission inherits the direct parent's effective value;
-  explicit configuration overrides it. Root defaults are lanes 4 and recall auto.
-  Explicit recall auto selects both sources, even under a narrower parent policy.
+  explicit configuration overrides it. Root defaults are lanes 4 and recall `far, near`.
+  Explicit recall `far, near` selects both sources, even under a narrower parent policy.
 - Lane precedence: statement clause > current runnable directive > inherited
-  value > built-in 4. Allow at most one `lanes = N` per runnable; N must be a
-  positive integer. Children may override with a larger value.
+  value > built-in 4. Allow at most one lanes directive per runnable: a positive integer
+  or `default` (4). Children may override with a larger value.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
   Agics supply the default for descendants; repeat bodies use the enclosing
   runnable's value. Statement overrides affect only that operation, not the
@@ -295,13 +301,17 @@ repeat 5 times windowing 3:
   siblings do not share mutations. Existing model-binding validation still applies.
 - `hands`/`handoffs` authorize the current caller's model-driven routes, not the
   whole descendant call tree. Omission inherits; explicit `=` replaces the route
-  selection from public runnables, and empty `hands =` / `handoffs =` disables it.
+  selection from public runnables, and `hands = none` / `handoffs = none` disables it.
   With no inherited value, routes are empty. Flow provides defaults to descendants;
   authored flow statements do not require a matching route.
 - Route selections may differ from or exceed the parent's selections: a parent
   with `hands = worker` can call a worker declaring `hands = helper`. Neither
   delegation nor transfer expands resource sets; existing recursion checks remain.
-- `instruct:` / `context:` keep their forms. Omission inherits; an explicit value
+- `instruct =` / `context =` select named declarations, `none`, or `default`.
+  Content is declared explicitly at module level; inline runnable definitions are
+  removed. Unnamed declarations override the module default, with a system
+  fallback when absent. Only nonexistent explicit names fail resolution.
+  Omission inherits; an explicit value
   replaces the inherited setting, `none` disables it, and `default` selects the
   runnable's own module default. Roots use existing module/built-in defaults.
   Inherit resolved template references, including defaults, retaining their
@@ -317,7 +327,7 @@ repeat 5 times windowing 3:
 - Cost: parents must allow resources needed by their descendants. Calls relying
   on agent-scope resets or additional module-local capabilities need migration.
 
-| Concern | Current implementation | Target |
+| Concern | Before this plan | Target |
 | --- | --- | --- |
 | Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
 | Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Same directive set as agic |
@@ -334,12 +344,12 @@ repeat 5 times windowing 3:
 
 | Area | Required syntax |
 | --- | --- |
-| Shared directives | Agic and flow bodies accept all directives in section 8; preserve existing `instruct:` / `context:` reference and content forms. |
+| Shared directives | Agic and flow bodies accept all directives in section 8; use `=` for prompt selections and explicit module-level declarations for content. |
 | Lanes | Add `lanes = N` to both runnable kinds; retain optional `in N lanes` on parallel statements. |
 | Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
 | Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
 | Repeat window | Optional `windowing N` before the header colon, as in `repeat 5 times windowing 3:`; also available on repeats without a count that use `until`. |
-| Empty route selection | Allow `hands =` and `handoffs =` to clear inherited routes. |
+| Empty route selection | `hands = none` and `handoffs = none` disable inherited routes; empty values are invalid. |
 
 - Preserve omitted signatures versus explicit `()` and authored type annotations;
   defaults and parameter inference belong to semantic normalization.
@@ -378,7 +388,7 @@ repeat 5 times windowing 3:
   transfer/output contracts, caller cancellation, and flow statement result binding.
 - Migrate runtime tool descriptions and result consumers to scheduling receipts
   with final outcomes delivered through completion context.
-- Verify every recall view, omission versus explicit auto, child near under parent
+- Verify every recall view, omission versus explicit default, child near under parent
   none, missing sources, and policy/version consistency across compaction and replay.
 - Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,
   and statement limits without changing descendant defaults or sibling operations.
@@ -404,3 +414,12 @@ repeat 5 times windowing 3:
   records, `assembly/{history,prompting}.py`, and store projections.
 - Risks: contract/resource-scope migration, inherited prompt dependencies,
   frame retention, mixed history versions, and durable scheduling/completion delivery.
+
+## 11. Grammar Integration
+
+The coordinated grammar contract is defined in
+[tree-sitter-toolang's plan](https://github.com/openhat-ai/tree-sitter-toolang/blob/v0.3.3/docs/plans/flow-directives.md).
+Toolang requires the published grammar version `>=0.3.3,<0.4`.
+Prepared layer schema 10 invalidates stale authored
+syntax caches; historical scatter Step records still decode their obsolete
+non-negative integer count without exposing it in the current AST.

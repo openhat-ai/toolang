@@ -50,8 +50,8 @@ def test_clause_order_preserves_semantics_and_lane_limit(
 @pytest.mark.parametrize(
     ("header", "output"),
     [
-        ("scatter 2 using -> Text[]: Work.", "Text[]"),
-        ("scatter 2 using: Work.", "Text[]"),
+        ("scatter using -> Text[]: Work.", "Text[]"),
+        ("scatter using: Work.", "Text[]"),
         ("storm 2 in 1 lane using -> Text: Work.", "Text"),
         ("gather using: Work with {{_}}.", "Text"),
         ("settle using: Work with {{_}} and {{_1._}}.", "Text"),

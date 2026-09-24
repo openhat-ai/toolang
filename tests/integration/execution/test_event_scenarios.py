@@ -49,8 +49,8 @@ def test_tool_loop_events_include_durable_generic_summaries(
         source="""
 agic calculate(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -125,8 +125,8 @@ def test_nested_run_events_are_strictly_inside_the_parent_run_step(
         source="""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow relay(_: Text) -> Text:
@@ -181,8 +181,8 @@ def test_parallel_events_are_balanced_without_requiring_sibling_order(
         source="""
 agic worker(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow parallel(_: Text) -> Text[]:

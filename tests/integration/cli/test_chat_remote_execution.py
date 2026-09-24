@@ -46,8 +46,8 @@ def test_remote_chat_session_executes_against_the_agent_api(
     source = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     if entry == "agic:<entry>":

@@ -31,7 +31,7 @@ from toolang.setup import SetupWatcher
 
 
 SOURCE = """agic chat(_: Part[]) -> Text:
-  context: none
+  context = none
   user: {{_}}
 """
 

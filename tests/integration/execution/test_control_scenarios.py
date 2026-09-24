@@ -44,8 +44,8 @@ def test_cancel_cancels_an_active_model_step_and_finishes_its_control(
         source="""
 agic wait(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -106,8 +106,8 @@ def test_steer_during_a_model_call_is_consumed_by_the_next_call(
         source="""
 agic revise(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -357,8 +357,8 @@ def test_next_step_steer_replaces_a_pending_tool_batch(tmp_path: Path) -> None:
         source="""
 agic calculate(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -450,8 +450,8 @@ def test_cancel_cancels_an_active_tool_step(tmp_path: Path) -> None:
         source="""
 agic calculate(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -529,8 +529,8 @@ def test_cancel_timing_selects_the_next_matching_flow_boundary(
         source="""
 agic pause(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow sequence(_: Text) -> Text:
@@ -603,8 +603,8 @@ def test_flow_runs_reject_steer_controls(
         source="""
 agic pause(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow sequence(_: Text) -> Text:
@@ -653,8 +653,8 @@ def test_multiple_steers_are_consumed_in_durable_index_order(
         source="""
 agic revise(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[

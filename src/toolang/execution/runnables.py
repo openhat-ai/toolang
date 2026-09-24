@@ -118,8 +118,23 @@ def resolve_agic_routes(
         ("execute", handoffs),
     )
     dataset = runnable_dataset(state)
-    for route_action, queries in groups:
-        selected = dataset.query(queries) if queries else ()
+    for route_action, references in groups:
+        if not references or references == ("none",):
+            continue
+        if references == ("*",):
+            selected = dataset.items
+        else:
+            refs = tuple(parse_runnable_ref_parts(value) for value in references)
+            selected = tuple(
+                item
+                for item in dataset.items
+                if any(
+                    item.name == ref.name
+                    and (ref.kind is None or item.kind == ref.kind)
+                    and (ref.module is None or item.module == ref.module)
+                    for ref in refs
+                )
+            )
         for item in selected:
             target = ResolvedRunnable(
                 name=item.name,

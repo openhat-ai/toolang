@@ -30,8 +30,8 @@ from tests.support.execution_harness import (
 _SOURCE = """
 agic review(_: Part[], focus: Text):
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{focus}} {{_}}
 """
 
@@ -220,8 +220,8 @@ prompt wrap:
 
 agic review(_: Part[], focus: Text):
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{focus}} {{_}}
 """,
         responses=[],

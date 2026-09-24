@@ -41,7 +41,7 @@ from toolang.state.watcher import StateRefresh
 
 SOURCE = """
 agic chat() -> Text:
-  context: none
+  context = none
   user: Complete the task.
 """
 
@@ -493,7 +493,7 @@ def test_parallel_children_keep_honor_dependencies_and_replies_local(tmp_path):
         SOURCE
         + """
 agic child(_: Part[]) -> Part[]:
-  context: none
+  context = none
   user: Child task.
 
 flow parent(_: Part[]) -> Part[][]:
@@ -663,12 +663,12 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("recall", ["auto", "none"])
+@pytest.mark.parametrize("recall", ["default", "none"])
 def test_selected_near_determines_whether_next_run_needs_honor(tmp_path, recall):
     harness, repo, publication = _harness(
         tmp_path,
         [_calls(_call("first")), _answer(), _calls(_call("next")), _answer()],
-        source=SOURCE.replace("context: none", f"recall = {recall}\n  context: none"),
+        source=SOURCE.replace("context = none", f"recall = {recall}\n  context = none"),
     )
 
     async def scenario():
@@ -678,8 +678,8 @@ def test_selected_near_determines_whether_next_run_needs_honor(tmp_path, recall)
             second = await harness.executor.run(_spec(harness, publication, thread))
             assert first.status == second.status == "succeeded"
             assert len(_recalls(harness, first)) == 2
-            assert len(_recalls(harness, second)) == (0 if recall == "auto" else 2)
-            assert (repo / "src/result").exists() == (recall == "auto")
+            assert len(_recalls(harness, second)) == (0 if recall == "default" else 2)
+            assert (repo / "src/result").exists() == (recall == "default")
 
     asyncio.run(scenario())
 

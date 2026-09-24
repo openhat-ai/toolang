@@ -36,11 +36,13 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
 
 
-_ROOT_SOURCE = """
+_ROOT_SOURCE = """instruct child_instruct: old state
+
+
 agic child:
   recall = none
-  context: none
-  instruct: old state
+  context = none
+  instruct = child_instruct
   user: hello
 
 flow parent:
@@ -57,7 +59,7 @@ instruct:
 
 agic active -> Number:
   recall = none
-  context: none
+  context = none
   user: hello
 """.lstrip()
 
@@ -72,7 +74,7 @@ instruct:
 
 agic child(_: Part[]) -> Part[]:
   recall = none
-  context: none
+  context = none
   user: hello
 
 flow parent(_: Part[]) -> Part[][]:
@@ -122,8 +124,8 @@ def test_reload_refreshes_inherited_recall_through_active_flows(
 agic seed():
   Previous exchange.
 agic worker:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: History={{_past}}.
 """
     for index in range(depth):
@@ -194,11 +196,13 @@ agic worker:
 def test_reload_preserves_execute_configuration_for_nested_descendants(
     tmp_path: Path,
 ) -> None:
-    source = """
+    source = """instruct delegate_instruct: Transferred instruction.
+
+
 agic seed():
   Previous exchange.
 agic worker:
-  context: none
+  context = none
   user: History={{_past}}.
 flow target:
   run worker
@@ -206,8 +210,8 @@ flow target:
 agic delegate:
   recall = near
   handoffs = flow:target
-  context: none
-  instruct: Transferred instruction.
+  context = none
+  instruct = delegate_instruct
   user: Delegate.
 flow parent:
   recall = none
@@ -274,19 +278,23 @@ flow parent:
 def test_reload_refreshes_inherited_prompts_through_a_public_flow_call(
     tmp_path: Path, override: bool
 ) -> None:
-    source = "agic worker:\n"
+    source = """instruct parent_instruct: Old instruction.
+context parent_context: Old context.
+instruct worker_instruct: Worker instruction.
+context worker_context: Worker context.
+agic worker:
+"""
     if override:
-        source += "  instruct: Worker instruction.\n  context: Worker context.\n"
-    source += """
-  user: Work.
+        source += "  instruct = worker_instruct\n  context = worker_context\n"
+    source += """  user: Work.
 flow middle:
   run worker
   run worker
 agic parent:
   recall = none
   hands = flow:middle
-  instruct: Old instruction.
-  context: Old context.
+  instruct = parent_instruct
+  context = parent_context
   user: Delegate.
 """
     first_call = AsyncGate()
@@ -850,8 +858,8 @@ def test_until_reload_uses_the_current_condition_history_requirement(
 context:
   {condition(initial_depth) if layer == "context" else "Condition context."}
 agic worker:
-  instruct: none
-  context: none
+  instruct = none
+  context = none
   user: Work.
 flow parent:
   repeat 3 times:
@@ -942,7 +950,7 @@ agic {worker} -> {output}:
   user: Old current {{{{_}}}}.
 {declaration}
 flow parent() -> {output if operation == "settle" else f"{output}[]"}:
-  scatter 3 using seed
+  scatter using seed
   {statement}
 """
     replacement = (

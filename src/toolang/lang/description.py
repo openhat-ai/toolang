@@ -43,9 +43,7 @@ def statement_description(statement: FlowStmt) -> str:
             else "Ask for human input"
         )
     elif isinstance(statement, ScatterStmt):
-        action = _scatter_description(
-            _runnable_label(statement.runnable), statement.count
-        )
+        action = f"Scatter into items with {_runnable_label(statement.runnable)}"
     elif isinstance(statement, StormStmt):
         action = (
             f"Storm into {_count(statement.count, 'item')} "
@@ -94,11 +92,6 @@ def statement_description(statement: FlowStmt) -> str:
     if statement.binding is None:
         return f"{action}, discard result"
     return f"{action}, save result to {statement.binding}"
-
-
-def _scatter_description(runnable: str, item_count: int | None) -> str:
-    quantity = _count(item_count, "item") if item_count is not None else "items"
-    return f"Scatter into {quantity} with {runnable}"
 
 
 def _count(value: int, noun: str) -> str:

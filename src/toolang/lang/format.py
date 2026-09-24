@@ -30,12 +30,10 @@ _NAMED_BLOCK_HEADER_RE = re.compile(
     r"(?P<body>[ \t]*.*)$"
 )
 _MESSAGE_HEADER_RE = re.compile(
-    r"^(?P<kind>context|instruct|user|assistant|tool)[ \t]*:(?P<body>[ \t]*.*)$"
+    r"^(?P<kind>user|assistant|tool)[ \t]*:(?P<body>[ \t]*.*)$"
 )
 _COMMENT_SPLIT_KINDS = {
     "directive",
-    "control",
-    "control_block_header",
     "message_header",
     "message_block_header",
     "message_body",
@@ -78,7 +76,6 @@ _COMMENT_TYPES = {
     "module_doc_comment",
 }
 _TEXT_TYPES = {"text_body", "unroled_message", "implicit_run_statement"}
-_CONTROL_TYPES = {"context_setting", "instruct_setting"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +85,6 @@ class _Line:
     value: str
     kind: str
     text_owner: int | None = None
-    control_owner: int | None = None
     separate: bool = False
     follows_doc: bool = False
     group: tuple[str, str] | None = None
@@ -137,7 +133,6 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
     elif isinstance(statement, ast.ScatterStmt):
         head = _statement_words(
             "scatter",
-            str(statement.count),
             _runnable_clause("using", statement.runnable),
         )
     elif isinstance(statement, ast.StormStmt):
@@ -232,9 +227,6 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
         if node is None:
             raise ToolangFormatError(f"Missing syntax node at line {row + 1}.")
         ancestors = tuple(_ancestors(node))
-        control = next(
-            (item for item in ancestors if item.type in _CONTROL_TYPES), None
-        )
         text = next((item for item in ancestors if item.type in _TEXT_TYPES), None)
         kind = _source_line_kind(line, node=node, ancestors=ancestors)
         depth = _indent_depth(node) if prefix else 0
@@ -244,7 +236,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             depth = 1 + sum(
                 1
                 for item in ancestors
-                if item.type == "repeat_statement"
+                if item.type in {"repeat_statement", "settle_statement"}
                 and text_indent_width(lines[item.start_point.row])
                 < text_indent_width(line)
             )
@@ -273,7 +265,6 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 group=_spacing_group(kind, value=value, ancestors=ancestors, row=row),
                 flow_ancestry=_flow_ancestry(ancestors),
                 text_owner=text.id if text is not None else None,
-                control_owner=control.id if control is not None else None,
                 separate=previous_doc_indent is not None
                 and previous_doc_indent != prefix
                 and _leading_whitespace(formatted[-1].value) == rendered_prefix,
@@ -284,9 +275,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
         previous_doc_indent = prefix if node.type == "item_doc_comment" else None
 
     return _normalize_blank_lines(
-        _order_program_comments(
-            _order_control_segments(_order_directive_sections(formatted))
-        )
+        _order_program_comments(_order_directive_sections(formatted))
     )
 
 
@@ -335,9 +324,7 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
         return "message_body" if "unroled_message" in types else "block_body"
     if node.type in _COMMENT_TYPES:
         return "comment"
-    owner = next(
-        (item for item in ancestors if item.type in _CONTROL_TYPES | {"message"}), None
-    )
+    owner = next((item for item in ancestors if item.type == "message"), None)
     if owner is not None:
         text = next(
             (item for item in owner.named_children if item.type == "text_inline"), None
@@ -345,8 +332,6 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
         block = text is not None and any(
             item.type == "text_block" for item in text.named_children
         )
-        if owner.type in _CONTROL_TYPES:
-            return "control_block_header" if block else "control"
         return "message_block_header" if block else "message_header"
     return "message_body"
 
@@ -392,11 +377,7 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
         return _format_property_line(stripped_line)
     if "directive" in ancestors:
         return _format_directive_line(stripped_line)
-    if ancestors & {
-        "context_setting",
-        "instruct_setting",
-        "message",
-    }:
+    if "message" in ancestors:
         if match := _MESSAGE_HEADER_RE.match(stripped_line):
             return _format_message_header_line(match)
         return _collapse_syntax_space(stripped_line)
@@ -430,6 +411,11 @@ def _indent_depth(node: Node) -> int:
             or (
                 current.type == "repeat_statement"
                 and current.start_point.row < node.start_point.row
+            )
+            or (
+                current.type == "settle_statement"
+                and (initial := current.child_by_field_name("from")) is not None
+                and node.start_point.row >= initial.start_point.row
             )
         )
     if ancestors & {"context", "instruct"} and "text_body" in ancestors:
@@ -573,7 +559,7 @@ def _format_signature_params(raw: str) -> str:
 def _format_directive_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
     match = re.fullmatch(
-        r"(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall)"
+        r"(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall|lanes|instruct|context)"
         r"[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
         body,
     )
@@ -581,7 +567,8 @@ def _format_directive_line(stripped_line: str) -> str:
         return stripped_line
     values = (
         _format_csv_values(match.group("values"))
-        if match.group("key") == "recall"
+        if match.group("key")
+        in {"hands", "handoffs", "recall", "lanes", "instruct", "context"}
         else format_query_text(match.group("values"))
     )
     return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
@@ -659,36 +646,6 @@ def _order_directive_sections(lines: list[_Line]) -> list[_Line]:
         for group in groups.values():
             ordered.extend(group)
         ordered.extend(trailing_blanks)
-    return ordered
-
-
-def _order_control_segments(lines: list[_Line]) -> list[_Line]:
-    ordered: list[_Line] = []
-    index = 0
-    while index < len(lines):
-        if lines[index].kind not in {"control", "control_block_header"}:
-            ordered.append(lines[index])
-            index += 1
-            continue
-        segments: list[list[_Line]] = []
-        while index < len(lines) and lines[index].kind in {
-            "control",
-            "control_block_header",
-        }:
-            header = lines[index]
-            segment = [header]
-            index += 1
-            while index < len(lines):
-                line = lines[index]
-                if line.value and line.control_owner != header.control_owner:
-                    break
-                segment.append(line)
-                index += 1
-            segments.append(segment)
-        for segment in sorted(
-            segments, key=lambda group: group[0].kind == "control_block_header"
-        ):
-            ordered.extend(segment)
     return ordered
 
 
@@ -775,34 +732,23 @@ def _needs_blank_line(
         return previous_kind in {"block_body", "message_body", "message_header"}
     if current_kind == "directive":
         return previous_kind not in {"agic_header", "top_level", "directive"}
-    if current_kind == "control":
-        return previous_kind in {
-            "directive",
-            "message_header",
-            "message_body",
-            "block_body",
-        }
     if current_kind in {
-        "control_block_header",
         "message_header",
         "message_block_header",
     }:
         return previous_kind in {
             "directive",
-            "control",
             "message_header",
             "message_body",
             "block_body",
         }
     if current_kind == "block_body":
         return previous_kind not in {
-            "control_block_header",
             "message_block_header",
             "block_body",
         }
     if current_kind == "message_body":
         return previous_kind not in {
-            "control_block_header",
             "message_block_header",
             "message_header",
             "message_body",

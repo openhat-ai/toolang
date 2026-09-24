@@ -21,7 +21,7 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from toolang.lang.description import _scatter_description, statement_description
+from toolang.lang.description import statement_description
 
 SPAN = Span(line=1)
 
@@ -38,21 +38,6 @@ def test_automatic_statement_description_is_independent_of_docs(
     )
 
     assert statement_description(statement) == description
-
-
-@pytest.mark.parametrize(
-    ("item_count", "expected"),
-    [
-        (None, "Scatter into items with expand"),
-        (0, "Scatter into 0 items with expand"),
-        (1, "Scatter into 1 item with expand"),
-        (6, "Scatter into 6 items with expand"),
-    ],
-)
-def test_scatter_description_supports_known_and_unknown_quantity(
-    item_count: int | None, expected: str
-) -> None:
-    assert _scatter_description("expand", item_count) == expected
 
 
 def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
@@ -113,12 +98,12 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Ask reviewer for input",
         ),
         (
-            ScatterStmt(span=SPAN, count=3, runnable="expand_queries"),
-            "Scatter into 3 items with expand_queries",
+            ScatterStmt(span=SPAN, runnable="expand_queries"),
+            "Scatter into items with expand_queries",
         ),
         (
-            ScatterStmt(span=SPAN, count=1, runnable="agic:<adhoc:5>"),
-            "Scatter into 1 item with agic:<adhoc:5>",
+            ScatterStmt(span=SPAN, runnable="agic:<adhoc:5>"),
+            "Scatter into items with agic:<adhoc:5>",
         ),
         (
             GatherStmt(span=SPAN, runnable="synthesize"),
@@ -195,8 +180,8 @@ def test_statement_description_covers_every_statement(
             "Ask agent researcher to run agic:<adhoc:2>",
         ),
         (
-            "scatter 3 using: Expand the query.",
-            "Scatter into 3 items with agic:<adhoc:2>",
+            "scatter using: Expand the query.",
+            "Scatter into items with agic:<adhoc:2>",
         ),
         (
             "storm 3 in 2 lanes using: Review the findings.",

@@ -151,7 +151,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
         path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
-        given=ScatterStmt(span=Span(line=4), count=2, runnable="agic:child"),
+        given=ScatterStmt(span=Span(line=4), runnable="agic:child"),
         state=RunControlRefData(run="run_root", index=0),
         output=None,
     )

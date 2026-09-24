@@ -55,8 +55,8 @@ def test_immediate_control_stops_shell_and_preserves_history(
         tmp_path,
         source="""
 agic chat(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         tools={shell.name: shell},
@@ -314,8 +314,8 @@ def test_recall_and_steer_preserve_adoption_order(tmp_path: Path, timing) -> Non
         tmp_path,
         source="""
 agic chat(_: Part[]) -> Part[]:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         tools={tool.name: tool},

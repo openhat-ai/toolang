@@ -2,7 +2,7 @@ agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -
   recall = none
   tools = history/*
 
-  context: none
+  context = none
 
   Read the Runs and Steps in Thread {{thread}} from {{begin}} (inclusive) to
   {{end}} (exclusive), using history tools. Follow pagination with cursor-only
