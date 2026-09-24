@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+from functools import partialmethod
 import threading
 
 import pytest
@@ -20,6 +21,7 @@ from toolang.work.scheduler import JobScheduler
 from toolang.base.errors import ToolangError
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
+from toolang.work.watcher import JobWatcher
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -34,6 +36,16 @@ agic review(_: Part[], focus: Text):
   instruct = none
   user: {{focus}} {{_}}
 """
+
+
+@pytest.fixture(autouse=True)
+def fast_job_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keep the real file watcher without its one-second shutdown polling delay.
+    monkeypatch.setattr(
+        JobWatcher,
+        "updates",
+        partialmethod(JobWatcher.updates, interval_ms=50, debounce_ms=50),
+    )
 
 
 def _result(text: str = "done") -> ModelCallResult:

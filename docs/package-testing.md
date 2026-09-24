@@ -5,6 +5,28 @@ Toolang package. The goal is confidence in the package's behavior and
 boundaries, not a high line-coverage number by itself.
 
 
+## Running Tests
+
+Run the complete offline suite with up to four worker processes:
+
+```sh
+uv run pytest -n auto --maxprocesses=4 --dist=worksteal
+```
+
+CI uses the same worker limit and scheduling mode. Work stealing redistributes
+pending tests when workers finish early. Use `--durations=20` to locate slow
+tests. Worker count is explicit so focused tests and debugging stay serial:
+
+```sh
+uv run pytest tests/unit/lang/test_program.py
+uv run pytest <failing-test> --pdb
+```
+
+Live-provider and Docker tests remain opt-in; run them serially with their
+existing `--live-model` or `--live-docker` options. Each test must isolate its
+files and external resources across both workers and repeated suite runs.
+
+
 ## Testing Scope
 
 Begin with the package responsibility, public API, and direct callers. Build an
