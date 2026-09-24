@@ -17,6 +17,8 @@ def test_format_statement_head_preserves_compact_source_order() -> None:
 agic action:
   pass
 
+agic pieces -> Text[]:
+  pass
 agic predicate -> Boolean:
   pass
 
@@ -31,7 +33,7 @@ flow work:
   let run action
   seek reviewer action
   ask: Continue?
-  scatter 2 using action
+  scatter 2 using pieces
   storm 3 using action in 2 lanes
   gather using action
   settle using action
@@ -55,7 +57,7 @@ flow work:
         "let run action",
         "seek reviewer action",
         "ask",
-        "scatter 2 using action",
+        "scatter 2 using pieces",
         "storm 3 in 2 lanes using action",
         "gather using action",
         "settle using action",
@@ -74,8 +76,8 @@ def test_format_statement_head_hides_generated_inline_agic_names() -> None:
         """
 flow work:
   run: Draft a report.
-  map in 3 lanes using: Rewrite this item.
-  sort descending in 3 lanes by: Score this item.
+  map in 3 lanes using: Rewrite {{_}}.
+  sort descending in 3 lanes by: Score {{_}}.
   keep first 2
 """
     )
@@ -667,7 +669,7 @@ context repo:
 instruct concise:
     Be concise.
 
-agic review( _,focus ? : Text)->Result:
+agic review( _,focus ? : Text)->Result[]:
     models= gpt-5,claude
     context: repo
     instruct: concise
@@ -708,7 +710,7 @@ context repo:
 instruct concise:
   Be concise.
 
-agic review(_, focus?: Text) -> Result:
+agic review(_, focus?: Text) -> Result[]:
   models = gpt-5, claude
 
   context: repo

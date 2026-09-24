@@ -50,16 +50,16 @@ def test_clause_order_preserves_semantics_and_lane_limit(
 @pytest.mark.parametrize(
     ("header", "output"),
     [
-        ("scatter 2 using -> Text: Work.", "Text[]"),
-        ("scatter 2 using: Work.", "Part[][]"),
+        ("scatter 2 using -> Text[]: Work.", "Text[]"),
+        ("scatter 2 using: Work.", "Text[]"),
         ("storm 2 in 1 lane using -> Text: Work.", "Text"),
-        ("gather using: Work.", "Part[]"),
-        ("settle using: Work with {{item}}.", "Part[]"),
-        ("map using -> Text: Work.", "Text"),
-        ("keep if: Decide.", "Boolean"),
-        ("drop if -> Boolean: Decide.", "Boolean"),
-        ("sort descending by: Score.", "Number"),
-        ("sort ascending by -> Number: Score.", "Number"),
+        ("gather using: Work with {{_}}.", "Text"),
+        ("settle using: Work with {{_}} and {{_1._}}.", "Text"),
+        ("map using -> Text: Work with {{_}}.", "Text"),
+        ("keep if: Decide {{_}}.", "Boolean"),
+        ("drop if -> Boolean: Decide {{_}}.", "Boolean"),
+        ("sort descending by: Score {{_}}.", "Number"),
+        ("sort ascending by -> Number: Score {{_}}.", "Number"),
     ],
 )
 def test_inline_runnable_fields_preserve_the_operation_contract(
@@ -72,7 +72,6 @@ def test_inline_runnable_fields_preserve_the_operation_contract(
     assert agic.output == output
     if header.startswith(("keep", "drop", "sort")):
         assert [(item.name, item.values) for item in agic.directives] == [
-            ("recall", ("none",)),
             ("tools", ("*",)),
         ]
     assert program_from_data(to_data(program)) == program
@@ -178,7 +177,7 @@ def test_formatter_preserves_prose_continuations_and_statement_boundaries() -> N
   Sort     is a word in this prompt.
 
   map in 2 lanes using:
-    Rewrite the option.
+    Rewrite {{_}}.
 
   Summarize the result.
 """

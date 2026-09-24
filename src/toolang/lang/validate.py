@@ -9,6 +9,7 @@ from typing import Any
 from toolang.common.errors import ToolangError
 
 from . import ast
+from .contracts import validate_operation_contract
 from .errors import ToolangValidationError
 from .runnable_query import RUNNABLE_SCHEMA
 from .types import parse_runnable_ref_parts, validate_struct_type
@@ -29,7 +30,7 @@ _CAP_REQUIRED_FIELDS: dict[ast.CapKind, frozenset[str]] = {
 }
 _CAP_BODY_REQUIRED = frozenset({"psyche", "skill", "prompt"})
 _SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
-_RESERVED_RUNTIME_NAMES = frozenset({"far", "near", "line"})
+_RESERVED_RUNTIME_NAMES = frozenset({"runtime"})
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
@@ -44,28 +45,20 @@ def _validate(program: ast.Program) -> None:
     runnables = _runnable_namespace(program)
     runnables.update(_adhoc_runnables(program))
 
-    for agic in program.agics:
-        owner = f"Agic {agic.name!r}" if agic.name is not None else "Unnamed agic"
-        _validate_parameters(agic.input, agic.params, owner=owner)
-        _validate_directives(
-            agic.directives,
-            owner=owner,
-            allow_routes=True,
-            allow_recall=True,
+    for runnable in (*program.agics, *program.flows):
+        owner = (
+            f"{runnable.kind.capitalize()} {runnable.name!r}"
+            if runnable.name is not None
+            else f"Unnamed {runnable.kind}"
         )
-        _validate_prompt_ref(agic.context, contexts, target="context", owner=owner)
-        _validate_prompt_ref(agic.instruct, instructs, target="instruct", owner=owner)
-
-    for flow in program.flows:
-        owner = f"Flow {flow.name!r}" if flow.name is not None else "Unnamed flow"
-        _validate_parameters(flow.input, flow.params, owner=owner)
-        _validate_directives(
-            flow.directives,
-            owner=owner,
-            allow_routes=False,
-            allow_recall=False,
+        _validate_parameters(runnable.input, runnable.params, owner=owner)
+        _validate_directives(runnable.directives, owner=owner)
+        _validate_prompt_ref(runnable.context, contexts, target="context", owner=owner)
+        _validate_prompt_ref(
+            runnable.instruct, instructs, target="instruct", owner=owner
         )
-        _validate_stmts(flow.stmts, runnables=runnables)
+        if isinstance(runnable, ast.FlowDecl):
+            _validate_stmts(runnable.stmts, runnables=runnables)
 
 
 def _validate_cap_source(
@@ -326,7 +319,11 @@ def _validate_parameters(
             raise ToolangValidationError(
                 f"{owner} must not use reserved parameter name 'runtime'."
             )
-        if param.name in _RESERVED_RUNTIME_NAMES:
+        if (
+            param.name in _RESERVED_RUNTIME_NAMES
+            or param.name.startswith("_")
+            or param.name.endswith("_")
+        ):
             raise ToolangValidationError(
                 f"{owner} must not use reserved runtime parameter name {param.name!r}."
             )
@@ -341,9 +338,21 @@ def _validate_directives(
     directives: tuple[ast.Directive, ...],
     *,
     owner: str,
-    allow_routes: bool,
-    allow_recall: bool,
 ) -> None:
+    lanes = [item for item in directives if item.name == "lanes"]
+    if len(lanes) > 1:
+        raise ToolangValidationError(
+            f"{owner} may declare at most one lanes directive."
+        )
+    for directive in lanes:
+        if (
+            directive.operator != "="
+            or len(directive.values) != 1
+            or re.fullmatch(r"[1-9][0-9]*", directive.values[0]) is None
+        ):
+            raise ToolangValidationError(
+                f"{owner} lanes requires a positive integer with '='."
+            )
     models = [item for item in directives if item.name == "models"]
     for directive in models:
         if not directive.values:
@@ -352,10 +361,6 @@ def _validate_directives(
             )
     for name in ("hands", "handoffs"):
         routes = [item for item in directives if item.name == name]
-        if routes and not allow_routes:
-            raise ToolangValidationError(
-                f"{owner} must not declare the {name} routing directive."
-            )
         if len(routes) > 1:
             raise ToolangValidationError(
                 f"{owner} may declare at most one {name} directive."
@@ -366,10 +371,6 @@ def _validate_directives(
         if directive.operator != "=":
             raise ToolangValidationError(
                 f"{owner} must use '=' for its {name} directive."
-            )
-        if not directive.values:
-            raise ToolangValidationError(
-                f"{owner} must declare at least one public runnable in its {name} directive."
             )
         for value in directive.values:
             try:
@@ -394,8 +395,6 @@ def _validate_directives(
             )
 
     recalls = [item for item in directives if item.name == "recall"]
-    if recalls and not allow_recall:
-        raise ToolangValidationError(f"{owner} must not declare the recall directive.")
     if len(recalls) > 1:
         raise ToolangValidationError(
             f"{owner} may declare at most one recall directive."
@@ -483,6 +482,7 @@ def _validate_stmts(
                 raise ToolangValidationError(
                     f"Repeat at line {stmt.span.line} requires count or until."
                 )
+            _positive_optional(stmt.window, field="window", line=stmt.span.line)
             if stmt.count is not None:
                 _non_negative(stmt.count, field="count", line=stmt.span.line)
             if stmt.runnable is not None:
@@ -500,7 +500,10 @@ def _validate_stmts(
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:
     binding = stmt.binding
-    if binding in _RESERVED_RUNTIME_NAMES:
+    if binding in _RESERVED_RUNTIME_NAMES or (
+        binding not in {None, "_"}
+        and (binding.startswith("_") or binding.endswith("_"))
+    ):
         raise ToolangValidationError(
             f"Flow binding {binding!r} at line {stmt.span.line} is reserved "
             "for a runtime local."
@@ -556,6 +559,9 @@ def _require_runnable(
         raise ToolangValidationError(
             f"{stmt.kind.capitalize()} at line {stmt.span.line} references unknown runnable {name!r}."
         )
+    validate_operation_contract(
+        stmt.kind, runnables[name], name=name, line=stmt.span.line
+    )
 
 
 def _require_evaluator(

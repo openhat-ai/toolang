@@ -345,12 +345,18 @@ At `run()`, the executor intersects every
 `RunSpec.ceilings` restriction and creates tree-level `AgentResources` using
 stable model entry keys. A ceiling cannot expand the published base. Invalid
 queries are rejected before the run is durably accepted.
-Every flow invocation starts from the tree-level agent resources and applies
-its own directives, whether or not the flow declares any. Agics start from the
-nearest containing flow resources, or directly from the agent resources at the
-root. Agic directives affect only that agic. A nested flow does not inherit its
-caller's flow restriction; returning from it naturally restores the caller's
-immutable flow resources.
+Every child agic/flow inherits its immediate parent's effective resources,
+intersected with module visibility by stable identity. Public calls and execute
+transfers use the same boundary; reload reapplies it rather than resetting to
+agent resources. Immutable per-run configuration inherits separately and permits
+explicit overrides. Inherited instruct/context retain their declaring module.
+
+The root runtime owns one thread-history snapshot. Only root agics automatically
+prepend recalled messages; child calls and flow Content receive recall-filtered
+`_far`, `_near`, and `_past`. Successful compaction advances the shared version;
+subsequent evaluations adopt it through recorded controls, while started Steps
+keep their captured version. Iteration scopes use task-local immutable frames,
+shadowed by nested repeat/settle and preserved through ordinary calls.
 
 Input structs, prompts, static child calls, and `here` caps resolve against the
 bound owner module. Static child calls stay within that module; private helpers

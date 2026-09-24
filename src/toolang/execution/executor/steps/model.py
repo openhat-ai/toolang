@@ -36,7 +36,7 @@ from toolang.state.state import AgentState
 from ...assembly import prompting
 from ...assembly.message_buffer import MessageBuffer
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...recall import required_declarations
+from ...recall import required_declarations, history_variables
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     ModelAccounting,
@@ -92,7 +92,7 @@ def _candidate(
     messages = state.messages.copy()
     history = (
         state.execution.message_history().select(prepared.run.horizon)
-        if state.execution is not None
+        if state.execution is not None and prepared.run.parent is None
         else None
     )
     if state.execution is not None:
@@ -183,7 +183,10 @@ def _estimate_binding(prepared: _AgicFrame) -> object:
 
 
 def _boundary(
-    state: _AgicState, prepared: _AgicFrame, request: ModelCall
+    state: _AgicState,
+    prepared: _AgicFrame,
+    request: ModelCall,
+    controls: Sequence[ControlRecord],
 ) -> RunRef | None:
     budget = prepared.input_budget
     if (
@@ -209,10 +212,30 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
-    history_size = len(history.near) + bool(history.far and "far" in prepared.recall)
+    # Re-render the smallest retained history view. Child requests have no
+    # automatic history prefix to slice away; templates may embed history in
+    # messages, context, or instructions instead.
+    inputs = replace(
+        prepared.inputs,
+        facts={
+            **prepared.inputs.facts,
+            **history_variables("", roots[-1][1], prepared.recall),
+        },
+        runnables=() if state.repairing_output else prepared.inputs.runnables,
+    )
+    instructions, _declarations = prompting.instructions(inputs)
+    messages, _recorded = prompting.messages(
+        inputs,
+        state.messages.copy(),
+        step=StepRef.from_local(prepared.run.run_id, (state.next_step,)),
+        controls=controls,
+    )
     required = replace(
         request,
-        messages=[*roots[-1][1], *request.messages[history_size:]],
+        instructions=instructions,
+        messages=[*roots[-1][1], *messages]
+        if prepared.run.parent is None
+        else messages,
     )
     # This lower bound excludes the summary.
     if InputEstimate().count(required, None, prepared.input_overhead) > budget:
@@ -237,10 +260,10 @@ def compaction_boundary(state: _AgicState) -> RunRef | None:
     """Reprepare after admission without committing a Step or consuming deltas."""
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
-    prepared, _messages, _controls, request, _recorded = _candidate(
+    prepared, _messages, controls, request, _recorded = _candidate(
         state, *state.execution.state_snapshot()
     )
-    return _boundary(state, prepared, request)
+    return _boundary(state, prepared, request, controls)
 
 
 @dataclass(slots=True)
@@ -280,7 +303,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             state.execution.pending_controls(run.run_id, "cancel")
         )
         if interruption is None and not canceling:
-            boundary = _boundary(state, prepared, request)
+            boundary = _boundary(state, prepared, request, preceding)
             if boundary is not None:
                 raise _NeedsCompact(boundary)
         return StepBegin(
@@ -309,7 +332,11 @@ async def execute(state: _AgicState) -> ModelCallResult:
         state.visible_recalls = {
             item.target: item.revision for item in prepared.declarations
         }
-        if state.execution is not None and "near" in prepared.recall:
+        if (
+            state.execution is not None
+            and prepared.run.parent is None
+            and "near" in prepared.recall
+        ):
             state.visible_recalls.update(
                 state.execution.message_history().select(prepared.run.horizon).recalls
             )

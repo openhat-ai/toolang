@@ -18,6 +18,7 @@ from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.lang.contracts import OutputContract
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -496,7 +497,7 @@ def test_event_delivery_does_not_read_run_state_per_event(
     record = asyncio.run(_start(executor, _setup(), _state(flow), _name(flow)))
 
     assert record.status == "succeeded"
-    assert reads == 1
+    assert reads == 2  # Root acceptance and the shared thread-history snapshot.
     asyncio.run(executor.stop())
 
 
@@ -671,7 +672,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     asyncio.run(executor.stop())
 
 
-def test_nested_flow_resets_resources_and_restores_parent_scope(
+def test_nested_flow_inherits_resources_and_restores_parent_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -752,7 +753,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
     assert record.status == "succeeded"
     assert observed == [
         ("direct", ("alpha__one",)),
-        ("nested", ("alpha__one", "beta__two")),
+        ("nested", ("alpha__one",)),
         ("sibling", ("alpha__one",)),
     ]
     asyncio.run(executor.stop())
@@ -798,7 +799,10 @@ def test_parallel_children_preserve_input_and_output_types(
         _step: str,
         _name: str,
         _placement: dict[str, object] | None,
+        *,
+        expected_output: OutputContract | None = None,
     ) -> Local:
+        assert expected_output is not None and expected_output.type_name == "Number"
         observed_types.append(child_locals["_"].type_name)
         return Local(1, "item", type_name="Number")
 
@@ -857,7 +861,10 @@ def test_parallel_children_reuse_the_lane_that_finished(
         _step: str,
         _name: str,
         occurrence: Occurrence | None,
+        *,
+        expected_output: OutputContract | None = None,
     ) -> Local:
+        assert expected_output is not None and expected_output.type_name == "Number"
         item = cast(int, child_locals["_"].value)
         assert occurrence is not None
         occurrences[item] = occurrence

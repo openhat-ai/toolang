@@ -43,6 +43,7 @@ from toolang.lang.types import Array, Value
 from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
+from ..settings import RunnableSettings
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_runnable
@@ -126,7 +127,9 @@ class BoundRun:
     ceilings: tuple[AgentCeiling, ...] = ()
     agent_resources: AgentResources | None = None
     resources: AgentResources | None = None
-    flow_resources: AgentResources | None = None
+    parent_resources: AgentResources | None = None
+    settings: RunnableSettings = RunnableSettings()
+    settings_base: RunnableSettings | None = None
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
@@ -584,12 +587,16 @@ def require_item(locals: Mapping[str, Local], *, operation: str) -> Any:
     return current.value
 
 
-def require_list(locals: Mapping[str, Local], *, operation: str) -> list[Any]:
+def require_list(
+    locals: Mapping[str, Local], *, operation: str, nonempty: bool = False
+) -> list[Any]:
     current = locals.get("_", Local())
     if current.shape != "list" or not isinstance(current.value, Array | list):
         raise ToolangError(
             f"{operation} requires current shape list, got {current.shape}"
         )
+    if nonempty and not current.value:
+        raise ToolangError(f"{operation} requires a nonempty list")
     return list(current.value)
 
 

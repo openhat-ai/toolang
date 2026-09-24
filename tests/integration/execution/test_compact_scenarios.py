@@ -15,7 +15,13 @@ from tests.support.execution_harness import (
     RecordingTool,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    Message,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+    message_text,
+)
 from toolang.base.types.model import Reasoning
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
@@ -787,7 +793,9 @@ def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action
     asyncio.run(scenario())
 
 
-def test_parallel_children_share_compact_output_but_adopt_separately(tmp_path):
+def test_parallel_children_do_not_automatically_recall_or_compact_root_history(
+    tmp_path,
+):
     source = (
         SOURCE
         + "\nflow parallel(_: Part[]) -> Text[]:\n  storm 2 using chat in 2 lanes\n"
@@ -795,53 +803,37 @@ def test_parallel_children_share_compact_output_but_adopt_separately(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
-        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+        responses=[
+            reply("old " * 18000),
+            reply("middle"),
+            reply("recent"),
+            reply("child one"),
+            reply("child two"),
+        ],
     )
-    gate = AsyncGate()
 
     async def scenario():
         async with harness:
-            thread, end = await seed(harness)
-            turns = compact_responses(thread, end)
-            harness.adapter._responses.extend(
-                [
-                    ScriptedModelTurn(turns[0], gate=gate),
-                    *turns[1:],
-                    reply("child one"),
-                    reply("child two"),
-                ]
-            )
-            handle = harness.executor.run(
+            thread, _ = await seed(harness)
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="parallel",
                     primary=Message.user("work").parts,
                 )
             )
-            await asyncio.wait_for(gate.wait_until_entered(), 2)
-            gate.release()
-            root = await asyncio.wait_for(handle, 3)
             assert root.status == "succeeded", root.error
-            history = RunHistory(harness.store)
-            compact = history.thread_view(f"compact_{thread}")
-            assert len(compact.roots) == 1
-            children = [
-                r
-                for r in history.thread_view(thread).members
-                if r.parent is not None and r.parent.run_id == root.id
-            ]
-            assert len(children) == 2
-            horizons = []
-            for child in children:
-                controls = [
-                    c
-                    for c in harness.store.list_run_controls(run_id=child.id)
-                    if isinstance(c.payload, CompactControlPayload)
-                ]
-                assert len(controls) == 1
-                assert isinstance(controls[0].payload, CompactControlPayload)
-                horizons.append(controls[0].payload.horizon)
-            assert horizons[0] == horizons[1]
+            assert len(harness.adapter.invocations) == 5
+            for invocation in harness.adapter.invocations[3:]:
+                assert all(
+                    "old old" not in message_text(message.parts)
+                    for message in invocation.call.messages
+                )
+            for child in harness.store.list_run_tree(root_run_id=root.id):
+                assert not any(
+                    isinstance(control.payload, CompactControlPayload)
+                    for control in harness.store.list_run_controls(run_id=child.id)
+                )
 
     asyncio.run(scenario())
 
@@ -1100,5 +1092,83 @@ def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
                 assert latest.result.summary in str(call.messages)
                 assert "old old" not in str(call.messages)
                 assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_child_fixed_input_does_not_compact_unused_root_history(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE + "\nflow parent:\n  run chat\n",
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            harness.adapter._responses.extend(compact_responses(thread, end))
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="parent",
+                    primary=(TextPart("fixed " * 30000),),
+                )
+            )
+            assert root.status == "failed"
+            assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
+            assert len(harness.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("layer", ["user", "context", "instruct"])
+@pytest.mark.parametrize("root", ["reader", "parent"])
+def test_compact_budget_rerenders_explicit_history_in_all_prompt_layers(
+    tmp_path, layer, root
+):
+    source = (
+        SOURCE
+        + f"""
+agic reader() -> Text:
+  context: none
+  instruct: none
+  {layer}: History: {{{{_past}}}}
+flow parent() -> Text:
+  run reader
+"""
+    )
+    # Each setting can appear only once; the selected layer contains history.
+    source = source.replace(f"  {layer}: none\n  {layer}:", f"  {layer}:")
+    if layer == "context":
+        source = source.replace(
+            "  context: none\n  instruct: none\n  context:",
+            "  instruct: none\n  context:",
+        )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            harness.adapter._responses.extend(
+                [*compact_responses(thread, end), reply("done")]
+            )
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable=root)
+            )
+            assert run.status == "succeeded", (
+                harness.store.resolve_error(run.error) if run.error else None
+            )
+            assert len(harness.adapter.invocations) == 5
+            final = harness.adapter.invocations[-1].call
+            rendered = final.instructions + "\n".join(
+                message_text(message.parts) for message in final.messages
+            )
+            assert "old old" not in rendered
+            assert "Earlier facts." in rendered
+            assert "recent" in rendered
 
     asyncio.run(scenario())

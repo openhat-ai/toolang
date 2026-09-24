@@ -117,6 +117,8 @@ def test_control_headers_use_cst_body_shape() -> None:
 def test_text_consumers_share_the_formatting_contract(
     tab_size: int, header: str, depth: int, body: str
 ) -> None:
+    if "map using:" in header:
+        body += "\n{{_}}"
     source = (
         header
         + "\n"
@@ -469,5 +471,18 @@ def test_new_documentation_conventions_preserve_parameter_bindings(module_marker
     assert f"{module_marker} Module." in formatted
     assert "## @param _ Input.\n## @param instruction Direction." in formatted
     assert "agic rewrite(_, instruction?):" in formatted
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize(
+    "section", ["{{# _1 }}{{_1._}}{{/ _1 }}", "{{#.}}present{{/.}}"]
+)
+def test_template_sections_survive_lowering_and_formatting(section: str) -> None:
+    body = "{{_}} " + section
+    source = f"flow main:\n  repeat 2 times:\n    run: {body}\n"
+    program = Program.from_source(source)
+    assert program.agics[0].messages[0].content == body
+    formatted = format_source(source)
     assert _semantics(formatted) == _semantics(source)
     assert format_source(formatted) == formatted

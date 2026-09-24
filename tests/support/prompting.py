@@ -35,8 +35,15 @@ def instruction_inputs(
         PromptInputs,
         SimpleNamespace(
             program=program,
+            instruct=None,
             agic=agic,
-            template_values=context,
+            template_values={
+                "agent": {},
+                "date": "",
+                "timezone": "",
+                "model": {},
+                **context,
+            },
             caps=caps,
             psyches={
                 item["ref"]: item["content"] for item in context.get("psyches", ())

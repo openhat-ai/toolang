@@ -61,7 +61,7 @@ async def execute(
                 flow.output,
                 structs=program_structs(binding),
             ),
-            result.shape,
+            "list" if result.shape == "list" and flow.output.endswith("[]") else "item",
             result.ref if preserves_provenance else None,
             (
                 flow.output[:-2]

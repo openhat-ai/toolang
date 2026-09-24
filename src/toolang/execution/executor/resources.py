@@ -180,6 +180,17 @@ def _apply_cap_ceiling(
     )
 
 
+def intersect_resources(
+    parent: AgentResources, visible: AgentResources
+) -> AgentResources:
+    """Keep stable identities shared by the parent and the target module."""
+    return AgentResources(
+        models=tuple(item for item in parent.models if item in visible.models),
+        tools=tuple(item for item in parent.tools if item in visible.tools),
+        caps=tuple(item for item in parent.caps if item in visible.caps),
+    )
+
+
 def resolve_runnable_resources(
     selection: ModelCollection,
     *,
@@ -191,15 +202,9 @@ def resolve_runnable_resources(
 ) -> AgentResources:
     """Apply one runnable's authored queries within a chosen resource base."""
 
-    model_directives = _directives(runnable, "models")
-    if model_directives:
-        if not base.models:
-            raise ToolangError("run resources include no models")
-        models = selection.subset(base.models).apply(
-            _query_operations(model_directives)
-        )
-    else:
-        models = selection.subset(base.models)
+    models = selection.subset(base.models).apply(
+        _query_operations(_directives(runnable, "models"))
+    )
 
     available_tools = _resource_tool_collection(setup, base)
     selected_tools = available_tools.apply(

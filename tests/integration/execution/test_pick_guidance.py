@@ -563,7 +563,9 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
 
 
 @pytest.mark.parametrize("operation", ["run", "execute"])
-def test_pick_uses_the_target_modules_effective_resources(tmp_path: Path, operation):
+def test_pick_intersects_caller_resources_with_target_module_visibility(
+    tmp_path: Path, operation
+):
     home_ref, module_ref = "service/github", "service/github"
     module_guidance = "Use the target module's guidance."
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -625,6 +627,7 @@ flow research() -> Text:
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="chat",
+                    ceilings=(AgentCeiling(services=(home_ref,)),),
                 ),
                 tracer=tracer,
             )
@@ -641,16 +644,16 @@ flow research() -> Text:
                     and "not available" in results[identity].error
                 )
             assert results["caller"].error is None
-            assert results["target"].error is None
+            assert "not available" in (results["target"].error or "")
             contents = [
                 c.payload.content for run in runs for c in _recalls(harness, run)
             ]
-            assert contents == [GUIDANCE, module_guidance]
+            assert contents == [GUIDANCE]
             caller = harness.adapter.invocations[0].call.instructions
             target = harness.adapter.invocations[2].call.instructions
-            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' in target
+            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' not in target
             assert "Module guidance." not in caller
-            assert "Module guidance." in target
+            assert "Module guidance." not in target
             assert caller != target
             if operation == "run":
                 assert results["resumed"].output == {"controls": []}
@@ -1129,5 +1132,36 @@ def test_read_failure_is_not_a_removal(tmp_path: Path, monkeypatch):
             assert run.status == "succeeded", run.error
             assert _results(harness, run)["pick"].error == "guidance cannot be read"
             assert not _recalls(harness, run)
+
+    asyncio.run(scenario())
+
+
+def test_child_pick_delivers_guidance_recalled_by_a_previous_root(tmp_path: Path):
+    harness, _ = _harness(
+        tmp_path,
+        [_calls(_pick()), _answer(), _calls(_pick()), _answer()],
+        source=SOURCE + "\nflow parent():\n  run chat\n",
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            prior = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="chat")
+            )
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="parent")
+            )
+            assert prior.status == root.status == "succeeded"
+            child = next(
+                run
+                for run in harness.store.list_run_tree(root_run_id=root.id)
+                if run.parent is not None
+            )
+            assert len(_recalls(harness, child)) == 1
+            assert escape(GUIDANCE, quote=False) in "\n".join(
+                message_text(message.parts)
+                for message in harness.adapter.invocations[-1].call.messages
+            )
 
     asyncio.run(scenario())

@@ -27,6 +27,21 @@ def recall_sources(values: Sequence[str] = ()) -> tuple[str, ...]:
     return ("far", "near") if not values or "auto" in values else tuple(values)
 
 
+def history_variables(
+    far: str, near: Sequence[Message], recall: Sequence[str]
+) -> dict[str, object]:
+    """Derive a runnable's view from the full root history snapshot."""
+    sources = recall_sources(recall)
+    summary = far if "far" in sources else ""
+    recent = list(near) if "near" in sources else []
+    past = ([Message.user(summary)] if summary else []) + recent
+    return {
+        "_far": summary,
+        "_near": [message.to_data() for message in recent],
+        "_past": [message.to_data() for message in past],
+    }
+
+
 def required_declarations(
     declarations: Sequence[RecallControlPayload],
     visible: Mapping[RecallTarget, str],

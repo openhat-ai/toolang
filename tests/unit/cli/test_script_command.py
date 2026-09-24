@@ -1139,7 +1139,7 @@ flow research(_: Text):
   map using search in 4 lanes
   keep first 1
 
-agic expand:
+agic expand -> Text[]:
   Expand the question.
 
 agic search:

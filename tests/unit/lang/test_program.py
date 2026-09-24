@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 import re
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
+from toolang.lang.validate import _validate
 from toolang.lang.errors import ToolangValidationError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import (
@@ -285,7 +287,7 @@ agic custom(_: Json, detail: Text):
     assert [(item.name, item.type_name) for item in custom.params] == [
         ("detail", "Text")
     ]
-    assert [agic.output for agic in program.agics] == ["Part[]"] * 5
+    assert [agic.output for agic in program.agics] == ["Text"] * 5
 
 
 def test_flow_materializes_named_parameter_and_output_defaults() -> None:
@@ -296,18 +298,32 @@ def test_flow_materializes_named_parameter_and_output_defaults() -> None:
     assert [(param.name, param.type_name) for param in flow.params] == [
         ("topic", "Text")
     ]
-    assert flow.output == "Part[]"
+    assert flow.output == "Text"
 
 
-@pytest.mark.parametrize("name", ["far", "near", "line"])
+@pytest.mark.parametrize("name", ["_far", "_near", "_past", "_1", "name_"])
 def test_runtime_local_names_are_reserved_for_parameters_and_bindings(
     name: str,
 ) -> None:
+    program = Program.from_source(
+        "agic invalid(name):\n  pass\nflow work:\n  let value = content\n"
+    )
+    agic = program.agics[0]
     with pytest.raises(ToolangValidationError, match=f"reserved.*{name!r}"):
-        Program.from_source(f"agic invalid({name}):\n  pass\n")
-
+        _validate(
+            replace(
+                program,
+                agics=(replace(agic, params=(replace(agic.params[0], name=name),)),),
+            )
+        )
+    flow = program.flows[0]
     with pytest.raises(ToolangValidationError, match=f"binding {name!r}.*reserved"):
-        Program.from_source(f"flow invalid:\n  let {name} = content\n")
+        _validate(
+            replace(
+                program,
+                flows=(replace(flow, stmts=(replace(flow.stmts[0], binding=name),)),),
+            )
+        )
 
 
 def test_pack_is_available_as_a_user_struct_type() -> None:
@@ -335,7 +351,7 @@ def test_primary_input_validation(signature: str, message: str) -> None:
 def test_program_lowers_complete_flow_statement_set() -> None:
     program = Program.from_source(
         """
-agic action:
+agic action -> Text[]:
   pass
 
 agic predicate -> Boolean:
@@ -419,7 +435,7 @@ def test_inline_settle_exposes_the_current_item() -> None:
         """
 flow summarize(_: Text[]) -> Text:
   settle using -> Text:
-    {{_}}{{item}}
+    {{_}}{{_1._}}
 """
     )
 
@@ -432,9 +448,7 @@ flow summarize(_: Text[]) -> Text:
     )
     assert generated.input is not None
     assert generated.input.type_name == "Part[]"
-    assert [(param.name, param.type_name) for param in generated.params] == [
-        ("item", "Part[]")
-    ]
+    assert generated.params == ()
 
 
 def test_inline_scatter_declares_referenced_flow_locals_as_inputs() -> None:
@@ -448,7 +462,7 @@ flow expand(_: Text, topic: Text) -> Text[]:
     {{_}}
   let prepared = run prepare
 
-  scatter 3 using -> Text:
+  scatter 3 using -> Text[]:
     Return distinct pieces of {{source}} about {{topic}} and {{prepared}}.
     {{#source}}{{detail}}{{/source}}
 """
@@ -462,13 +476,13 @@ flow expand(_: Text, topic: Text) -> Text[]:
         if agic.span.line == statement.span.line and agic.name is None
     )
     assert [(param.name, param.type_name) for param in generated.params] == [
-        ("source", "Part[]"),
+        ("source", "Text"),
         ("topic", "Text"),
-        ("prepared", "Part[]"),
+        ("prepared", "Text"),
     ]
 
 
-def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None:
+def test_inline_scatter_defaults_to_text_array() -> None:
     program = Program.from_source(
         "flow expand:\n  scatter 2 using:\n    Return distinct pieces.\n"
     )
@@ -480,18 +494,18 @@ def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None
         for agic in program.agics
         if agic.span.line == statement.span.line and agic.name is None
     )
-    assert generated.output == "Part[][]"
+    assert generated.output == "Text[]"
 
 
-def test_inline_flow_evaluators_disable_recall_and_tools() -> None:
+def test_inline_flow_evaluators_inherit_recall_and_disable_tools() -> None:
     program = Program.from_source(
         """
 agic action:
   pass
 
 flow evaluate:
-  keep if: Return true when the item is useful.
-  sort descending by: Return a relevance score.
+  keep if: Return true when {{_}} is useful.
+  sort descending by: Return a relevance score for {{_}}.
   repeat 2 times:
     run action
     until: Return true when complete.
@@ -510,7 +524,6 @@ flow evaluate:
             (directive.name, directive.operator, directive.values)
             for directive in agic.directives
         ] == [
-            ("recall", "=", ("none",)),
             ("tools", "-=", ("*",)),
         ]
 
@@ -577,11 +590,11 @@ def test_recall_directive_lowers_canonical_values(
     assert program.agics[0].directives[0].values == expected
 
 
-def test_flow_rejects_recall_directive() -> None:
-    with pytest.raises(ToolangValidationError, match="must not declare the recall"):
-        Program.from_source(
-            "flow configured:\n  recall = near\n\n  Explain the result.\n"
-        )
+def test_flow_accepts_recall_directive() -> None:
+    program = Program.from_source(
+        "flow configured:\n  recall = near\n\n  Explain the result.\n"
+    )
+    assert program.flows[0].directives[0].values == ("near",)
 
 
 def test_agic_routing_directives_preserve_collection_queries() -> None:
@@ -642,11 +655,11 @@ def test_agic_routing_directives_accept_collection_queries(query: str) -> None:
 
 
 @pytest.mark.parametrize("name", ["hands", "handoffs"])
-def test_flow_rejects_agic_routing_directives(name: str) -> None:
-    with pytest.raises(ToolangValidationError, match="must not declare"):
-        Program.from_source(
-            f"flow coordinate:\n  {name} = research\n\n  Coordinate the work.\n"
-        )
+def test_flow_accepts_routing_directives(name: str) -> None:
+    program = Program.from_source(
+        f"flow coordinate:\n  {name} = research\n\n  Coordinate the work.\n"
+    )
+    assert program.flows[0].directives[0].values == ("research",)
 
 
 @pytest.mark.parametrize(
@@ -1011,3 +1024,16 @@ def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
     )
     assert display_runnable_ref("agic:chat", surface="progress") == "agic:chat"
     assert display_runnable_ref("agic:研究", surface="chat") == "agic:研究"
+
+
+def test_historical_nested_statements_load_new_default_fields() -> None:
+    from toolang.lang.ast import flow_stmt_from_data
+
+    program = Program.from_source(
+        "agic fold:\n  pass\nflow work:\n  repeat 2 times:\n    settle using fold\n"
+    )
+    statement = program.flows[0].stmts[0]
+    encoded = cast(dict[str, Any], to_data(statement))
+    encoded.pop("window")
+    encoded["stmts"][0].pop("initial")
+    assert flow_stmt_from_data(encoded) == statement

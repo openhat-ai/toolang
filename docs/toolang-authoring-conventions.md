@@ -61,7 +61,7 @@ runnable contract:
 - an omitted parameter list implies a primary `_` input of `Part[]`;
 - an explicit untyped `_` also defaults to `Part[]`;
 - an untyped named parameter defaults to `Text`; and
-- an omitted return type defaults to `Part[]`.
+- an omitted return type defaults to `Text`.
 
 Prefer:
 
@@ -76,10 +76,10 @@ agic rewrite(_, instruction):
 over redundant signatures:
 
 ```too
-agic transform(_: Part[]) -> Part[]:
+agic transform(_: Part[]) -> Text:
   Transform the current input.
 
-agic rewrite(_: Part[], instruction: Text) -> Part[]:
+agic rewrite(_: Part[], instruction: Text) -> Text:
   Rewrite {{_}} according to {{instruction}}.
 ```
 
@@ -89,15 +89,17 @@ runnable intentionally accepts no primary input, and keep `?` when a named
 parameter is optional.
 
 Do not repeat a return type that the consuming context already determines.
-Inline runnables after `if` and `by` are the common cases, with `Boolean` and
+Inline agics infer parameters from their own free template references; reference
+`{{_}}` explicitly for list operations. Inline runnables after `if` and `by`
+are the common cases, with `Boolean` and
 `Number` results respectively:
 
 ```too
 keep if:
-  Return true when the current item is actionable.
+  Return true when {{_}} is actionable.
 
 sort descending by:
-  Score the current item by priority.
+  Score {{_}} by priority.
 ```
 
 ## Documentation Comments

@@ -94,6 +94,8 @@ agic action(_: Text, focus?) -> Review:
   context: shared
   instruct: concise
   user: Review {{_}}.
+agic pieces -> Text[]:
+  pass
 agic predicate -> Boolean:
   pass
 agic score -> Number:
@@ -102,7 +104,7 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter 2 using action
+  scatter 2 using pieces
   storm 3 using action in 2 lanes
   gather using action
   settle using action
