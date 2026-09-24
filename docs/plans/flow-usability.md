@@ -146,7 +146,31 @@ repeat 5 times windowing 3:
 - Nested iterations replace the history family and restore it on exit. Resolve
   history exclusively within the active iteration scope; concurrent runs are isolated.
 
-## 6. Select Thread History
+## 6. Project and Select Thread History
+
+- Runs contain Steps; child Runs attach to their parent's calling Steps. A Step's
+  owning Run, not its nesting depth, determines whether it belongs to a root Run.
+- Thread history projects each prior root Run's retained execution segment.
+  `recall` controls consuming this history, not whether the current Run contributes
+  to later roots; `recall = none` still records the current exchange.
+
+| Root Run's retained Steps | Contribution to later root history |
+| --- | --- |
+| Contains model Steps, normally an agic | Its own model conversation: new input messages, assistant outputs, and matched replies from tool/runnable calls, including the terminal exchange |
+| Contains no model Steps, normally a flow | Entry `_` as a user message and recorded root output as an assistant message, when present; successful runs use their final output |
+
+- Never recursively flatten child Runs. A child's return value can appear through
+  its parent's call reply or the root output, without exposing the child's internal
+  messages. Flow Step inputs/outputs are not individually appended to history.
+- Count each conversation contribution once. Exclude automatically recalled
+  prefixes and repeated model-input prefixes; include completed call replies after
+  the last model Step, preserving call/result pairing.
+- Model input means recorded conversation messages, including rendered context;
+  instructions, tool definitions, and provider settings are not history messages.
+- Preserve existing retry/execute segment selection and control/failure/cancellation
+  handling, including retained partial outputs. Step representation does not change
+  the boundary: today `_toolang/run` is a tool Step with a child Run, while a flow
+  `run` statement has a run Step.
 
 | Variable | Value |
 | --- | --- |
@@ -157,9 +181,10 @@ repeat 5 times windowing 3:
 - The root runtime owns the full versioned thread-history snapshot for root agics
   and flows. All descendants, including flow Content and until, use that source;
   child runnables never fetch or assemble thread history independently.
-- Only root agics automatically include messages selected by recall. Child agics
-  choose whether to reference the supplied variables and keep their own model/tool
-  conversation. Nested loops preserve thread context while replacing iteration history.
+- For model-call assembly, a root agic automatically prepends selected historical
+  messages. A flow has no model call; child agics reference history variables
+  explicitly and keep their own model conversation. This consumption rule does
+  not determine which Runs contribute history. Nested loops preserve thread context.
 - Runtime derives `_far/_near/_past` from each runnable's effective recall and
   the root snapshot. All three bindings remain present;
   excluded sources become typed empty values. `_past` always combines the
@@ -182,10 +207,6 @@ repeat 5 times windowing 3:
   theirs; failed compaction keeps the old version. Record version and policy for replay.
 - Current progress travels through `_`, named arguments, or iteration frames;
   compaction does not add active-run intermediates to prior thread history.
-- Only roots contribute thread exchanges. Root agics keep their existing
-  model/tool exchange and terminal reply. Child transcripts remain execution records.
-- Root flow exchange: entry `_` as user message when present, then final
-  output as assistant message. Preserve control/failure/cancellation handling.
 
 ## 7. Configure Execution
 
@@ -292,6 +313,9 @@ repeat 5 times windowing 3:
   successful round, and distinguishes missing frames from invalid references/fields.
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
+- Verify root-Step projection without recursive child transcripts, child returns
+  through parent call replies, excluded flow intermediates, terminal call/result
+  pairs, no duplicated recalled prefixes, and contributions with recall none.
 - Verify every recall view, omission versus explicit auto, child near under parent
   none, missing sources, and policy/version consistency across compaction and replay.
 - Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,
