@@ -1,145 +1,97 @@
-# Define a Persistent Derived Model Catalog Cache
+# Persistent Flat Model Catalog Cache
 
-## Status
+## Goal and approved scope
 
-Proposed. Implementation requires explicit human approval of this plan.
+Speed up repeated `too models` queries by persisting the complete catalog once.
+This design incorporates the approved review: flat records, no content scanning,
+accurate dependency detection, and one replaceable cache per root or agent.
+`providers` and runtime `AgentSetup` construction keep their current behavior.
 
-## Goal
+Success means a warm invocation skips static parsing, merge, route resolution,
+model building, and policy ordering while preserving every query, table status,
+JSON field, and default/full ordering.
 
-Avoid rebuilding the full model-list projection on every `too models`
-invocation. Persist the complete derived catalog and reuse it while all inputs
-that affect it remain unchanged. Apply `--query` after loading the full data.
+## Representation and layout
 
-## Success Criteria
-
-- A warm unchanged invocation skips source parsing, catalog merge, route
-  resolution, model build, and ordering; query filtering still works.
-- One cache contains all catalog models, including unavailable or disallowed
-  entries, so default and `--all` views use the same source data.
-- Any change to catalog bytes, full config-file bytes, relevant environment
-  values, dynamic catalog snapshots, plugin provenance, or projection schema
-  invalidates the cache.
-- Local catalogs are probed every invocation; their host environment variables
-  do not directly enter the environment fingerprint.
-- Cached and uncached query/table/JSON results are identical. Corrupt, unsafe,
-  missing, or incompatible entries safely rebuild without persisting secrets.
-- Tests prove warm hits bypass build/order; a benchmark compares warm and cold
-  runs without fragile timing assertions in the unit suite.
-
-## Decisions
-
-### Placement and data
-
-Use the existing root or agent model-cache directory, whose location already
-provides isolation:
+Each existing root/agent `.setup/models` directory contains:
 
 ```text
-.setup/models/
-  models_dev.json
-  ollama.json
-  llama_cpp.json
-  merged.json
+merged.json             # Complete derived inspection catalog
+sources/<catalog>.json  # Independent source snapshots maintained by runtime setup
 ```
 
-Keep existing per-catalog source snapshots. Add one distinct `merged.json`
-containing the complete ordered model-list projection plus its dependency
-metadata. Do not call it `effective.json`, and do not store a separate
-manifest. Keep JSON export fields, query facts, `--all` readiness/allow state,
-and stable ordering needed by the model-list command. This is not a persisted
-`AgentSetup`: exclude adapters, plugin instances, credentials, raw environment
-values, resolved headers, and resolved API endpoints. Reuse cache safety checks;
-unsafe data is non-cacheable, never a reason to relax validation.
+`merged.json` is one checksummed JSON document with dependency metadata and two
+arrays: `providers` and `models`. Each record appears once. Models reference a
+provider by string ID and have unique `(provider, id)` identities. Per-model
+connection declarations use `connection` internally; public JSON export restores
+`provider`. Structured facts such as costs, limits, and modalities keep their shape.
 
-### Cache validation and refresh
+Each model carries adapter/API/environment availability facts and nullable
+`allowed_order`. These determine readiness, status reasons, and default ordering.
+Query views, resolved runtime routes, and lookup indexes are not persisted.
+Consumers build and reuse query datasets or indexes only when needed. Export
+reconstructs nested public JSON only for selected records.
 
-Build the cache identity from:
+Root and agent caches remain isolated. `--catalog` replaces only the static source;
+its normalized path and content participate in validation. Switching A → B → A
+rebuilds and replaces the same cache each time. Missing explicit files error.
+Source filenames cannot collide with the derived file. Source files are independent
+runtime caches, not a transactionally synchronized copy of the listing's inputs.
+Old flat source-cache locations and old derived schemas are ignored and rebuilt.
 
-- exact static catalog byte revisions;
-- complete byte fingerprints for root and selected agent `config.toml` files,
-  including a stable missing-file value;
-- sorted relevant environment entries as `(name, SHA-256(value))` pairs;
-- current dynamic catalog snapshot revisions;
-- model catalog and adapter plugin provenance; and
-- a manually versioned projection/cache schema.
+## Dependency detection
 
-Store these revisions and the environment-variable **names** in `merged.json`;
-never store variable values. Directory placement defines scope, so scope is not
-part of the identity.
+- Read the static catalog once, check its size/stable observation, and hash its
+  captured bytes. Parse those same bytes on a miss. A content-preserving touch
+  does not invalidate the listing; runtime watcher touch semantics are unchanged.
+- Capture each applicable config's complete bytes once for both parsing and hash.
+  Missing files have a stable marker; even comment-only changes invalidate.
+- Probe dynamic catalogs on every invocation and hash their current snapshot
+  facts, including endpoint and model metadata. Preserve plugin error behavior:
+  propagated errors abort without replacing the listing; built-in unavailable
+  local services retain their existing empty-snapshot behavior.
+- Include concrete adapter/catalog configuration, effective allow rules, plugin
+  entry-point/distribution/version provenance, and a manually versioned schema.
+- Derive environment dependency names using the same effective credential rules
+  and API-template selection as route resolution, including adapter defaults and
+  currently missing variables. Store sorted names and SHA-256 hashes of set values.
+  Missing and empty values differ; rotation invalidates; unrelated values do not.
+  Local discovery variables need no extra hash when their only effect is represented
+  by the probe, but remain dependencies when explicitly used in a route template.
+- Recompute dependency names on every miss, including config/plugin changes.
+  Queries and output formats do not enter the cache identity.
 
-Static catalog revisions use a digest of the captured file bytes. A hit may
-reuse the cached variable-name list only when its non-environment dependency
-revisions match; hash the current values for those names and compare the full
-identity. On a miss, derive the names from the exact source snapshots used for
-the rebuild. Names come from provider environment requirements and valid API
-URL template substitutions in both provider and model declarations (`$NAME`,
-`${NAME}`; `$$` is an escaped literal). A dedicated
-`src/toolang/setup/cache_environment.py` module owns name extraction and
-fingerprinting. It returns only sorted `(name, SHA-256(value))` pairs for
-currently set variables, and must never persist or log raw values. A value
-rotation intentionally invalidates the projection, including credentials.
+Catalog declarations are trusted data: neither source nor merged catalog reads or
+writes run heuristic secret/header/URL scans or discard authored fields. Raw
+process/dotenv values and resolved runtime routes never enter the listing. Enforce
+that boundary when projecting environment inputs. Keep size, checksum, schema,
+type, identity, and reference checks. Retain locking and atomic replacement;
+corruption is a miss and a failed write does not reject a valid in-memory result.
 
-Do not fingerprint `OLLAMA_HOST`, `LLAMA_CPP_HOST`, or
-`TOOLANG_HOST_GATEWAY`. Probe configured local catalogs on every invocation;
-include their returned snapshot revisions in the identity. A changed endpoint or
-model inventory therefore triggers a rebuild. If a required probe fails, do
-not treat old data as current or publish an incomplete replacement; retain
-existing error behavior.
+## Implementation and acceptance
 
-On a hit, read and validate `merged.json`, then filter it for the request. Do
-not decode source cache records or rerun merge, route resolution, build, or
-ordering. On a miss, use the same captured static bytes and dynamic snapshots
-whose revisions formed the identity, rebuild once, and atomically replace the
-merged cache. This prevents associating a key with a different source read.
-Query and output format are not identity inputs. A failed cache write must not
-reject a valid in-memory result.
+Touchpoints: setup records/listing/cache/environment modules; route dependency
+selection; config and static-source capture; watcher and models CLI; focused tests.
 
-## Scope and Touchpoints
+1. Real round trips preserve all query fields, nested declaration fields, table/JSON
+   output, policy order, unavailable/disallowed models, and duplicate model IDs
+   belonging to different providers. Default and full queries share the records.
+2. Warm hits bypass parsing, routing, merging, building, ordering, and scanning.
+   Dataset/index access is reused and status rendering does not rebuild a full
+   lookup per output row.
+3. Test changed bytes with restored size/mtime, unchanged touches, complete config
+   changes, environment missing/set/empty/rotation, effective overrides/defaults,
+   escaped template syntax, dynamic endpoint/metadata changes, and plugin/schema drift.
+4. Cover root/agent isolation, explicit catalog switching, captured-byte consistency,
+   source-name collisions, corrupt records/checksums, probe errors, and write failure.
+5. Run default offline verification. Benchmark fresh processes on the same complete
+   catalog/configuration against main, reporting cache size, confirmed warm hits,
+   cache-to-query-ready time, and default/all/filtered command latency. Keep timing
+   thresholds out of unit tests and do not equate skipped work with measured speedup.
 
-The first implementation covers `too models` only; `providers` and runtime
-`AgentSetup` caching remain unchanged. Likely files:
+## Risks and open questions
 
-- `src/toolang/setup/cache_environment.py`: auditable variable extraction and
-  hashed fingerprinting;
-- `src/toolang/setup/cache.py` or a focused sibling: merged projection codec
-  and safe atomic persistence;
-- `src/toolang/setup/watcher.py` and
-  `src/toolang/cli/toolang/commands/model_catalog.py`: validate revisions and
-  use the merged projection before list construction;
-- setup unit tests and `tests/integration/cli/test_model_catalog_commands.py`:
-  invalidation, parity, secrecy, and warm-path coverage.
-
-## Acceptance Tests
-
-1. An unchanged hit skips source parsing, merge, route resolution, build, and
-   ordering, but repeated queries return the same stable results.
-2. Changed catalog bytes invalidate even if size and mtime are restored;
-   changes to any root/agent config bytes invalidate.
-3. Environment extraction covers provider `env` and provider/model API
-   templates, supports `$NAME` and `${NAME}`, ignores escaped `$$`, sorts names,
-   omits unset values, and persists hashes but never raw values. An unrelated
-   environment variable does not invalidate.
-4. Local catalogs are probed each invocation; unchanged revisions hit and
-   changed revisions rebuild. Host/gateway env vars are not direct key inputs.
-5. Plugin provenance and projection schema changes invalidate.
-6. Default and `--all` table/JSON output, repeated query semantics, and full
-   catalog export match an uncached build.
-7. Corrupt, unsafe, stale-schema, or missing cache data safely rebuilds; failed
-   writes do not leave partial files or reject valid in-memory output.
-8. Default offline verification passes.
-
-## Risks
-
-- Remote dynamic changes require a probe each invocation; the cache cannot know
-  a service changed without observing its current snapshot.
-- Hashing complete configs intentionally invalidates on comments or other
-  byte-only changes.
-- Credential rotation also invalidates the model projection by design.
-- Full-catalog serialization and validation have a cost; benchmark the warm
-  path against the current approximately 1.9-second `too models` invocation.
-- Third-party catalog data may contain sensitive provider/model overrides; the
-  safety validator must reject such a cache without weakening secret checks.
-
-## Open Questions
-
-None. Cache location/name, environment hashing, local-probe behavior, and
-root/agent scope are decided above.
+Probes and process startup remain on the warm path. Runtime source snapshots may
+duplicate data across agents. Config comments and credential rotation intentionally
+invalidate. Editable plugin changes require a version/schema bump or cache removal.
+No open design questions remain for this scope.

@@ -11,7 +11,7 @@ from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.types.model import Model, ModelRoute, Provider
+from toolang.base.types.model import Model, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
@@ -30,12 +30,12 @@ from toolang.common.json import dumps
 from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
     CatalogProviderView,
-    ModelQueryView,
-    catalog_model_dataset,
     catalog_provider_views,
 )
 from toolang.setup import AgentSetup
-from toolang.setup.watcher import load_setup
+from toolang.setup.watcher import SetupWatcher, load_setup
+from toolang.setup.model_listing import ModelListing
+from toolang.setup.records import ModelRecord
 
 
 def models_command(
@@ -62,23 +62,21 @@ def models_command(
     """List or export model catalog entries."""
 
     try:
-        setup = _setup(ctx, model_catalog=model_catalog)
+        listing = _listing(ctx, model_catalog=model_catalog)
     except TypeError as error:
         raise ClickException(str(error)) from error
-    snapshot = setup.model_catalog(all=all_)
-    dataset = catalog_model_dataset(snapshot)
+    dataset = listing.all if all_ else listing.default
     try:
         if query:
             MODEL_SCHEMA.parse(query)
-        selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+        selected = cast(tuple[ModelRecord, ...], query_items(dataset, query))
     except ToolangError as error:
         raise ClickException(str(error)) from error
-    selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
-        content = dumps(snapshot.to_data(models=selected))
+        content = dumps(listing.export(selected))
         typer.echo(content, nl=False)
         return
-    headers, raw_rows = dataset.table(selected_views)
+    headers, raw_rows = dataset.table(selected)
     # Readiness remains queryable; the table groups it with policy in STATUS.
     headers = (headers[0], *headers[2:])
     rows = [(row[0], *row[2:]) for row in raw_rows]
@@ -88,7 +86,7 @@ def models_command(
         rows = [
             (
                 *row,
-                _model_status(model, allowed=setup.model_allowed(model.ref)),
+                _model_status(model),
             )
             for row, model in zip(rows, selected, strict=True)
         ]
@@ -98,7 +96,7 @@ def models_command(
     echo_collection_summary(
         len(selected),
         "model",
-        group=(len({model._toolang.provider for model in selected}), "provider"),
+        group=(len({model.provider for model in selected}), "provider"),
     )
 
 
@@ -192,6 +190,20 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     )
 
 
+def _listing(ctx: typer.Context, *, model_catalog: Path | None = None) -> ModelListing:
+    """Load the complete cached catalog in the selected inspection scope."""
+
+    layout, agent_context = _layout(ctx)
+    return asyncio.run(
+        SetupWatcher(
+            layout,
+            model_catalog=resolve_model_catalog_option(model_catalog),
+            agent_context=agent_context,
+            validate_defaults=False,
+        ).load_catalog_listing()
+    )
+
+
 def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
     """Build one setup version for the catalog commands."""
 
@@ -224,25 +236,20 @@ def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
     return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
 
 
-def _model_status(model: Model, *, allowed: bool) -> str:
-    status = inspection_status(allowed=allowed, ready=model._toolang.ready)
-    if not model._toolang.ready and (reason := _route_reason(model._toolang.route)):
-        status += f" ({reason})"
-    return status
-
-
-def _route_reason(route: ModelRoute) -> str:
-    """Summarize missing prerequisites in a stable display order."""
-
-    return "; ".join(
+def _model_status(model: ModelRecord) -> str:
+    status = inspection_status(
+        allowed=model.allowed_order is not None, ready=model.ready
+    )
+    reason = "; ".join(
         reason
         for missing, reason in (
-            (route.adapter is None, "No adapter"),
-            (route.api is None, "No API URL"),
-            (route.env is None, "Missing env"),
+            (model.adapter is None, "No adapter"),
+            (not model.api_present, "No API URL"),
+            (not model.env_present, "Missing env"),
         )
         if missing
     )
+    return f"{status} ({reason})" if reason else status
 
 
 def _provider_adapters_cell(provider: CatalogProviderView) -> Text:

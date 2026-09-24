@@ -1250,14 +1250,14 @@ def test_models_json_uses_the_published_version_without_rereading_source(
     monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
     path = tmp_path / "catalog.json"
     path.write_text(json.dumps(_catalog_data()))
-    original_setup = model_catalog_commands._setup
+    original_setup = model_catalog_commands._listing
 
     def setup_then_remove_source(*args, **kwargs):
         setup = original_setup(*args, **kwargs)
         path.unlink()
         return setup
 
-    monkeypatch.setattr(model_catalog_commands, "_setup", setup_then_remove_source)
+    monkeypatch.setattr(model_catalog_commands, "_listing", setup_then_remove_source)
     result = runner.invoke(
         cli.app,
         ["--root", str(tmp_path), "models", *(["--all"] if all_ else []), "--json"],
@@ -1306,6 +1306,13 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
         )
     )
     monkeypatch.setattr(model_catalog_commands, "_setup", lambda *args, **kwargs: setup)
+    if command == "models":
+        from toolang.setup.model_listing import build_model_listing
+
+        listing = build_model_listing(setup.model_catalog(all=True), allow_models=None)
+        monkeypatch.setattr(
+            model_catalog_commands, "_listing", lambda *args, **kwargs: listing
+        )
     monkeypatch.setenv("TEST_API_KEY", "added-after-publication")
     source.unlink()
 
