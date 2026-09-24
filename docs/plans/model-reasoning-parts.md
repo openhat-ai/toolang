@@ -29,7 +29,7 @@ Define these values and explicit codecs in `base/types/message.py`:
 
 | Type | Fields | Discriminator |
 | --- | --- | --- |
-| `ReasoningPart` | `text: str`, `signature: str \| None = None`, `representation: Literal["text", "summary", "unknown"] = "unknown"` | `type="reasoning"` |
+| `ReasoningPart` | `text: str`, `signature: str \| None = None` | `type="reasoning"` |
 | `ReasoningDelta` | `text: str` | `kind="reasoning"` |
 
 Add these types to the existing unions. `signature` directly carries an opaque
@@ -48,29 +48,30 @@ whole response envelopes, credentials, or request options into metadata.
 Reasoning is allowed only in assistant messages; native fields are only sent
 for assistant history with a matching adapter/provider/model scope.
 
-`representation` describes what the provider returned, not the wire format or
-a claim of complete internal reasoning. Use `unknown` when the protocol/model
-does not establish whether text is a summary. Preserve characters exactly and
-keep independently identified blocks separate. Empty text is allowed when a
-Part carries a signature or native reasoning metadata; token counts alone create
-no Part. Empty signed normal text remains a `TextPart` in its original position.
+`text` preserves the readable reasoning returned by the provider, including
+summaries, without classifying it or claiming complete internal reasoning.
+Native block types and field names needed for reconstruction stay in provider
+metadata. Preserve characters exactly and keep independently identified blocks
+separate. Empty text is allowed when a Part carries a signature or native
+reasoning metadata; token counts alone create no Part. Empty signed normal text
+remains a `TextPart` in its original position.
 
 There is no reasoning-specific ID. Add required `part: int` to
 `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` for every kind, matching the
 existing execution events. The adapter assigns zero-based call-local ordinals
 on first canonical observation; the final message uses that order. Provider IDs
 and block indices stay inside adapters and provider metadata. `tool_call_id`
-keeps its existing tool association role. Representation and late native
-metadata are final Part properties, not mutable delta identity.
+keeps its existing tool association role. Late native metadata is attached to
+the final Part and does not change delta identity.
 
 ## Adapter Normalization
 
 | Adapter | Readable projection and native ownership |
 | --- | --- |
-| Chat Completions | Read `reasoning_details` text/summary entries, `reasoning_content`, and `reasoning`. Structured entry types determine representation; flat aliases default to `unknown`. Put a detail's signature or encrypted `data` in `signature`; keep its type, ID, index, and format in provider metadata. Flat fields need no signature; record their field name to reconstruct them from `text`. |
-| Responses | Map reasoning `summary[].text` to `summary` and supported `content[].text` to `text`. Match delta/done events by item ID and summary/content index. Map `encrypted_content` to `signature`; retain item identity, status, and content indices in provider metadata. |
-| Messages | Map thinking blocks and `thinking_delta` by content-block index. Use `unknown`: the generic thinking block does not distinguish summarized from full text. Map `thinking.signature` to `signature`. A redacted block becomes an empty ReasoningPart with its `data` in `signature` and native block type in metadata. |
-| Generate Content | Map `thought: true` text to `summary`. Maintain a call-local active thought block across chunks; close it on a transition to another kind or a signed boundary. Map `thoughtSignature` to `signature` on its actual Part, including normal text, tools, and empty signed text. |
+| Chat Completions | Read `reasoning_details` text/summary entries, `reasoning_content`, and `reasoning` into `ReasoningPart.text`. Put a detail's signature or encrypted `data` in `signature`; keep its type, ID, index, and format in provider metadata. Flat fields need no signature; record their field name to reconstruct them from `text`. |
+| Responses | Read reasoning `summary[].text` and supported `content[].text` into `ReasoningPart.text`. Match delta/done events by item ID and summary/content index. Map `encrypted_content` to `signature`; retain item identity, status, native content types, source field, and indices in provider metadata. |
+| Messages | Read thinking blocks and `thinking_delta` into `ReasoningPart.text`, tracking content-block index. Map `thinking.signature` to `signature`. A redacted block becomes an empty ReasoningPart with its `data` in `signature` and native block type in metadata. |
+| Generate Content | Read `thought: true` text into `ReasoningPart.text`. Maintain a call-local active thought block across chunks; close it on a transition to another kind or a signed boundary. Map `thoughtSignature` to `signature` on its actual Part, including normal text, tools, and empty signed text. |
 
 Gemini chunk-local array positions are not stable identities. Consecutive thought
 fragments may extend one block; thought text after an intervening answer/tool
@@ -87,7 +88,7 @@ precedence: structured readable details, `reasoning_content`, then `reasoning`.
 Unknown compatible routes buffer reasoning and use that same precedence.
 Buffered fallback produces final-only Parts, also on graceful interruption.
 Its delayed canonical observation may follow answer/tool events. This latency
-tradeoff avoids changing emitted identity, text, or representation midstream.
+tradeoff avoids changing emitted identity or text midstream.
 Opaque structured data is retained regardless of which readable alias wins;
 mirrored aliases never produce duplicate readable Parts.
 
@@ -208,10 +209,11 @@ estimate. Billing and reported reasoning-token counts do not change.
    response with no tools. Verify incompatible schema versions fail without
    changing the DB.
 5. Encode a subsequent call for each protocol after reopening and fork/rewind.
-   Verify native item order, redaction/encryption, Gemini text/tool/empty-text
-   signatures, distinct adjacent signed Parts, and no duplicate content. Test
-   scope changes, compaction, pruning, and Responses cursor/full-history paths.
-   No removed message is resurrected.
+   Verify native item order, summary/content types and source fields,
+   redaction/encryption, Gemini text/tool/empty-text signatures, distinct adjacent
+   signed Parts, and no duplicate content. Test scope changes, compaction,
+   pruning, and Responses cursor/full-history paths. No removed message is
+   resurrected.
 6. Over a multi-call conversation, each new stored message contributes its own
    signatures/metadata; continuation contains no accumulated reasoning history.
    Assert metadata does not duplicate canonical text or signatures. Existing
@@ -255,3 +257,6 @@ state. AI SDK's [reasoning Part](https://github.com/vercel/ai/blob/40231b6222a41
 and [history conversion](https://github.com/vercel/ai/blob/40231b6222a41f89987dd35fe63825598aef453b/packages/ai/src/ui/convert-to-model-messages.ts#L208)
 illustrate Part-owned provider metadata. These inform vocabulary and ownership;
 Toolang keeps its existing records, events, and continuation contracts.
+Like these types and LangChain's [ReasoningContentBlock](https://github.com/langchain-ai/langchain/blob/7622d3dce760ac4be6d9aef4c653277e06064aea/libs/core/langchain_core/messages/content.py#L456),
+`ReasoningPart` uses one readable text field without a generic text/summary
+classification.
