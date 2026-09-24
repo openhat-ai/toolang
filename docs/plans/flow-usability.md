@@ -1,7 +1,7 @@
 # Flow Rules Outline
 
 Goal: local signatures, validated operation contracts, consistent runtime scheduling,
-and bounded iteration/thread context. Resolve open decisions before implementation.
+and bounded iteration/thread context.
 tree-sitter-toolang is outside scope.
 
 ## 1. Determine the Signature
@@ -33,7 +33,7 @@ contracts. Constraints apply to both. `T` means any supported value type.
 | gather | Must include `_` | Text | T |
 | settle with from | Must include `_` | Text | T; initial value must also satisfy T |
 | settle without from | Must include `_` | Text | Must match the source element type |
-| until | May include or omit `_` | Boolean | Boolean |
+| until (inline agic) | May include or omit `_` | Boolean | Boolean |
 
 - Validate required arguments, input types, output types, and runtime context.
 - Map/keep/drop/sort/settle pass one element as `_`; gather passes the whole list.
@@ -96,8 +96,9 @@ repeat 5 times windowing 3:
   nested repeats use their own setting/default.
 - Settle: retain exactly one prior frame for any reducer. No window clause or
   capacity inference; `_2` and higher are outside its iteration scope.
-- `_1`, `_2`, ... select historical frames, nearest first. Each completed frame
-  contains entry and exit snapshots; the pair occupies one window slot.
+- `_1`, `_2`, ... select prior rounds of the nearest active repeat/settle, nearest
+  first; indexes never select outer scopes. Each completed frame contains entry
+  and exit snapshots; the pair occupies one window slot.
 
 | Reference | Snapshot value |
 | --- | --- |
@@ -109,6 +110,9 @@ repeat 5 times windowing 3:
 - Repeat: capture entry -> execute body, updating locals after each statement ->
   evaluate until -> save entry/exit snapshots -> stop or continue. History stays
   fixed throughout the body and `until`.
+- Until remains an inline agic. Bind its ordinary parameters from post-body locals
+  according to its signature; runtime supplies the active iteration-history family.
+  Until creates no iteration scope of its own.
 - Settle captures entry locals after binding the current element as `_`, before
   invoking the reducer. Its exit snapshot replaces `_` with the cumulative
   output of type T; reducer-private state is excluded.
@@ -125,7 +129,7 @@ repeat 5 times windowing 3:
 - History-frame section guards test presence, independent of empty/false/zero
   output values. Existing template section scoping applies: render the current
   `_` outside a history-frame section; use qualified `_k.field` inside it.
-- For until agics, required depth is the highest history index in their own
+- For until, required depth is the highest history index in its own
   resolved templates, including guards and effective instruct/context, whether
   local or inherited; no references means 0. If fewer prior frames exist, until
   is false without rendering or invoking its runnable. Save the completed body
@@ -134,6 +138,9 @@ repeat 5 times windowing 3:
   first evaluates until in round 3; a history-free condition can run in round 1.
   Invalid contracts, references beyond the window, and missing fields in existing
   frames remain errors rather than being converted to false.
+- Do not infer history requirements through a call tree or dynamic targets.
+  Additional callee history dependencies are checked in the callee's active scope;
+  errors do not retroactively turn the calling until into false.
 - Save one pair per successful round, including unchanged values. Failed rounds
   add nothing; retries do not duplicate entries. Settle saves after each reducer call.
 - Capture only ordinary locals and the primary `_` on both entry and exit.
@@ -143,8 +150,10 @@ repeat 5 times windowing 3:
 - Filtering applies to frame bindings, not fields inside ordinary data values.
   Snapshots retain types and provenance and remain immutable. Compaction
   refreshes live thread variables, not saved frame values.
-- Nested iterations replace the history family and restore it on exit. Resolve
-  history exclusively within the active iteration scope; concurrent runs are isolated.
+- Runtime exposes one iteration scope at a time; its history capacity is still
+  the loop's window. Ordinary agic/flow calls preserve that scope. Entering an inner
+  repeat/settle replaces it; leaving restores the outer scope before outer until.
+  Missing inner history never falls back to outer frames. Concurrent calls are isolated.
 
 ## 6. Project and Select Thread History
 
@@ -352,6 +361,10 @@ repeat 5 times windowing 3:
   injected bindings before entry projection while preserving ordinary data fields.
 - Verify until warm-up returns false with zero child calls, still saves each
   successful round, and distinguishes missing frames from invalid references/fields.
+  Check only the inline condition's own templates; callee failures remain errors.
+- Verify post-body parameter binding and runtime history injection, scope propagation
+  through agic/flow calls, inner repeat/settle shadowing without fallback, and outer
+  scope restoration before outer until. Frame indexes count rounds, not scope levels.
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
 - Verify root-Step projection without recursive child transcripts, child outcomes
@@ -391,9 +404,3 @@ repeat 5 times windowing 3:
   records, `assembly/{history,prompting}.py`, and store projections.
 - Risks: contract/resource-scope migration, inherited prompt dependencies,
   frame retention, mixed history versions, and durable scheduling/completion delivery.
-
-## 11. Open Decisions
-
-- Define required iteration-history depth for until flows and indirect/dynamic
-  dependencies. This concerns `_k`, not the shared thread variables `_far/_near/_past`;
-  local agic inference does not determine callee requirements.
