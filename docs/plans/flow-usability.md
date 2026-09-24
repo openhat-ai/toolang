@@ -94,10 +94,8 @@ repeat 5 times windowing 3:
 - Repeat: optional `windowing N`, default 3; N is a positive integer counting
   prior frames, excluding the current round. The iteration limit is independent;
   nested repeats use their own setting/default.
-- Settle: no window clause. For named/adhoc agic reducers, infer capacity as
-  `max(1, highest referenced history index)` from their own resolved templates,
-  including guards and authored instruct/context. This is separate from the
-  signature; exclude callees and `from`.
+- Settle: retain exactly one prior frame for any reducer. No window clause or
+  capacity inference; `_2` and higher are outside its iteration scope.
 - `_1`, `_2`, ... select historical frames, nearest first. Each completed frame
   contains entry and exit snapshots; the pair occupies one window slot.
 
@@ -116,7 +114,7 @@ repeat 5 times windowing 3:
   output of type T; reducer-private state is excluded.
 - Repeat starts without history; settle starts with one seed frame containing
   exit `_` only. After its first call, `_1.__` is the processed element, `_1._`
-  is the result, and `_2._` is the seed if retained. Never pad missing history.
+  is the result, and this frame replaces the seed. Never pad missing history.
 - Snapshot selection applies to the first field after `_k`; later fields read
   data, as in `_2._report.title`. Entry/exit access requires the same history depth.
 - Missing bindings remain absent: a local first created during a round has no
@@ -155,12 +153,13 @@ repeat 5 times windowing 3:
 | `_n` | Ordered recent messages with roles/content; empty array when absent |
 | `_h` | Combined messages: summary followed by recent messages |
 
-- All runnables, including flow Content and until, can read runtime-supplied
-  `_f/_n/_h`. Only root agics automatically include messages selected by recall;
-  child agics reference history explicitly and keep their own model/tool conversation.
-- The root and descendants share a historical boundary and version. Recall
-  controls automatic inclusion, not variable availability; nested loops preserve
-  thread context while replacing iteration history.
+- The root runtime prepares `_f/_n/_h` for root agics and flows and supplies the
+  same versioned snapshot to all descendants, including flow Content and until.
+  Child agics and flows never assemble thread-history messages independently.
+- Only root agics automatically include messages selected by recall. Child agics
+  choose whether to reference the supplied variables and keep their own model/tool
+  conversation. Recall does not restrict variable availability; nested loops
+  preserve thread context while replacing iteration history.
 - Successful compaction atomically publishes a new version for subsequent model
   calls and flow frame evaluations. Each evaluation's recall and `_f/_n/_h` use
   one version. In-flight evaluations keep theirs; failed compaction keeps the old
@@ -169,7 +168,7 @@ repeat 5 times windowing 3:
   compaction does not add active-run intermediates to prior thread history.
 - Only roots contribute thread exchanges. Root agics keep their existing
   model/tool exchange and terminal reply. Child transcripts remain execution records.
-- Proposed root flow exchange: entry `_` as user message when present, then final
+- Root flow exchange: entry `_` as user message when present, then final
   output as assistant message. Preserve control/failure/cancellation handling.
 
 ## 7. Configure Execution
@@ -177,8 +176,9 @@ repeat 5 times windowing 3:
 - Agic configuration: tools, caps, models, hands, handoffs, recall, instruct, context.
 - Flow configuration: lanes. Resource choices belong to agics or agent setup.
 - `instruct:` and `context:` retain their existing setting forms.
-- Proposed caps configuration: one union of psyches/skills/services/prompts,
-  using existing selection operations and scope rules.
+- Proposed `caps`: replace the runnable selectors `psyches`/`skills`/`services`/
+  `prompts` with one capability union, retaining the four kinds and query operators.
+  Agent resource ceilings still apply; migration details remain open.
 - Lane precedence: statement clause > enclosing flow directive > built-in 4.
 - `lanes = N`: one positive integer per flow; statement lane clauses are optional.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
@@ -190,13 +190,15 @@ repeat 5 times windowing 3:
 - Validate signatures, arguments, types/shapes, operation contracts, configuration,
   counts, lanes, and runtime availability; report known failures before model calls.
 - Acceptance: signature defaults/inference and use-site contracts; empty inputs;
-  lane precedence; initializer timing; window defaults/overrides and inferred
-  settle depth; entry/exit values and missing bindings; eviction and warm-up with
+  lane precedence; initializer timing; repeat window defaults/overrides and fixed
+  settle depth 1; entry/exit values and missing bindings; eviction and warm-up with
   empty/false/zero values; nested isolation, retry/resume, and concurrent compaction.
 - Verify reserved names, primary `_` and internal-underscore exceptions; filter
   injected bindings before entry projection while preserving ordinary data fields.
 - Verify until warm-up returns false with zero child calls, still saves each
   successful round, and distinguishes missing frames from invalid references/fields.
+- Verify root flow input/final-output exchanges and shared thread-history snapshots
+  across child agics/flows, with automatic recall only in root agics.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
@@ -210,8 +212,10 @@ repeat 5 times windowing 3:
 
 ## 9. Open Decisions
 
-- Confirm the root flow input-plus-final-output history policy.
-- Confirm inferred settle retention.
-- Define history requirements for flow reducers/conditions and indirect/dynamic
-  dependencies; local agic inference does not determine callee requirements.
-- Caps-key migration and removal of existing flow resource directives.
+- Define required iteration-history depth for until flows and indirect/dynamic
+  dependencies. This concerns `_k`, not the shared thread variables `_f/_n/_h`;
+  local agic inference does not determine callee requirements.
+- Define `caps` migration: old per-kind `=` replaces only that kind, whereas a
+  union selector replaces the whole capability selection; decide old-key handling.
+- Define migration of flow resource directives to agics or agent setup, preserving
+  intended resource limits when flow retains only `lanes`.
