@@ -96,10 +96,10 @@ settle using merge:
 
 ## 5. Retain Iteration History
 
-Proposed shared window and frame rules:
+Proposed retention and shared-frame rules:
 
 ```too
-repeat 10 times with window 3:
+repeat 10 times holding 3:
   run: Improve {{_}}.
   until:
     Current result: {{_}}
@@ -110,15 +110,21 @@ repeat 10 times with window 3:
     Return false.
     {{/_2}}
 
-settle with window 3 using merge:
+settle using merge:
   from:
     Initial report.
 ```
 
-- Both statements accept optional `with window N`, default 3; N is a positive
-  integer. Settle places it before `using`; adhoc form: `settle with window N:`.
-  Window capacity counts prior entries, excluding the current iteration. It is
-  independent of repeat's iteration limit and does not inherit across nesting.
+- Repeat accepts optional `holding N`, default 3; N is a positive integer.
+  Capacity counts prior frames, excluding the current iteration, independently
+  of the iteration limit. Nested repeats use their own setting/default.
+- Settle has no retention clause. For an agic reducer, infer capacity as
+  `max(1, highest referenced history index)`: `_1` needs 1; `_1` and `_3` need 3.
+  With no history references, retain the single accumulator frame.
+- Derive that requirement locally for both named and adhoc agics from their own
+  resolved templates, including section guards and authored instruct/context.
+  Keep it separate from the parameter/output signature. Do not scan callees or
+  settle's `from`, whose history references belong to the surrounding scope.
 - `_1`, `_2`, ... are frame snapshots, nearest first, for both operations.
   `_1._` reads the previous output; repeat also exposes `_1.report` etc.
 - Settle frames contain the cumulative output as `_`, of type T. `from` supplies
@@ -207,7 +213,8 @@ Contribute history:
   counts, lanes, and runtime availability; report known failures before model calls.
 - Acceptance coverage: defaults, adhoc inference, use-site compatibility, empty
   inputs, lane precedence, initializer timing, and history scope/isolation;
-  both window defaults/overrides, eviction, warm-up guards with empty/false/zero
+  repeat retention defaults/overrides, settle's local depth inference (including
+  guarded references and excluding the initializer), eviction, warm-up with empty/false/zero
   values, retry/resume, nested scopes, and compaction during concurrent calls.
 - Update affected examples and prepared caches for changed contracts.
 - Use `_f`, `_n`, `_h`, and numbered history variables as the runtime names.
@@ -225,6 +232,9 @@ Contribute history:
 ## 9. Open Decisions
 
 - Confirm the root flow input-plus-final-output history policy.
-- Confirm shared `with window N` (default 3), frame-valued `_k`, and guarded
-  warm-up behavior. The proposal treats `from` as one seed, not prefilled history.
+- Confirm repeat's `holding N` (default 3), inferred settle retention for agic
+  reducers, frame-valued `_k`, and guarded warm-up behavior. The proposal treats
+  `from` as one seed, not prefilled history.
+- Define settle retention for flow reducers and indirect/dynamic history
+  dependencies; local agic inference does not determine callee requirements.
 - Caps-key migration and removal of existing flow resource directives.
