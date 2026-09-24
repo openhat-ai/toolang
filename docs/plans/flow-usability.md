@@ -259,10 +259,29 @@ repeat 5 times windowing 3:
 | Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
 | Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; filtered views; automatic inclusion only at root agic |
 
-## 8. Validate and Migrate
+## 8. Syntax Requirements
+
+| Area | Required syntax |
+| --- | --- |
+| Shared directives | Agic and flow bodies accept all directives in section 7; preserve existing `instruct:` / `context:` reference and content forms. |
+| Lanes | Add `lanes = N` to both runnable kinds; retain optional `in N lanes` on parallel statements. |
+| Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
+| Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
+| Repeat window | Optional `windowing N` before the header colon, as in `repeat 5 times windowing 3:`; also available on repeats without a count that use `until`. |
+| Empty route selection | Allow `hands =` and `handoffs =` to clear inherited routes. |
+
+- Preserve omitted signatures versus explicit `()` and authored type annotations;
+  defaults and parameter inference belong to semantic normalization.
+- Runtime names `_far`, `_near`, `_past`, `_1`, etc. and frame paths `_1.name`,
+  `_1._name`, `_1._`, `_1.__` use existing template syntax. Reserved binding names,
+  type/operation contracts, and count/window constraints are semantic checks.
+
+## 9. Validate and Migrate
 
 - Validate signatures, arguments, types/shapes, operation contracts, configuration,
   counts, lanes, and runtime availability; report known failures before model calls.
+- Verify parsing/formatting round trips for section 8, preserving omitted fields
+  and clause ownership; reject the removed scatter count form.
 - Acceptance: signature defaults/inference and use-site contracts; empty inputs;
   lane precedence; initializer timing; repeat window defaults/overrides and fixed
   settle depth 1; entry/exit values and missing bindings; eviction and warm-up with
@@ -299,7 +318,7 @@ repeat 5 times windowing 3:
 - Risks: contract/resource-scope migration, inherited prompt dependencies,
   frame retention, and mixed history versions.
 
-## 9. Open Decisions
+## 10. Open Decisions
 
 - Define required iteration-history depth for until flows and indirect/dynamic
   dependencies. This concerns `_k`, not the shared thread variables `_far/_near/_past`;
