@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import sleep
+from time import monotonic
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -104,6 +105,7 @@ class _AgicState:
     next_model_inputs: tuple[FieldRef, ...] | None = None
     model_calls: int = 0
     model_recoveries: int = 0
+    retry_not_before: float = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     visible_recalls: dict[RecallTarget, str] = field(default_factory=dict)
@@ -338,7 +340,7 @@ def _output_repair_message(type_name: str | None) -> Message:
     )
 
 
-async def _recover_model_response(state: _AgicState, error: ModelResponseError) -> None:
+def _recover_model_response(state: _AgicState, error: ModelResponseError) -> None:
     """Retry before tool execution, sharing a bounded allowance across the run."""
 
     step = StepRef.from_local(state.prepared.run.run_id, (state.next_step - 1,))
@@ -347,13 +349,14 @@ async def _recover_model_response(state: _AgicState, error: ModelResponseError) 
         not error.recoverable
         or state.model_recoveries >= 2
         or (limit is not None and state.model_calls >= limit)
-        or (error.retry_after is not None and error.retry_after > 30)
     ):
         raise _StepFailed(step, error) from error
     state.model_recoveries += 1
     state.next_model_inputs = (FieldRef.from_path(step, "error"),)
     if error.kind == "transport_error":
-        await sleep(max(float(state.model_recoveries), error.retry_after or 0))
+        state.retry_not_before = monotonic() + max(
+            float(state.model_recoveries), error.retry_after or 0
+        )
     else:
         state.messages.append(
             Message.user(
@@ -368,10 +371,13 @@ async def _recover_model_response(state: _AgicState, error: ModelResponseError) 
 async def _execute(state: _AgicState) -> Message | None:
     while True:
         try:
+            if delay := max(0, state.retry_not_before - monotonic()):
+                await sleep(delay)
+            state.retry_not_before = 0
             try:
                 result = await model_step.execute(state)
             except ModelResponseError as exc:
-                await _recover_model_response(state, exc)
+                _recover_model_response(state, exc)
                 continue
         except asyncio.CancelledError:
             if state.immediate_steer():

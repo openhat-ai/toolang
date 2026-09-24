@@ -9,8 +9,15 @@ from typing import Any, cast
 
 import httpx
 
-from ._errors import model_transport, model_transport_errors
-from toolang.base.errors import ToolangError
+from ._errors import (
+    model_events,
+    model_transport,
+    model_transport_errors,
+    provider_error,
+    raise_for_model_status,
+)
+from ._tool_calls import parse_tool_arguments
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     DocumentPart,
@@ -67,7 +74,7 @@ class MessagesModelAdapter(ModelAdapter):
                 headers=_headers(model, environ=environ),
                 json=messages_payload(model, request, stream=False),
             )
-            response.raise_for_status()
+            await raise_for_model_status(response)
             result = parse_message_response(_json_object(response.json()))
             return replace(
                 result,
@@ -86,11 +93,14 @@ class MessagesModelAdapter(ModelAdapter):
         environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
+        on_event = model_events(on_event)
         payload = messages_payload(model, request, stream=True)
         text: list[str] = []
         tool_blocks: dict[int, dict[str, object]] = {}
         thinking_blocks: dict[int, dict[str, object]] = {}
         usage: dict[str, object] = {}
+        ended = False
+        stop_reason = None
         with model_transport_errors(
             usage=lambda: messages_usage(usage), partial_text=lambda: "".join(text)
         ):
@@ -101,7 +111,7 @@ class MessagesModelAdapter(ModelAdapter):
                     headers=_headers(model, environ=environ),
                     json=payload,
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_model_status(response)
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -110,11 +120,19 @@ class MessagesModelAdapter(ModelAdapter):
                             continue
                         event = _json_object(json.loads(raw))
                         event_type = event.get("type")
+                        if event_type == "error":
+                            raise provider_error(event.get("error"))
+                        if event_type == "message_stop":
+                            ended = True
+                            break
                         if event_type == "message_start":
                             message = _json_object(event.get("message"))
                             usage.update(_json_object(message.get("usage")))
                         elif event_type == "message_delta":
                             usage.update(_json_object(event.get("usage")))
+                            stop_reason = _json_object(event.get("delta")).get(
+                                "stop_reason"
+                            )
                         elif event_type == "content_block_start":
                             index = _int(event.get("index"))
                             block = _json_object(event.get("content_block"))
@@ -162,10 +180,15 @@ class MessagesModelAdapter(ModelAdapter):
                                     value = _text(delta.get(key))
                                     if value:
                                         block[key] = _text(block.get(key)) + value
-        calls = tuple(
-            _tool_call(block, fallback=f"tool-call-{index}")
-            for index, block in sorted(tool_blocks.items())
-        )
+            if not ended:
+                raise ModelResponseError(
+                    "model stream ended before message_stop", kind="incomplete_stream"
+                )
+            _check_stop_reason(stop_reason)
+            calls = tuple(
+                _tool_call(block, fallback=f"tool-call-{index}")
+                for index, block in sorted(tool_blocks.items())
+            )
         parts: list[TextPart | ToolCallPart] = []
         output = "".join(text)
         if output:
@@ -274,6 +297,17 @@ def messages_payload(
     return payload
 
 
+def _check_stop_reason(reason: object) -> None:
+    if reason == "max_tokens":
+        raise ModelResponseError(
+            "model response truncated by output limit", kind="output_limit"
+        )
+    if reason in {"refusal", "model_context_window_exceeded"}:
+        raise ModelResponseError(
+            f"provider stopped response: {reason}", kind="provider_rejection"
+        )
+
+
 def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
     """Parse one Anthropic Messages response."""
 
@@ -281,23 +315,32 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
     calls: list[ToolCall] = []
     thinking: list[dict[str, object]] = []
     call_thinking: dict[str, list[dict[str, object]]] = {}
-    content = payload.get("content")
-    if isinstance(content, list):
-        for raw in content:
-            block = _json_object(raw)
-            if block.get("type") == "text":
-                value = _text(block.get("text"))
-                if value:
-                    parts.append(TextPart(value))
-            elif block.get("type") in {"thinking", "redacted_thinking"}:
-                thinking.append(dict(block))
-            elif block.get("type") == "tool_use":
-                call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
-                calls.append(call)
-                parts.append(_tool_part(call))
-                if thinking:
-                    call_thinking[call.call_id] = thinking
-                    thinking = []
+    with model_transport_errors(
+        usage=lambda: messages_usage(_json_object(payload.get("usage"))),
+        partial_text=lambda: "".join(
+            part.text for part in parts if isinstance(part, TextPart)
+        ),
+    ):
+        if "error" in payload:
+            raise provider_error(payload["error"])
+        _check_stop_reason(payload.get("stop_reason"))
+        content = payload.get("content")
+        if isinstance(content, list):
+            for raw in content:
+                block = _json_object(raw)
+                if block.get("type") == "text":
+                    value = _text(block.get("text"))
+                    if value:
+                        parts.append(TextPart(value))
+                elif block.get("type") in {"thinking", "redacted_thinking"}:
+                    thinking.append(dict(block))
+                elif block.get("type") == "tool_use":
+                    call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
+                    calls.append(call)
+                    parts.append(_tool_part(call))
+                    if thinking:
+                        call_thinking[call.call_id] = thinking
+                        thinking = []
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
@@ -529,15 +572,14 @@ def _headers(
 
 def _tool_call(block: Mapping[str, object], *, fallback: str) -> ToolCall:
     call_id = _text(block.get("id")) or fallback
-    name = _text(block.get("name"))
-    raw_input = block.get("input")
-    if not isinstance(raw_input, Mapping):
-        partial = _text(block.get("partial_json")) or "{}"
-        try:
-            raw_input = _json_object(json.loads(partial))
-        except json.JSONDecodeError:
-            raw_input = {}
-    return ToolCall(call_id, call_id, name, dict(cast(Mapping[str, Any], raw_input)))
+    name = _text(block.get("name")).strip()
+    if not name:
+        raise ModelResponseError(
+            "model emitted a tool call without a function name", kind="missing_name"
+        )
+    # A streaming start block has input={}; the following deltas are authoritative.
+    raw_input = block.get("partial_json", block.get("input"))
+    return ToolCall(call_id, call_id, name, parse_tool_arguments(raw_input))
 
 
 def _tool_part(call: ToolCall) -> ToolCallPart:

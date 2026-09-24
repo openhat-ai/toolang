@@ -665,6 +665,7 @@ def test_messages_stream_returns_normalized_final_usage(monkeypatch) -> None:
                 "output_tokens_details": {"thinking_tokens": 2},
             },
         },
+        {"type": "message_stop"},
     )
     monkeypatch.setattr(
         messages_adapter.httpx,
@@ -708,7 +709,7 @@ def test_messages_stream_returns_normalized_final_usage(monkeypatch) -> None:
 def test_generate_content_stream_returns_normalized_final_usage(monkeypatch) -> None:
     lines: tuple[dict[str, object], ...] = (
         {
-            "candidates": [],
+            "candidates": [{"finishReason": "STOP"}],
             "usageMetadata": {
                 "promptTokenCount": 100,
                 "cachedContentTokenCount": 60,
@@ -1417,6 +1418,8 @@ def test_protocol_adapters_reject_conflicting_structured_output_options(
 
 
 class _FakeStreamResponse:
+    is_error = False
+
     def __init__(self, lines: tuple[dict[str, object], ...]) -> None:
         self._lines = lines
 

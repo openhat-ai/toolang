@@ -37,7 +37,7 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 from ._credentials import credential_value
-from ._errors import model_transport, model_transport_errors
+from ._errors import model_events, model_transport, model_transport_errors
 from ._tool_calls import parse_tool_arguments
 
 from ._structured_output import (
@@ -94,7 +94,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
         """Execute one streaming Chat Completions API call."""
 
         return await stream_chat_completion(
-            model, request, environ=environ, on_event=on_event
+            model, request, environ=environ, on_event=model_events(on_event)
         )
 
 
@@ -168,6 +168,7 @@ async def stream_chat_completion(
     final_usage: ModelUsage | None = None
     text_started = False
     finish_reason: str | None = None
+    refused = False
     defer_text = _audio_output_requested(model)
     stream = await client.chat.completions.create(**_openai_sdk_payload(model, payload))
     try:
@@ -183,6 +184,7 @@ async def stream_chat_completion(
                 delta = getattr(choice, "delta", None)
                 if delta is None:
                     continue
+                refused = refused or bool(getattr(delta, "refusal", None))
                 reasoning_content = getattr(delta, "reasoning_content", None)
                 if isinstance(reasoning_content, str) and reasoning_content:
                     reasoning_parts.append(reasoning_content)
@@ -222,9 +224,15 @@ async def stream_chat_completion(
                             )
                         )
     except ModelResponseError as exc:
-        exc.usage = final_usage
-        exc.partial_text = "".join(text_parts)
-        raise
+        # A finish reason completes the response; a lost optional usage tail
+        # must not discard it. Validate the finish reason and calls below.
+        if finish_reason is None or exc.kind not in {
+            "transport_error",
+            "incomplete_stream",
+        }:
+            exc.usage = final_usage
+            exc.partial_text = "".join(text_parts)
+            raise
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
@@ -237,6 +245,10 @@ async def stream_chat_completion(
                 kind="incomplete_stream",
             )
         _check_finish_reason(finish_reason)
+        if refused:
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
+            )
         tool_calls = tuple(
             buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items())
         )
@@ -568,6 +580,10 @@ def parse_chat_completion(
     reasoning_content = getattr(raw_message, "reasoning_content", None)
     try:
         _check_finish_reason(getattr(choice, "finish_reason", None))
+        if getattr(raw_message, "refusal", None):
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
+            )
         tool_calls = tuple(parse_tool_calls(getattr(raw_message, "tool_calls", None)))
     except ModelResponseError as exc:
         exc.usage = chat_usage(response)

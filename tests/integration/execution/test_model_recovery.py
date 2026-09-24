@@ -154,22 +154,26 @@ def test_recovery_is_bounded(tmp_path: Path, kind, limit, attempts: int) -> None
 
 
 @pytest.mark.parametrize("action", ["retry", "cancel", "steer"])
+@pytest.mark.parametrize("retry_after", [3, 60])
 def test_network_backoff_is_cancelable_and_accepts_steering(
-    tmp_path: Path, monkeypatch, action: str
+    tmp_path: Path, monkeypatch, action: str, retry_after: int
 ) -> None:
     gate = AsyncGate()
+    resumed = AsyncGate()
     delays = []
 
     async def wait(delay):
         delays.append(delay)
-        await gate.wait()
+        await (gate if len(delays) == 1 else resumed).wait()
 
     monkeypatch.setattr(agic, "sleep", wait)
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
         responses=[
-            ModelResponseError("disconnected", kind="transport_error", retry_after=3),
+            ModelResponseError(
+                "disconnected", kind="transport_error", retry_after=retry_after
+            ),
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
@@ -193,6 +197,9 @@ def test_network_backoff_is_cancelable_and_accepts_steering(
                     message=Message.user("change"),
                     timing="immediate",
                 )
+                await asyncio.wait_for(resumed.wait_until_entered(), 2)
+                assert len(harness.adapter.invocations) == 1
+                resumed.release()
             else:
                 gate.release()
             run = await asyncio.wait_for(handle, 2)
@@ -208,7 +215,8 @@ def test_network_backoff_is_cancelable_and_accepts_steering(
                 )
             if action == "steer":
                 assert "change" in str(harness.adapter.invocations[-1].call.messages)
-            assert delays == [3]
+            assert len(delays) == (2 if action == "steer" else 1)
+            assert all(0 < delay <= retry_after for delay in delays)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -313,27 +321,33 @@ def test_failed_attempt_respects_token_accounting_limits(
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_long_retry_after_does_not_retry_before_provider_deadline(
-    tmp_path: Path,
-) -> None:
+def test_run_time_limit_stops_long_backoff(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
         responses=[
-            ModelResponseError("rate limited", kind="transport_error", retry_after=31),
+            ModelResponseError("rate limited", kind="transport_error", retry_after=60),
             ModelCallResult(message=Message.assistant("unexpected")),
         ],
     )
+    tracer = RecordingRunTracer()
 
     async def scenario() -> None:
         async with harness:
-            run = await harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
-                    runnable="chat",
-                )
+            run = await asyncio.wait_for(
+                harness.executor.run(
+                    harness.run_spec(
+                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        runnable="chat",
+                        limits=RunLimits(time=1),
+                    ),
+                    tracer=tracer,
+                ),
+                3,
             )
             assert run.status == "failed"
+            assert "Run time limit exceeded" in str(run.error)
             assert len(harness.adapter.invocations) == 1
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

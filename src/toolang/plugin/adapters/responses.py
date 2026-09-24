@@ -38,7 +38,12 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 from ._credentials import credential_value
-from ._errors import model_transport, model_transport_errors
+from ._errors import (
+    model_events,
+    model_transport,
+    model_transport_errors,
+    provider_error,
+)
 from ._tool_calls import parse_tool_arguments
 
 from ._structured_output import (
@@ -105,7 +110,7 @@ class ResponsesModelAdapter(ModelAdapter):
             request,
             stateful=_stateful_route(model),
             environ=environ,
-            on_event=on_event,
+            on_event=model_events(on_event),
         )
 
 
@@ -257,16 +262,9 @@ async def stream_response(
                         "response.failed",
                     }:
                         terminal_response = getattr(event, "response", None)
-                        continue
+                        break
                     if event_type == "error":
-                        raise ModelResponseError(
-                            "provider returned a Responses error event",
-                            kind="transport_error"
-                            if getattr(event, "code", None)
-                            in {"server_error", "rate_limit_exceeded"}
-                            else "provider_rejection",
-                            partial_text="".join(text_deltas),
-                        )
+                        raise provider_error({"code": getattr(event, "code", None)})
                     if event_type == "response.output_text.delta":
                         delta = str(getattr(event, "delta", ""))
                         if delta:
@@ -486,14 +484,25 @@ def parse_response(
                 if reason == "content_filter"
                 else "incomplete_stream",
             )
-        if status in {"failed", "cancelled"}:
+        if status == "failed":
+            raise provider_error(
+                {"code": getattr(getattr(response, "error", None), "code", None)}
+            )
+        if status == "cancelled":
             raise ModelResponseError(
-                f"provider response {status}",
-                kind="transport_error"
-                if status == "failed"
-                and getattr(getattr(response, "error", None), "code", None)
-                in {"server_error", "rate_limit_exceeded"}
-                else "provider_rejection",
+                "provider response cancelled", kind="provider_rejection"
+            )
+        if status not in {None, "completed"}:
+            raise ModelResponseError(
+                f"provider response is not complete: {status}", kind="incomplete_stream"
+            )
+        if any(
+            getattr(part, "type", None) == "refusal"
+            for item in getattr(response, "output", [])
+            for part in getattr(item, "content", [])
+        ):
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
             )
         tool_calls = tuple(parse_tool_calls(response))
     except ModelResponseError as exc:

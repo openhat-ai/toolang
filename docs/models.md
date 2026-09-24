@@ -551,19 +551,21 @@ The separate output-contract repair does not replenish this allowance. Every
 attempt also counts toward the run's model-call limit. Output and reasoning
 budgets remain unchanged.
 
-- Chat Completions and Responses reject truncated responses, streams that end
-  before a terminal event, malformed or non-object tool arguments, and missing
+- Built-in adapters reject truncated responses, streams that end before a
+  terminal event, malformed or non-object tool arguments, and missing
   function names. Empty argument strings mean `{}`. The runtime discards the
   failed turn's tool calls and requests a complete, concise replacement. It does
   not repair JSON or execute the valid siblings of a malformed call.
 - Built-in adapters retry connection failures, timeouts, interrupted transport,
-  and HTTP 408, 409, 429, 500, 502, 503, or 504. Explicit quota exhaustion and
-  `x-should-retry: false` remain terminal. Network retries wait one then two
-  seconds, or longer if `Retry-After` requires it. A required wait above 30 seconds
-  ends the run instead of retrying too early. Cancel and steering controls remain
-  active during the wait.
-- Authentication, invalid requests, provider rejection, and unclassified errors
-  remain terminal. SDK-internal retries are disabled so attempts are visible and
+  and HTTP 408, 409, 429, 500, 502, 503, 504, or 529. Known transient error
+  codes inside streamed responses use the same recovery policy. Explicit quota
+  exhaustion and `x-should-retry: false` remain terminal. Network retries wait for
+  the shared recovery attempt number in seconds (one or two), or longer if
+  `Retry-After` requires it. The run time limit
+  and cancellation remain effective while waiting. Steering preserves the
+  remaining backoff deadline.
+- Authentication, invalid requests, explicit refusal, provider rejection, and
+  unclassified errors remain terminal. SDK-internal retries are disabled so attempts are visible and
   bounded by the runtime.
 
 Each failed attempt is stored as a failed model step with available partial text
@@ -571,3 +573,9 @@ and reported usage. Missing usage remains unknown. Recovery keeps the preceding
 valid message history and continuation; it does not replay successful tools or
 add incomplete tool calls to the next request. Retries can incur provider charges,
 including when a disconnected request's usage is unavailable.
+
+A complete terminal response remains usable if its optional stream tail is lost.
+Observer failures are propagated separately and never classified as provider
+transport errors. Native stream completion follows the
+[Messages event lifecycle](https://platform.claude.com/docs/en/build-with-claude/streaming)
+and [Generate Content finish reasons](https://ai.google.dev/api/generate-content#FinishReason).
