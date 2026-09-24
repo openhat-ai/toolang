@@ -3,7 +3,9 @@
 Design outline for implementation preparation. Scope: runnable contracts, flow
 execution, and runtime context. Resolve the open decisions before implementing
 the affected behavior.
-Repeat history is a future extension. tree-sitter-toolang is outside this scope.
+Success: determine signatures locally, validate operation contracts before calls,
+and provide bounded, unambiguous iteration and thread context.
+tree-sitter-toolang is outside this scope.
 
 ## 1. Determine the Signature
 
@@ -58,7 +60,7 @@ contracts. Constraints apply to both. `T` means any supported value type.
 
 ```too
 settle:
-  Incorporate {{_}} into {{_1}}.
+  Incorporate {{_}} into {{_1._}}.
   Preserve the report structure.
 
   from:
@@ -69,31 +71,77 @@ settle:
 - The main body processes elements; an optional final `from:` clause supplies initial Content.
 - Infer the adhoc signature from the main body only. Resolve `from` references
   against the surrounding flow context; they are initializer dependencies.
-- With `from`, the body's output type T determines the type of `_1`. Render and
+- With `from`, the body's output type T determines the type of `_1._`. Render and
   convert the initializer to T before the first child call; validate later results as T.
 - Evaluate `from:` once before entering settle's iteration scope, using the
   surrounding context and let's Content rules. Outer iteration history remains
   visible during initialization. Its value belongs to settle state; flow locals stay unchanged.
-- Each call receives the current element as `_` and the previous result as `_1`.
-- With `from`, the initial value supplies the first `_1`; N elements require N calls.
-- Without `from`, the first element supplies the initial `_1`; iterate from the
+- Each call receives the current element as `_` and the previous result as `_1._`
+  under the shared-frame proposal below.
+- With `from`, the initial value supplies the first `_1._`; N elements require N calls.
+- Without `from`, the first element supplies the initial `_1._`; iterate from the
   second element, requiring N-1 calls. A singleton returns its element after
   contract validation; empty input still fails.
 - Without `from`, require the body and final output to have the source element
   type. Validate the locally determined signature against that type; use an
   explicit output annotation when the default Text does not match.
-- Settle exposes only the preceding result, including that initial value.
+- Named reducers accept the same trailing initializer, without changing their
+  signature. Omit the block when no initializer is needed:
+
+```too
+settle using merge:
+  from:
+    Initial report.
+```
 
 ## 5. Retain Iteration History
 
-- `_1`, `_2`, ... address preceding iterations, nearest first.
-- Repeat retains the latest N frame snapshots, including ordinary named locals.
-  `_1._` reads the previous primary value; `_1.report` reads its `report` local.
+Proposed shared window and frame rules:
+
+```too
+repeat 10 times with window 3:
+  run: Improve {{_}}.
+  until:
+    Current result: {{_}}
+    {{#_2}}
+    Return true only if the current result, {{_1._}}, and {{_2._}} are equivalent.
+    {{/_2}}
+    {{^_2}}
+    Return false.
+    {{/_2}}
+
+settle with window 3 using merge:
+  from:
+    Initial report.
+```
+
+- Both statements accept optional `with window N`, default 3; N is a positive
+  integer. Settle places it before `using`; adhoc form: `settle with window N:`.
+  Window capacity counts prior entries, excluding the current iteration. It is
+  independent of repeat's iteration limit and does not inherit across nesting.
+- `_1`, `_2`, ... are frame snapshots, nearest first, for both operations.
+  `_1._` reads the previous output; repeat also exposes `_1.report` etc.
+- Settle frames contain the cumulative output as `_`, of type T. `from` supplies
+  one seed frame, not a list of frames, even when T is an array. After the first
+  call, `_1._` is the new output and `_2._` is the seed, subject to window capacity.
+- Repeat starts with no prior frames; settle starts with its single seed frame.
+  Keep only actual entries; never pad by repeating a seed/output or inventing values.
+- An absent `_k` within the window can be guarded with a template section;
+  reading it in a rendered branch is an error. References beyond the configured
+  window, or without an iteration scope, are errors even in guards.
+- History-frame section guards test presence, independent of empty/false/zero
+  output values. Existing template section scoping applies: render the current
+  `_` outside a history-frame section; use qualified `_k.field` inside it.
+- Until evaluates normally with the available history. Guard comparisons that
+  need more frames and return false during warm-up, as above. Conditions based
+  only on current values can still terminate immediately.
 - History stays fixed throughout an iteration, including `until`.
 - Order: execute body -> evaluate until against current locals and prior frames ->
   save the successful frame -> stop or continue.
 - Save ordinary frame values once per completed iteration, including unchanged
   values. Failed iterations add nothing; retries preserve one entry per iteration.
+- Snapshots retain types and provenance, exclude runtime variables, and remain
+  immutable. Compaction refreshes live thread variables, not saved frame values.
 - Nested iterations replace the history family and restore it on exit. Resolve
   history exclusively within the active iteration scope; concurrent runs are isolated.
 - Runtime history references are reserved, read-only execution values.
@@ -106,21 +154,38 @@ settle:
 | `_n` | Ordered recent messages with roles/content; empty array when absent |
 | `_h` | Combined messages: summary followed by recent messages |
 
-Proposed root/child policy:
+Read history:
 
 | Execution | History behavior |
 | --- | --- |
-| Root agic | Prepare history variables; automatically include messages selected by recall |
-| Child agic | Inherit variables; select history through templates; accumulate its own model/tool conversation |
-| Root flow | Prepare history variables; descendant agics follow the child rule |
-| Child flow | Inherit variables; descendants follow the child rule |
+| Root agic | Use runtime history variables; automatically include messages selected by recall |
+| Child agic | Use runtime history variables explicitly; accumulate its own model/tool conversation |
+| Root flow | Use runtime history variables; descendant agics follow the child rule |
+| Child flow | Use runtime history variables; descendants follow the child rule |
 
 - Root execution establishes the shared historical boundary. Recall controls
   automatic message inclusion independently of variable availability.
-- Flow Content and until can read `_f`, `_n`, and `_h`.
+- Flow Content and until can read `_f`, `_n`, and `_h`. The runtime supplies them
+  from one shared history version across the active root and its descendants.
+- Successful compaction atomically publishes a new version. Subsequent model
+  calls and flow frame evaluations acquire that version; automatic recall,
+  `_f`, `_n`, and `_h` within one evaluation all use the same version.
+- In-flight evaluations keep their acquired version. Record the selected version
+  for replay; failed compaction leaves the previous version active.
 - Pass current execution progress through `_`, named arguments, or iteration
-  frames; the thread-history snapshot stays separate from current activity.
+  frames. Compaction changes the representation of prior thread history; it does
+  not publish the active run's intermediate work into that history.
 - Nested iterations retain the thread-history context while replacing `_1` etc.
+
+Contribute history:
+
+- Only root runnables contribute a thread-history exchange. Root agics preserve
+  their existing model/tool exchange and terminal reply behavior.
+- Proposed root flow policy: retain the entry `_` as a user message when present,
+  followed by the final output as an assistant message. Keep existing control
+  and failure/cancellation handling; do not manufacture a successful output.
+- Child transcripts and intermediate flow frames remain execution records;
+  they do not become independent thread-history exchanges.
 
 ## 7. Configure Execution
 
@@ -141,14 +206,25 @@ Proposed root/child policy:
 - Validate signatures, arguments, types/shapes, operation contracts, configuration,
   counts, lanes, and runtime availability; report known failures before model calls.
 - Acceptance coverage: defaults, adhoc inference, use-site compatibility, empty
-  inputs, lane precedence, initializer timing, and history scope/isolation.
+  inputs, lane precedence, initializer timing, and history scope/isolation;
+  both window defaults/overrides, eviction, warm-up guards with empty/false/zero
+  values, retry/resume, nested scopes, and compaction during concurrent calls.
 - Update affected examples and prepared caches for changed contracts.
+- Use `_f`, `_n`, `_h`, and numbered history variables as the runtime names.
+  Remove the old runtime bindings; provide no compatibility aliases. Reserve
+  runtime names against user bindings and exclude them from signature inference.
+  Migrate runtime uses of bare `far`/`near` and settle's `item` without rewriting
+  unrelated user-defined names.
 - Documentation check: `git diff --check`. Implementation: repository default checks.
+- Touchpoints: `src/toolang/lang/{ast,lower,input,format,validate}.py`, template
+  runtime-variable resolution, execution
+  `executor/stmts/{repeat,settle}.py`, runnable frames, `assembly/{history,prompting}.py`,
+  and store projections. Main risks: contract migration, frame retention, and
+  mixing history versions during concurrent evaluation.
 
 ## 9. Open Decisions
 
-- Final runtime spellings and migration of bare far/near references.
-- Root-only automatic recall and history behavior across compaction updates.
-- The named-reducer form when supplying `from:`.
-- Repeat history window N, its configuration, and insufficient-history checks.
+- Confirm the root flow input-plus-final-output history policy.
+- Confirm shared `with window N` (default 3), frame-valued `_k`, and guarded
+  warm-up behavior. The proposal treats `from` as one seed, not prefilled history.
 - Caps-key migration and removal of existing flow resource directives.
