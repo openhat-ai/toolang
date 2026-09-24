@@ -96,7 +96,7 @@ settle using merge:
 
 ## 5. Retain Iteration History
 
-Proposed retention and shared-frame rules:
+Proposed retention and entry/exit snapshot rules:
 
 ```too
 repeat 10 times holding 3:
@@ -109,10 +109,6 @@ repeat 10 times holding 3:
     {{^_2}}
     Return false.
     {{/_2}}
-
-settle using merge:
-  from:
-    Initial report.
 ```
 
 - Repeat accepts optional `holding N`, default 3; N is a positive integer.
@@ -125,11 +121,29 @@ settle using merge:
   resolved templates, including section guards and authored instruct/context.
   Keep it separate from the parameter/output signature. Do not scan callees or
   settle's `from`, whose history references belong to the surrounding scope.
-- `_1`, `_2`, ... are frame snapshots, nearest first, for both operations.
-  `_1._` reads the previous output; repeat also exposes `_1.report` etc.
-- Settle frames contain the cumulative output as `_`, of type T. `from` supplies
-  one seed frame, not a list of frames, even when T is an array. After the first
-  call, `_1._` is the new output and `_2._` is the seed, subject to window capacity.
+- `_1`, `_2`, ... select historical frames, nearest first. Each completed frame
+  contains entry and exit snapshots; the pair occupies one window slot.
+
+| Reference | Snapshot value |
+| --- | --- |
+| `_k.name` | Local `name` at that iteration's end |
+| `_k.$name` | Local `name` at that iteration's entry |
+| `_k._` | Primary output at that iteration's end |
+| `_k.$_` | Primary value at that iteration's entry |
+
+- Repeat captures entry locals before its first statement. Current locals update
+  after each statement; history remains fixed throughout the body and `until`.
+- Settle captures entry locals after binding the current element as `_`, before
+  invoking the reducer. Its exit snapshot replaces `_` with the cumulative
+  output of type T; reducer-private state is excluded.
+- Settle's seed has an exit `_` only, with no entry snapshot. `from` supplies one
+  seed even when T is an array. After the first call, `_1.$_` is the processed
+  element, `_1._` is the result, and `_2._` is the seed if retained.
+- `$` selects entry state only on the local-name segment after `_k`; nested
+  access such as `_2.$report.title` follows that value. Both entry and exit
+  references contribute the same history index to retention inference.
+- Missing bindings remain absent: a local first created during a round has no
+  entry value. Direct reads fail; do not substitute exit values or outer locals.
 - Repeat starts with no prior frames; settle starts with its single seed frame.
   Keep only actual entries; never pad by repeating a seed/output or inventing values.
 - An absent `_k` within the window can be guarded with a template section;
@@ -141,11 +155,11 @@ settle using merge:
 - Until evaluates normally with the available history. Guard comparisons that
   need more frames and return false during warm-up, as above. Conditions based
   only on current values can still terminate immediately.
-- History stays fixed throughout an iteration, including `until`.
-- Order: execute body -> evaluate until against current locals and prior frames ->
-  save the successful frame -> stop or continue.
-- Save ordinary frame values once per completed iteration, including unchanged
-  values. Failed iterations add nothing; retries preserve one entry per iteration.
+- Repeat order: capture entry -> execute body -> evaluate until against current
+  locals and prior frames -> save entry/exit snapshots -> stop or continue.
+  Settle saves the pair after a successful reducer call.
+- Save unchanged values too. Failed iterations add nothing; retries preserve one
+  entry/exit pair per completed iteration.
 - Snapshots retain types and provenance, exclude runtime variables, and remain
   immutable. Compaction refreshes live thread variables, not saved frame values.
 - Nested iterations replace the history family and restore it on exit. Resolve
@@ -214,9 +228,12 @@ Contribute history:
 - Acceptance coverage: defaults, adhoc inference, use-site compatibility, empty
   inputs, lane precedence, initializer timing, and history scope/isolation;
   repeat retention defaults/overrides, settle's local depth inference (including
-  guarded references and excluding the initializer), eviction, warm-up with empty/false/zero
+  guarded references and excluding the initializer), entry/exit values, locals
+  created mid-round, seed entry absence, eviction, warm-up with empty/false/zero
   values, retry/resume, nested scopes, and compaction during concurrent calls.
 - Update affected examples and prepared caches for changed contracts.
+- Extend template path validation and reference discovery for `_k.$name`; the
+  current validator rejects it. Keep `$name` invalid in other template paths.
 - Use `_f`, `_n`, `_h`, and numbered history variables as the runtime names.
   Remove the old runtime bindings; provide no compatibility aliases. Reserve
   runtime names against user bindings and exclude them from signature inference.
@@ -233,8 +250,8 @@ Contribute history:
 
 - Confirm the root flow input-plus-final-output history policy.
 - Confirm repeat's `holding N` (default 3), inferred settle retention for agic
-  reducers, frame-valued `_k`, and guarded warm-up behavior. The proposal treats
-  `from` as one seed, not prefilled history.
+  reducers, `_k.name` / `_k.$name` exit/entry snapshots, and guarded warm-up
+  behavior. The proposal treats `from` as one seed, not prefilled history.
 - Define settle retention for flow reducers and indirect/dynamic history
   dependencies; local agic inference does not determine callee requirements.
 - Caps-key migration and removal of existing flow resource directives.
