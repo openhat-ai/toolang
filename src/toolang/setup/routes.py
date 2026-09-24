@@ -21,20 +21,22 @@ from toolang.base.types.model import (
 from toolang.base.types.model import ModelProvider
 
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
+_APP_ATTRIBUTION_URL = "https://toolang.ai"
+_APP_ATTRIBUTION_TITLE = "Toolang"
 
 # Toolang-owned provider conventions: agent-side data keyed by provider id.
 PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
     "openrouter": {
         "headers": {
-            "HTTP-Referer": "https://toolang.ai",
-            "X-OpenRouter-Title": "Toolang",
+            "HTTP-Referer": _APP_ATTRIBUTION_URL,
+            "X-OpenRouter-Title": _APP_ATTRIBUTION_TITLE,
             "X-OpenRouter-Categories": "cli-agent,personal-agent",
         },
     },
     "vercel": {
         "headers": {
-            "http-referer": "https://toolang.ai",
-            "x-title": "Toolang",
+            "http-referer": _APP_ATTRIBUTION_URL,
+            "x-title": _APP_ATTRIBUTION_TITLE,
         },
     },
 }
