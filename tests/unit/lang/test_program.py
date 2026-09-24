@@ -252,27 +252,29 @@ def test_cap_property_like_lines_remain_literal_after_the_body_starts() -> None:
     assert prompt.body == "Start body.\nparams = literal text"
 
 
-def test_parameters_distinguish_implicit_empty_and_explicit_input() -> None:
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_parameters_distinguish_implicit_empty_and_explicit_input(kind: str) -> None:
     program = Program.from_source(
-        """
-agic implicit:
+        f"""
+{kind} implicit:
   Hello.
 
-agic empty():
+{kind} empty():
   Hello.
 
-agic explicit(_):
+{kind} explicit(_):
   Hello.
 
-agic args(name: Text, detail?):
+{kind} args(name: Text, detail?):
   Hello.
 
-agic custom(_: Json, detail: Text):
+{kind} custom(_: Json, detail: Text):
   Hello.
 """
     )
 
-    implicit, empty, explicit, args, custom = program.agics
+    declarations = program.agics if kind == "agic" else program.flows
+    implicit, empty, explicit, args, custom = declarations
     assert implicit.input is not None
     assert (implicit.input.name, implicit.input.type_name) == ("_", "Part[]")
     assert empty.input is None and empty.params == ()
@@ -287,7 +289,7 @@ agic custom(_: Json, detail: Text):
     assert [(item.name, item.type_name) for item in custom.params] == [
         ("detail", "Text")
     ]
-    assert [agic.output for agic in program.agics] == ["Text"] * 5
+    assert [declaration.output for declaration in declarations] == ["Text"] * 5
 
 
 def test_flow_materializes_named_parameter_and_output_defaults() -> None:
