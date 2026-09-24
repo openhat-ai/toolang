@@ -1134,3 +1134,34 @@ def test_read_failure_is_not_a_removal(tmp_path: Path, monkeypatch):
             assert not _recalls(harness, run)
 
     asyncio.run(scenario())
+
+
+def test_child_pick_delivers_guidance_recalled_by_a_previous_root(tmp_path: Path):
+    harness, _ = _harness(
+        tmp_path,
+        [_calls(_pick()), _answer(), _calls(_pick()), _answer()],
+        source=SOURCE + "\nflow parent():\n  run chat\n",
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            prior = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="chat")
+            )
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="parent")
+            )
+            assert prior.status == root.status == "succeeded"
+            child = next(
+                run
+                for run in harness.store.list_run_tree(root_run_id=root.id)
+                if run.parent is not None
+            )
+            assert len(_recalls(harness, child)) == 1
+            assert escape(GUIDANCE, quote=False) in "\n".join(
+                message_text(message.parts)
+                for message in harness.adapter.invocations[-1].call.messages
+            )
+
+    asyncio.run(scenario())

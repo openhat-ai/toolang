@@ -82,6 +82,7 @@ def _runtime_template(
 ) -> tuple[str, Callable[..., Any]]:
     """Check reserved names statically; resolve history only in rendered branches."""
     aliases: dict[str, tuple[str, bool]] = {}
+    authored_names = set(template_root_names(template))
     replacements: list[tuple[int, int, str]] = []
     sections: list[tuple[str | None, bool]] = []
     for match in _REFERENCE_TAG_RE.finditer(template):
@@ -110,6 +111,8 @@ def _runtime_template(
         alias = None
         if (historic and sigil in {"#", "^"}) or (runtime and not sigil):
             alias = f"__toolang_runtime_{len(aliases)}"
+            while alias in authored_names:
+                alias += "_"
             aliases[alias] = (name, bool(sigil))
             replacements.append(
                 (match.start(), match.end(), "{{" + sigil + alias + "}}")

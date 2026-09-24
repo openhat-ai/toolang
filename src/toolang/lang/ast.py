@@ -454,7 +454,9 @@ def _mask_query_hashes(source: bytes) -> bytes:
     """Mask query-data hashes while preserving byte offsets for the CST."""
 
     source = re.sub(
-        rb"\{\{[ \t]*#(?=[A-Za-z_])", lambda match: match[0].replace(b"#", b"x"), source
+        rb"\{\{[ \t]*#",
+        lambda match: match[0].replace(b"#", b"x"),
+        source,
     )
     lines: list[bytes] = []
     for line in source.splitlines(keepends=True):

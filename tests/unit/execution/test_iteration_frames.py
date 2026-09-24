@@ -119,3 +119,13 @@ def test_history_reads_follow_actual_mustache_branches():
             render_text_template(
                 "{{#items}}{{#enabled}}{{_1._}}{{/enabled}}{{/items}}", values
             )
+
+
+def test_runtime_template_aliases_do_not_shadow_data_fields():
+    assert (
+        render_text_template(
+            "{{#record}}{{__toolang_runtime_0}}{{/record}} {{_1._}}",
+            {"record": {"__toolang_runtime_0": "data"}, "_1": {"_": "history"}},
+        )
+        == "data history"
+    )

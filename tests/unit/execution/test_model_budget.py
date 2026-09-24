@@ -109,7 +109,7 @@ def test_reported_context_overflow_is_rejected_before_dispatch(calibrated) -> No
         estimate.observe(request, _estimate_binding(frame), 665128)
     state = cast(_AgicState, SimpleNamespace(estimate=estimate, execution=None))
     with pytest.raises(Exception, match="input exceeds"):
-        _boundary(state, frame, request)
+        _boundary(state, frame, request, ())
     assert request.max_output_tokens == 384000
 
 
@@ -194,10 +194,10 @@ def test_exact_budget_fits_but_one_more_token_requires_action() -> None:
         run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
         recall=("near",),
     )
-    assert _boundary(state, cast(_AgicFrame, frame), request) is None
+    assert _boundary(state, cast(_AgicFrame, frame), request, ()) is None
     frame.input_budget -= 1
     with pytest.raises(Exception, match="input exceeds"):
-        _boundary(state, cast(_AgicFrame, frame), request)
+        _boundary(state, cast(_AgicFrame, frame), request, ())
 
 
 def test_missing_provider_usage_reuses_estimated_prefix(monkeypatch) -> None:
@@ -265,7 +265,7 @@ def test_continuation_update_keeps_measured_prefix_in_admission():
     )
     state = cast(_AgicState, SimpleNamespace(estimate=estimate, execution=None))
     with pytest.raises(ToolangError, match="input exceeds"):
-        _boundary(state, frame, next_call)
+        _boundary(state, frame, next_call, ())
     assert estimate.count(
         next_call, _estimate_binding(frame)
     ) >= 600000 + message_tokens(added)

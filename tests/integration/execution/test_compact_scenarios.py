@@ -1094,3 +1094,81 @@ def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
                 assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
+
+
+def test_child_fixed_input_does_not_compact_unused_root_history(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE + "\nflow parent:\n  run chat\n",
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            harness.adapter._responses.extend(compact_responses(thread, end))
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="parent",
+                    primary=(TextPart("fixed " * 30000),),
+                )
+            )
+            assert root.status == "failed"
+            assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
+            assert len(harness.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("layer", ["user", "context", "instruct"])
+@pytest.mark.parametrize("root", ["reader", "parent"])
+def test_compact_budget_rerenders_explicit_history_in_all_prompt_layers(
+    tmp_path, layer, root
+):
+    source = (
+        SOURCE
+        + f"""
+agic reader() -> Text:
+  context: none
+  instruct: none
+  {layer}: History: {{{{_past}}}}
+flow parent() -> Text:
+  run reader
+"""
+    )
+    # Each setting can appear only once; the selected layer contains history.
+    source = source.replace(f"  {layer}: none\n  {layer}:", f"  {layer}:")
+    if layer == "context":
+        source = source.replace(
+            "  context: none\n  instruct: none\n  context:",
+            "  instruct: none\n  context:",
+        )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            harness.adapter._responses.extend(
+                [*compact_responses(thread, end), reply("done")]
+            )
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable=root)
+            )
+            assert run.status == "succeeded", (
+                harness.store.resolve_error(run.error) if run.error else None
+            )
+            assert len(harness.adapter.invocations) == 5
+            final = harness.adapter.invocations[-1].call
+            rendered = final.instructions + "\n".join(
+                message_text(message.parts) for message in final.messages
+            )
+            assert "old old" not in rendered
+            assert "Earlier facts." in rendered
+            assert "recent" in rendered
+
+    asyncio.run(scenario())

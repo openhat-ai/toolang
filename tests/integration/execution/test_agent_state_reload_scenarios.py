@@ -592,3 +592,68 @@ def test_revoked_reload_releases_its_retained_state(tmp_path: Path) -> None:
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("layer", ["message", "context"])
+@pytest.mark.parametrize("initial_depth,updated_depth", [(0, 2), (2, 0)])
+def test_until_reload_uses_the_current_condition_history_requirement(
+    tmp_path: Path, layer: str, initial_depth: int, updated_depth: int
+) -> None:
+    def condition(depth: int) -> str:
+        return f"Compare {{{{_{depth}._}}}}." if depth else "Return true."
+
+    source = f"""
+context:
+  {condition(initial_depth) if layer == "context" else "Condition context."}
+agic worker:
+  instruct: none
+  context: none
+  user: Work.
+flow parent:
+  repeat 3 times:
+    run worker
+    until: {condition(initial_depth) if layer == "message" else "Return true."}
+"""
+    replacement = source.replace(condition(initial_depth), condition(updated_depth), 1)
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=(
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("round 1")),
+                gate=first_call,
+            ),
+            *(
+                ModelCallResult(message=Message.assistant(f"round {index + 2}"))
+                for index in range(updated_depth)
+            ),
+            ModelCallResult(message=Message.assistant("true")),
+        ),
+    )
+    reloaded = _durable_state(harness, replacement)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=Message.user("seed").parts,
+                )
+            )
+            await first_call.wait_until_entered()
+            control = handle.reload(reloaded)
+            await _wait_until_applied(harness, handle.run_id, control.index)
+            first_call.release()
+            root = await handle
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            assert len(harness.adapter.invocations) == updated_depth + 2
+            assert harness.store.run_output_text(run_id=root.id) == (
+                f"round {updated_depth + 1}"
+            )
+
+    asyncio.run(scenario())

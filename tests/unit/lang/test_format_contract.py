@@ -473,3 +473,16 @@ def test_new_documentation_conventions_preserve_parameter_bindings(module_marker
     assert "agic rewrite(_, instruction?):" in formatted
     assert _semantics(formatted) == _semantics(source)
     assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize(
+    "section", ["{{# _1 }}{{_1._}}{{/ _1 }}", "{{#.}}present{{/.}}"]
+)
+def test_template_sections_survive_lowering_and_formatting(section: str) -> None:
+    body = "{{_}} " + section
+    source = f"flow main:\n  repeat 2 times:\n    run: {body}\n"
+    program = Program.from_source(source)
+    assert program.agics[0].messages[0].content == body
+    formatted = format_source(source)
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted) == formatted

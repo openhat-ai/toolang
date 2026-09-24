@@ -1775,8 +1775,10 @@ class _Execution:
         step: StepRef,
         name: str,
         locals: Mapping[str, Local],
+        *,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> AgicDecl | FlowDecl:
-        state, _ = self.state_for_step(step)
+        state, _ = state_snapshot or self.state_for_step(step)
         ref, kind = parse_runnable_ref(name)
         _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)
         self._validate_child_contract(step, name, runnable)
@@ -1790,9 +1792,14 @@ class _Execution:
         return runnable
 
     def condition_templates(
-        self, binding: BoundRun, step: StepRef, name: str
+        self,
+        binding: BoundRun,
+        step: StepRef,
+        name: str,
+        *,
+        state_snapshot: tuple[AgentState, ControlRef],
     ) -> tuple[str, ...]:
-        state, state_ref = self.state_for_step(step)
+        state, state_ref = state_snapshot
         parent = self.current_binding(binding, state, state_ref)
         ref, kind = parse_runnable_ref(name)
         _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)

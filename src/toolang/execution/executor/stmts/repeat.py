@@ -42,7 +42,12 @@ async def execute(
         if statement.runnable is not None:
             with iteration_scope(scope):
                 history_available(
-                    execution.condition_templates(binding, path, statement.runnable)
+                    execution.condition_templates(
+                        binding,
+                        path,
+                        statement.runnable,
+                        state_snapshot=execution.state_snapshot(),
+                    )
                 )
         while statement.count is None or iteration < statement.count:
             entry = snapshot(locals)
@@ -61,11 +66,19 @@ async def execute(
                     ),
                 )
                 if statement.runnable is not None:
+                    state_snapshot = execution.state_snapshot()
                     templates = execution.condition_templates(
-                        binding, path, statement.runnable
+                        binding,
+                        path,
+                        statement.runnable,
+                        state_snapshot=state_snapshot,
                     )
                     execution.validate_child_inputs(
-                        binding, path, statement.runnable, locals
+                        binding,
+                        path,
+                        statement.runnable,
+                        locals,
+                        state_snapshot=state_snapshot,
                     )
                     if history_available(templates):
                         condition = await execution.execute_child(
@@ -81,6 +94,7 @@ async def execute(
                                 )
                             ),
                             output_binding=None,
+                            state_snapshot=state_snapshot,
                         )
                         satisfied = boolean(condition.value, operation="until")
             frame = IterationFrame(entry, snapshot(locals))
