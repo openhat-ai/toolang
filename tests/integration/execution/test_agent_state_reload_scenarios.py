@@ -16,8 +16,8 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.message import Message, message_text
+from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor.common import BoundRun, Local
@@ -102,6 +102,246 @@ async def _wait_until_applied(
             await asyncio.sleep(0)
 
     await asyncio.wait_for(wait(), timeout=1)
+
+
+@pytest.mark.parametrize(
+    "depth,before,after,override",
+    [
+        (0, "none", "near", None),
+        (1, "none", "near", None),
+        (3, "none", "near", None),
+        (3, "near", "none", None),
+        (3, "none", "near", "none"),
+        (3, "none", "near", "near"),
+    ],
+)
+def test_reload_refreshes_inherited_recall_through_active_flows(
+    tmp_path: Path, depth: int, before: str, after: str, override: str | None
+) -> None:
+    source = """
+agic seed():
+  Previous exchange.
+agic worker:
+  context: none
+  instruct: none
+  user: History={{_past}}.
+"""
+    for index in range(depth):
+        source += f"flow nested{index}:\n"
+        if index == depth - 1 and override is not None:
+            source += f"  recall = {override}\n"
+        source += (
+            f"  run nested{index + 1}\n"
+            if index + 1 < depth
+            else "  run worker\n  run worker\n"
+        )
+    source += f"flow parent:\n  recall = {before}\n"
+    source += "  run nested0\n" if depth else "  run worker\n  run worker\n"
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=(
+            ModelCallResult(message=Message.assistant("Previous result")),
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("first")),
+                gate=first_call,
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+        ),
+    )
+    reloaded = _durable_state(
+        harness,
+        source.replace(
+            f"flow parent:\n  recall = {before}",
+            f"flow parent:\n  recall = {after}",
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            seed = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:seed")
+            )
+            assert seed.status == "succeeded", seed.error
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=Message.user("start").parts,
+                )
+            )
+            await first_call.wait_until_entered()
+            control = handle.reload(reloaded, request_id="reload-inherited-recall")
+            await _wait_until_applied(harness, handle.run_id, control.index)
+            first_call.release()
+            root = await handle
+
+            assert root.status == "succeeded", root.error
+            for invocation, recall in zip(
+                harness.adapter.invocations[1:],
+                (override or before, override or after),
+                strict=True,
+            ):
+                text = message_text(invocation.call.messages[-1].parts)
+                assert ("Previous result" in text) == (recall == "near"), text
+                assert ("History=[]." in text) == (recall == "none"), text
+
+    asyncio.run(scenario())
+
+
+def test_reload_preserves_execute_configuration_for_nested_descendants(
+    tmp_path: Path,
+) -> None:
+    source = """
+agic seed():
+  Previous exchange.
+agic worker:
+  context: none
+  user: History={{_past}}.
+flow target:
+  run worker
+  run worker
+agic delegate:
+  recall = near
+  handoffs = flow:target
+  context: none
+  instruct: Transferred instruction.
+  user: Delegate.
+flow parent:
+  recall = none
+  run delegate
+"""
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=(
+            ModelCallResult(message=Message.assistant("Previous result")),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="handoff",
+                        call_id="provider-handoff",
+                        name="_toolang__execute",
+                        input={"runnable": "flow:target", "input": {"_": "work"}},
+                    ),
+                ),
+            ),
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("first")),
+                gate=first_call,
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+        ),
+    )
+    reloaded = _durable_state(harness, source.replace("recall = none", "recall = far"))
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            seed = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:seed")
+            )
+            assert seed.status == "succeeded", seed.error
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=Message.user("start").parts,
+                )
+            )
+            await first_call.wait_until_entered()
+            control = handle.reload(reloaded, request_id="reload-execute-defaults")
+            await _wait_until_applied(harness, handle.run_id, control.index)
+            first_call.release()
+            root = await handle
+
+            assert root.status == "succeeded", root.error
+            workers = harness.adapter.invocations[2:]
+            assert len(workers) == 2
+            for invocation in workers:
+                assert "Previous result" in message_text(
+                    invocation.call.messages[-1].parts
+                )
+                assert "Transferred instruction." in invocation.call.instructions
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_reload_refreshes_inherited_prompts_through_a_public_flow_call(
+    tmp_path: Path, override: bool
+) -> None:
+    source = "agic worker:\n"
+    if override:
+        source += "  instruct: Worker instruction.\n  context: Worker context.\n"
+    source += """
+  user: Work.
+flow middle:
+  run worker
+  run worker
+agic parent:
+  recall = none
+  hands = flow:middle
+  instruct: Old instruction.
+  context: Old context.
+  user: Delegate.
+"""
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="delegate",
+                        call_id="provider-delegate",
+                        name="_toolang__run",
+                        input={"runnable": "flow:middle", "input": {"_": "work"}},
+                    ),
+                ),
+            ),
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("first")),
+                gate=first_call,
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+            ModelCallResult(message=Message.assistant("done")),
+        ),
+    )
+    reloaded = _durable_state(harness, source.replace("Old", "New"))
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=Message.user("start").parts,
+                )
+            )
+            await first_call.wait_until_entered()
+            control = handle.reload(reloaded, request_id="reload-inherited-prompts")
+            await _wait_until_applied(harness, handle.run_id, control.index)
+            first_call.release()
+            root = await handle
+
+            assert root.status == "succeeded", root.error
+            for invocation, prefix in zip(
+                harness.adapter.invocations[1:3],
+                ("Worker", "Worker") if override else ("Old", "New"),
+                strict=True,
+            ):
+                assert f"{prefix} instruction." in invocation.call.instructions
+                assert f"{prefix} context." in message_text(
+                    invocation.call.messages[-1].parts
+                )
+
+    asyncio.run(scenario())
 
 
 def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(

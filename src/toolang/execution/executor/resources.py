@@ -202,15 +202,9 @@ def resolve_runnable_resources(
 ) -> AgentResources:
     """Apply one runnable's authored queries within a chosen resource base."""
 
-    model_directives = _directives(runnable, "models")
-    if model_directives:
-        if not base.models:
-            raise ToolangError("run resources include no models")
-        models = selection.subset(base.models).apply(
-            _query_operations(model_directives)
-        )
-    else:
-        models = selection.subset(base.models)
+    models = selection.subset(base.models).apply(
+        _query_operations(_directives(runnable, "models"))
+    )
 
     available_tools = _resource_tool_collection(setup, base)
     selected_tools = available_tools.apply(

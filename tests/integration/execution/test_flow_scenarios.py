@@ -26,8 +26,9 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.common.errors import ToolangError
 from toolang.execution.events import RunBegin, RunEnd
-from toolang.execution.executor import RunExecutor, RunLimits
+from toolang.execution.executor import AgentCeiling, RunExecutor, RunLimits
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RetryControlPayload,
@@ -248,6 +249,84 @@ flow passthrough(_: Text) -> Text:
             retry = harness.store.list_run_controls(run_id=root.id)[-1]
             assert isinstance(retry.payload, RetryControlPayload)
             assert retry.payload.model_request is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operator", ["=", "-=", "+="])
+@pytest.mark.parametrize("query", ["*", "test/scripted"])
+def test_model_free_flows_can_select_an_inherited_empty_model_set(
+    tmp_path: Path, operator: str, query: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+flow child(_: Text) -> Text:
+  models {operator} {query}
+  let note = child
+flow parent(_: Text) -> Text:
+  models -= *
+  run child
+""",
+        responses=[],
+    )
+    harness.setup = replace(harness.setup, defaults=RunDefaults())
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+            assert root.status == "succeeded", root.error
+            assert harness.store.run_output_text(run_id=root.id) == "hello"
+            assert not harness.adapter.invocations
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            assert len(runs) == 2
+            for run in runs:
+                control = harness.store.get_run_control(run_id=run.id, index=0)
+                assert control is not None
+                assert isinstance(control.payload, RunControlPayload)
+                assert control.payload.resources.models == ()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operator", ["=", "-=", "+="])
+@pytest.mark.parametrize("query", ["*", "test/scripted"])
+def test_empty_model_selection_still_rejects_an_unavailable_model_binding(
+    tmp_path: Path, operator: str, query: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+flow parent(_: Text) -> Text:
+  models {operator} {query}
+  let note = parent
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            with pytest.raises(
+                ToolangError, match="model ref is outside run resources: test/scripted"
+            ):
+                harness.executor.run(
+                    harness.run_spec(
+                        thread=thread,
+                        runnable="flow:parent",
+                        primary=resolve_input_parts("hello"),
+                        ceilings=(AgentCeiling(models=()),),
+                    )
+                )
+            assert not harness.store.list_runs(thread_id=thread, limit=None)
+            assert not harness.adapter.invocations
 
     asyncio.run(scenario())
 

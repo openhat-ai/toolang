@@ -1860,6 +1860,10 @@ class _Execution:
                 refreshed_parent = self.refresh_run_binding(
                     parent, state, state_ref, current_parent, module=parent.module
                 )
+                # Child entry control 0 inherits its caller. Execute replacements
+                # retain the outgoing runnable's captured defaults instead.
+                if binding.control_index == 0:
+                    settings_base = refreshed_parent.settings
                 if parent_resources is None:
                     parent_resources = refreshed_parent.resources
                 elif refreshed_parent.resources is not None:
