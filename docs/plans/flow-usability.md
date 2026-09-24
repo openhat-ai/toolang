@@ -160,8 +160,8 @@ repeat 5 times windowing 3:
 - Only root agics automatically include messages selected by recall. Child agics
   choose whether to reference the supplied variables and keep their own model/tool
   conversation. Nested loops preserve thread context while replacing iteration history.
-- Proposed recall view: runtime derives `_far/_near/_past` from each runnable's
-  effective recall and the root snapshot. All three bindings remain present;
+- Runtime derives `_far/_near/_past` from each runnable's effective recall and
+  the root snapshot. All three bindings remain present;
   excluded sources become typed empty values. `_past` always combines the
   selected `_far` and `_near`.
 
@@ -189,9 +189,16 @@ repeat 5 times windowing 3:
 
 ## 7. Configure Execution
 
-- Agic and flow configuration: models, tools, psyches, skills, services, prompts,
-  hands, handoffs, recall, instruct, context, lanes. Keep the four capability-kind
-  selectors and their independent operations.
+- Agics and flows share the same directives and inheritance rules across calls
+  in either direction. Omission inherits the direct parent's effective setting.
+
+| Class | Directives | Explicit child setting |
+| --- | --- | --- |
+| Resource selection | models, tools, psyches, skills, services, prompts | May narrow; cannot exceed the parent's effective resources |
+| Configuration | hands, handoffs, recall, instruct, context, lanes | May override the inherited setting |
+
+- Keep capability-kind selections independent. Configuration overrides are local
+  to the runnable and its descendants; parents and siblings remain unchanged.
 - `lanes` and `recall`: omission inherits the direct parent's effective value;
   explicit configuration overrides it. Root defaults are lanes 4 and recall auto.
   Explicit recall auto selects both sources, even under a narrower parent policy.
@@ -203,8 +210,6 @@ repeat 5 times windowing 3:
   runnable's value. Statement overrides affect only that operation, not the
   default passed to its children. Limits are per operation, not a shared subtree
   budget; settle is sequential. Repeat windows remain local to each loop.
-
-Proposed inheritance, pending confirmation:
 
 - Resource selectors (`models`, `tools`, and the four capability kinds): root
   base is the agent's allowed resources; child base is its immediate parent's
@@ -227,17 +232,21 @@ Proposed inheritance, pending confirmation:
   delegation nor transfer expands resource sets; existing recursion checks remain.
 - `instruct:` / `context:` keep their forms. Omission inherits; an explicit value
   replaces the inherited setting, `none` disables it, and `default` selects the
-  runnable's own module default. Only authored settings propagate; without one,
-  use the receiving agic's existing defaults. Bind template references in the
-  declaring module, then render in the child's frame; do not concatenate settings
-  or implicitly capture parent locals.
-- Flow forwards prompt settings to descendants without rendering model messages
-  itself. Inherited template dependencies are checked at use sites, not added to
+  runnable's own module default. Roots use existing module/built-in defaults.
+  Inherit resolved template references, including defaults, retaining their
+  declaring module; render in the child's frame without concatenating settings
+  or implicitly capturing parent locals.
+- Agics assemble model calls using effective `recall`, `instruct`, and `context`:
+  `instruct` supplies instructions, `context` supplies context messages, and
+  `recall` selects history variables plus automatic history inclusion at root agics.
+  Child agics include history through explicit template references. Flows evaluate
+  their own history variables and pass configuration to descendants without model calls.
+- Inherited template dependencies are checked at use sites, not added to
   declaration signatures.
 - Cost: parents must allow resources needed by their descendants. Calls relying
   on agent-scope resets or additional module-local capabilities need migration.
 
-| Concern | Current implementation | Proposed target |
+| Concern | Current implementation | Target |
 | --- | --- | --- |
 | Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
 | Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Same directive set as agic |
@@ -248,7 +257,7 @@ Proposed inheritance, pending confirmation:
 | Resource operators | `=` intersects; `+=` adds within the chosen base | Keep operators; consistently use the parent base |
 | Hands/handoffs | Each agic selects independently; omission disables routes | Inherit defaults; explicit selection replaces them |
 | Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
-| Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; proposed filtered views; automatic inclusion only at root agic |
+| Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; filtered views; automatic inclusion only at root agic |
 
 ## 8. Validate and Migrate
 
@@ -275,6 +284,8 @@ Proposed inheritance, pending confirmation:
 - Verify route inheritance/replacement/empty selections, worker-to-helper routing,
   prompt inheritance/override/none/default with declaring-module resolution, and
   inherited until templates contributing history depth.
+- Verify identical directive classes across agic-to-flow and flow-to-agic calls,
+  with effective recall/instruct/context used for each agic's model-call assembly.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
@@ -293,7 +304,3 @@ Proposed inheritance, pending confirmation:
 - Define required iteration-history depth for until flows and indirect/dynamic
   dependencies. This concerns `_k`, not the shared thread variables `_far/_near/_past`;
   local agic inference does not determine callee requirements.
-- Confirm the proposed inheritance rules, including parent resource boundaries
-  across public calls/transfers, module-local capability restrictions, overridable
-  route/prompt defaults, and recall-filtered `_far/_near/_past` views from a shared
-  root snapshot.
