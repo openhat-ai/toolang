@@ -101,7 +101,7 @@ agic calculate(_: Text) -> Text:
                 if isinstance(event, StepEnd) and event.kind == "tool"
             )
             assert isinstance(tool_begin.given, ToolStepGiven)
-            assert tool_begin.given.summary == "Executing double 3 ..."
+            assert tool_begin.given.summary == "Executing double 3"
             assert isinstance(tool_end.noted, ToolStepNoted)
             assert tool_end.noted.summary == "Executed double 3"
 
@@ -111,7 +111,7 @@ agic calculate(_: Text) -> Text:
                 if step.ref == tool_begin.step
             )
             assert isinstance(stored_tool.given, ToolStepGiven)
-            assert stored_tool.given.summary == "Executing double 3 ..."
+            assert stored_tool.given.summary == "Executing double 3"
             assert stored_tool.noted == ToolStepNoted(summary="Executed double 3")
 
     asyncio.run(scenario())

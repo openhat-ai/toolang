@@ -4,7 +4,8 @@
 
 Approved on 2026-09-24 for implementation in the same pull request.
 Make active tools as visible as Thinking, remove Thinking's trailing dots,
-and shorten pending steer feedback.
+remove automatically appended progress dots from tool summaries, and shorten
+pending steer feedback.
 Success means active work uses normal intensity, finished tool summaries and
 pending feedback are secondary, and steer counts remain accurate.
 
@@ -39,8 +40,14 @@ Change the model activity fallback from `• Thinking...` to `• Thinking` in
 the shared projection for Chat and Script. Preserve model preview content
 and genuine truncation ellipses; this is a literal status-label change.
 
+Built-in tool summaries and the default executor summary template must not
+append `...` while running. Change summary generation, not rendered strings,
+so authored command/argument punctuation and truncation ellipses remain intact.
+Custom plugin summaries remain plugin-owned; no blanket suffix stripping.
+Cancellation prefixes the running summary without stripping target punctuation.
+
 This includes the command or target, rather than trying to split arbitrary
-plugin summaries into verbs and arguments. Preserve summary wording, markers,
+plugin summaries into verbs and arguments. Preserve action wording, markers,
 one-line truncation, and parallel lane identity styles. Finished tool summaries
 remain dim; existing error diagnostics retain their error styling. Apply this
 through the shared projection used by Chat and Script, not a Chat-only override.
@@ -76,6 +83,15 @@ This supersedes only the aggregate feedback wording and intensity in the older
 
 ## Scope and Likely Files
 
+- `src/toolang/base/utils/tool_descriptions.py` and
+  `src/toolang/execution/executor/steps/tool.py`: stop appending progress dots
+  in built-in and default running summaries.
+- `tests/unit/plugin/test_tool_descriptions.py`,
+  `tests/unit/execution/test_tool_step_summary.py`,
+  `tests/integration/execution/test_event_scenarios.py`, and
+  `tests/integration/execution/test_honor_rules.py`: exact running summaries,
+  persisted wording, and preservation of authored punctuation.
+
 - `src/toolang/cli/common/execution_progress/step_projection.py`: active tool
   tone and the Thinking fallback label; preserve terminal projection.
 - `projector.py` and `state.py` in the same package: distinguish current lane
@@ -96,14 +112,16 @@ This supersedes only the aggregate feedback wording and intensity in the older
 - `docs/execution-presentation.md`: document the revised presentation.
 
 Out of scope: new animations, marker changes, plugin summary parsing, scheduling,
-runtime/API changes, queue layout, and new steering actions.
+runtime execution/API changes, queue layout, and new steering actions.
 
 ## Acceptance Checks
 
 1. Active ordinary/runtime tool markers and full summaries have no dim, bold,
    or added color, matching Thinking intensity in Chat and Script.
    Model activity without preview text reads exactly `• Thinking`; model
-   preview text and width-driven truncation ellipses remain unchanged.
+   preview text and width-driven truncation ellipses remain unchanged. Built-in
+   and fallback running tool summaries have no automatically appended dots;
+   literal dots in commands and target paths remain unchanged.
 2. Completed summaries remain dim even within a live region. Error diagnostics
    and parallel lane identity styling retain their current behavior.
 3. Narrow and wide terminals keep tool summaries on one line; long commands

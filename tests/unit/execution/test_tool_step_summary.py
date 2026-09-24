@@ -66,8 +66,24 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
     assert context.family == "demo"
     assert context.name == "call"
     assert context.args == ("“primary value”", "later")
-    assert _tool_summary(context, "running") == "Executing call “primary value” ..."
+    assert _tool_summary(context, "running") == "Executing call “primary value”"
     assert _tool_summary(context, "canceled") == "Canceled call “primary value”"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("running", "Reading repo:/file..."),
+        ("canceled", "Canceled: Reading repo:/file..."),
+    ],
+)
+def test_tool_summary_preserves_trailing_dots_in_target(status, expected) -> None:
+    call = ToolCall(
+        "tool-1", "call-1", "fs__read", {"path": "workspace://repo/file..."}
+    )
+    context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
+
+    assert _tool_summary(context, status) == expected
 
 
 @pytest.mark.parametrize(

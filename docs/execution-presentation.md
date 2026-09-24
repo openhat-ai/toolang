@@ -326,10 +326,12 @@ overflow, list markers start at the row prefix, and quoted content keeps the
 two cells its `▌ ` bar does not use. Fenced code already fills the width as
 one rectangular Code surface.
 
-Tool activity uses the persisted running description, replaced at completion:
+Tool activity uses the persisted running description, replaced at completion.
+Built-in tool summaries and the default fallback do not append progress dots;
+argument punctuation and width-driven truncation ellipses remain intact:
 
 ```text
-› Searching for “Toolang plugin protocol”...
+› Searching for “Toolang plugin protocol”
 › Searched for “Toolang plugin protocol”
 ```
 
@@ -376,7 +378,7 @@ Progress reads the saved summaries; it never invokes plugins during replay.
 
 The default summary uses the leaf `name` and first supplied argument in
 tool-schema declaration order; it does not repeat the tool family.
-The default running form is `Executing NAME ARG ...`; the succeeded and failed
+The default running form is `Executing NAME ARG`; the succeeded and failed
 forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
 `Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
 sensitive fields. Only failure adds a diagnostic continuation; cancellation
@@ -447,7 +449,7 @@ are truncated rather than wrapped:
 ```text
 • Running · 3 active · 4/18 succeeded
   0 | #4 | • Thinking
-  1 | #5 | › Searching for “agent runtimes”...
+  1 | #5 | › Searching for “agent runtimes”
   2 | #6 | • Source summary prepared
 ```
 

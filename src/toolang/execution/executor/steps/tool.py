@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARGUMENT_PREVIEW_CHARS = 80
 _DEFAULT_TOOL_SUMMARY_TEMPLATES = {
-    "running": "Executing {{name}} {{args.0}} ...",
+    "running": "Executing {{name}} {{args.0}}",
     "succeeded": "Executed {{name}} {{args.0}}",
     "failed": "Failed {{name}} {{args.0}}",
     "canceled": "Canceled {{name}} {{args.0}}",
@@ -662,11 +662,7 @@ def _tool_summary(
             )
             if isinstance(summary, str) and summary.strip():
                 summary = " ".join(summary.split())
-                return (
-                    f"Canceled: {summary.removesuffix('...').rstrip()}"
-                    if status == "canceled"
-                    else summary
-                )
+                return f"Canceled: {summary}" if status == "canceled" else summary
         except Exception:
             # Presentation must not change execution or log potentially secret data.
             _LOGGER.warning("Tool description failed for %s", context.name)

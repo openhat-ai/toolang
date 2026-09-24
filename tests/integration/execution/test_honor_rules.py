@@ -337,7 +337,7 @@ def test_failed_rule_reads_block_the_operation_without_retraction(tmp_path, fail
             (original,) = _results(harness.adapter.invocations[-1].call.messages)
             assert "operation not executed" in original.error
             assert "were just loaded" not in original.error
-            assert honor.given.summary == "Loading rules..."
+            assert honor.given.summary == "Loading rules"
             assert honor.noted.summary == "Failed to load rules"
             assert not _recalls(harness, run)
             assert not (repo / "src/result").exists()

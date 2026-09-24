@@ -16,7 +16,7 @@ def action_summary(
         if result.error is not None
         else succeeded
     )
-    return f"{action} {target}" + ("..." if result is None else "")
+    return f"{action} {target}"
 
 
 def workspace_label(name: str, path: str) -> str:
