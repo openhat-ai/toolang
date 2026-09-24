@@ -321,7 +321,10 @@ def test_failed_attempt_respects_token_accounting_limits(
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_run_time_limit_stops_long_backoff(tmp_path: Path) -> None:
+@pytest.mark.parametrize("steer", [False, True])
+def test_run_time_limit_stops_long_backoff(
+    tmp_path: Path, monkeypatch, steer: bool
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
@@ -332,22 +335,40 @@ def test_run_time_limit_stops_long_backoff(tmp_path: Path) -> None:
     )
     tracer = RecordingRunTracer()
 
+    gate = AsyncGate()
+
+    async def wait(_delay):
+        await gate.wait()
+
+    monkeypatch.setattr(agic, "sleep", wait)
+
     async def scenario() -> None:
         async with harness:
-            run = await asyncio.wait_for(
-                harness.executor.run(
-                    harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
-                        runnable="chat",
-                        limits=RunLimits(time=1),
-                    ),
-                    tracer=tracer,
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    limits=RunLimits(time=1),
                 ),
-                3,
+                tracer=tracer,
             )
-            assert run.status == "failed"
-            assert "Run time limit exceeded" in str(run.error)
-            assert len(harness.adapter.invocations) == 1
-            assert_run_event_integrity(tracer.events)
+            task = asyncio.ensure_future(handle)
+            try:
+                await asyncio.wait_for(gate.wait_until_entered(), 2)
+                if steer:
+                    harness.executor.steer(
+                        run_id=handle.run_id,
+                        message=Message.user("change"),
+                        timing="immediate",
+                    )
+                run = await asyncio.wait_for(asyncio.shield(task), 3)
+                assert run.status == "failed"
+                assert "Run time limit exceeded" in str(run.error)
+                assert len(harness.adapter.invocations) == 1
+                assert_run_event_integrity(tracer.events)
+            finally:
+                if not task.done():
+                    handle.cancel(reason="test cleanup")
+                    await task
 
     asyncio.run(scenario())
