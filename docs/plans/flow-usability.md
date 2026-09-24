@@ -154,17 +154,31 @@ repeat 5 times windowing 3:
 | `_n` | Ordered recent messages with roles/content; empty array when absent |
 | `_h` | Combined messages: summary followed by recent messages |
 
-- The root runtime prepares `_f/_n/_h` for root agics and flows and supplies the
-  same versioned snapshot to all descendants, including flow Content and until.
-  Child agics and flows never assemble thread-history messages independently.
+- The root runtime owns the full versioned thread-history snapshot for root agics
+  and flows. All descendants, including flow Content and until, use that source;
+  child runnables never fetch or assemble thread history independently.
 - Only root agics automatically include messages selected by recall. Child agics
   choose whether to reference the supplied variables and keep their own model/tool
-  conversation. Recall does not restrict variable availability; nested loops
-  preserve thread context while replacing iteration history.
+  conversation. Nested loops preserve thread context while replacing iteration history.
+- Proposed recall view: runtime derives `_f/_n/_h` from each runnable's effective
+  recall and the root snapshot. All three bindings remain present; excluded sources
+  become typed empty values. `_h` always combines the selected `_f` and `_n`.
+
+| Effective recall | `_f` | `_n` | `_h` |
+| --- | --- | --- | --- |
+| `auto` / `far, near` | Summary | Recent messages | Summary followed by recent messages |
+| `far` | Summary | `[]` | Summary message, or `[]` if absent |
+| `near` | `""` | Recent messages | Recent messages |
+| `none` | `""` | `[]` | `[]` |
+
+- Recall is an overridable selection, not a resource ceiling. Derive each view
+  from the full root snapshot, not its parent's filtered view: a child may select
+  `near` under a parent using `none`, without changing root or sibling policies.
+  Missing source history remains empty.
 - Successful compaction atomically publishes a new version for subsequent model
-  calls and flow frame evaluations. Each evaluation's recall and `_f/_n/_h` use
-  one version. In-flight evaluations keep theirs; failed compaction keeps the old
-  version. Record the selected version for replay.
+  calls and flow frame evaluations. Each evaluation's automatic recall and
+  `_f/_n/_h` use one version and one effective policy. In-flight evaluations keep
+  theirs; failed compaction keeps the old version. Record version and policy for replay.
 - Current progress travels through `_`, named arguments, or iteration frames;
   compaction does not add active-run intermediates to prior thread history.
 - Only roots contribute thread exchanges. Root agics keep their existing
@@ -174,15 +188,20 @@ repeat 5 times windowing 3:
 
 ## 7. Configure Execution
 
-- Agic configuration: models, tools, psyches, skills, services, prompts, hands,
-  handoffs, recall, instruct, context.
-- Flow supports the same configuration plus lanes. Keep the four capability-kind
+- Agic and flow configuration: models, tools, psyches, skills, services, prompts,
+  hands, handoffs, recall, instruct, context, lanes. Keep the four capability-kind
   selectors and their independent operations.
-- Lane precedence: statement clause > enclosing flow directive > built-in 4.
-- `lanes = N`: one positive integer per flow; statement lane clauses are optional.
+- `lanes` and `recall`: omission inherits the direct parent's effective value;
+  explicit configuration overrides it. Root defaults are lanes 4 and recall auto.
+  Explicit recall auto selects both sources, even under a narrower parent policy.
+- Lane precedence: statement clause > current runnable directive > inherited
+  value > built-in 4. Allow at most one `lanes = N` per runnable; N must be a
+  positive integer. Children may override with a larger value.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
-  Repeat bodies use their enclosing flow's setting; named flows use their own.
-  Settle runs sequentially.
+  Agics supply the default for descendants; repeat bodies use the enclosing
+  runnable's value. Statement overrides affect only that operation, not the
+  default passed to its children. Limits are per operation, not a shared subtree
+  budget; settle is sequential. Repeat windows remain local to each loop.
 
 Proposed inheritance, pending confirmation:
 
@@ -214,25 +233,21 @@ Proposed inheritance, pending confirmation:
 - Flow forwards prompt settings to descendants without rendering model messages
   itself. Inherited template dependencies are checked at use sites, not added to
   declaration signatures.
-- `recall` keeps its existing values and default. Only root agics apply it to
-  automatic message inclusion; flow/child declarations are accepted but do not
-  assemble history or filter `_f/_n/_h`. They cannot change the root's policy.
-- Lanes and iteration windows are local controls, not resource ceilings. A nested
-  flow can use a larger lane count; omission uses built-in 4, not its caller's value.
 - Cost: parents must allow resources needed by their descendants. Calls relying
   on agent-scope resets or additional module-local capabilities need migration.
 
 | Concern | Current implementation | Proposed target |
 | --- | --- | --- |
 | Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
-| Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Accept agic configuration plus lanes |
+| Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Same directive set as agic |
+| Lanes | Statement clauses only | Agic/flow defaults inherited by children; statement override stays local |
 | Statement child agic | Uses enclosing flow resources, otherwise agent resources | Uses immediate parent resources |
 | Nested flow | Resets to agent resources | Inherits parent boundary |
 | Public run / execute | Rebuilds target resources from agent scope | Preserves caller boundary, including transfers |
 | Resource operators | `=` intersects; `+=` adds within the chosen base | Keep operators; consistently use the parent base |
 | Hands/handoffs | Each agic selects independently; omission disables routes | Inherit defaults; explicit selection replaces them |
 | Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
-| Recall | Each agic selects history for its model calls | Automatic inclusion only for root agics |
+| Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; proposed filtered views; automatic inclusion only at root agic |
 
 ## 8. Validate and Migrate
 
@@ -248,13 +263,17 @@ Proposed inheritance, pending confirmation:
   successful round, and distinguishes missing frames from invalid references/fields.
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
+- Verify every recall view, omission versus explicit auto, child near under parent
+  none, missing sources, and policy/version consistency across compaction and replay.
+- Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,
+  and statement limits without changing descendant defaults or sibling operations.
 - Verify resource narrowing across every call/transfer path, module visibility,
   per-kind operators, empty sets, sibling isolation, and reload/resume boundaries.
   Parent `{a,b}`, child `= a; += b` yields `{a,b}`; parent `{a}`, child `+= b`
   remains `{a}`. Selecting an unavailable concrete model remains an error.
 - Verify route inheritance/replacement/empty selections, worker-to-helper routing,
   prompt inheritance/override/none/default with declaring-module resolution, and
-  independent nested lanes. Inherited until templates contribute history depth.
+  inherited until templates contributing history depth.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
@@ -275,4 +294,4 @@ Proposed inheritance, pending confirmation:
   local agic inference does not determine callee requirements.
 - Confirm the proposed inheritance rules, including parent resource boundaries
   across public calls/transfers, module-local capability restrictions, overridable
-  route/prompt defaults, and recall's root-agic-only effect.
+  route/prompt defaults, and recall-filtered `_f/_n/_h` views from a shared root snapshot.
