@@ -15,6 +15,11 @@ tree-sitter-toolang is outside this scope.
   enclosing operation's output default when the output is omitted.
 - Explicit `()` declares no parameters. Declared/inferred `_` is required.
 - Parameter type defaults: `_` is `Part[]`; other parameters are `Text`.
+- User-declared parameters and locals cannot start or end with `_`, except for
+  the primary binding `_`. Internal underscores remain allowed. Boundary
+  underscores are reserved for runtime names; reject unknown reserved references
+  rather than inferring ordinary parameters. This restriction concerns binding
+  names, not fields inside data values.
 - Inference includes ordinary external references and respects template scope.
   Runtime variables are supplied by execution rather than inferred as parameters.
 - Determine the signature locally, then check its compatibility at each use.
@@ -76,8 +81,7 @@ settle:
 - Evaluate `from:` once before entering settle's iteration scope, using the
   surrounding context and let's Content rules. Outer iteration history remains
   visible during initialization. Its value belongs to settle state; flow locals stay unchanged.
-- Each call receives the current element as `_` and the previous result as `_1._`
-  under the shared-frame proposal below.
+- Each call receives the current element as `_` and the previous result as `_1._`.
 - With `from`, the initial value supplies the first `_1._`; N elements require N calls.
 - Without `from`, the first element supplies the initial `_1._`; iterate from the
   second element, requiring N-1 calls. A singleton returns its element after
@@ -96,7 +100,7 @@ settle using merge:
 
 ## 5. Retain Iteration History
 
-Proposed retention and entry/exit snapshot rules:
+Retention and entry/exit snapshot rules:
 
 ```too
 repeat 10 times holding 3:
@@ -127,9 +131,9 @@ repeat 10 times holding 3:
 | Reference | Snapshot value |
 | --- | --- |
 | `_k.name` | Local `name` at that iteration's end |
-| `_k.$name` | Local `name` at that iteration's entry |
+| `_k._name` | Local `name` at that iteration's entry |
 | `_k._` | Primary output at that iteration's end |
-| `_k.$_` | Primary value at that iteration's entry |
+| `_k.__` | Primary value at that iteration's entry |
 
 - Repeat captures entry locals before its first statement. Current locals update
   after each statement; history remains fixed throughout the body and `until`.
@@ -137,10 +141,10 @@ repeat 10 times holding 3:
   invoking the reducer. Its exit snapshot replaces `_` with the cumulative
   output of type T; reducer-private state is excluded.
 - Settle's seed has an exit `_` only, with no entry snapshot. `from` supplies one
-  seed even when T is an array. After the first call, `_1.$_` is the processed
+  seed even when T is an array. After the first call, `_1.__` is the processed
   element, `_1._` is the result, and `_2._` is the seed if retained.
-- `$` selects entry state only on the local-name segment after `_k`; nested
-  access such as `_2.$report.title` follows that value. Both entry and exit
+- Prefix a local's name with `_` to select entry state immediately after `_k`;
+  nested access such as `_2._report.title` follows that value. Both entry and exit
   references contribute the same history index to retention inference.
 - Missing bindings remain absent: a local first created during a round has no
   entry value. Direct reads fail; do not substitute exit values or outer locals.
@@ -160,8 +164,13 @@ repeat 10 times holding 3:
   Settle saves the pair after a successful reducer call.
 - Save unchanged values too. Failed iterations add nothing; retries preserve one
   entry/exit pair per completed iteration.
-- Snapshots retain types and provenance, exclude runtime variables, and remain
-  immutable. Compaction refreshes live thread variables, not saved frame values.
+- Capture only ordinary locals and the primary `_` on both entry and exit.
+  Exclude injected runtime bindings such as `_1`, `_2`, `_f`, `_n`, and `_h`,
+  even when present in iteration input; generate entry selectors only for the
+  retained bindings. Neither `_k._1` nor `_k.__1` retains earlier history frames.
+- Filtering applies to frame bindings, not fields inside ordinary data values.
+  Snapshots retain types and provenance and remain immutable. Compaction
+  refreshes live thread variables, not saved frame values.
 - Nested iterations replace the history family and restore it on exit. Resolve
   history exclusively within the active iteration scope; concurrent runs are isolated.
 - Runtime history references are reserved, read-only execution values.
@@ -231,9 +240,13 @@ Contribute history:
   guarded references and excluding the initializer), entry/exit values, locals
   created mid-round, seed entry absence, eviction, warm-up with empty/false/zero
   values, retry/resume, nested scopes, and compaction during concurrent calls.
+- Cover leading/trailing underscore rejection, allowed internal underscores, and
+  the primary `_` exception; entry/exit
+  exclusion of injected history/thread bindings, absence of generated aliases
+  for them, and preservation of underscore-prefixed fields inside ordinary data.
 - Update affected examples and prepared caches for changed contracts.
-- Extend template path validation and reference discovery for `_k.$name`; the
-  current validator rejects it. Keep `$name` invalid in other template paths.
+- Resolve entry selectors within history frames using existing template path
+  characters. Validate snapshot availability and the reserved binding namespace.
 - Use `_f`, `_n`, `_h`, and numbered history variables as the runtime names.
   Remove the old runtime bindings; provide no compatibility aliases. Reserve
   runtime names against user bindings and exclude them from signature inference.
@@ -250,8 +263,8 @@ Contribute history:
 
 - Confirm the root flow input-plus-final-output history policy.
 - Confirm repeat's `holding N` (default 3), inferred settle retention for agic
-  reducers, `_k.name` / `_k.$name` exit/entry snapshots, and guarded warm-up
-  behavior. The proposal treats `from` as one seed, not prefilled history.
+  reducers, and guarded warm-up behavior. The proposal treats `from` as one seed,
+  not prefilled history.
 - Define settle retention for flow reducers and indirect/dynamic history
   dependencies; local agic inference does not determine callee requirements.
 - Caps-key migration and removal of existing flow resource directives.
