@@ -1,0 +1,406 @@
+# Flow Rules Outline
+
+Goal: local signatures, validated operation contracts, consistent runtime scheduling,
+and bounded iteration/thread context.
+tree-sitter-toolang is outside scope.
+
+## 1. Determine the Signature
+
+- Agic / flow declarations: explicit fields take precedence; omitted fields use
+  declaration defaults: parameters `(_)`, output `Text`.
+- Adhoc agics: infer parameters from their own scoped template references; omitted
+  output uses the operation default. Runtime references are not parameters.
+- Explicit `()` declares no parameters. Declared/inferred `_` is required.
+- Parameter type defaults: `_` is `Part[]`; other parameters are `Text`.
+- Parameter/local names cannot start or end with `_`, except primary `_`.
+  Internal underscores and data-field names are unrestricted by this rule.
+  Reject unknown reserved references rather than inferring parameters.
+- Determine the signature locally, then check its compatibility at each use.
+
+## 2. Check the Operation Contract
+
+Defaults below apply to adhoc agics. Declared runnables keep their own output
+contracts. Constraints apply to both. `T` means any supported value type.
+
+| Operation / role | Child primary input | Default output | Required output type |
+| --- | --- | --- | --- |
+| run / seek | According to signature | Text | T |
+| scatter | May include or omit `_` | Text[] | T[] |
+| storm | May include or omit `_` | Text | T |
+| map | Must include `_` | Text | T |
+| keep / drop predicate | Must include `_` | Boolean | Boolean |
+| sort scorer | Must include `_` | Number | Number |
+| gather | Must include `_` | Text | T |
+| settle with from | Must include `_` | Text | T; initial value must also satisfy T |
+| settle without from | Must include `_` | Text | Must match the source element type |
+| until (inline agic) | May include or omit `_` | Boolean | Boolean |
+
+- Validate required arguments, input types, output types, and runtime context.
+- Map/keep/drop/sort/settle pass one element as `_`; gather passes the whole list.
+- Scatter/storm pass `_` when it appears in the child's signature.
+- Map/storm collect child outputs into `T[]`, preserving array-valued elements.
+- Gather/settle produce one value of type `T`, which may itself be an array.
+- `ask` and content-valued `let` produce `Part[]`.
+
+## 3. Execute Collection Operations
+
+- `scatter using ...`: call once; the child's full array type and returned length
+  determine the result.
+- `storm N using ...`: call N times and preserve result order.
+- List consumers require present, list-shaped input.
+- Empty input: map/sort/keep/drop return typed `[]` with zero child calls;
+  gather/settle report an error before child calls.
+- Empty map results use the child's output type; sort/keep/drop preserve the
+  source element type. Positional keep/drop follows the same empty-input rule.
+- Bind results only after successful completion.
+
+## 4. Initialize and Execute Settle
+
+```too
+settle:
+  Incorporate {{_}} into {{_1._}}.
+
+  from:
+    Initial report.
+```
+
+```too
+settle using merge:
+  from:
+    Initial report.
+```
+
+- Each call receives the current element as `_` and the previous result as `_1._`.
+- Optional trailing `from:` supplies one initial value, even when that value is
+  an array. Named reducers use the same clause; omit the block when unused.
+- Determine the reducer signature independently of `from`. Evaluate the
+  initializer once using let's Content rules and the outer context, before
+  entering settle's iteration scope. Outer history remains visible; no local is created.
+- With `from`: convert the seed to reducer output type T before calls; every
+  result must satisfy T. N elements require N calls.
+- Without `from`: use the first element as seed and make N-1 calls. Reducer
+  output must match the source element type; declaration/operation defaults
+  remain unchanged. A singleton returns its element after validation; `[]` fails.
+
+## 5. Retain Iteration History
+
+```too
+repeat 5 times windowing 3:
+  run: Improve {{_}}.
+  until:
+    Return true only if {{_}}, {{_1._}}, and {{_2._}} are equivalent.
+```
+
+- Repeat: optional `windowing N`, default 3; N is a positive integer counting
+  prior frames, excluding the current round. The iteration limit is independent;
+  nested repeats use their own setting/default.
+- Settle: retain exactly one prior frame for any reducer. No window clause or
+  capacity inference; `_2` and higher are outside its iteration scope.
+- `_1`, `_2`, ... select prior rounds of the nearest active repeat/settle, nearest
+  first; indexes never select outer scopes. Each completed frame contains entry
+  and exit snapshots; the pair occupies one window slot.
+
+| Reference | Snapshot value |
+| --- | --- |
+| `_k.name` | Local `name` at that iteration's end |
+| `_k._name` | Local `name` at that iteration's entry |
+| `_k._` | Primary output at that iteration's end |
+| `_k.__` | Primary value at that iteration's entry |
+
+- Repeat: capture entry -> execute body, updating locals after each statement ->
+  evaluate until -> save entry/exit snapshots -> stop or continue. History stays
+  fixed throughout the body and `until`.
+- Until remains an inline agic. Bind its ordinary parameters from post-body locals
+  according to its signature; runtime supplies the active iteration-history family.
+  Until creates no iteration scope of its own.
+- Settle captures entry locals after binding the current element as `_`, before
+  invoking the reducer. Its exit snapshot replaces `_` with the cumulative
+  output of type T; reducer-private state is excluded.
+- Repeat starts without history; settle starts with one seed frame containing
+  exit `_` only. After its first call, `_1.__` is the processed element, `_1._`
+  is the result, and this frame replaces the seed. Never pad missing history.
+- Snapshot selection applies to the first field after `_k`; later fields read
+  data, as in `_2._report.title`. Entry/exit access requires the same history depth.
+- Missing bindings remain absent: a local first created during a round has no
+  entry value. Direct reads fail; do not substitute exit values or outer locals.
+- In body/reducer templates, guard absent frames within the window; reading one
+  in a rendered branch is an error. Out-of-window or out-of-scope references are
+  errors even in guards.
+- History-frame section guards test presence, independent of empty/false/zero
+  output values. Existing template section scoping applies: render the current
+  `_` outside a history-frame section; use qualified `_k.field` inside it.
+- For until, required depth is the highest history index in its own
+  resolved templates, including guards and effective instruct/context, whether
+  local or inherited; no references means 0. If fewer prior frames exist, until
+  is false without rendering or invoking its runnable. Save the completed body
+  frame and honor the iteration limit.
+- Only the referenced depth must be available, not the full window: the example
+  first evaluates until in round 3; a history-free condition can run in round 1.
+  Invalid contracts, references beyond the window, and missing fields in existing
+  frames remain errors rather than being converted to false.
+- Do not infer history requirements through a call tree or dynamic targets.
+  Additional callee history dependencies are checked in the callee's active scope;
+  errors do not retroactively turn the calling until into false.
+- Save one pair per successful round, including unchanged values. Failed rounds
+  add nothing; retries do not duplicate entries. Settle saves after each reducer call.
+- Capture only ordinary locals and the primary `_` on both entry and exit.
+  Exclude injected runtime bindings such as `_1`, `_2`, `_far`, `_near`, and `_past`,
+  even when present in iteration input; generate entry selectors only for the
+  retained bindings. Neither `_k._1` nor `_k.__1` retains earlier history frames.
+- Filtering applies to frame bindings, not fields inside ordinary data values.
+  Snapshots retain types and provenance and remain immutable. Compaction
+  refreshes live thread variables, not saved frame values.
+- Runtime exposes one iteration scope at a time; its history capacity is still
+  the loop's window. Ordinary agic/flow calls preserve that scope. Entering an inner
+  repeat/settle replaces it; leaving restores the outer scope before outer until.
+  Missing inner history never falls back to outer frames. Concurrent calls are isolated.
+
+## 6. Project and Select Thread History
+
+- Runs own Steps; child Runs retain caller/root ownership. Triggering Steps and
+  controls record causality without requiring execution inside the triggering
+  Step's lifetime. A Step's owning Run determines whether it belongs to a root Run.
+- Thread history projects each prior root Run's retained execution segment.
+  `recall` controls consuming this history, not whether the current Run contributes
+  to later roots; `recall = none` still records the current exchange.
+
+| Root Run's retained Steps | Contribution to later root history |
+| --- | --- |
+| Contains model Steps, normally an agic | Its own model conversation: new input messages, assistant outputs, paired tool replies, and runtime context from completed runnable calls |
+| Contains no model Steps, normally a flow | Entry `_` as a user message and recorded root output as an assistant message, when present; successful runs use their final output |
+
+- Never recursively flatten child Runs. A child's outcome can appear through its
+  caller's runtime context or the root output, without exposing internal messages.
+  Flow Step inputs/outputs are not individually appended to history.
+- Count each conversation contribution once. Exclude automatically recalled
+  prefixes and repeated model-input prefixes. Include terminal tool replies and
+  committed run-completion messages even without a subsequent model Step;
+  preserve call/result pairing and keep scheduling receipts distinct from outcomes.
+- Model input means recorded conversation messages, including rendered context;
+  instructions, tool definitions, and provider settings are not history messages.
+- Preserve existing retry/execute segment selection and control/failure/cancellation
+  handling, including retained partial outputs. Scheduling a child through a control
+  does not make it a new root or expose its internal Steps to thread history.
+
+| Variable | Value |
+| --- | --- |
+| `_far` | Older thread-history summary as Text; empty Text when absent |
+| `_near` | Ordered recent messages with roles/content; empty array when absent |
+| `_past` | Combined messages: summary followed by recent messages |
+
+- The root runtime owns the full versioned thread-history snapshot for root agics
+  and flows. All descendants, including flow Content and until, use that source;
+  child runnables never fetch or assemble thread history independently.
+- For model-call assembly, a root agic automatically prepends selected historical
+  messages. A flow has no model call; child agics reference history variables
+  explicitly and keep their own model conversation. This consumption rule does
+  not determine which Runs contribute history. Nested loops preserve thread context.
+- Runtime derives `_far/_near/_past` from each runnable's effective recall and
+  the root snapshot. All three bindings remain present;
+  excluded sources become typed empty values. `_past` always combines the
+  selected `_far` and `_near`.
+
+| Effective recall | `_far` | `_near` | `_past` |
+| --- | --- | --- | --- |
+| `auto` / `far, near` | Summary | Recent messages | Summary followed by recent messages |
+| `far` | Summary | `[]` | Summary message, or `[]` if absent |
+| `near` | `""` | Recent messages | Recent messages |
+| `none` | `""` | `[]` | `[]` |
+
+- Recall is an overridable selection, not a resource ceiling. Derive each view
+  from the full root snapshot, not its parent's filtered view: a child may select
+  `near` under a parent using `none`, without changing root or sibling policies.
+  Missing source history remains empty.
+- Successful compaction atomically publishes a new version for subsequent model
+  calls and flow frame evaluations. Each evaluation's automatic recall and
+  `_far/_near/_past` use one version and one effective policy. In-flight evaluations keep
+  theirs; failed compaction keeps the old version. Record version and policy for replay.
+- Current progress travels through `_`, named arguments, or iteration frames;
+  compaction does not add active-run intermediates to prior thread history.
+
+## 7. Schedule Runtime Calls
+
+| Runtime call | Execution decision | Continuation |
+| --- | --- | --- |
+| `_toolang/run` | Schedule a separate target Run | Resume the caller after the target ends |
+| `_toolang/execute` | Replace the runnable in the same Run | The caller never resumes |
+
+- Both tool results acknowledge committed controls, not target execution outcomes.
+  Return control references; `run` also identifies its target Run. Validate target,
+  authorization, recursion, and input contracts before acknowledging acceptance.
+- Run sequence: prepare inputs and inherited settings -> persist the pending target
+  Run and entry control -> acknowledge and end the Tool Step -> runtime applies
+  the control and executes the target -> record its outcome -> resume the caller.
+  Retain caller/root ownership and causal links to the originating call/control;
+  no extra Step is needed solely to dispatch the target.
+- Preserve the caller's conversation and continuation while it waits. Before its
+  next model call, add one recorded runtime context message containing the target
+  Run reference, terminal status, and output type/value or error. Deliver it without
+  model polling; keep the receipt unchanged and emit no second tool result.
+- Process tool calls in existing order, finishing each scheduled Run before the
+  next call. Present the batch's paired tool replies before completion context.
+  `execute` remains the only tool call allowed in its model call.
+- Target failure/cancellation is reported through completion context; acceptance
+  remains successful. Caller/root cancellation propagates and stops continuation.
+  Persist acceptance and its receipt consistently; recovery reuses the same target
+  Run and delivers each completion once, including after interrupted delivery.
+- Control `applied` means its decision has taken effect; the target Run records
+  execution status. Preserve each control's actual application boundary.
+- Execute keeps its current sequence: commit an applied control -> record the tool
+  result and end the Tool Step -> switch the execution loop to the target. The
+  target starts its own conversation; a committed transfer is not rolled back on
+  target failure. Preserve the original Run's output contract.
+- Existing related behavior remains: pick/honor record recall controls; reload
+  applies State; compact publishes history for adoption. Honor/compact are runtime
+  initiated. Honor reports the intercepted operation as unexecuted and lets the
+  model reconsider it after reading rules.
+- Current `run` awaits a child inside its Tool Step and returns the child's output.
+  Replace that path with control scheduling and separate completion context.
+  Authored flow `run` statements retain their statement result binding.
+
+## 8. Configure Execution
+
+- Agics and flows share the same directives and inheritance rules across calls
+  in either direction. Omission inherits the direct parent's effective setting.
+
+| Class | Directives | Explicit child setting |
+| --- | --- | --- |
+| Resource selection | models, tools, psyches, skills, services, prompts | May narrow; cannot exceed the parent's effective resources |
+| Configuration | hands, handoffs, recall, instruct, context, lanes | May override the inherited setting |
+
+- Keep capability-kind selections independent. Configuration overrides are local
+  to the runnable and its descendants; parents and siblings remain unchanged.
+- `lanes` and `recall`: omission inherits the direct parent's effective value;
+  explicit configuration overrides it. Root defaults are lanes 4 and recall auto.
+  Explicit recall auto selects both sources, even under a narrower parent policy.
+- Lane precedence: statement clause > current runnable directive > inherited
+  value > built-in 4. Allow at most one `lanes = N` per runnable; N must be a
+  positive integer. Children may override with a larger value.
+- Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
+  Agics supply the default for descendants; repeat bodies use the enclosing
+  runnable's value. Statement overrides affect only that operation, not the
+  default passed to its children. Limits are per operation, not a shared subtree
+  budget; settle is sequential. Repeat windows remain local to each loop.
+
+- Resource selectors (`models`, `tools`, and the four capability kinds): root
+  base is the agent's allowed resources; child base is its immediate parent's
+  effective resources, intersected with the child's module visibility. Compare
+  stable identities, not bare names; module changes grant no additional resources.
+- Omission inherits the base. Apply directives in source order: `=` intersects
+  the active set, `-=` removes matches, and `+=` restores matches from the fixed
+  base. A child cannot restore anything excluded by its parent. Kinds are independent.
+- Use this rule for agic/flow, named/adhoc, statement calls, public `run`, and
+  `execute` transfers. Transfers retain the outgoing runnable's resource boundary.
+  State refresh and resume reapply the same boundary without resetting to agent scope;
+  siblings do not share mutations. Existing model-binding validation still applies.
+- `hands`/`handoffs` authorize the current caller's model-driven routes, not the
+  whole descendant call tree. Omission inherits; explicit `=` replaces the route
+  selection from public runnables, and empty `hands =` / `handoffs =` disables it.
+  With no inherited value, routes are empty. Flow provides defaults to descendants;
+  authored flow statements do not require a matching route.
+- Route selections may differ from or exceed the parent's selections: a parent
+  with `hands = worker` can call a worker declaring `hands = helper`. Neither
+  delegation nor transfer expands resource sets; existing recursion checks remain.
+- `instruct:` / `context:` keep their forms. Omission inherits; an explicit value
+  replaces the inherited setting, `none` disables it, and `default` selects the
+  runnable's own module default. Roots use existing module/built-in defaults.
+  Inherit resolved template references, including defaults, retaining their
+  declaring module; render in the child's frame without concatenating settings
+  or implicitly capturing parent locals.
+- Agics assemble model calls using effective `recall`, `instruct`, and `context`:
+  `instruct` supplies instructions, `context` supplies context messages, and
+  `recall` selects history variables plus automatic history inclusion at root agics.
+  Child agics include history through explicit template references. Flows evaluate
+  their own history variables and pass configuration to descendants without model calls.
+- Inherited template dependencies are checked at use sites, not added to
+  declaration signatures.
+- Cost: parents must allow resources needed by their descendants. Calls relying
+  on agent-scope resets or additional module-local capabilities need migration.
+
+| Concern | Current implementation | Target |
+| --- | --- | --- |
+| Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
+| Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Same directive set as agic |
+| Lanes | Statement clauses only | Agic/flow defaults inherited by children; statement override stays local |
+| Statement child agic | Uses enclosing flow resources, otherwise agent resources | Uses immediate parent resources |
+| Nested flow | Resets to agent resources | Inherits parent boundary |
+| Public run / execute | Rebuilds target resources from agent scope | Preserves caller boundary, including transfers |
+| Resource operators | `=` intersects; `+=` adds within the chosen base | Keep operators; consistently use the parent base |
+| Hands/handoffs | Each agic selects independently; omission disables routes | Inherit defaults; explicit selection replaces them |
+| Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
+| Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; filtered views; automatic inclusion only at root agic |
+
+## 9. Syntax Requirements
+
+| Area | Required syntax |
+| --- | --- |
+| Shared directives | Agic and flow bodies accept all directives in section 8; preserve existing `instruct:` / `context:` reference and content forms. |
+| Lanes | Add `lanes = N` to both runnable kinds; retain optional `in N lanes` on parallel statements. |
+| Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
+| Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
+| Repeat window | Optional `windowing N` before the header colon, as in `repeat 5 times windowing 3:`; also available on repeats without a count that use `until`. |
+| Empty route selection | Allow `hands =` and `handoffs =` to clear inherited routes. |
+
+- Preserve omitted signatures versus explicit `()` and authored type annotations;
+  defaults and parameter inference belong to semantic normalization.
+- Runtime names `_far`, `_near`, `_past`, `_1`, etc. and frame paths `_1.name`,
+  `_1._name`, `_1._`, `_1.__` use existing template syntax. Reserved binding names,
+  type/operation contracts, and count/window constraints are semantic checks.
+
+## 10. Validate and Migrate
+
+- Validate signatures, arguments, types/shapes, operation contracts, configuration,
+  counts, lanes, and runtime availability; report known failures before model calls.
+- Verify parsing/formatting round trips for section 9, preserving omitted fields
+  and clause ownership; reject the removed scatter count form.
+- Acceptance: signature defaults/inference and use-site contracts; empty inputs;
+  lane precedence; initializer timing; repeat window defaults/overrides and fixed
+  settle depth 1; entry/exit values and missing bindings; eviction and warm-up with
+  empty/false/zero values; nested isolation, retry/resume, and concurrent compaction.
+- Verify reserved names, primary `_` and internal-underscore exceptions; filter
+  injected bindings before entry projection while preserving ordinary data fields.
+- Verify until warm-up returns false with zero child calls, still saves each
+  successful round, and distinguishes missing frames from invalid references/fields.
+  Check only the inline condition's own templates; callee failures remain errors.
+- Verify post-body parameter binding and runtime history injection, scope propagation
+  through agic/flow calls, inner repeat/settle shadowing without fallback, and outer
+  scope restoration before outer until. Frame indexes count rounds, not scope levels.
+- Verify root flow input/final-output exchanges and shared thread-history snapshots
+  across child agics/flows, with automatic recall only in root agics.
+- Verify root-Step projection without recursive child transcripts, child outcomes
+  through caller completion context, excluded flow intermediates, terminal receipts
+  and completions, no duplicated recalled prefixes, and contributions with recall none.
+- Verify run-control persistence before acknowledgment, Tool Step completion before
+  target execution, serial caller suspension/resumption, batch reply ordering,
+  and separate completion messages for success/failure/cancellation. Recovery must
+  preserve continuation without duplicate dispatch or completion delivery.
+- Verify run/execute control references and causal ownership, unchanged execute
+  transfer/output contracts, caller cancellation, and flow statement result binding.
+- Migrate runtime tool descriptions and result consumers to scheduling receipts
+  with final outcomes delivered through completion context.
+- Verify every recall view, omission versus explicit auto, child near under parent
+  none, missing sources, and policy/version consistency across compaction and replay.
+- Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,
+  and statement limits without changing descendant defaults or sibling operations.
+- Verify resource narrowing across every call/transfer path, module visibility,
+  per-kind operators, empty sets, sibling isolation, and reload/resume boundaries.
+  Parent `{a,b}`, child `= a; += b` yields `{a,b}`; parent `{a}`, child `+= b`
+  remains `{a}`. Selecting an unavailable concrete model remains an error.
+- Verify route inheritance/replacement/empty selections, worker-to-helper routing,
+  prompt inheritance/override/none/default with declaring-module resolution, and
+  inherited until templates contributing history depth.
+- Verify identical directive classes across agic-to-flow and flow-to-agic calls,
+  with effective recall/instruct/context used for each agic's model-call assembly.
+- Update affected examples and prepared caches for changed contracts.
+- Resolve entry selectors within history frames using existing template path
+  characters. Validate snapshot availability and the reserved binding namespace.
+- Use the new runtime names without compatibility aliases. Migrate runtime uses
+  of bare `far`/`near` and settle's `item`; preserve unrelated user-defined names.
+- Documentation check: `git diff --check`. Implementation: repository default checks.
+- Touchpoints: `src/toolang/lang/{ast,lower,input,format,validate}.py`, template
+  resolution, execution `executor/stmts/{repeat,settle}.py`, runnable frames,
+  `executor/{executor,resources,frame,tool_runtime}.py`, `executor/runs/agic.py`,
+  `executor/steps/tool.py`, `runnables.py`, `tools/_toolang.py`, control/continuation
+  records, `assembly/{history,prompting}.py`, and store projections.
+- Risks: contract/resource-scope migration, inherited prompt dependencies,
+  frame retention, mixed history versions, and durable scheduling/completion delivery.
