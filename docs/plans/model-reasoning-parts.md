@@ -1,221 +1,235 @@
 # Preserve Model Reasoning Parts and Events
 
-## Status
+## Status and Scope
 
-Proposed feature definition. Human approval is required before implementation.
-The requested scope is adapter ingestion, canonical Parts and deltas, execution
-events, and persistence. Reasoning presentation is deferred.
+Proposed feature definition; human approval is required before implementation.
+Add adapter ingestion, canonical reasoning Parts/deltas, execution events, and
+persistence across the four existing protocols. Reasoning presentation, new
+configuration flags, cross-provider translation, and historical backfill are out
+of scope.
 
-## Goal and Success Criteria
-
-Preserve provider-returned reasoning text and summaries independently of answer
-text and tool calls. Streaming observers receive typed reasoning events, and
-completed or gracefully interrupted model Steps retain the collected reasoning
-after reopening the store. Ordinary answers, tool execution, and terminal
-presentation keep their existing behavior.
+Success means returned reasoning survives a completed or gracefully interrupted
+Model Step, store reopening, and history reconstruction. Compatible assistant
+history carries its native replay data without depending on the previous run's
+in-memory continuation. Answers, tool execution, and human output keep their
+existing behavior.
 
 ## Current Behavior
 
-- `Part` has no reasoning variant; `Delta` contains text and tool-call deltas.
-- Chat Completions reads only `reasoning_content`, attaching it to the first
-  `ToolCallPart`; a response without tools loses this text. Vercel documents
-  `reasoning` and `reasoning_details`, which this adapter does not read.
-- Responses retains some native reasoning items in stateful continuation but
-  ignores reasoning text and summary deltas. Messages retains thinking blocks
-  associated with tool calls. Generate Content skips `thought: true` text.
-- The executor persists final Step outputs and continuation. Part events are
-  live observations, not a durable token-by-token journal.
-- Generic output fallbacks can print unknown Parts as JSON. The terminal-output
-  guard currently accepts any nonempty assistant Parts as visible output.
+`Part` and `Delta` have no reasoning variants. Chat Completions retains only
+`reasoning_content` on the first tool call. Responses, Messages, and Generate
+Content retain some native reasoning/signatures in tool-associated continuation;
+readable reasoning is otherwise discarded. A new Agic run starts without that
+continuation. Part events are live observations; only terminal Step output is
+durable. Generic output fallbacks can render unknown Parts as JSON.
 
-## Canonical Contract
+## Canonical Vocabulary
 
-Add the following types in `base/types/message.py`, including their explicit
-codecs, `Part`/`Delta` unions, and literal discriminators:
+Define these values and explicit codecs in `base/types/message.py`:
 
 | Type | Fields | Discriminator |
 | --- | --- | --- |
-| `ReasoningPart` | `id: str`, `text: str`, `format: Literal["text", "summary"] = "text"` | `type="reasoning"` |
-| `ReasoningDelta` | `reasoning_id: str`, `text: str`, `format: Literal["text", "summary"] = "text"` | `kind="reasoning"` |
+| `ReasoningPart` | `text: str`, `representation: Literal["text", "summary", "unknown"] = "unknown"`, `replay: PartReplay \| None = None` | `type="reasoning"` |
+| `ReasoningDelta` | `text: str` | `kind="reasoning"` |
+| `PartReplay` | `adapter: str`, `provider: str`, `model: str`, `data: dict[str, object]` | Nested value, not a Part or record |
 
-- IDs are nonempty and unique within one model Step, not globally. Adapters
-  derive them from provider item/block IDs and content indices; when absent,
-  use deterministic call-local ordinal IDs. Never use text content as identity.
-- Keep independently identified reasoning blocks separate, including multiple
-  summaries and interleaving with answers or tools. Preserve received characters
-  exactly; do not trim, join with invented separators, or deduplicate repeated
-  text from different blocks.
-- `format` distinguishes provider-declared summaries from reasoning text. Do
-  not claim summaries are complete internal reasoning. No text is inferred from
-  token counts, encrypted data, signatures, or redacted blocks.
-- Add optional `reasoning_id` and `reasoning_format` fields to `ModelPartStart`.
-  Require them for `kind="reasoning"`; other starts retain existing behavior.
-  Start, delta, and end identify the same reasoning block and format.
-- Reasoning belongs to the assistant message and Model Step output even when
-  that response has no tools or answer. It is not `TextPart`, a tool argument,
-  or an alternative successful final answer.
+Add `ReasoningPart`/`ReasoningDelta` to the existing unions. Add the same optional
+`replay` field to `TextPart` and `ToolCallPart`: Gemini signatures can belong to
+those Parts. `PartReplay.data` must be JSON-compatible, with adapter-owned
+protocol parsing. Its scope uses the resolved adapter name, provider key, and
+model ID. Store only the native contribution needed for replay, not the whole
+response envelope, credentials, or request configuration.
+Message validation permits reasoning only in the assistant role.
 
-## Adapter Ingestion
+`representation` describes what the provider returned, not the wire format or
+a claim of complete internal reasoning. Use `unknown` when the protocol/model
+does not establish whether text is a summary. Preserve characters exactly and
+keep independently identified blocks separate. Empty text is allowed when a
+Part carries opaque reasoning replay data; token counts alone create no Part.
 
-Both ordinary and streaming calls implement the same normalization contract.
-Use existing factories and protocol modules; no new adapter or provider route.
+There is no reasoning-specific ID. Add required `part: int` to
+`ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` for every kind, matching the
+existing execution events. The adapter assigns zero-based call-local ordinals
+on first canonical observation; the final message uses that order. Provider IDs
+and block indices stay inside adapters and replay data. `tool_call_id` keeps its
+existing tool association role. Representation and late native metadata are
+final Part properties, not mutable delta identity.
 
-| Adapter | Readable data to normalize |
+## Adapter Normalization
+
+| Adapter | Readable projection and native ownership |
 | --- | --- |
-| Chat Completions | `reasoning_content`, `reasoning`, and readable `reasoning_details` entries: `reasoning.text.text` and `reasoning.summary.summary`. |
-| Responses | Reasoning item `summary[].text` and supported `content[].text`; handle `response.reasoning_summary_text.delta/done` and `response.reasoning_text.delta/done`, keyed by item and summary/content index. |
-| Messages | `thinking` blocks and `thinking_delta`, identified by content-block index. |
-| Generate Content | Text Parts with `thought: true`, identified by candidate/part position; preserve existing answer extraction for other text. |
+| Chat Completions | Read `reasoning_details` text/summary entries, `reasoning_content`, and `reasoning`. Structured entry types determine representation; flat aliases default to `unknown`. Preserve structured IDs, indices, formats, and encrypted entries for replay. |
+| Responses | Map reasoning `summary[].text` to `summary` and supported `content[].text` to `text`. Match delta/done events by item ID and summary/content index. Retain native item metadata and encrypted content. |
+| Messages | Map thinking blocks and `thinking_delta` by content-block index. Use `unknown`: the generic thinking block does not distinguish summarized from full text. Retain signatures and redacted blocks; do not infer representation from model-name prefixes. |
+| Generate Content | Map `thought: true` text to `summary`. Maintain a call-local active thought block across chunks; close it on a transition to another kind or a signed boundary. Retain signatures on the actual originating Part, including normal text, tools, and empty signed text. |
 
-Chat Completions structured readable details take precedence over their
-co-emitted flat aliases; otherwise prefer nonempty `reasoning_content`, then
-`reasoning`. Select one readable representation per frame, so a mirrored field
-does not double the emitted text. Keep summary and text detail entries separate.
-Use provider IDs/indices to append fragments and reconcile final snapshots;
-do not append a complete final snapshot after already streaming its prefix.
-For flat-only streams use one call-local reasoning block. If structured details
-arrive later for that same flat stream, reconcile the accumulated prefix before
-emitting any suffix; contradictory content fails normalization explicitly.
+Gemini chunk-local array positions are not stable identities. Consecutive thought
+fragments may extend one block; thought text after an intervening answer/tool
+starts another. Streaming summaries and non-streaming summaries need not have
+identical segmentation or wording. Both paths must preserve the data actually
+received. Never merge signed native blocks or move a signature to another Part.
 
-Emit reasoning updates as they arrive, including before the first answer or tool
-delta. Final-only reasoning emits begin/end without invented delta chunks.
-Late signatures and encrypted entries do not produce readable delta events.
+Chat Completions selects an alias policy once per call, using the resolved
+provider route: Vercel/OpenRouter stream structured details; DeepSeek streams
+`reasoning_content`. Buffer other aliases as fallback. If the primary produces
+no readable data, choose one fallback at termination using whole-response
+precedence: structured readable details, `reasoning_content`, then `reasoning`.
+Unknown compatible routes buffer reasoning and use that same precedence.
+Buffered fallback produces final-only Parts, also on graceful interruption.
+Its delayed canonical observation may follow answer/tool events. This latency
+tradeoff avoids changing emitted identity, text, or representation midstream.
+Opaque structured data is retained regardless of which readable alias wins;
+mirrored aliases never produce duplicate readable Parts.
 
-This feature consumes data returned under the existing request configuration.
-Do not automatically enable summaries, change reasoning effort/budget, or add
-CLI/configuration flags. Explicit provider options enabling summaries must
-survive canonical effort normalization; canonical effort still owns its field.
+Reconcile a protocol's final snapshots against its accumulated deltas; emit only
+an unobserved suffix and reject contradictory content. Do not compare unrelated
+blocks or infer identity from equal text. Final-only Parts need no fabricated
+deltas. Late signatures/encrypted data produce no readable deltas.
 
-## Native Continuation and History
+Consume existing request configuration. Do not automatically enable summaries
+or change effort/budget. Preserve explicitly supplied summary/include options
+when normalizing canonical effort, which continues to own its specific field.
 
-Readable Parts are for normalized records and observations; provider-native
-payloads remain in adapter-owned `ModelCallResult.continuation` and durable
-`ModelStepNoted.continuation`. Preserve signatures, encrypted/redacted blocks,
-native IDs, formats, and block order without converting them to text.
+## Native Replay and Record Ownership
 
-Extend continuation to retain reasoning blocks independently of tool calls,
-including final responses and opaque-only reasoning. Associate native blocks
-with their owning assistant message and its reasoning IDs; identical IDs in
-different messages must not collide. Use a separate call-local ID for opaque-only
-blocks, retaining their message association. Keep opaque-only blocks out of `Part[]`.
-Chat Completions adds native reasoning continuation for gateways, alongside the
-existing protocol-specific continuation formats in the other adapters.
+Each Part owns only its native contribution through `replay`. A readable native
+block and its normalized text may both be stored; this bounded duplication
+preserves exact replay. Split multi-block native items into contributions using
+their native item ID/index; store shared metadata and opaque content once on the
+first contribution. Adapters reassemble contributions within the owning message,
+never across messages, and validate that the complete native unit is present.
+Opaque-only reasoning uses an empty `ReasoningPart`.
+Replay data preserves native order and boundaries even when a flat alias is the
+readable projection. A signed Gemini text/tool Part owns the native block(s)
+needed to replay that Part, including its own text/arguments.
 
-Outgoing adapters skip normalized reasoning as ordinary message content. For a
-compatible provider/model context, replay the original native payload in the
-protocol's reasoning fields exactly once. Native data takes precedence over
-legacy `ToolCallPart.reasoning`; that field remains readable for old records
-and existing DeepSeek replay. New responses use `ReasoningPart` as the sole
-canonical readable copy. Do not fabricate signatures or convert reasoning into
-an answer when replaying through another adapter.
+Outgoing encoders use complete, compatible replay data exactly once in assistant
+history. Replay replaces the corresponding canonical wire encoding; it does not
+append a duplicate text/tool block. Adapters interpret only their own payloads
+and apply their protocol's replay requirements. Content transformations clear
+replay; stale or incomplete retained replay fails validation instead of encoding
+different text/arguments. If scope differs, omit reasoning
+and native metadata while encoding ordinary Parts normally; do not send reasoning
+as user/tool text or fabricate missing signatures. Remove `ToolCallPart.reasoning`
+and the old tool-keyed reasoning/signature maps when implementing this contract.
 
-Keep native continuation bound to the existing adapter/provider/model scope.
-Prune data whose owning messages are removed by history selection or compaction;
-provider changes must not reuse incompatible opaque state. Historical call
-reconstruction preserves the captured Parts and continuation independently of
-current setup. No new cross-provider reasoning translation is included.
+Keep `ModelCallResult.continuation` and `ModelStepNoted.continuation` for transport
+state such as Responses' `previous_response_id` and prefix validation. Do not put
+historical reasoning payloads there. A valid cursor sends only its existing
+suffix; without one, encode selected history from its Parts. Persisting Parts
+must not depend on whether a response also returns tools.
+
+Use existing Step output, tagged values, immutable message-content hashes, and
+message deltas. No `ReasoningRecord`, separate table, message-ID registry, or
+recovery scan is needed. Reopening, fork/rewind, and history selection retain or
+drop Parts with their messages; compaction that rewrites content must discard
+its replay data. Exact recorded ModelCall reconstruction remains independent of
+current setup. Adding a response stores only its new native payload, not copies
+of all previous reasoning in successive call/Step records.
+This follows the existing [message recording](model-message-recording.md)
+contract: Parts are output, selected messages are captured input, and `noted`
+does not duplicate either.
+
+Budget estimation counts each Part's replay data instead of its duplicated
+canonical text/arguments when present, and canonical data otherwise. Shared
+native metadata is counted only where stored. This remains a conservative byte
+estimate, including opaque data; provider usage still calibrates it. Billing and
+reported reasoning-token counts do not change.
 
 ## Events, Persistence, and Completion
 
-- Track reasoning buffers and stable Part indices by reasoning ID in the model
-  executor. Emit existing `PartBegin(part_type="reasoning")`,
-  `PartDelta(delta=ReasoningDelta(...))`, and `PartEnd(data=ReasoningPart(...))`.
-  Existing text/tool indexing stays intact. New Part indices follow first
-  observation; completed output uses that same order.
-- Each Part has exactly one begin and end. Final text must extend streamed
-  deltas and agree with any authoritative end. Reject changed identity/format
-  and inconsistent terminal content; final reconciliation never duplicates a
-  Part or its end event.
-- Extend typed-value registries and record codecs for `ReasoningPart` and
-  `ReasoningPart[]`, including nested `Part[]`, immutable message content,
-  historical call reconstruction, and JSON inspection. Use the existing tagged
-  value representation; no SQL layout change or historical backfill is needed.
-  New readers keep reading old Parts and legacy tool reasoning unchanged.
-  Older binaries do not gain support for newly written reasoning tags.
-- On graceful cancellation or failure, close active reasoning Parts with the
-  collected prefix and persist them in terminal Step output. Step status remains
-  canceled/failed. Preserve existing crash durability: an abrupt process death
-  before Step completion does not promise persistence of in-flight deltas.
-- Reuse event serialization and API SSE transport. Do not add an event table,
-  per-token database writes, or a promise to replay the original chunk stream.
-- Reasoning-only terminal responses still follow the empty-visible-output error
-  path. Text extraction, structured-output parsing/repair, and conversion to a
-  text or structured answer must ignore reasoning. Raw `Part[]` output retains
-  it. Reasoning plus tools continues tool execution normally. Usage/cost
-  calculations remain unchanged.
-
-## Presentation Boundary
-
-No reasoning panels, labels, spinners, transcript entries, or new display flags.
-Existing human output must ignore reasoning Parts and deltas, including nested
-and parallel progress, Flow outputs, `/output`, and JSON fallback rendering.
-Only compatibility filtering needed to preserve this behavior is in scope;
-existing layouts and answer/tool rendering stay unchanged. Machine-readable
-inspection and SSE intentionally expose the new typed data.
+- The executor tracks all streamed Parts by the adapter's ordinal and emits the
+  existing `PartBegin`, `PartDelta`, and `PartEnd`. Each Part begins/ends once;
+  streamed reasoning deltas concatenate to its text. Final-only Parts use their
+  end payload. PartEnd equals terminal Step output; reconciliation must neither
+  duplicate Parts nor end events. Reasoning uses `part_type="reasoning"` and
+  `ReasoningDelta` within those existing events.
+- On graceful failure/cancellation, close observed Parts and persist collected
+  prefixes. Only provider-complete blocks may carry replay; unfinished signed
+  blocks retain readable text without replay. Adapters flush buffered reasoning
+  through the existing callback before propagating the error. The Step remains
+  failed/canceled. Abrupt process death has no new in-flight durability promise.
+- Extend Part registries, tagged-value codecs, immutable content capture, JSON
+  inspection, and existing SSE serialization. `PartReplay` stays a nested value.
+  Do not persist token events or promise replay of their original chunking.
+- Bump the execution-store schema version (currently 47; use the next available
+  version at implementation). Follow the existing strict version gate: reject
+  incompatible stores before decoding or writing, without modifying them. No
+  automatic migration, reset, or legacy dual-reader is included. Document this
+  data-format change and the required indexed adapter stream contract together.
+- Reasoning-only output follows the empty-visible-output error path. Reasoning
+  plus tools still executes tools. Text extraction, structured-output parsing
+  and repair, and child-run-to-user-context conversion exclude reasoning. Raw
+  `Part[]` results and machine inspection retain it.
+- Human progress/result paths ignore reasoning and replay metadata, including
+  JSON fallbacks and nested/parallel output. Only compatibility filtering is in
+  scope; no new display, transcript item, label, spinner, or flag.
 
 ## Implementation Touchpoints
 
-- `src/toolang/base/types/message.py`, `base/types/run.py`: canonical vocabulary,
-  codecs, stream identity, and text-only helpers.
+- `src/toolang/base/types/{message,run}.py`: vocabulary, codecs, stream ordinals.
 - `src/toolang/plugin/adapters/{chat_completions,responses,messages,generate_content}.py`:
-  ingestion, native continuation, and outgoing protocol encoding.
-- `src/toolang/execution/executor/steps/model.py`, `executor/runs/agic.py`:
-  stream lifecycle, partial output, reconciliation, and terminal-output guards.
+  ingestion, native ownership, outgoing encoding, and continuation cleanup.
+- `src/toolang/execution/executor/{steps/model,runs/agic,budget}.py`: lifecycle,
+  completion guards, and estimates; `execution/assembly/`: message preservation
+  and child-result conversion.
 - `src/toolang/execution/{types,records,values,events,store,runnables}.py` and
-  `src/toolang/lang/types.py`: Part registration, durable values, historical
-  reconstruction, and existing event transport contracts.
-- `src/toolang/cli/common/human_values.py` and
-  `cli/common/execution_progress/`: compatibility filtering only.
-- Existing adapter, message, event, model-Step, history, API streaming, and
-  progress tests; `docs/models.md`, `docs/plugins.md`, and `docs/api.md` for
-  the implemented data/event contracts.
+  `src/toolang/lang/types.py`: registration, schema gate, capture, reconstruction.
+- `src/toolang/cli/common/human_values.py`, `cli/common/execution_progress/`:
+  compatibility filters only. Existing adapter, Step, store, event/SSE, budget,
+  and rendering tests; `docs/{models,plugins,api}.md` for public contracts.
 
 ## Acceptance Tests
 
-1. All four adapters normalize reasoning in streaming and ordinary responses,
-   with and without tools/answers. Vercel/OpenRouter fixtures cover flat aliases,
-   summary/text details, mirrored fields, and encrypted-only entries.
-2. Multiple/interleaved blocks retain IDs, order, exact Unicode text, and summary
-   distinction. Empty deltas, final-only text, final snapshot suffixes, late
-   metadata, and mismatched prefixes have deterministic outcomes.
-3. Executor observers see one begin/end per reasoning Part and ordered deltas.
-   PartEnd content equals the corresponding terminal Step output Part; existing
-   answer/tool events retain their lifecycle and content.
-4. Complete and gracefully interrupted reasoning survives closing/reopening the
-   store, typed-value round trips, content hashing, thread history, and exact
-   recorded ModelCall reconstruction. Existing records remain readable.
-5. Event JSON and remote SSE round-trip the new types; local and remote observers
-   receive equivalent reasoning data. No durable per-token journal is created.
-6. Reasoning-only output still fails as empty visible output; reasoning plus
-   tools executes tools. Structured answers, text outputs, accounting, and
-   reasoning-token counts keep their current semantics.
-7. Native replay preserves signatures and opaque blocks, including responses
-   without tools. Replay does not duplicate legacy tool reasoning or leak native
-   state after provider changes, compaction, fork/rewind, or history pruning.
-8. Chat/Script progress, parallel/nested runs, Flow outputs, and human result
-   fallbacks render identically with or without added reasoning. JSON inspection
-   contains reasoning without needing a terminal presentation feature.
-9. Default offline checks pass: `uv run ruff check .`,
-   `uv run ruff format --check .`, `uv run ty check`, and `uv run pytest`.
-   Live-provider tests remain opt-in.
+1. All four adapters cover ordinary/streaming calls, with/without tools, multiple
+   and interleaved blocks, Unicode, summaries, opaque-only and final-only data.
+   Usage-only reasoning creates no Part. Gemini repeated chunk positions and
+   thought/answer/thought sequences must not collide.
+2. Gateway aliases cover mirrored fields, flat-before-structured arrival, late
+   encryption, fallback, interruption, and unsupported routes. Assert one chosen
+   readable source and preserved native data; contradictory terminal snapshots
+   fail. Explicit summary/include settings survive effort normalization.
+3. All Part kinds have stable ordinals and one begin/end, including interleaved
+   tools and graceful failure. PartEnd equals persisted output; no incomplete
+   signature is replayed. Local and remote SSE round-trip the same typed values.
+4. Close/reopen the store, start a new run without continuation, and reconstruct
+   recorded calls. Verify exact reasoning/replay data, including a response with
+   no tools. Verify incompatible schema versions fail without changing the DB.
+5. Encode a subsequent call for each protocol after reopening and fork/rewind.
+   Verify native item order, redaction/encryption, Gemini text/tool/empty-text
+   signatures, and no duplicate content. Test scope changes, compaction, pruning,
+   and Responses cursor/full-history paths. No removed message is resurrected.
+6. Over a multi-call conversation, each new stored message contributes its own
+   replay data; continuation contains no accumulated reasoning history. Budget
+   estimates count one representation per contribution and calibrate as before.
+7. Reasoning-only output fails; tools and structured answers behave as before.
+   Human Chat/Script/Flow, nested/parallel output, and JSON fallbacks remain
+   unchanged; raw Parts and machine inspection expose reasoning and replay data.
+8. Run the repository's default offline checks: Ruff check/format, ty, and the
+   full pytest suite. Live-provider tests remain opt-in.
 
-## Risks and Open Questions
+## Risks and Approval
 
-- Providers may return only token counts or opaque state. Those calls correctly
-  have no readable reasoning Parts; old runs cannot recover missing text.
-- Gateway aliases and repeated terminal snapshots can duplicate content unless
-  normalization and identity tests cover them explicitly.
-- Added Parts affect value registries, completion guards, and JSON fallbacks;
-  adapter-only tests cannot establish end-to-end correctness.
-- Reasoning increases stored content size and appears in machine-readable
-  exports. Use existing record access and retention behavior; do not add raw
-  provider logging or change credential handling.
-- No open design questions remain. Human approval of this definition is pending.
+Native replay requirements vary by protocol and model; unknown payloads must not
+be guessed into valid signed blocks. ID-only server references still depend on
+provider retention; absent encrypted state cannot be reconstructed. Native
+storage increases size and exposes
+provider data through existing machine-readable exports and retention rules.
+Buffered alias fallback trades streaming latency for unambiguous normalization.
+The schema bump deliberately requires a compatible runtime/store pair; this
+plan does not authorize changing or resetting existing user databases.
+
+No open design choices remain. Approval is still pending; no implementation or
+presentation change is included in this definition.
 
 ## Protocol References
 
 - [Vercel Chat Completions reasoning](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/reasoning)
-- [OpenRouter reasoning fields and native replay](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+- [OpenRouter reasoning and replay](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [OpenAI reasoning summaries](https://developers.openai.com/api/docs/guides/reasoning#reasoning-summaries)
-- [OpenAI reasoning summary streaming event](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.reasoning_summary_text.delta)
+- [OpenAI summary streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.reasoning_summary_text.delta)
+- [Anthropic thinking and signatures](https://platform.claude.com/docs/en/build-with-claude/thinking)
+- [Gemini Generate Content thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+- [Gemini Generate Content signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
