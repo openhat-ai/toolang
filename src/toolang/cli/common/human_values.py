@@ -14,7 +14,9 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Part,
+    content_parts,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
 )
@@ -27,6 +29,7 @@ from .execution_progress.rich_rendering import progress_block_renderable
 
 _PART_TYPES = (
     TextPart,
+    ReasoningPart,
     ImagePart,
     AudioPart,
     DocumentPart,
@@ -40,6 +43,7 @@ _ScalarRenderer = Callable[[object], str | None]
 def parts_response_text(parts: Sequence[Part]) -> str:
     """Return the durable Chat response text or its structured fallback."""
 
+    parts = content_parts(parts)
     text = "".join(part.text for part in parts if isinstance(part, TextPart)).strip()
     if text or not parts:
         return text
@@ -106,6 +110,9 @@ def human_value_renderable(
 ) -> RenderableType | None:
     """Return a registered Rich renderer for one durable runtime value."""
 
+    parts = _parts(value, type_name)
+    if parts is not None:
+        return parts_response_renderable(parts, prefix="")
     renderer = _RICH_RENDERERS.get(type_name)
     return renderer(value) if renderer is not None else None
 
@@ -113,14 +120,17 @@ def human_value_renderable(
 def human_scalar_text(value: object, type_name: str) -> str | None:
     """Return registered natural scalar text, or defer to generic JSON."""
 
+    parts = _parts(value, type_name)
+    if parts is not None and content_parts(parts) != parts:
+        return parts_response_text(parts)
     renderer = _SCALAR_RENDERERS.get(type_name)
     return renderer(value) if renderer is not None else None
 
 
 def _parts(value: object, type_name: str) -> tuple[Part, ...] | None:
-    if type_name == "Part" and isinstance(value, _PART_TYPES):
+    if isinstance(value, _PART_TYPES):
         return (value,)
-    if type_name != "Part[]" or not isinstance(value, Array | list | tuple):
+    if not type_name.endswith("[]") or not isinstance(value, Array | list | tuple):
         return None
     parts = tuple(value)
     return (

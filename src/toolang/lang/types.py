@@ -17,6 +17,7 @@ from toolang.base.types.message import (
     ImagePart,
     Part,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
 )
@@ -33,6 +34,7 @@ _UNNAMED_RUNNABLE_RE = re.compile(
 )
 _PART_TYPES = (
     TextPart,
+    ReasoningPart,
     ImagePart,
     AudioPart,
     DocumentPart,

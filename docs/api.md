@@ -1495,6 +1495,20 @@ Every payload retains its canonical `type` discriminator. A `part_begin`
 payload uses `part_type` for the message-part kind so it does not collide with
 the event discriminator.
 
+Reasoning uses these same events: `part_begin.part_type` is `"reasoning"`,
+`part_delta.delta` is `{"kind":"reasoning","text":"..."}`, and `part_end.data`
+is a canonical `ReasoningPart` with `type="reasoning"`. The call-local `part`
+ordinal also identifies its position in the completed Model Step's output.
+Optional `signature`, `provider`, and `provider_metadata` fields are retained on
+the Part; signatures can also occur on normal text and tool-call Parts. Signature
+fragments are not separate events. Deltas are live only; completed Parts are
+durable and available through existing output/inspection endpoints.
+
+The Part format requires execution-store schema **48**. Opening an incompatible
+store fails without modifying it; no migration or reset is performed. See the
+[model adapter contract](plugins.md#model-adapter) for the required indexed
+stream interface. Human output continues to omit reasoning and native fields.
+
 Run control acceptance and status are durable `ControlRecord` truth, not
 synthetic stream events. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run

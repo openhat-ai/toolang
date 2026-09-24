@@ -46,12 +46,12 @@ def main() -> None:
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant(response)),
                 updates=(
-                    ModelPartStart(kind="text"),
+                    ModelPartStart(part=0, kind="text"),
                     *(
-                        ModelPartDelta(delta=TextDelta(line))
+                        ModelPartDelta(part=0, delta=TextDelta(line))
                         for line in response.splitlines(keepends=True)
                     ),
-                    ModelPartEnd(data=TextPart(response)),
+                    ModelPartEnd(part=0, data=TextPart(response)),
                 ),
                 after_updates_gate=_DelayGate(),
             )

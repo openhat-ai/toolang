@@ -120,7 +120,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 47
+_SCHEMA_VERSION = 48
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 

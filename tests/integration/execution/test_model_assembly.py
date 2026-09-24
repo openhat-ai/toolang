@@ -16,7 +16,7 @@ from tests.support.execution_harness import (
     RecordingRunTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.message import Message, ReasoningPart, TextPart, message_text
 from toolang.base.types.model import Model, ModelRoute, ModelToolang
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.plugin.adapters.responses import response_payload
@@ -1088,15 +1088,29 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             ModelCallResult(message=Message.assistant("old reply")),
             ModelCallResult(message=Message.assistant("recent reply")),
             ModelCallResult(
+                message=Message(
+                    "assistant",
+                    (
+                        ReasoningPart(
+                            "",
+                            provider="openai",
+                            provider_metadata={
+                                "adapter": "responses",
+                                "model": "model",
+                                "item_id": "rs_0",
+                                "output_index": 0,
+                                "summary_count": 0,
+                                "content_count": 0,
+                            },
+                        ),
+                    ),
+                ),
                 tool_calls=tuple(
                     ToolCall(f"lookup{i}", f"lookup{i}", tool.name, {})
                     for i in range(2)
                 ),
                 continuation={
                     "previous_response_id": "uncompacted",
-                    "reasoning": {
-                        "lookup0": [{"id": "rs_0", "type": "reasoning", "summary": []}],
-                    },
                 },
             ),
             ModelCallResult(message=Message.assistant("done")),

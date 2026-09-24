@@ -2,11 +2,13 @@
 
 import pytest
 
-from toolang.base.types.message import ImagePart, TextPart
+from toolang.base.types.message import ImagePart, Message, ReasoningPart, TextPart
 from toolang.execution.assembly.utils import (
     join_parts,
     strip_parts,
     text_block,
+    literal_delta,
+    render_delta,
 )
 
 
@@ -38,3 +40,22 @@ def test_join_parts_merges_adjacent_text_and_preserves_nontext_boundaries() -> N
         (TextPart("one"), TextPart(" two")), (), (image,), (TextPart("tail"),)
     ) == (TextPart("one two\n\n"), image, TextPart("\n\ntail"))
     assert join_parts((), ()) == ()
+
+
+def test_native_text_boundaries_and_whitespace_survive_history_assembly():
+    origin: dict[str, object] = {"adapter": "generate_content", "model": "model"}
+    parts = (
+        TextPart(
+            "  first\n", signature="one", provider="provider", provider_metadata=origin
+        ),
+        TextPart("", signature="empty", provider="provider", provider_metadata=origin),
+        ReasoningPart("  thought\n", "thought", "provider", origin),
+        TextPart(
+            "last  ", signature="last", provider="provider", provider_metadata=origin
+        ),
+    )
+    assert strip_parts(parts) == parts
+    assert join_parts(parts) == parts
+    assert render_delta(
+        literal_delta((Message("assistant", parts),)), lambda value: value
+    ) == (Message("assistant", parts),)

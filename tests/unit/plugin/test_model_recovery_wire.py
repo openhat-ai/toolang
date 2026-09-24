@@ -26,6 +26,21 @@ MODULES = {
 }
 
 
+def _text_events(text):
+    return [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": text},
+        },
+    ]
+
+
 @pytest.fixture
 def wire_call(monkeypatch) -> Callable[..., ModelCallResult]:
     client_type = httpx.AsyncClient
@@ -132,16 +147,13 @@ def test_transient_in_band_error_is_recoverable(wire_call, protocol, error):
 
 @pytest.mark.parametrize("protocol", ["messages", "generate_content"])
 def test_native_early_eof_never_returns_success(wire_call, protocol):
-    event = (
-        {
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": "partial"},
-        }
+    events = (
+        _text_events("partial")
         if protocol == "messages"
-        else {"candidates": [{"content": {"parts": [{"text": "partial"}]}}]}
+        else [{"candidates": [{"content": {"parts": [{"text": "partial"}]}}]}]
     )
     with pytest.raises(ModelResponseError) as caught:
-        wire_call(protocol, [event])
+        wire_call(protocol, events)
     assert caught.value.kind == "incomplete_stream"
     assert caught.value.partial_text == "partial"
 
@@ -157,10 +169,7 @@ def test_native_early_eof_never_returns_success(wire_call, protocol):
 )
 def test_messages_stop_reason_wins_over_stream_tail(wire_call, ending, reason, kind):
     events = [
-        {
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": "received"},
-        },
+        *_text_events("received"),
         {
             "type": "message_delta",
             "delta": {"stop_reason": reason},
@@ -477,10 +486,7 @@ def test_terminal_response_survives_later_disconnect(wire_call, protocol, ending
         ]
     elif protocol == "messages":
         data = [
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done"},
-            },
+            *_text_events("done"),
             {"type": "message_stop"},
         ]
     else:
@@ -515,10 +521,7 @@ def test_observer_failure_is_not_a_provider_retry(wire_call, protocol):
         ]
     elif protocol == "messages":
         data = [
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done"},
-            },
+            *_text_events("done"),
             {"type": "message_stop"},
         ]
     else:

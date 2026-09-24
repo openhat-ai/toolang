@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from toolang.base.errors import ModelResponseError, ToolangError
@@ -16,7 +17,8 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Message,
-    TextDelta,
+    Part,
+    ReasoningPart,
     TextPart,
     ToolCallDelta,
     ToolCallPart,
@@ -28,9 +30,6 @@ from ._payload import clear_options, output_allowance, request_options
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelPartDelta,
-    ModelPartEnd,
-    ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
     ToolCall,
@@ -46,6 +45,7 @@ from ._structured_output import (
     openai_strict_object_schema,
 )
 from ._usage import billing_value, optional_int, reported_cost
+from ._parts import PartStream, compatible, native_metadata
 
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
@@ -144,6 +144,7 @@ async def invoke_chat_completion(
     _log_api_response(model, response, stream=False)
     return parse_chat_completion(
         response,
+        model=model,
         audio_format=_output_audio_format(model),
     )
 
@@ -160,85 +161,89 @@ async def stream_chat_completion(
     client = create_client(model, environ=environ)
     payload = chat_completion_payload(model, request, stream=True)
     _log_api_request(model, payload, stream=True)
-    reasoning_parts: list[str] = []
+    parts = PartStream(on_event)
+    reasoning = _ChatReasoning(model)
     text_parts: list[str] = []
     audio_data_parts: list[str] = []
     audio_transcript_parts: list[str] = []
     tool_buffers: dict[int, _ToolCallBuffer] = {}
     final_usage: ModelUsage | None = None
-    text_started = False
     finish_reason: str | None = None
     refused = False
     defer_text = _audio_output_requested(model)
     stream = await client.chat.completions.create(**_openai_sdk_payload(model, payload))
     try:
-        with model_transport_errors():
-            async for chunk in stream:
-                chunk_usage = chat_usage(chunk)
-                if chunk_usage is not None:
-                    final_usage = chunk_usage
-                choice = _first_choice(chunk)
-                if choice is None:
-                    continue
-                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-                refused = refused or bool(getattr(delta, "refusal", None))
-                reasoning_content = getattr(delta, "reasoning_content", None)
-                if isinstance(reasoning_content, str) and reasoning_content:
-                    reasoning_parts.append(reasoning_content)
-                audio = getattr(delta, "audio", None)
-                audio_data = _value_text(audio, "data")
-                audio_transcript = _value_text(audio, "transcript")
-                if audio_data:
-                    audio_data_parts.append(audio_data)
-                if audio_transcript:
-                    audio_transcript_parts.append(audio_transcript)
-                content = getattr(delta, "content", None)
-                if isinstance(content, str) and content:
-                    text_parts.append(content)
-                    if not defer_text:
-                        if not text_started:
-                            text_started = True
-                            await on_event(ModelPartStart(kind="text"))
-                        await on_event(ModelPartDelta(delta=TextDelta(text=content)))
-                for call_delta in getattr(delta, "tool_calls", None) or ():
-                    index = getattr(call_delta, "index", None)
-                    if not isinstance(index, int):
-                        index = len(tool_buffers)
-                    buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
-                    if not buffer.started:
-                        buffer.started = True
-                        await on_event(ModelPartStart(kind="tool_call"))
-                    buffer.append(call_delta)
-                    arguments_delta = _tool_call_delta_arguments(call_delta)
-                    if arguments_delta:
-                        await on_event(
-                            ModelPartDelta(
-                                delta=ToolCallDelta(
-                                    text=arguments_delta,
-                                    tool_call_id=buffer.tool_call_id
-                                    or f"tool-call-{index}",
-                                )
+        try:
+            with model_transport_errors():
+                async for chunk in stream:
+                    chunk_usage = chat_usage(chunk)
+                    if chunk_usage is not None:
+                        final_usage = chunk_usage
+                    choice = _first_choice(chunk)
+                    if choice is None:
+                        continue
+                    finish_reason = (
+                        getattr(choice, "finish_reason", None) or finish_reason
+                    )
+                    delta = getattr(choice, "delta", None)
+                    snapshot = delta is None
+                    if snapshot:
+                        delta = getattr(choice, "message", None)
+                    if delta is None:
+                        if finish_reason:
+                            _check_finish_reason(finish_reason)
+                            await reasoning.finish(parts, complete=True)
+                        continue
+                    refused = refused or bool(getattr(delta, "refusal", None))
+                    for key, value in reasoning.add(delta, snapshot=snapshot):
+                        await parts.text(key, value, reasoning=True)
+                    audio = getattr(delta, "audio", None)
+                    if value := _value_text(audio, "data"):
+                        audio_data_parts.append(value)
+                    if value := _value_text(audio, "transcript"):
+                        audio_transcript_parts.append(value)
+                    content = _value_text(delta, "content")
+                    if snapshot:
+                        previous = "".join(text_parts)
+                        if not content.startswith(previous):
+                            raise ToolangError(
+                                "Chat Completions snapshot contradicts streamed text"
                             )
+                        content = content[len(previous) :]
+                    if content:
+                        text_parts.append(content)
+                        if not defer_text:
+                            await parts.text("text", content)
+                    for position, call_delta in enumerate(
+                        getattr(delta, "tool_calls", None) or ()
+                    ):
+                        index = getattr(call_delta, "index", None)
+                        if not isinstance(index, int):
+                            index = position if snapshot else len(tool_buffers)
+                        buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
+                        arguments = buffer.append(call_delta, snapshot=snapshot)
+                        call_id = buffer.tool_call_id or f"tool-call-{index}"
+                        key = ("tool", index)
+                        await parts.start(
+                            key, ToolCallPart(call_id, buffer.name, buffer.name)
                         )
-    except ModelResponseError as exc:
-        # A finish reason completes the response; a lost optional usage tail
-        # must not discard it. Validate the finish reason and calls below.
-        if finish_reason is None or exc.kind not in {
-            "transport_error",
-            "incomplete_stream",
-        }:
-            exc.usage = final_usage
-            exc.partial_text = "".join(text_parts)
-            raise
-    finally:
-        close = getattr(stream, "close", None)
-        if callable(close):
-            await close()
-    text = "".join(text_parts)
-    try:
+                        if arguments:
+                            await parts.delta(key, ToolCallDelta(arguments, call_id))
+                    if finish_reason:
+                        _check_finish_reason(finish_reason)
+                        if not refused:
+                            await reasoning.finish(parts, complete=True)
+        except ModelResponseError as exc:
+            # A terminal response survives a lost optional usage tail.
+            if finish_reason is None or exc.kind not in {
+                "transport_error",
+                "incomplete_stream",
+            }:
+                raise
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                await close()
         if finish_reason is None:
             raise ModelResponseError(
                 "model stream ended before a terminal finish reason",
@@ -249,51 +254,41 @@ async def stream_chat_completion(
             raise ModelResponseError(
                 "provider refused the response", kind="provider_rejection"
             )
+        await reasoning.finish(parts, complete=True)
+        text = "".join(text_parts)
+        audio = _audio_part(
+            data="".join(audio_data_parts),
+            transcript="".join(audio_transcript_parts),
+            format=_output_audio_format(model),
+        )
+        if text and (audio is None or text != audio.transcript):
+            await parts.finish("text", TextPart(text))
+        if audio is not None:
+            await parts.finish("audio", audio)
         tool_calls = tuple(
-            buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items())
+            buffer.to_tool_call(index) for index, buffer in tool_buffers.items()
         )
-    except ModelResponseError as exc:
-        exc.usage = final_usage
-        exc.partial_text = text
-        raise
-    audio = _audio_part(
-        data="".join(audio_data_parts),
-        transcript="".join(audio_transcript_parts),
-        format=_output_audio_format(model),
-    )
-    message = _assistant_message(
-        text=text,
-        tool_calls=tool_calls,
-        reasoning_content="".join(reasoning_parts),
-        audio=audio,
-    )
-    keep_text = bool(text and (audio is None or text != audio.transcript))
-    if keep_text and defer_text:
-        await on_event(ModelPartStart(kind="text"))
-        for delta in text_parts:
-            await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
-    if keep_text:
-        await on_event(ModelPartEnd(data=TextPart(text=text)))
-    if audio is not None:
-        await on_event(ModelPartStart(kind="audio"))
-        await on_event(ModelPartEnd(data=audio))
-    for call in tool_calls:
-        await on_event(
-            ModelPartEnd(
-                data=ToolCallPart(
-                    tool_call_id=call.tool_call_id,
+        for index, call in zip(tool_buffers, tool_calls):
+            await parts.finish(
+                ("tool", index),
+                ToolCallPart(
+                    call.tool_call_id,
+                    call.name,
+                    call.name,
+                    dict(call.input),
                     call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family=call.name,
-                    input=dict(call.input),
-                )
+                ),
             )
-        )
-    result = ModelCallResult(message=message, tool_calls=tool_calls)
-    if final_usage is not None:
-        result = ModelCallResult(
-            message=message, tool_calls=tool_calls, usage=final_usage
-        )
+    except (Exception, asyncio.CancelledError) as exc:
+        if isinstance(exc, ModelResponseError):
+            exc.usage = final_usage
+            exc.partial_text = "".join(text_parts)
+        await reasoning.finish(parts, complete=False)
+        await parts.interrupt()
+        raise
+    result = ModelCallResult(
+        message=parts.message(), tool_calls=tool_calls, usage=final_usage
+    )
     _log_api_response(model, result, stream=True)
     return result
 
@@ -420,13 +415,19 @@ def _apply_reasoning(
     if provider == "llama_cpp":
         clear_options(payload, "reasoning_budget_tokens", "thinking_budget_tokens")
     if provider == "openrouter":
-        payload.pop("reasoning", None)
+        extra = payload.get("extra_body")
+        raw = payload.get(
+            "reasoning", extra.get("reasoning") if isinstance(extra, Mapping) else None
+        )
+        wire = dict(raw) if isinstance(raw, Mapping) else {}
+        for key in ("effort", "enabled", "max_tokens"):
+            wire.pop(key, None)
+        clear_options(payload, "reasoning")
         payload.pop("reasoning_effort", None)
         if budget is not None and effort is not None:
             raise ToolangError(
                 "OpenRouter accepts either reasoning effort or budget_tokens"
             )
-        wire: dict[str, object] = {}
         if disabled:
             wire["enabled"] = False
         if isinstance(effort, str) and not disabled:
@@ -530,11 +531,7 @@ def encode_message(
             if isinstance(part, ToolCallPart)
         ]
         payload: dict[str, Any] = {"role": "assistant", "content": text}
-        reasoning_content = _reasoning_content_for_payload(
-            model, message, tool_calls=tool_calls
-        )
-        if reasoning_content is not None:
-            payload["reasoning_content"] = reasoning_content
+        payload.update(_reasoning_payload(model, message))
         if tool_calls:
             payload["tool_calls"] = tool_calls
         return payload
@@ -568,6 +565,7 @@ def tool_payload(definition: ToolDefinition) -> dict[str, Any]:
 def parse_chat_completion(
     response: Any,
     *,
+    model: Model,
     audio_format: AudioFormat = "wav",
 ) -> ModelCallResult:
     """Normalize one Chat Completions response object."""
@@ -577,7 +575,6 @@ def parse_chat_completion(
         return ModelCallResult(usage=chat_usage(response))
     raw_message = getattr(choice, "message", None)
     text = getattr(raw_message, "content", None)
-    reasoning_content = getattr(raw_message, "reasoning_content", None)
     try:
         _check_finish_reason(getattr(choice, "finish_reason", None))
         if getattr(raw_message, "refusal", None):
@@ -589,6 +586,8 @@ def parse_chat_completion(
         exc.usage = chat_usage(response)
         exc.partial_text = text if isinstance(text, str) else ""
         raise
+    reasoning = _ChatReasoning(model)
+    reasoning.add(raw_message)
     audio = _audio_part_from_value(
         getattr(raw_message, "audio", None),
         format=audio_format,
@@ -597,9 +596,7 @@ def parse_chat_completion(
         message=_assistant_message(
             text=text if isinstance(text, str) else "",
             tool_calls=tool_calls,
-            reasoning_content=reasoning_content
-            if isinstance(reasoning_content, str)
-            else "",
+            reasoning=tuple(part for _, part in reasoning.values()),
             audio=audio,
         ),
         tool_calls=tool_calls,
@@ -696,7 +693,10 @@ def _text_content(message: Message) -> str:
         if isinstance(part, TextPart):
             text.append(part.text)
             continue
-        if isinstance(part, ToolCallPart) and message.role == "assistant":
+        if (
+            isinstance(part, ReasoningPart | ToolCallPart)
+            and message.role == "assistant"
+        ):
             continue
         if isinstance(part, ToolResultPart) and message.role == "tool":
             continue
@@ -797,15 +797,15 @@ def _assistant_message(
     *,
     text: str,
     tool_calls: tuple[ToolCall, ...],
-    reasoning_content: str = "",
+    reasoning: tuple[ReasoningPart, ...] = (),
     audio: AudioPart | None = None,
 ) -> Message | None:
-    parts: list[TextPart | AudioPart | ToolCallPart] = []
+    parts: list[Part] = list(reasoning)
     if text and (audio is None or text != audio.transcript):
         parts.append(TextPart(text=text))
     if audio is not None:
         parts.append(audio)
-    for index, call in enumerate(tool_calls):
+    for call in tool_calls:
         parts.append(
             ToolCallPart(
                 tool_call_id=call.tool_call_id,
@@ -813,7 +813,6 @@ def _assistant_message(
                 tool_name=call.name,
                 tool_family=call.name,
                 input=dict(call.input),
-                reasoning=(reasoning_content or None) if index == 0 else None,
             )
         )
     if not parts:
@@ -821,22 +820,238 @@ def _assistant_message(
     return Message(role="assistant", parts=tuple(parts))
 
 
-def _reasoning_content_for_payload(
-    model: Model,
-    message: Message,
-    *,
-    tool_calls: list[dict[str, Any]],
-) -> str | None:
-    if model._toolang.provider != "deepseek" or not tool_calls:
-        return None
-    return next(
-        (
-            part.reasoning
-            for part in message.parts
-            if isinstance(part, ToolCallPart) and part.reasoning
-        ),
-        None,
-    )
+@dataclass
+class _ChatReasoning:
+    model: Model
+    aliases: dict[str, str] = field(default_factory=dict)
+    details: dict[tuple[object, ...], dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def primary(self) -> str | None:
+        provider = self.model._toolang.provider.lower()
+        if provider in {"vercel", "openrouter"}:
+            return "reasoning_details"
+        return "reasoning_content" if provider == "deepseek" else None
+
+    def add(self, value: Any, *, snapshot: bool = False) -> list[tuple[object, str]]:
+        deltas: list[tuple[object, str]] = []
+        for name in ("reasoning_content", "reasoning"):
+            text = _value_text(value, name)
+            if not text:
+                continue
+            previous = self.aliases.get(name, "")
+            if snapshot:
+                if not text.startswith(previous):
+                    raise ToolangError("reasoning snapshot contradicts its deltas")
+                text = text[len(previous) :]
+            self.aliases[name] = previous + text
+            if name == self.primary:
+                deltas.append((("reasoning", name), text))
+        raw_details = (
+            value.get("reasoning_details")
+            if isinstance(value, Mapping)
+            else getattr(value, "reasoning_details", None)
+        )
+        for position, raw in enumerate(raw_details or ()):
+            detail = (
+                dict(raw)
+                if isinstance(raw, Mapping)
+                else {
+                    key: getattr(raw, key)
+                    for key in (
+                        "type",
+                        "id",
+                        "index",
+                        "format",
+                        "text",
+                        "summary",
+                        "signature",
+                        "data",
+                    )
+                    if getattr(raw, key, None) is not None
+                }
+            )
+            kind = detail.get("type")
+            if kind not in {
+                "reasoning.text",
+                "reasoning.summary",
+                "reasoning.encrypted",
+            }:
+                raise ToolangError(
+                    f"unsupported Chat Completions reasoning type: {kind}"
+                )
+            native_index = detail.get("index")
+            if native_index is not None and (
+                type(native_index) is not int or native_index < 0
+            ):
+                raise ToolangError(
+                    "reasoning detail index must be a non-negative integer"
+                )
+            key = (
+                ("index", detail["index"], kind)
+                if detail.get("index") is not None
+                else ("id", detail["id"], kind)
+                if detail.get("id") is not None
+                else ("anonymous", kind, position)
+            )
+            current = self.details.setdefault(key, {})
+            for name in ("type", "id", "index", "format"):
+                if detail.get(name) is not None:
+                    if name in current and current[name] != detail[name]:
+                        raise ToolangError(
+                            "reasoning detail changed its native identity"
+                        )
+                    current[name] = detail[name]
+            for name in ("text", "summary", "signature", "data"):
+                text = detail.get(name)
+                if not isinstance(text, str):
+                    continue
+                previous = current.get(name, "")
+                if snapshot:
+                    if not text.startswith(previous):
+                        raise ToolangError(
+                            "reasoning detail snapshot contradicts its deltas"
+                        )
+                    text = text[len(previous) :]
+                current[name] = previous + text
+                if (
+                    name in {"text", "summary"}
+                    and self.primary == "reasoning_details"
+                    and text
+                ):
+                    deltas.append((("reasoning", key), text))
+        return deltas
+
+    def values(self, *, complete: bool = True) -> list[tuple[object, ReasoningPart]]:
+        readable = any(
+            item.get("text") or item.get("summary") for item in self.details.values()
+        )
+        available = {
+            "reasoning_details": readable,
+            **{name: bool(text) for name, text in self.aliases.items()},
+        }
+        source = (
+            self.primary
+            if self.primary and available.get(self.primary)
+            else next(
+                (
+                    name
+                    for name in ("reasoning_details", "reasoning_content", "reasoning")
+                    if available.get(name)
+                ),
+                None,
+            )
+        )
+        result: list[tuple[object, ReasoningPart]] = []
+        if source in {"reasoning_content", "reasoning"}:
+            result.append(
+                (
+                    ("reasoning", source),
+                    ReasoningPart(
+                        self.aliases[source],
+                        provider=self.model._toolang.provider,
+                        provider_metadata=native_metadata(
+                            self.model, "chat_completions", field=source
+                        ),
+                    ),
+                )
+            )
+        for order, (key, detail) in enumerate(self.details.items()):
+            kind = detail["type"]
+            text = (
+                detail.get("text", "")
+                if kind == "reasoning.text"
+                else detail.get("summary", "")
+                if kind == "reasoning.summary"
+                else ""
+            )
+            signature = (
+                detail.get("data")
+                if kind == "reasoning.encrypted"
+                else detail.get("signature")
+            )
+            if kind != "reasoning.encrypted" and source != "reasoning_details":
+                if signature and complete:
+                    raise ToolangError(
+                        "alias selection cannot discard signed reasoning text"
+                    )
+                continue
+            metadata = {
+                name: detail[name]
+                for name in ("type", "id", "index", "format")
+                if name in detail
+            }
+            result.append(
+                (
+                    ("reasoning", key),
+                    ReasoningPart(
+                        text,
+                        signature=signature,
+                        provider=self.model._toolang.provider,
+                        provider_metadata=native_metadata(
+                            self.model,
+                            "chat_completions",
+                            field="reasoning_details",
+                            order=detail.get("index", order),
+                            **metadata,
+                        ),
+                    ),
+                )
+            )
+        if not complete:
+            return [
+                (key, ReasoningPart(part.text)) for key, part in result if part.text
+            ]
+        return result
+
+    async def finish(self, parts: PartStream, *, complete: bool) -> None:
+        for key, part in self.values(complete=complete):
+            index = parts.indices.get(key)
+            if index is not None and index in parts.ended and not complete:
+                continue
+            await parts.finish(key, part)
+
+
+def _reasoning_payload(model: Model, message: Message) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    details: list[tuple[int, dict[str, Any]]] = []
+    for part in message.parts:
+        if not isinstance(part, ReasoningPart) or not compatible(
+            part, model, "chat_completions"
+        ):
+            continue
+        metadata = part.provider_metadata
+        name = metadata.get("field")
+        if isinstance(name, str) and name in {"reasoning_content", "reasoning"}:
+            payload[name] = payload.get(name, "") + part.text
+        elif name == "reasoning_details":
+            kind = metadata.get("type")
+            detail = {
+                key: metadata[key]
+                for key in ("type", "id", "index", "format")
+                if key in metadata
+            }
+            if kind in {"reasoning.text", "reasoning.summary"}:
+                detail["text" if kind == "reasoning.text" else "summary"] = part.text
+                if part.signature is not None:
+                    detail["signature"] = part.signature
+            elif kind == "reasoning.encrypted" and part.signature is not None:
+                detail["data"] = part.signature
+            else:
+                raise ToolangError("invalid native Chat Completions reasoning detail")
+            order = metadata.get("order")
+            if type(order) is not int:
+                raise ToolangError("reasoning detail requires its native order")
+            details.append((order, detail))
+        else:
+            raise ToolangError(
+                "reasoning Part is missing its native Chat Completions field"
+            )
+    if details:
+        payload["reasoning_details"] = [
+            detail for _, detail in sorted(details, key=lambda item: item[0])
+        ]
+    return payload
 
 
 def _audio_part_from_value(
@@ -931,21 +1146,28 @@ class _ToolCallBuffer:
     tool_call_id: str = ""
     name: str = ""
     arguments: list[str] | None = None
-    started: bool = False
 
-    def append(self, delta: Any) -> None:
+    def append(self, delta: Any, *, snapshot: bool = False) -> str:
         tool_call_id = _optional_attr_text(delta, "id")
         if tool_call_id:
+            if self.tool_call_id and self.tool_call_id != tool_call_id:
+                raise ToolangError("tool call changed its native identity")
             self.tool_call_id = tool_call_id
         function = getattr(delta, "function", None)
         name = _optional_attr_text(function, "name")
         if name:
             self.name = name
         arguments = _tool_call_delta_arguments(delta)
+        if snapshot:
+            previous = "".join(self.arguments or ())
+            if not arguments.startswith(previous):
+                raise ToolangError("tool call snapshot contradicts its deltas")
+            arguments = arguments[len(previous) :]
         if arguments:
             if self.arguments is None:
                 self.arguments = []
             self.arguments.append(arguments)
+        return arguments
 
     def to_tool_call(self, index: int) -> ToolCall:
         if not self.name:

@@ -19,6 +19,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
     Message,
     Part,
+    ReasoningPart,
     TextPart,
     message_text,
     part_from_data,
@@ -1222,7 +1223,7 @@ def _text_value(value: object, *, boundary: str) -> str:
     if isinstance(value, str):
         return value
     parts = _as_parts(value)
-    if not all(isinstance(part, TextPart) for part in parts):
+    if not all(isinstance(part, TextPart | ReasoningPart) for part in parts):
         raise ToolangError(f"{boundary} is not Text: non-text parts are present")
     return message_text(parts)
 

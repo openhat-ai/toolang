@@ -23,6 +23,7 @@ from ..types import RecallTarget, RulesRecallTarget, WorkspaceRecallTarget
 _PART_NAMES = {
     "Part",
     "TextPart",
+    "ReasoningPart",
     "ImagePart",
     "AudioPart",
     "DocumentPart",
@@ -104,7 +105,12 @@ def literal_delta(messages: Sequence[Message]) -> tuple[MessageTemplate, ...]:
         MessageTemplate(
             message.role,
             tuple(
-                part.text if isinstance(part, TextPart) else deepcopy(part)
+                part.text
+                if isinstance(part, TextPart)
+                and not part.provider_metadata
+                and part.signature is None
+                and part.provider is None
+                else deepcopy(part)
                 for part in message.parts
             ),
             tag=message.tag,
@@ -202,11 +208,28 @@ def text_block(tag: str, content: str) -> str:
 
 def strip_parts(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     result = list(parts)
-    if result and isinstance(result[0], TextPart):
+    if (
+        result
+        and isinstance(result[0], TextPart)
+        and not result[0].provider_metadata
+        and result[0].signature is None
+    ):
         result[0] = TextPart(result[0].text.lstrip())
-    if result and isinstance(result[-1], TextPart):
+    if (
+        result
+        and isinstance(result[-1], TextPart)
+        and not result[-1].provider_metadata
+        and result[-1].signature is None
+    ):
         result[-1] = TextPart(result[-1].text.rstrip())
-    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
+    return tuple(
+        part
+        for part in result
+        if not isinstance(part, TextPart)
+        or part.text
+        or part.signature is not None
+        or part.provider_metadata
+    )
 
 
 def join_parts(*groups: tuple[Part, ...]) -> tuple[Part, ...]:
@@ -222,7 +245,15 @@ def join_parts(*groups: tuple[Part, ...]) -> tuple[Part, ...]:
 
 
 def _append_part(parts: list[Part], part: Part) -> None:
-    if isinstance(part, TextPart) and parts and isinstance(parts[-1], TextPart):
+    if (
+        isinstance(part, TextPart)
+        and parts
+        and isinstance(parts[-1], TextPart)
+        and not part.provider_metadata
+        and part.signature is None
+        and not parts[-1].provider_metadata
+        and parts[-1].signature is None
+    ):
         parts[-1] = TextPart(parts[-1].text + part.text)
     else:
         parts.append(part)

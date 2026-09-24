@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from typing import Annotated, Any, Literal, cast
 
@@ -14,13 +14,14 @@ from pydantic.json_schema import SkipJsonSchema
 MessageRole = Literal["user", "assistant", "tool"]
 PartType = Literal[
     "text",
+    "reasoning",
     "image",
     "audio",
     "document",
     "tool_call",
     "tool_result",
 ]
-DeltaType = Literal["text", "tool_call"]
+DeltaType = Literal["text", "reasoning", "tool_call"]
 ImageDetail = Literal["low", "high", "auto", "original"]
 AudioFormat = Literal["mp3", "wav"]
 
@@ -31,13 +32,40 @@ class TextPart:
 
     text: str
     type: Literal["text"] = "text"
+    signature: str | None = None
+    provider: str | None = None
+    provider_metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_native_fields(self.signature, self.provider, self.provider_metadata)
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> TextPart:
-        return cls(text=str(payload.get("text", "")))
+        return cls(text=str(payload.get("text", "")), **_native_fields(payload))
 
     def to_data(self) -> dict[str, Any]:
-        return {"type": self.type, "text": self.text}
+        return {"type": self.type, "text": self.text, **_native_data(self)}
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningPart:
+    """Provider-returned reasoning text and its opaque native state."""
+
+    text: str
+    signature: str | None = None
+    provider: str | None = None
+    provider_metadata: dict[str, object] = field(default_factory=dict)
+    type: Literal["reasoning"] = "reasoning"
+
+    def __post_init__(self) -> None:
+        _validate_native_fields(self.signature, self.provider, self.provider_metadata)
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> ReasoningPart:
+        return cls(text=str(payload.get("text", "")), **_native_fields(payload))
+
+    def to_data(self) -> dict[str, Any]:
+        return {"type": self.type, "text": self.text, **_native_data(self)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,8 +233,13 @@ class ToolCallPart:
     tool_family: str
     input: dict[str, Any] = field(default_factory=dict)
     call_id: str | None = None
-    reasoning: str | None = None
     type: Literal["tool_call"] = "tool_call"
+    signature: str | None = None
+    provider: str | None = None
+    provider_metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_native_fields(self.signature, self.provider, self.provider_metadata)
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ToolCallPart:
@@ -218,7 +251,7 @@ class ToolCallPart:
             ),
             input=_json_object(payload.get("input")),
             call_id=_optional_text(payload.get("call_id")),
-            reasoning=_optional_text(payload.get("reasoning")),
+            **_native_fields(payload),
         )
 
     def to_data(self) -> dict[str, Any]:
@@ -231,8 +264,7 @@ class ToolCallPart:
         }
         if self.call_id:
             data["call_id"] = self.call_id
-        if self.reasoning:
-            data["reasoning"] = self.reasoning
+        data.update(_native_data(self))
         return data
 
 
@@ -276,7 +308,15 @@ class ToolResultPart:
         return data
 
 
-Part = TextPart | ImagePart | AudioPart | DocumentPart | ToolCallPart | ToolResultPart
+Part = (
+    TextPart
+    | ReasoningPart
+    | ImagePart
+    | AudioPart
+    | DocumentPart
+    | ToolCallPart
+    | ToolResultPart
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +328,14 @@ class TextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class ReasoningDelta:
+    """One incremental fragment of provider-returned reasoning text."""
+
+    text: str
+    kind: Literal["reasoning"] = "reasoning"
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCallDelta:
     """One canonical tool-call delta."""
 
@@ -296,7 +344,7 @@ class ToolCallDelta:
     kind: Literal["tool_call"] = "tool_call"
 
 
-Delta = TextDelta | ToolCallDelta
+Delta = TextDelta | ReasoningDelta | ToolCallDelta
 
 
 def part_from_data(payload: Mapping[str, Any]) -> Part:
@@ -305,6 +353,8 @@ def part_from_data(payload: Mapping[str, Any]) -> Part:
     part_type = str(payload.get("type", "")).strip()
     if part_type == "text":
         return TextPart.from_data(payload)
+    if part_type == "reasoning":
+        return ReasoningPart.from_data(payload)
     if part_type == "image":
         return ImagePart.from_data(payload)
     if part_type == "audio":
@@ -336,6 +386,18 @@ def message_text(parts: Sequence[Part]) -> str:
     """Return concatenated text from canonical message parts."""
 
     return "".join(part.text for part in parts if isinstance(part, TextPart))
+
+
+def content_parts(parts: Sequence[Part]) -> tuple[Part, ...]:
+    """Project content for a new context without reasoning or native state."""
+
+    return tuple(
+        replace(part, signature=None, provider=None, provider_metadata={})
+        if isinstance(part, TextPart | ToolCallPart)
+        else part
+        for part in parts
+        if not isinstance(part, ReasoningPart)
+    )
 
 
 def message_summary(parts: Sequence[Part]) -> str:
@@ -406,7 +468,14 @@ class Message:
         if self.role == "assistant" and not all(
             isinstance(
                 part,
-                (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart),
+                (
+                    TextPart,
+                    ReasoningPart,
+                    ImagePart,
+                    AudioPart,
+                    DocumentPart,
+                    ToolCallPart,
+                ),
             )
             for part in self.parts
         ):
@@ -486,6 +555,58 @@ def _tool_output_payload(content: str) -> dict[str, Any]:
     return (
         dict(parsed) if isinstance(parsed, Mapping) else {"output": {"content": parsed}}
     )
+
+
+def _native_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "signature": payload.get("signature"),
+        "provider": payload.get("provider"),
+        "provider_metadata": payload.get("provider_metadata", {}),
+    }
+
+
+def _native_data(part: TextPart | ReasoningPart | ToolCallPart) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    if part.signature is not None:
+        data["signature"] = part.signature
+    if part.provider is not None:
+        data["provider"] = part.provider
+    if part.provider_metadata:
+        data["provider_metadata"] = dict(part.provider_metadata)
+    return data
+
+
+def _validate_native_fields(
+    signature: str | None, provider: str | None, metadata: dict[str, object]
+) -> None:
+    if signature is not None and not isinstance(signature, str):
+        raise TypeError("part signature must be text")
+    if provider is not None and (not isinstance(provider, str) or not provider):
+        raise ValueError("part provider requires a non-empty key")
+    if not isinstance(metadata, dict):
+        raise TypeError("part provider_metadata must be a JSON object")
+    if signature is not None or metadata:
+        if not provider or not all(
+            isinstance(metadata.get(key), str) and metadata[key]
+            for key in ("adapter", "model")
+        ):
+            raise ValueError("native part fields require provider, adapter, and model")
+    _validate_json(metadata)
+
+
+def _validate_json(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("provider metadata keys must be strings")
+            _validate_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json(item)
+    elif value is not None and not isinstance(value, str | bool | int | float):
+        raise TypeError("provider metadata must contain JSON values")
+    else:
+        json.dumps(value, allow_nan=False)
 
 
 def _json_object(raw: object) -> dict[str, Any]:

@@ -12,9 +12,49 @@ from toolang.base.types.message import (
     Message,
     MessageRecall,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
+    content_parts,
+    message_text,
 )
+
+
+def test_reasoning_and_native_fields_round_trip_without_entering_visible_text():
+    origin: dict[str, object] = {
+        "adapter": "messages",
+        "model": "model",
+        "type": "thinking",
+    }
+    reasoning = ReasoningPart("  analysis α\n", " sig\n", "provider", origin)
+    text = TextPart(
+        "answer", signature=" text sig ", provider="provider", provider_metadata=origin
+    )
+    message = Message("assistant", (reasoning, text))
+    assert Message.from_data(message.to_data()) == message
+    assert TypeAdapter(Message).validate_json(json.dumps(message.to_data())) == message
+    assert message_text(message.parts) == "answer"
+    assert content_parts(message.parts) == (TextPart("answer"),)
+    for role in ("user", "tool"):
+        with pytest.raises(ValueError):
+            Message(role, (reasoning,))
+
+
+@pytest.mark.parametrize(
+    "metadata", [{"bad": object()}, {1: "bad"}, {"bad": (1, 2)}, {"bad": float("nan")}]
+)
+def test_native_metadata_requires_json_values(metadata):
+    with pytest.raises((TypeError, ValueError)):
+        ReasoningPart(
+            "text",
+            provider="provider",
+            provider_metadata={"adapter": "messages", "model": "model", **metadata},
+        )
+
+
+def test_signature_requires_resolved_origin():
+    with pytest.raises(ValueError, match="provider, adapter, and model"):
+        ReasoningPart("text", signature="opaque")
 
 
 def test_document_part_round_trips_canonical_data() -> None:
@@ -122,11 +162,11 @@ def test_tool_part_metadata_round_trips_without_message_meta() -> None:
     message = Message(
         role="assistant",
         parts=(
+            ReasoningPart("Need current data."),
             ToolCallPart(
                 tool_call_id="call-1",
                 tool_name="lookup",
                 tool_family="lookup",
-                reasoning="Need current data.",
             ),
         ),
     )
@@ -144,7 +184,7 @@ def test_tool_part_metadata_round_trips_without_message_meta() -> None:
 
     assert Message.from_data(message.to_data()) == message
     assert Message.from_data(result.to_data()) == result
-    assert message.parts[0].type == "tool_call"
+    assert message.parts[1].type == "tool_call"
     assert result.parts[0].type == "tool_result"
 
 

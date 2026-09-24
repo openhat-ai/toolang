@@ -586,7 +586,9 @@ class RemoteChatSession:
                 "remote chat run result returned mismatched identity"
             )
         output = (
-            parts_from_local(detail.output.local) if detail.output is not None else ()
+            parts_from_local(detail.output.local, content_only=True)
+            if detail.output is not None
+            else ()
         )
         if not output:
             raise ValueError(f"Run has no result: {detail.id}")

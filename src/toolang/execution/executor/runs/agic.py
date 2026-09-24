@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from toolang.base.errors import ModelResponseError
-from toolang.base.types.message import Message
+from toolang.base.types.message import ReasoningPart, TextPart, Message
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ModelContinuation, ModelUsage
 from toolang.common.errors import ToolangError
@@ -516,7 +516,25 @@ def _require_visible_output(result: ModelCallResult) -> None:
     """Reject a terminal model step that returned nothing a caller can see."""
 
     message = result.message
-    if message is not None and message.parts:
+    if message is not None and any(
+        not isinstance(part, ReasoningPart)
+        and (not isinstance(part, TextPart) or bool(part.text))
+        for part in message.parts
+    ):
+        return
+    # Preserve the existing empty Text contract; native-only model output is not
+    # an answer, even when a provider attaches its signature to empty text.
+    if (
+        message is not None
+        and message.parts
+        and all(
+            isinstance(part, TextPart)
+            and part.signature is None
+            and part.provider is None
+            and not part.provider_metadata
+            for part in message.parts
+        )
+    ):
         return
     usage = result.usage
     if (

@@ -5,7 +5,13 @@ from dataclasses import replace
 from html import escape
 import json
 
-from toolang.base.types.message import Part, TextPart, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    Part,
+    ReasoningPart,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 
 from ..records import RunRecord, StepRecord
 from ..types import (
@@ -67,10 +73,21 @@ def run_completion(
     content = ()
     if run.status == "succeeded" and run.output is not None:
         value = run.output.local
-        parts = parts_from_local(replace(value, value=resolve(value.value)))
+        resolved = replace(value, value=resolve(value.value))
+        raw_parts = parts_from_local(resolved)
+        parts = parts_from_local(resolved, content_only=True)
         attributes += f' output-type="{escape(value.type, quote=True)}"'
         if value.type in {"Text", "Part", "Part[]"} and not any(
-            isinstance(part, ToolCallPart | ToolResultPart) for part in parts
+            isinstance(part, ReasoningPart | ToolCallPart | ToolResultPart)
+            or (
+                isinstance(part, TextPart)
+                and (
+                    part.signature is not None
+                    or part.provider is not None
+                    or bool(part.provider_metadata)
+                )
+            )
+            for part in raw_parts
         ):
             content = (
                 TypedRef(

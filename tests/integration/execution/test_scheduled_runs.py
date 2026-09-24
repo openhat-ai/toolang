@@ -22,6 +22,7 @@ from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.base.types.message import (
     ImagePart,
     Message,
+    ReasoningPart,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -395,7 +396,21 @@ flow child(_: Part[]) -> Part[]:
     unchanged
 """
     media = ImagePart(image_url="https://example.test/image.png")
-    primary = [part.to_data() for part in (TextPart("<note>&"), media, returned)]
+    origin: dict[str, object] = {"adapter": "generate_content", "model": "model"}
+    primary = [
+        part.to_data()
+        for part in (
+            ReasoningPart("child reasoning", "reasoning-signature", "provider", origin),
+            TextPart(
+                "<note>&",
+                signature="text-signature",
+                provider="provider",
+                provider_metadata=origin,
+            ),
+            media,
+            returned,
+        )
+    ]
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -462,6 +477,14 @@ flow child(_: Part[]) -> Part[]:
             assert "&lt;note&gt;&amp;" in text
             assert "other-call" in text and "external__tool" in text
             assert "&lt;/toolang:run-result&gt;" in text
+            assert "child reasoning" not in text
+            assert "signature" not in text
+            assert all(not isinstance(p, ReasoningPart) for p in completion.parts)
+            assert all(
+                p.signature is None and p.provider is None and not p.provider_metadata
+                for p in completion.parts
+                if isinstance(p, TextPart)
+            )
             conversation = reopened.recent_conversation_messages(
                 thread_id=thread, limit=100
             )

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    ReasoningPart,
+    Message,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 import toolang.cli.toolang.commands.inspect as inspect_commands
@@ -139,6 +145,7 @@ def test_model_call_human_view_restores_review_content_presentation() -> None:
                 role="assistant",
                 parts=(
                     TextPart("I will inspect it."),
+                    ReasoningPart("The run record contains the failure."),
                     ToolCallPart(
                         tool_call_id="tool-1",
                         tool_name="inspect__run",
@@ -147,7 +154,6 @@ def test_model_call_human_view_restores_review_content_presentation() -> None:
                             "run_id": "run_123",
                             "include": ["steps", "errors"],
                         },
-                        reasoning="The run record contains the failure.",
                     ),
                 ),
             ),
@@ -200,12 +206,12 @@ def test_model_call_human_view_restores_review_content_presentation() -> None:
     assert "[2] assistant" in output
     assert "[1] tool" in output
     assert "I will inspect it." in output
-    call_boundary = "<[[ ToolCallPart(1), id=tool-1"
+    call_boundary = "<[[ ToolCallPart(2), id=tool-1"
     result_boundary = "<[[ ToolResultPart(0), id=tool-1, status=failed, exit_code=2"
     assert call_boundary in output
     invocation = 'inspect.run(run_id: "run_123", include: ["steps", "errors"])'
     assert invocation in output
-    assert "Reason\nThe run record contains the failure." in output
+    assert "The run record contains the failure." not in output
     assert result_boundary in output
     assert "message: Run inspection failed." in output
     assert output_lines.count("]]>") == 2

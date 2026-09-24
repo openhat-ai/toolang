@@ -55,14 +55,15 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
             ScriptedModelTurn(
                 result=ModelCallResult(),
                 updates=(
-                    ModelPartDelta(TextDelta("unfinished")),
+                    ModelPartDelta(0, TextDelta("unfinished")),
                     ModelPartEnd(
+                        1,
                         ToolCallPart(
                             tool_call_id="discard",
                             tool_name=tool.name,
                             tool_family="lookup",
                             input={},
-                        )
+                        ),
                     ),
                 ),
                 error=ModelResponseError(
@@ -132,7 +133,7 @@ def test_failed_step_retains_available_text(
         responses=[
             ScriptedModelTurn(
                 result=ModelCallResult(),
-                updates=(ModelPartDelta(TextDelta(streamed)),) if streamed else (),
+                updates=(ModelPartDelta(0, TextDelta(streamed)),) if streamed else (),
                 error=ModelResponseError(
                     "truncated", kind="output_limit", partial_text=received
                 ),

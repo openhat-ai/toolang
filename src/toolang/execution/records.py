@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     MessageRole,
     Part,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
     part_from_data,
@@ -703,6 +704,7 @@ def _validate_record_error(error: object, *, label: str) -> None:
 
 _PART_STORAGE_TYPES = {
     "TextPart": "text",
+    "ReasoningPart": "reasoning",
     "ImagePart": "image",
     "AudioPart": "audio",
     "DocumentPart": "document",
@@ -812,6 +814,7 @@ def local_value_to_data(value: Value | TypedRef) -> object:
         value,
         (
             TextPart,
+            ReasoningPart,
             ImagePart,
             AudioPart,
             DocumentPart,
@@ -1678,6 +1681,11 @@ def model_call_to_data(call: ModelCall) -> dict[str, Any]:
         ),
         "cont": (dict(call.continuation) if call.continuation is not None else None),
         "max_output_tokens": call.max_output_tokens,
+        **(
+            {"reasoning": call.reasoning.to_data()}
+            if call.reasoning is not None
+            else {}
+        ),
     }
 
 

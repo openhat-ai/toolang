@@ -20,6 +20,7 @@ from toolang.base.types.message import (
     ImagePart,
     Message,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
 )
@@ -289,7 +290,8 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
                 },
             ],
             "usage": {"input_tokens": 10, "output_tokens": 5},
-        }
+        },
+        model=_model("claude", provider="anthropic"),
     )
     assert result.message is not None
 
@@ -643,13 +645,15 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
         usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7),
     )
 
-    result = chat_completions_models.parse_chat_completion(response)
+    result = chat_completions_models.parse_chat_completion(
+        response, model=_model("deepseek-v4-flash", provider="deepseek")
+    )
 
     assert result.message is not None
-    call_part = next(
-        part for part in result.message.parts if isinstance(part, ToolCallPart)
+    reasoning_part = next(
+        part for part in result.message.parts if isinstance(part, ReasoningPart)
     )
-    assert call_part.reasoning == (
+    assert reasoning_part.text == (
         "The user asked for the directory, so list the current folder."
     )
 
@@ -727,7 +731,7 @@ def test_chat_output_limit_precedes_json_parsing_and_preserves_usage():
         usage=SimpleNamespace(prompt_tokens=100, completion_tokens=4096),
     )
     with pytest.raises(ModelResponseError, match="output limit") as caught:
-        chat_completions_models.parse_chat_completion(response)
+        chat_completions_models.parse_chat_completion(response, model=_model())
     assert caught.value.usage == ModelUsage(input_tokens=100, output_tokens=4096)
     assert caught.value.partial_text == "Working."
 
@@ -864,9 +868,16 @@ def test_chat_completions_stream_collects_usage(monkeypatch, provider: str) -> N
     payload = cast(dict[str, object], captured["payload"])
 
     assert payload["stream_options"] == {"include_usage": True}
-    assert result.message == Message.assistant("done")
+    assert result.message is not None
+    assert [
+        part.text for part in result.message.parts if isinstance(part, TextPart)
+    ] == ["done"]
+    assert [
+        part.text for part in result.message.parts if isinstance(part, ReasoningPart)
+    ] == ["Thinking."]
     assert result.usage == ModelUsage(input_tokens=13, output_tokens=8)
-    assert events == ["ModelPartStart", "ModelPartDelta", "ModelPartEnd"]
+    assert events.count("ModelPartStart") == events.count("ModelPartEnd") == 2
+    assert events.count("ModelPartDelta") == (2 if provider == "deepseek" else 1)
 
 
 def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(
@@ -1508,6 +1519,7 @@ def test_chat_completions_audio_response_keeps_transcript_on_audio_part() -> Non
             usage=None,
         ),
         audio_format="mp3",
+        model=_model("test"),
     )
 
     assert result.message == Message(
@@ -1744,6 +1756,7 @@ def test_responses_audio_response_keeps_transcript_on_audio_part() -> None:
             output_text="hello",
         ),
         tool_calls=(),
+        model=_model("test"),
     )
 
     assert result == Message(
@@ -1770,6 +1783,7 @@ def test_responses_image_generation_output_becomes_image_part() -> None:
             output_text="",
         ),
         tool_calls=(),
+        model=_model("test"),
     )
 
     assert result == Message(
@@ -2061,7 +2075,7 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
     ]
 
 
-def test_responses_skip_historical_tool_items_without_previous_response_id() -> None:
+def test_responses_encode_historical_tool_items_without_previous_response_id() -> None:
     payload = response_payload(
         _model("gpt-5", provider="openai", name="gpt-5").with_route(
             _route(provider="openai", adapter="responses", api=None, options={})
@@ -2111,6 +2125,18 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
             "type": "message",
             "role": "user",
             "content": [{"type": "input_text", "text": "hello"}],
+        },
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "shell__execute",
+            "arguments": '{"command":"pwd"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": '{"ok":true,"name":"shell__execute","output":{"ok":true,"stdout":"/tmp"}}',
         },
         {
             "type": "message",
@@ -2321,7 +2347,9 @@ def test_tool_argument_response_classification(protocol, name, arguments, kind) 
         )
 
         def parse():
-            return chat_completions_models.parse_chat_completion(response)
+            return chat_completions_models.parse_chat_completion(
+                response, model=_model()
+            )
     else:
         response = SimpleNamespace(
             output=[
@@ -2339,6 +2367,7 @@ def test_tool_argument_response_classification(protocol, name, arguments, kind) 
         def parse():
             return responses_models.parse_response(
                 response,
+                model=_model(),
                 request=ModelCall(instructions="", messages=[]),
                 stateful=False,
             )

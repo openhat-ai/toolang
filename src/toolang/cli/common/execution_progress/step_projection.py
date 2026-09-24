@@ -6,6 +6,7 @@ import json
 
 from toolang.base.types.message import (
     TextPart,
+    content_parts,
     ToolCallPart,
 )
 from toolang.execution.events import StepBegin, StepEnd
@@ -112,7 +113,7 @@ def trace_terminal_rows(
     tone = _tone(event.status)
     if begin.kind == "model":
         if event.status == "succeeded":
-            parts = output_parts(event)
+            parts = content_parts(output_parts(event))
             if parts and all(isinstance(part, ToolCallPart) for part in parts):
                 return ()
             return _marked_rows(
@@ -333,7 +334,7 @@ def lane_run_error_lines(error: str) -> tuple[str, ...]:
 
 
 def _model_output_lines(event: StepEnd, *, include_text: bool = True) -> list[str]:
-    parts = output_parts(event)
+    parts = content_parts(output_parts(event))
     lines: list[str] = []
     for part in parts:
         if isinstance(part, TextPart):
@@ -352,7 +353,7 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
     try:
-        parts = parts_from_local(event.output.local)
+        parts = parts_from_local(event.output.local, content_only=True)
     except (TypeError, ValueError):
         return []
     lines: list[str] = []
