@@ -58,12 +58,10 @@ def test_source_cache_round_trip_preserves_catalog_facts(
 
 
 @pytest.mark.parametrize("existing", [False, True])
-@pytest.mark.parametrize("skip_reason", ["unsafe", "oversized"])
 def test_skipped_probe_write_uses_content_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     existing: bool,
-    skip_reason: str,
 ) -> None:
     cache = ModelCatalogCache(tmp_path)
     snapshot = ModelCatalogSnapshot(providers={}, models=(), revision="probe")
@@ -73,9 +71,7 @@ def test_skipped_probe_write_uses_content_revision(
         name="Local",
         api="http://localhost/v1?api_key=test-placeholder",
     )
-    if skip_reason == "oversized":
-        provider = replace(provider, api="http://localhost/v1")
-        monkeypatch.setattr("toolang.common.cache._MAX_CACHE_BYTES", 1)
+    monkeypatch.setattr("toolang.common.cache._MAX_CACHE_BYTES", 1)
     changed = replace(snapshot, providers={"local": provider})
 
     revision = cache.store_probe("local", snapshot=changed)

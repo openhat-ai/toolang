@@ -396,7 +396,7 @@ def test_model_cache_does_not_bypass_catalog_size_limit(
         asyncio.run(load_setup(AgentLayout.resident(tmp_path, "alice")))
 
 
-def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
+def test_model_cache_preserves_authored_headers_without_persisting_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -415,14 +415,18 @@ def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
         }
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    watcher = _watcher(
+        monkeypatch, tmp_path, envs={"TEST_API_KEY": "raw-environment-sentinel"}
+    )
 
     setup = asyncio.run(watcher.refresh())
 
     context_files = _context_cache_files(tmp_path, "alice")
     assert all(
-        "secret" not in cache.read_text(encoding="utf-8") for cache in context_files
+        "raw-environment-sentinel" not in cache.read_text(encoding="utf-8")
+        for cache in context_files
     )
+    assert any("Authorization" in cache.read_text() for cache in context_files)
     route = setup.models.resolve("test/one")._toolang.route
     assert route.headers == {"Authorization": "secret"}
     assert route.api == "https://gateway.test/v1?api_key=secret"
@@ -686,6 +690,7 @@ def test_setup_watcher_keeps_probe_changes_when_cache_write_is_skipped(
         return probe
 
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", changed_probe)
+    monkeypatch.setattr("toolang.common.cache._MAX_CACHE_BYTES", 1)
     second = asyncio.run(watcher.refresh())
 
     assert second is not first
@@ -1126,7 +1131,11 @@ def _write_catalog(
 
 
 def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
-    return tuple(sorted((root / "agents" / agent / ".setup" / "models").glob("*.json")))
+    return tuple(
+        sorted(
+            (root / "agents" / agent / ".setup" / "models" / "sources").glob("*.json")
+        )
+    )
 
 
 def _model_cache_names(root: Path, agent: str) -> tuple[str, ...]:
@@ -1134,7 +1143,7 @@ def _model_cache_names(root: Path, agent: str) -> tuple[str, ...]:
 
 
 def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
-    return tuple(sorted((root / ".setup" / "models").glob("*.json")))
+    return tuple(sorted((root / ".setup" / "models" / "sources").glob("*.json")))
 
 
 def test_local_probe_keeps_its_stamp_across_identical_probes(

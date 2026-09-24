@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -13,6 +13,7 @@ from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.cache import digest
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import (
     load_model_adapters,
@@ -29,6 +30,7 @@ from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.collections import ModelCollection, catalog_model_dataset
 from toolang.setup.routes import (
     resolve_catalog_providers,
+    catalog_environment_names,
 )
 from toolang.plugin.models.resolution import resolve_model_reasoning
 from toolang.plugin.toolsets.collections import ToolCollection
@@ -42,6 +44,7 @@ from .cache import (
 )
 from .catalog import MergedModelCatalog, assemble_catalog
 from .config import (
+    capture_setup_config,
     load_agent_config,
     load_setup_config,
     load_root_setup_envs,
@@ -55,6 +58,8 @@ from .config import (
 )
 from .errors import SetupDiagnostic
 from .models import order_models, select_compact_model
+from .model_listing import ModelListing, build_model_listing
+from .records import ModelListingCache
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -148,9 +153,11 @@ class SetupWatcher:
         self._catalog_identity: FileObservation | None = None
         self._catalog_source: ModelCatalogSource | None = None
         self._source_revisions: tuple[tuple[str, str], ...] | None = None
-        self._model_cache = ModelCatalogCache(
+        cache_directory = (
             layout.home_model_cache if agent_context else layout.root_model_cache
         )
+        self._model_cache = ModelCatalogCache(cache_directory / "sources")
+        self.model_listing_cache = ModelListingCache(cache_directory)
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
@@ -176,6 +183,92 @@ class SetupWatcher:
         """
 
         self._setup = setup
+
+    async def load_catalog_listing(self) -> ModelListing:
+        """Capture dependencies and reuse one complete flat inspection catalog."""
+
+        paths = (
+            self.layout.root_config,
+            *((self.layout.config,) if self._agent_context else ()),
+        )
+        captured = tuple(capture_setup_config(path) for path in paths)
+        configs = tuple(config for config, _revision in captured)
+        envs = (
+            load_setup_envs(self.layout)
+            if self._agent_context
+            else load_root_setup_envs(self.layout)
+        )
+        validate_models_config(configs)
+        allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
+        adapter_configs = merge_plugin_configs(configs, family="model_adapter")
+        catalog_path = resolve_model_catalog_path(
+            self.layout,
+            explicit=self._model_catalog_override,
+            environ=envs,
+            include_agent=self._agent_context,
+        )
+        catalog_configs = self._runtime_catalog_configs(
+            configs, envs, catalog_path=catalog_path
+        )
+        catalogs = load_model_catalogs(catalog_configs)
+        models_dev = catalogs.get("models_dev")
+        if not isinstance(models_dev, ModelsDevModelCatalog):
+            raise RuntimeError("models_dev catalog plugin is not installed")
+        _observation, source = await asyncio.to_thread(models_dev.capture)
+        ordered = _ordered_additional_catalogs(catalogs)
+        probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
+        additional = tuple(
+            (catalog.name, assemble_catalog(probe))
+            for catalog, probe in zip(ordered, probes, strict=True)
+        )
+        inputs: dict[str, object] = {
+            "sources": [
+                ["models_dev", source.content_revision],
+                *[
+                    [name, self._model_cache.content_revision(snapshot)]
+                    for name, snapshot in additional
+                ],
+            ],
+            "config_files": [revision for _config, revision in captured],
+            "adapter_config": digest(adapter_configs),
+            "catalog_config": digest(
+                {
+                    name: {
+                        key: value
+                        for key, value in config.items()
+                        if key != "environ"
+                        # The captured bytes identify the static source across mounts.
+                        and not (name == "models_dev" and key == "path")
+                    }
+                    for name, config in catalog_configs.items()
+                }
+            ),
+            "allow_models": None if allow.models is None else list(allow.models),
+            "plugins": [
+                item.to_data()
+                for group in ("toolang.model_catalog", "toolang.model_adapter")
+                for item in plugin_provenance(group=group)
+            ],
+        }
+        records = self.model_listing_cache.load(inputs=inputs, environ=envs)
+        if records is not None:
+            return ModelListing(records)
+
+        static = await asyncio.to_thread(source.snapshot)
+        merged = await _merge_catalogs(static, additional)
+        adapters = load_model_adapters(adapter_configs)
+        names = catalog_environment_names(merged, adapters=adapters)
+        resolved = _resolve_catalog(merged, adapters=adapters, envs=envs)
+        listing = build_model_listing(resolved, allow_models=allow.models)
+        try:
+            self.model_listing_cache.store(
+                listing.records, inputs=inputs, environment_names=names, environ=envs
+            )
+        except Exception:
+            logger.warning(
+                "setup.model_listing_cache_write_failed agent=%s", self.layout.name
+            )
+        return listing
 
     def diagnostics(self) -> tuple[SetupDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
@@ -376,7 +469,7 @@ class SetupWatcher:
 
     def _runtime_catalog_configs(
         self,
-        configs: tuple[dict[str, object], dict[str, object]],
+        configs: Sequence[Mapping[str, object]],
         envs: Mapping[str, str],
         *,
         catalog_path: Path,

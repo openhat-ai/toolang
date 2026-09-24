@@ -66,6 +66,7 @@ class ModelCatalogSource:
 
     path: Path
     payload: bytes
+    content_revision: str
     revision: str
 
     def snapshot(self) -> ModelCatalogSnapshot:
@@ -116,14 +117,14 @@ def capture_model_catalog_source(
         payload = before.path.read_bytes()
         after = FileObservation.capture(before.path)
         if before == after:
+            content_revision = f"sha256:{sha256(payload).hexdigest()}"
             return before, ModelCatalogSource(
                 path=before.path,
                 payload=payload,
+                content_revision=content_revision,
                 # The payload digest and the mtime are both part of the revision:
                 # touching the file reloads it even when its content is unchanged.
-                revision=(
-                    f"sha256:{sha256(payload).hexdigest()}+mtime:{after.mtime_ns}"
-                ),
+                revision=f"{content_revision}+mtime:{after.mtime_ns}",
             )
     raise RuntimeError(f"model catalog changed while reading: {path}")
 

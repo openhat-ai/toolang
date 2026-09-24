@@ -16,6 +16,7 @@ from toolang.base.types.model import (
     ProviderToolang,
     ResolvedEnv,
     normalized_env,
+    env_names,
 )
 
 from toolang.base.types.model import ModelProvider
@@ -127,11 +128,9 @@ def resolve_provider(
     default_route = ModelRoute(
         adapter=adapter_name if adapter is not None else None,
         api=_resolve_api(
-            provider.api,
+            _provider_api_template(provider, adapter),
             environ=environ,
-            default=_default_api(
-                adapter, npm=provider.npm if not provider._toolang.adapter else None
-            ),
+            default=None,
         ),
         env=satisfied,
         headers=cast(Mapping[str, str], conventions["headers"]),
@@ -151,16 +150,15 @@ def resolve_model(
 
     name = model_adapter(provider, model)
     implementation = adapters.get(name) if name is not None else None
-    override = model.provider or ModelProvider()
     mode_blocks = _mode_provider_blocks(model)
     route = ModelRoute(
         adapter=name
         if implementation is not None and mode_blocks is not None
         else None,
         api=_resolve_api(
-            _optional_text(override.api) or provider.api,
+            _model_api_template(provider, model, implementation),
             environ=environ,
-            default=_default_api(implementation, npm=_model_npm(provider, model)),
+            default=None,
         ),
         env=provider._toolang.route.env,
         headers=model_headers(provider, model, mode_blocks=mode_blocks)
@@ -171,6 +169,54 @@ def resolve_model(
         else {},
     )
     return model.with_route(route)
+
+
+def catalog_environment_names(
+    snapshot: ModelCatalogSnapshot, *, adapters: Mapping[str, ModelAdapter]
+) -> tuple[str, ...]:
+    """Enumerate effective route dependencies, including currently missing names."""
+
+    names: set[str] = set()
+    templates: list[str | None] = []
+    for provider in snapshot.providers.values():
+        names.update(env_names(_resolve_env(provider)))
+        adapter = adapters.get(provider_adapter(provider) or "")
+        templates.append(_provider_api_template(provider, adapter))
+    for model in snapshot.models:
+        provider = snapshot.providers[model._toolang.provider]
+        adapter = adapters.get(model_adapter(provider, model) or "")
+        templates.append(_model_api_template(provider, model, adapter))
+    for template in templates:
+        for match in Template.pattern.finditer(template or ""):
+            name = match.group("named") or match.group("braced")
+            if name is not None:
+                names.add(name)
+    return tuple(sorted(names))
+
+
+def _api_template(value: str | None, default: str | None) -> str | None:
+    return value.strip() if value is not None and value.strip() else default
+
+
+def _provider_api_template(
+    provider: Provider, adapter: ModelAdapter | None
+) -> str | None:
+    return _api_template(
+        provider.api,
+        _default_api(
+            adapter, npm=provider.npm if not provider._toolang.adapter else None
+        ),
+    )
+
+
+def _model_api_template(
+    provider: Provider, model: Model, adapter: ModelAdapter | None
+) -> str | None:
+    override = model.provider or ModelProvider()
+    return _api_template(
+        _optional_text(override.api) or provider.api,
+        _default_api(adapter, npm=_model_npm(provider, model)),
+    )
 
 
 def _default_api(adapter: ModelAdapter | None, *, npm: str | None) -> str | None:
@@ -341,7 +387,7 @@ def _resolve_api(
     environ: Mapping[str, str],
     default: str | None,
 ) -> str | None:
-    template = value.strip() if value is not None and value.strip() else default
+    template = _api_template(value, default)
     if template is None:
         return None
     try:

@@ -161,7 +161,8 @@ def _hosted_model_catalog_mounts(
             hosted_path = request.hosted_root / relative
         section[MODEL_CATALOG_ENV] = str(hosted_path)
         mount = SandboxMount(local_path, hosted_path, read_only=True)
-        mounts[(local_path, hosted_path)] = mount
+        if mount not in request.mounts:
+            mounts[(local_path, hosted_path)] = mount
     return tuple(mounts.values())
 
 

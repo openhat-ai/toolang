@@ -73,7 +73,7 @@ class ModelCatalogCache:
         revision: str,
         snapshot: ModelCatalogSnapshot,
     ) -> None:
-        """Persist one source's records; unsafe or oversized payloads are skipped."""
+        """Persist source declarations; oversized payloads are skipped."""
 
         self._write(name, {**_snapshot_document(snapshot), "revision": revision})
 
@@ -91,7 +91,7 @@ class ModelCatalogCache:
         return _detected_revision(path)
 
     def content_revision(self, snapshot: ModelCatalogSnapshot) -> str:
-        """Return a content-derived revision for one probe that could not be stored."""
+        """Return a content-derived revision independent of cache file timestamps."""
 
         return f"probe:{digest(_snapshot_document(snapshot))}"
 
@@ -113,6 +113,7 @@ class ModelCatalogCache:
                 path,
                 kind=_CATALOG_KIND,
                 key=_file_name(name),
+                scan_content=False,
             )
             return (
                 document if document.get("catalog_schema") == _CATALOG_SCHEMA else None
@@ -121,12 +122,12 @@ class ModelCatalogCache:
             return None
 
     def _write(self, name: str, document: Mapping[str, object]) -> bool:
-        self._directory.mkdir(parents=True, exist_ok=True)
         return store_document(
             self._path(name),
             kind=_CATALOG_KIND,
             key=_file_name(name),
             document={**document, "catalog_schema": _CATALOG_SCHEMA},
+            scan_content=False,
         )
 
 

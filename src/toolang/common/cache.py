@@ -59,8 +59,9 @@ def store_document(
     kind: str,
     key: str,
     document: Mapping[str, object],
+    scan_content: bool = True,
 ) -> bool:
-    """Write a canonical document; return False for unsafe or oversized payloads."""
+    """Write atomically under the directory owner; catalogs may skip scanning."""
 
     payload = {
         "schema": CACHE_SCHEMA,
@@ -73,10 +74,10 @@ def store_document(
     content = f'{{"digest":"{checksum}","payload":{payload_content}}}'
     if len(content.encode("utf-8")) > _MAX_CACHE_BYTES:
         return False
-    if _serialized_data_is_unsafe(content, payload):
+    if scan_content and _serialized_data_is_unsafe(content, payload):
         return False
-    with file_write_lock(path.with_name(f".{path.name}.lock")):
-        atomic_write_text(path, content)
+    with file_write_lock(path.with_name(f".{path.name}.lock"), inherit_owner=True):
+        atomic_write_text(path, content, inherit_owner=True)
     return True
 
 
@@ -86,13 +87,14 @@ def load_document(
     kind: str,
     key: str,
     fast_json: bool = False,
+    scan_content: bool = True,
 ) -> dict[str, object]:
-    """Read and validate one canonical cache document."""
+    """Validate integrity and identity; content scanning is optional for catalogs."""
 
     if path.stat().st_size > _MAX_CACHE_BYTES:
         raise ValueError("model cache entry exceeds its size limit")
     content = path.read_text(encoding="utf-8")
-    if _serialized_data_is_unsafe(content):
+    if scan_content and _serialized_data_is_unsafe(content):
         raise ValueError("model cache entry contains unsafe data")
     del fast_json  # All cache readers now use the same native decoder.
     raw = msgspec.json.decode(content)
