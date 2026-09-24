@@ -8,6 +8,8 @@ import pytest
 
 from toolang.base.types.message import (
     Part,
+    ReasoningDelta,
+    ReasoningPart,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -475,6 +477,59 @@ def test_model_part_end_must_extend_streamed_text() -> None:
         ["• PartEnd text does not extend TextDelta for run_root.0 part 0"]
     ]
     assert mismatch.committed[0].rows[0].tone == "error"
+
+
+def test_multiple_signed_text_parts_render_without_exposing_reasoning():
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepRef.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    origin: dict[str, object] = {"adapter": "generate_content", "model": "model"}
+    parts = (
+        ReasoningPart("hidden", "reasoning-signature", "provider", origin),
+        TextPart(
+            "First answer",
+            signature="first-signature",
+            provider="provider",
+            provider_metadata=origin,
+        ),
+        ReasoningPart("also hidden"),
+        TextPart(
+            "Second answer",
+            signature="second-signature",
+            provider="provider",
+            provider_metadata=origin,
+        ),
+    )
+    rendered = []
+    for index, part in enumerate(parts):
+        projector.handle(PartBegin(step=path, part=index, part_type=part.type))
+        delta = (
+            ReasoningDelta(part.text)
+            if isinstance(part, ReasoningPart)
+            else TextDelta(part.text[:3])
+        )
+        update = projector.handle(PartDelta(step=path, part=index, delta=delta))
+        rendered.extend(_rows(update.committed))
+        if isinstance(part, ReasoningPart):
+            assert all(
+                part.text not in row.text for block in update.live for row in block.rows
+            )
+        update = projector.handle(PartEnd(step=path, part=index, data=part))
+        rendered.extend(_rows(update.committed))
+    update = projector.handle(
+        StepEnd(
+            step=path, kind="model", status="succeeded", output=_part_output(*parts)
+        )
+    )
+    rendered.extend(_rows(update.committed))
+    assert rendered == [["First answer"], ["Second answer"]]
 
 
 def test_model_step_end_must_repeat_the_completed_parts() -> None:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
-from typing import Any, cast
+import asyncio
+from typing import cast
 
 import httpx
 
@@ -23,6 +24,10 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Message,
+    Part,
+    ReasoningPart,
+    ReasoningDelta,
+    ToolCallDelta,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -34,9 +39,6 @@ from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelPartDelta,
-    ModelPartEnd,
-    ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
     ModelUsageMeter,
@@ -45,6 +47,7 @@ from toolang.base.types.run import (
 
 from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
+from ._parts import PartStream, compatible, native_metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,14 +78,7 @@ class MessagesModelAdapter(ModelAdapter):
                 json=messages_payload(model, request, stream=False),
             )
             await raise_for_model_status(response)
-            result = parse_message_response(_json_object(response.json()))
-            return replace(
-                result,
-                continuation=_merge_continuation(
-                    request.continuation,
-                    result.continuation,
-                ),
-            )
+            return parse_message_response(_json_object(response.json()), model=model)
 
     @model_transport
     async def stream(
@@ -93,123 +89,137 @@ class MessagesModelAdapter(ModelAdapter):
         environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
-        on_event = model_events(on_event)
-        payload = messages_payload(model, request, stream=True)
-        text: list[str] = []
-        tool_blocks: dict[int, dict[str, object]] = {}
-        thinking_blocks: dict[int, dict[str, object]] = {}
+        parts = PartStream(model_events(on_event))
+        blocks: dict[int, dict[str, object]] = {}
         usage: dict[str, object] = {}
+        stopped: set[int] = set()
         ended = False
-        with model_transport_errors(
-            usage=lambda: messages_usage(usage), partial_text=lambda: "".join(text)
-        ):
-            async with httpx.AsyncClient() as client:
-                async with client.stream(
-                    "POST",
-                    _messages_url(model),
-                    headers=_headers(model, environ=environ),
-                    json=payload,
-                ) as response:
-                    await raise_for_model_status(response)
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        raw = line.removeprefix("data:").strip()
-                        if not raw or raw == "[DONE]":
-                            continue
-                        event = _json_object(json.loads(raw))
-                        event_type = event.get("type")
-                        if event_type == "error":
-                            raise provider_error(event.get("error"))
-                        if event_type == "message_stop":
-                            ended = True
-                            break
-                        if event_type == "message_start":
-                            message = _json_object(event.get("message"))
-                            usage.update(_json_object(message.get("usage")))
-                        elif event_type == "message_delta":
-                            usage.update(_json_object(event.get("usage")))
-                            # A known rejection or truncation outranks a lost tail.
-                            _check_stop_reason(
-                                _json_object(event.get("delta")).get("stop_reason")
-                            )
-                        elif event_type == "content_block_start":
+        try:
+            with model_transport_errors(
+                usage=lambda: messages_usage(usage),
+                partial_text=lambda: "".join(
+                    _text(block.get("text"))
+                    for block in blocks.values()
+                    if block.get("type") == "text"
+                ),
+            ):
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST",
+                        _messages_url(model),
+                        headers=_headers(model, environ=environ),
+                        json=messages_payload(model, request, stream=True),
+                    ) as response:
+                        await raise_for_model_status(response)
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            raw = line.removeprefix("data:").strip()
+                            if not raw or raw == "[DONE]":
+                                continue
+                            event = _json_object(json.loads(raw))
+                            kind = event.get("type")
                             index = _int(event.get("index"))
-                            block = _json_object(event.get("content_block"))
-                            if index is not None and block.get("type") == "tool_use":
-                                tool_blocks[index] = dict(block)
-                                await on_event(ModelPartStart(kind="tool_call"))
-                            elif index is not None and block.get("type") in {
-                                "thinking",
-                                "redacted_thinking",
-                            }:
-                                thinking_blocks[index] = dict(block)
-                        elif event_type == "content_block_delta":
-                            delta = _json_object(event.get("delta"))
-                            if delta.get("type") == "text_delta":
-                                value = _text(delta.get("text"))
-                                if value:
-                                    if not text:
-                                        await on_event(ModelPartStart(kind="text"))
-                                    text.append(value)
-                                    await on_event(
-                                        ModelPartDelta(delta=TextDelta(value))
+                            if kind == "message_start":
+                                usage.update(
+                                    _json_object(
+                                        _json_object(event.get("message")).get("usage")
                                     )
-                            elif delta.get("type") == "input_json_delta":
-                                index = _int(event.get("index"))
-                                value = _text(delta.get("partial_json"))
-                                if index is not None and value:
-                                    block = tool_blocks.setdefault(index, {})
+                                )
+                            elif kind == "message_delta":
+                                usage.update(_json_object(event.get("usage")))
+                                _check_stop_reason(
+                                    _json_object(event.get("delta")).get("stop_reason")
+                                )
+                            elif kind == "message_stop":
+                                ended = True
+                                break
+                            elif kind == "error":
+                                raise provider_error(event.get("error"))
+                            elif kind == "content_block_start" and index is not None:
+                                block = _json_object(event.get("content_block"))
+                                blocks[index] = block
+                                part = _message_part(block, index=index, model=model)
+                                if part is not None:
+                                    if isinstance(part, TextPart | ReasoningPart):
+                                        await parts.text(
+                                            index,
+                                            part.text,
+                                            reasoning=isinstance(part, ReasoningPart),
+                                        )
+                                    else:
+                                        await parts.start(index, part)
+                            elif kind == "content_block_delta" and index is not None:
+                                block = blocks.get(index)
+                                if block is None:
+                                    raise ToolangError(
+                                        "Messages delta refers to an unknown content block"
+                                    )
+                                delta = _json_object(event.get("delta"))
+                                delta_type = _text(delta.get("type"))
+                                if delta_type in {
+                                    "text_delta",
+                                    "thinking_delta",
+                                    "signature_delta",
+                                }:
+                                    key = {
+                                        "text_delta": "text",
+                                        "thinking_delta": "thinking",
+                                        "signature_delta": "signature",
+                                    }[delta_type]
+                                    value = _text(delta.get(key))
+                                    block[key] = _text(block.get(key)) + value
+                                    if delta_type != "signature_delta":
+                                        await parts.delta(
+                                            index,
+                                            ReasoningDelta(value)
+                                            if delta_type == "thinking_delta"
+                                            else TextDelta(value),
+                                        )
+                                elif delta_type == "input_json_delta":
+                                    value = _text(delta.get("partial_json"))
                                     block["partial_json"] = (
                                         _text(block.get("partial_json")) + value
                                     )
-                            elif delta.get("type") in {
-                                "thinking_delta",
-                                "signature_delta",
-                            }:
-                                index = _int(event.get("index"))
-                                if index is not None:
-                                    block = thinking_blocks.setdefault(
-                                        index, {"type": "thinking"}
+                                    block.pop("input", None)
+                                    call_id = (
+                                        _text(block.get("id")) or f"tool-call-{index}"
                                     )
-                                    key = (
-                                        "thinking"
-                                        if delta.get("type") == "thinking_delta"
-                                        else "signature"
+                                    await parts.delta(
+                                        index, ToolCallDelta(value, call_id)
                                     )
-                                    value = _text(delta.get(key))
-                                    if value:
-                                        block[key] = _text(block.get(key)) + value
-            if not ended:
-                raise ModelResponseError(
-                    "model stream ended before message_stop", kind="incomplete_stream"
-                )
-            calls = tuple(
-                _tool_call(block, fallback=f"tool-call-{index}")
-                for index, block in sorted(tool_blocks.items())
-            )
-        parts: list[TextPart | ToolCallPart] = []
-        output = "".join(text)
-        if output:
-            part = TextPart(output)
-            parts.append(part)
-            await on_event(ModelPartEnd(data=part))
-        for call in calls:
-            part = _tool_part(call)
-            parts.append(part)
-            await on_event(ModelPartEnd(data=part))
-        message = Message(role="assistant", parts=tuple(parts))
+                            elif kind == "content_block_stop" and index is not None:
+                                block = blocks[index]
+                                part = _message_part(block, index=index, model=model)
+                                if part is not None:
+                                    await parts.finish(index, part)
+                                stopped.add(index)
+                if not ended:
+                    raise ModelResponseError(
+                        "model stream ended before message_stop",
+                        kind="incomplete_stream",
+                    )
+                # Text/tool values are still usable on compatible APIs without block-stop
+                # events. Opaque reasoning state requires an explicit completed block.
+                for index, block in blocks.items():
+                    if index not in stopped:
+                        part = _message_part(block, index=index, model=model)
+                        if isinstance(part, ReasoningPart):
+                            part = ReasoningPart(part.text)
+                        if part is not None:
+                            await parts.finish(index, part)
+        except (Exception, asyncio.CancelledError):
+            await parts.interrupt()
+            raise
+        message = parts.message()
         return ModelCallResult(
             message=message,
-            tool_calls=calls,
-            usage=messages_usage(usage),
-            continuation=_merge_continuation(
-                request.continuation,
-                _thinking_continuation(
-                    thinking_blocks=thinking_blocks,
-                    tool_blocks=tool_blocks,
-                ),
+            tool_calls=tuple(
+                _tool_call(block, fallback=f"tool-call-{index}")
+                for index, block in blocks.items()
+                if block.get("type") == "tool_use"
             ),
+            usage=messages_usage(usage),
         )
 
 
@@ -267,11 +277,7 @@ def messages_payload(
         "model": model.id,
         "max_tokens": max_tokens,
         "messages": [
-            _encode_message(
-                message,
-                thinking_blocks=_continuation_thinking_blocks(request.continuation),
-            )
-            for message in request.messages
+            _encode_message(message, model=model) for message in request.messages
         ],
         "stream": stream,
     }
@@ -307,46 +313,59 @@ def _check_stop_reason(reason: object) -> None:
         )
 
 
-def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
-    """Parse one Anthropic Messages response."""
+def parse_message_response(
+    payload: Mapping[str, object], *, model: Model
+) -> ModelCallResult:
+    """Parse one Anthropic Messages response with Part-owned native state."""
 
-    parts: list[TextPart | ToolCallPart] = []
+    parts: list[Part] = []
     calls: list[ToolCall] = []
-    thinking: list[dict[str, object]] = []
-    call_thinking: dict[str, list[dict[str, object]]] = {}
     content = payload.get("content")
-    blocks = (
-        tuple(_json_object(raw) for raw in content) if isinstance(content, list) else ()
-    )
     with model_transport_errors(
         usage=lambda: messages_usage(_json_object(payload.get("usage"))),
         partial_text=lambda: "".join(
-            _text(block.get("text")) for block in blocks if block.get("type") == "text"
+            _text(_json_object(block).get("text"))
+            for block in (content if isinstance(content, list) else ())
+            if _json_object(block).get("type") == "text"
         ),
     ):
         if "error" in payload:
             raise provider_error(payload["error"])
         _check_stop_reason(payload.get("stop_reason"))
-        for block in blocks:
-            if block.get("type") == "text":
-                value = _text(block.get("text"))
-                if value:
-                    parts.append(TextPart(value))
-            elif block.get("type") in {"thinking", "redacted_thinking"}:
-                thinking.append(dict(block))
-            elif block.get("type") == "tool_use":
-                call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
-                calls.append(call)
-                parts.append(_tool_part(call))
-                if thinking:
-                    call_thinking[call.call_id] = thinking
-                    thinking = []
+        if isinstance(content, list):
+            for index, raw in enumerate(content):
+                block = _json_object(raw)
+                part = _message_part(block, index=index, model=model)
+                if part is not None:
+                    parts.append(part)
+                if block.get("type") == "tool_use":
+                    calls.append(_tool_call(block, fallback=f"tool-call-{index}"))
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=messages_usage(_json_object(payload.get("usage"))),
-        continuation=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
     )
+
+
+def _message_part(
+    block: Mapping[str, object], *, index: int, model: Model
+) -> Part | None:
+    kind = block.get("type")
+    if kind == "text":
+        return TextPart(_text(block.get("text")))
+    if kind in {"thinking", "redacted_thinking"}:
+        return ReasoningPart(
+            text=_text(block.get("thinking")) if kind == "thinking" else "",
+            signature=_text(block.get("signature" if kind == "thinking" else "data"))
+            or None,
+            provider=model._toolang.provider,
+            provider_metadata=native_metadata(
+                model, "messages", type=kind, index=index
+            ),
+        )
+    if kind == "tool_use":
+        return _tool_part(_tool_call(block, fallback=f"tool-call-{index}"))
+    return None
 
 
 def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
@@ -405,66 +424,6 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
     )
 
 
-_THINKING_BLOCKS = "anthropic_thinking_blocks"
-
-
-def _continuation_thinking_blocks(
-    continuation: Mapping[str, Any] | None,
-) -> dict[str, tuple[dict[str, object], ...]]:
-    if not isinstance(continuation, Mapping):
-        return {}
-    raw = continuation.get(_THINKING_BLOCKS)
-    if not isinstance(raw, Mapping):
-        return {}
-    values: dict[str, tuple[dict[str, object], ...]] = {}
-    for call_id, raw_blocks in raw.items():
-        if not isinstance(raw_blocks, list | tuple):
-            continue
-        blocks = tuple(
-            dict(cast(Mapping[str, object], block))
-            for block in raw_blocks
-            if isinstance(block, Mapping)
-            and block.get("type") in {"thinking", "redacted_thinking"}
-        )
-        if blocks:
-            values[str(call_id)] = blocks
-    return values
-
-
-def _thinking_continuation(
-    *,
-    thinking_blocks: Mapping[int, Mapping[str, object]],
-    tool_blocks: Mapping[int, Mapping[str, object]],
-) -> dict[str, Any] | None:
-    by_call: dict[str, list[dict[str, object]]] = {}
-    pending: list[dict[str, object]] = []
-    for index in sorted(set(thinking_blocks) | set(tool_blocks)):
-        if block := thinking_blocks.get(index):
-            pending.append(dict(block))
-        if tool := tool_blocks.get(index):
-            call_id = _text(tool.get("id")) or f"tool-call-{index}"
-            if pending:
-                by_call[call_id] = pending
-                pending = []
-    return {_THINKING_BLOCKS: by_call} if by_call else None
-
-
-def _merge_continuation(
-    previous: Mapping[str, Any] | None,
-    current: Mapping[str, Any] | None,
-) -> dict[str, Any] | None:
-    merged = dict(previous or {})
-    merged.update(dict(current or {}))
-    blocks = _continuation_thinking_blocks(previous)
-    blocks.update(_continuation_thinking_blocks(current))
-    if blocks:
-        merged[_THINKING_BLOCKS] = {
-            call_id: [dict(block) for block in values]
-            for call_id, values in blocks.items()
-        }
-    return merged or None
-
-
 def _apply_structured_output(
     payload: dict[str, object],
     schema: dict[str, object] | None,
@@ -497,12 +456,25 @@ def _apply_structured_output(
 def _encode_message(
     message: Message,
     *,
-    thinking_blocks: Mapping[str, tuple[dict[str, object], ...]],
+    model: Model,
 ) -> dict[str, object]:
     role = "assistant" if message.role == "assistant" else "user"
     content: list[dict[str, object]] = []
     for part in message.parts:
-        if isinstance(part, TextPart):
+        if isinstance(part, ReasoningPart):
+            if message.role != "assistant" or not compatible(part, model, "messages"):
+                continue
+            kind = part.provider_metadata.get("type")
+            if kind not in {"thinking", "redacted_thinking"} or not part.signature:
+                raise ToolangError(
+                    "Messages reasoning requires a native block type and signature"
+                )
+            content.append(
+                {"type": "thinking", "thinking": part.text, "signature": part.signature}
+                if kind == "thinking"
+                else {"type": "redacted_thinking", "data": part.signature}
+            )
+        elif isinstance(part, TextPart):
             content.append({"type": "text", "text": part.text})
         elif isinstance(part, ImagePart) and part.image_url is not None:
             content.append(
@@ -524,7 +496,6 @@ def _encode_message(
             )
         elif isinstance(part, ToolCallPart):
             call_id = part.call_id or part.tool_call_id
-            content.extend(dict(block) for block in thinking_blocks.get(call_id, ()))
             content.append(
                 {
                     "type": "tool_use",
@@ -617,7 +588,9 @@ def _apply_reasoning(
     disabled = effort == "none"
     if disabled and budget is not None:
         raise ToolangError("disabled Messages reasoning conflicts with a token budget")
-    payload.pop("thinking", None)
+    thinking = _json_object(payload.get("thinking"))
+    for key in ("type", "budget_tokens"):
+        thinking.pop(key, None)
     raw_output_config = payload.get("output_config")
     if raw_output_config is not None and not isinstance(raw_output_config, Mapping):
         raise ToolangError("Messages output_config must be an object")
@@ -630,9 +603,9 @@ def _apply_reasoning(
     if disabled:
         payload["thinking"] = {"type": "disabled"}
     elif isinstance(budget, int) and not isinstance(budget, bool):
-        payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        payload["thinking"] = {**thinking, "type": "enabled", "budget_tokens": budget}
     elif isinstance(effort, str):
-        payload["thinking"] = {"type": "adaptive"}
+        payload["thinking"] = {**thinking, "type": "adaptive"}
     if isinstance(effort, str) and not disabled:
         output_config["effort"] = effort
     if output_config:

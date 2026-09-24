@@ -29,6 +29,7 @@ from toolang.base.types.message import (
     ImagePart,
     Message,
     MessageRecall,
+    ReasoningPart,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -186,7 +187,25 @@ def test_online_tool_loops_only_record_and_render_additions(
         tools={tool.name: tool},
         responses=[
             *(
-                ModelCallResult(tool_calls=(ToolCall(str(i), str(i), tool.name, {}),))
+                ModelCallResult(
+                    message=Message(
+                        "assistant",
+                        (
+                            ReasoningPart(
+                                f"reasoning-{i}",
+                                f"signature-{i}",
+                                "test",
+                                {
+                                    "adapter": "messages",
+                                    "model": "scripted",
+                                    "type": "thinking",
+                                    "index": 0,
+                                },
+                            ),
+                        ),
+                    ),
+                    tool_calls=(ToolCall(str(i), str(i), tool.name, {}),),
+                )
                 for i in range(12)
             ),
             ModelCallResult(message=Message.assistant("done")),
@@ -227,6 +246,15 @@ def test_online_tool_loops_only_record_and_render_additions(
             model_steps = [
                 step for step in steps if isinstance(step.given, StoredModelStepGiven)
             ]
+            for index, step in enumerate(model_steps[:-1]):
+                assert step.output is not None
+                reasoning = [
+                    part
+                    for part in parts_from_local(step.output.local)
+                    if isinstance(part, ReasoningPart)
+                ]
+                assert len(reasoning) == 1
+                assert reasoning[0].signature == f"signature-{index}"
             assert [
                 len(step.given.call.messages.delta)
                 for step in model_steps

@@ -15,11 +15,12 @@ from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import (
     Part,
     PartType,
+    ReasoningPart,
+    ReasoningDelta,
     TextDelta,
     TextPart,
     ToolCallDelta,
     ToolCallPart,
-    message_text,
 )
 from toolang.base.types.run import (
     ModelCall,
@@ -45,11 +46,13 @@ from ...types import (
     FieldRef,
     Local,
     ModelMessages,
+    MessageTemplate,
     ModelStepGiven,
     ModelStepNoted,
     Output,
     RunRef,
     StepRef,
+    TypedRef,
 )
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
@@ -153,9 +156,7 @@ def _candidate(
         output_schema=deepcopy(state.output_binding.output_schema),
         continuation=(
             state.continuation
-            # History changes invalidate calibration, but adapters still need
-            # opaque reasoning/signatures to replay retained tool exchanges.
-            # Stateful adapters validate the actual prefix before reusing it.
+            # Stateful adapters validate the actual prefix before reusing a cursor.
             if prepared.model == state.model_frame.model
             and prepared.reasoning == state.model_frame.reasoning
             else None
@@ -269,14 +270,11 @@ def compaction_boundary(state: _AgicState) -> RunRef | None:
 @dataclass(slots=True)
 class _ModelStream:
     step: int
-    part_count: int = 0
-    text_part: int | None = None
-    tool_parts: dict[str, int] = field(default_factory=dict)
     started_parts: set[int] = field(default_factory=set)
     ended_parts: set[int] = field(default_factory=set)
     part_types: dict[int, PartType] = field(default_factory=dict)
-    text_chunks: list[str] = field(default_factory=list)
-    tool_chunks: dict[str, list[str]] = field(default_factory=dict)
+    chunks: dict[int, list[str]] = field(default_factory=dict)
+    tool_ids: dict[int, str] = field(default_factory=dict)
     completed_parts: dict[int, Part] = field(default_factory=dict)
 
 
@@ -448,12 +446,26 @@ async def execute(state: _AgicState) -> ModelCallResult:
         raise
     except ModelResponseError as exc:
         # The adapter may have received more text than it emitted as deltas.
-        if exc.partial_text and exc.partial_text.startswith(
-            "".join(stream.text_chunks)
-        ):
-            stream.completed_parts[_ensure_text_part_index(stream)] = TextPart(
-                text=exc.partial_text
-            )
+        text_indices = [
+            index for index, kind in stream.part_types.items() if kind == "text"
+        ]
+        previous = "".join(
+            part.text
+            if isinstance(part := stream.completed_parts.get(index), TextPart)
+            else "".join(stream.chunks.get(index, ()))
+            for index in text_indices
+        )
+        if exc.partial_text and exc.partial_text.startswith(previous):
+            suffix = exc.partial_text[len(previous) :]
+            if suffix:
+                if (
+                    len(text_indices) == 1
+                    and text_indices[0] not in stream.completed_parts
+                ):
+                    stream.completed_parts[text_indices[0]] = TextPart(exc.partial_text)
+                else:
+                    index = max(stream.part_types, default=-1) + 1
+                    stream.completed_parts[index] = TextPart(suffix)
         await _end_incomplete(
             state, stream, error=ErrorMessage(str(exc)), response_error=exc
         )
@@ -577,109 +589,68 @@ async def _handle_event(
     stream: _ModelStream,
     event: object,
 ) -> None:
-    if isinstance(event, ModelPartStart):
-        if event.kind == "text":
-            await _emit_part_begin(
-                state,
-                stream,
-                part_index=_ensure_text_part_index(stream),
-                kind="text",
-            )
+    if not isinstance(event, ModelPartStart | ModelPartDelta | ModelPartEnd):
         return
-    if isinstance(event, ModelPartDelta):
-        if isinstance(event.delta, TextDelta):
-            stream.text_chunks.append(event.delta.text)
-            part_index = _ensure_text_part_index(stream)
-            await _emit_part_begin(
-                state,
-                stream,
-                part_index=part_index,
-                kind="text",
-            )
-            if event.delta.text:
-                await state.emit(
-                    PartDelta(
-                        step=StepRef.from_local(
-                            state.prepared.run.run_id, (stream.step,)
-                        ),
-                        part=part_index,
-                        delta=event.delta,
-                    )
-                )
-            return
-        if isinstance(event.delta, ToolCallDelta):
-            stream.tool_chunks.setdefault(event.delta.tool_call_id, []).append(
-                event.delta.text
-            )
-            part_index = _ensure_tool_part_index(stream, event.delta.tool_call_id)
-            await _emit_part_begin(
-                state,
-                stream,
-                part_index=part_index,
-                kind="tool_call",
-            )
-            if event.delta.text:
-                await state.emit(
-                    PartDelta(
-                        step=StepRef.from_local(
-                            state.prepared.run.run_id, (stream.step,)
-                        ),
-                        part=part_index,
-                        delta=event.delta,
-                    )
-                )
-            return
-    if isinstance(event, ModelPartEnd):
-        if isinstance(event.data, TextPart):
-            _validate_text_prefix(
-                stream,
-                event.data.text,
-                source="ModelPartEnd",
-            )
-            part_index = _ensure_text_part_index(stream)
-        elif isinstance(event.data, ToolCallPart):
-            part_index = _ensure_tool_part_index(stream, event.data.tool_call_id)
-        else:
-            part_index = _next_part_index(stream)
-        stream.completed_parts[part_index] = event.data
-        await _emit_part_begin(
-            state,
-            stream,
-            part_index=part_index,
-            kind=event.data.type,
-        )
-        return
-
-
-def _validate_stream_result(
-    stream: _ModelStream,
-    current: ModelCallResult,
-) -> None:
-    message = current.message
-    final_text = (
-        message_text(message.parts)
-        if message is not None and message.role == "assistant"
-        else ""
+    kind = (
+        event.kind
+        if isinstance(event, ModelPartStart)
+        else event.delta.kind
+        if isinstance(event, ModelPartDelta)
+        else event.data.type
     )
-    _validate_text_prefix(stream, final_text, source="ModelCallResult")
-    if stream.text_part is None:
+    await _emit_part_begin(state, stream, part_index=event.part, kind=kind)
+    if isinstance(event, ModelPartStart):
         return
-    completed = stream.completed_parts.get(stream.text_part)
-    if isinstance(completed, TextPart) and completed.text != final_text:
-        raise ValueError(
-            "ModelCallResult text does not match authoritative ModelPartEnd"
-        )
+    if event.part in stream.completed_parts:
+        raise ValueError("model update targets a completed Part")
+    if isinstance(event, ModelPartDelta):
+        if isinstance(event.delta, ToolCallDelta):
+            previous = stream.tool_ids.setdefault(event.part, event.delta.tool_call_id)
+            if previous != event.delta.tool_call_id:
+                raise ValueError("model delta changed a Part's tool call ID")
+        stream.chunks.setdefault(event.part, []).append(event.delta.text)
+        if event.delta.text:
+            await state.emit(
+                PartDelta(
+                    step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                    part=event.part,
+                    delta=event.delta,
+                )
+            )
+    else:
+        _validate_part(stream, event.part, event.data, source="ModelPartEnd")
+        stream.completed_parts[event.part] = event.data
 
 
-def _validate_text_prefix(
-    stream: _ModelStream,
-    final_text: str,
-    *,
-    source: str,
+def _validate_stream_result(stream: _ModelStream, current: ModelCallResult) -> None:
+    parts = dict(_output_parts(stream, current=current, tool_calls=current.tool_calls))
+    for index in stream.started_parts:
+        if index not in parts:
+            raise ValueError("ModelCallResult omitted an observed Part")
+        _validate_part(stream, index, parts[index], source="ModelCallResult")
+        if (
+            index in stream.completed_parts
+            and stream.completed_parts[index] != parts[index]
+        ):
+            raise ValueError(
+                f"ModelCallResult {parts[index].type} does not match authoritative ModelPartEnd"
+            )
+
+
+def _validate_part(
+    stream: _ModelStream, index: int, part: Part, *, source: str
 ) -> None:
-    streamed = "".join(stream.text_chunks)
-    if not final_text.startswith(streamed):
-        raise ValueError(f"{source} text does not extend streamed TextDelta content")
+    if index in stream.part_types and stream.part_types[index] != part.type:
+        raise ValueError(f"{source} changed a Part's type")
+    if isinstance(part, TextPart | ReasoningPart):
+        if not part.text.startswith("".join(stream.chunks.get(index, ()))):
+            delta = "ReasoningDelta" if isinstance(part, ReasoningPart) else "TextDelta"
+            raise ValueError(
+                f"{source} {part.type} does not extend streamed {delta} content"
+            )
+    if isinstance(part, ToolCallPart) and index in stream.tool_ids:
+        if stream.tool_ids[index] != part.tool_call_id:
+            raise ValueError(f"{source} changed a Part's tool call ID")
 
 
 def _output_parts(
@@ -688,55 +659,26 @@ def _output_parts(
     current: ModelCallResult,
     tool_calls: Sequence[ToolCall],
 ) -> list[tuple[int, Part]]:
-    items: list[tuple[int, Part]] = []
-    seen_tool_calls: set[str] = set()
-    saw_text = False
+    del stream
     message = current.message
-    if message is not None and message.role == "assistant":
-        for part in message.parts:
-            if isinstance(part, TextPart):
-                part_index = _ensure_text_part_index(stream)
-                items.append((part_index, part))
-                saw_text = True
-                continue
-            if isinstance(part, ToolCallPart):
-                part_index = _ensure_tool_part_index(stream, part.tool_call_id)
-                items.append((part_index, part))
-                seen_tool_calls.add(part.tool_call_id)
-                continue
-            used = {index for index, _ in items}
-            part_index = next(
-                (
-                    index
-                    for index, completed in stream.completed_parts.items()
-                    if index not in used and completed == part
-                ),
-                None,
-            )
-            items.append(
-                (_next_part_index(stream) if part_index is None else part_index, part)
-            )
-    current_text = message_text(message.parts) if message is not None else ""
-    if not saw_text and current_text:
-        part_index = _ensure_text_part_index(stream)
-        items.append((part_index, TextPart(text=current_text)))
-    for call in tool_calls:
-        if call.tool_call_id in seen_tool_calls:
-            continue
-        part_index = _ensure_tool_part_index(stream, call.tool_call_id)
-        items.append(
-            (
-                part_index,
-                ToolCallPart(
-                    tool_call_id=call.tool_call_id,
-                    call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family=call.name,
-                    input=dict(call.input),
-                ),
-            )
+    parts = (
+        list(message.parts)
+        if message is not None and message.role == "assistant"
+        else []
+    )
+    seen = {part.tool_call_id for part in parts if isinstance(part, ToolCallPart)}
+    parts.extend(
+        ToolCallPart(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            tool_name=call.name,
+            tool_family=call.name,
+            input=dict(call.input),
         )
-    return items
+        for call in tool_calls
+        if call.tool_call_id not in seen
+    )
+    return list(enumerate(parts))
 
 
 def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
@@ -754,28 +696,6 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
     )
 
 
-def _ensure_text_part_index(stream: _ModelStream) -> int:
-    if stream.text_part is None:
-        stream.text_part = stream.part_count
-        stream.part_count += 1
-    return stream.text_part
-
-
-def _ensure_tool_part_index(stream: _ModelStream, tool_call_id: str) -> int:
-    part_index = stream.tool_parts.get(tool_call_id)
-    if part_index is None:
-        part_index = stream.part_count
-        stream.part_count += 1
-        stream.tool_parts[tool_call_id] = part_index
-    return part_index
-
-
-def _next_part_index(stream: _ModelStream) -> int:
-    part_index = stream.part_count
-    stream.part_count += 1
-    return part_index
-
-
 async def _emit_part_begin(
     state: _AgicState,
     stream: _ModelStream,
@@ -783,8 +703,14 @@ async def _emit_part_begin(
     part_index: int,
     kind: PartType,
 ) -> None:
+    if type(part_index) is not int or part_index < 0:
+        raise ValueError("model Part ordinal must be a non-negative integer")
     if part_index in stream.started_parts:
+        if stream.part_types[part_index] != kind:
+            raise ValueError("model update changed a Part's type")
         return
+    if part_index != len(stream.started_parts):
+        raise ValueError("model Part ordinals must follow first observation order")
     stream.started_parts.add(part_index)
     stream.part_types[part_index] = kind
     await state.emit(
@@ -799,6 +725,22 @@ async def _emit_part_begin(
 async def _emit_part_end(
     state: _AgicState, stream: _ModelStream, part_index: int, part: Part
 ) -> None:
+    if part_index in stream.ended_parts:
+        return
+    if part_index in stream.chunks and isinstance(part, TextPart | ReasoningPart):
+        prefix = "".join(stream.chunks[part_index])
+        suffix = part.text[len(prefix) :]
+        if suffix:
+            stream.chunks[part_index].append(suffix)
+            await state.emit(
+                PartDelta(
+                    step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                    part=part_index,
+                    delta=ReasoningDelta(suffix)
+                    if isinstance(part, ReasoningPart)
+                    else TextDelta(suffix),
+                )
+            )
     # Events are projected before awaiting observers; cancellation there must not
     # cause an already-delivered terminal event to be emitted again.
     stream.ended_parts.add(part_index)
@@ -824,13 +766,18 @@ async def _end_incomplete(
         index: stream.completed_parts.get(index) or _partial_part(stream, index)
         for index in sorted(stream.started_parts | stream.completed_parts.keys())
     }
-    # Unfinished ToolCall placeholders close display events only.
-    output = tuple(
-        part
+    # Every observed ordinal stays in durable output, including incomplete tools.
+    # Only completed tools and readable prefixes may enter subsequent context.
+    output = tuple(parts.values())
+    retained = {
+        index: part
         for index, part in parts.items()
-        if (index in stream.completed_parts or isinstance(part, TextPart))
-        and (response_error is None or isinstance(part, TextPart))
-    )
+        if (
+            index in stream.completed_parts
+            or isinstance(part, TextPart | ReasoningPart)
+        )
+        and (response_error is None or isinstance(part, TextPart | ReasoningPart))
+    }
     step = StepRef.from_local(state.prepared.run.run_id, (stream.step,))
     local = Local.typed("Part[]", output) if output else None
     calls = tuple(
@@ -840,16 +787,24 @@ async def _end_incomplete(
             part.tool_name,
             part.input,
         )
-        for part in output
+        for part in retained.values()
         if isinstance(part, ToolCallPart)
     )
     accounting = state.account_usage(response_error.usage) if response_error else None
-    if local is not None and response_error is None:
-        state.messages.append_ref(
-            "assistant", FieldRef.from_path(step, "output", "local", "value"), local
+    if retained and response_error is None:
+        refs = tuple(
+            TypedRef(
+                FieldRef.from_path(step, "output", "local", "value", index), "Part"
+            )
+            for index in retained
+        )
+        values: dict[object, Part] = dict(zip(refs, retained.values()))
+        state.messages.append_template(
+            MessageTemplate("assistant", refs),
+            lambda ref: values[ref],
         )
         state.last_step = stream.step
-        for index, part in enumerate(output):
+        for index, part in retained.items():
             if isinstance(part, ToolCallPart):
                 state.tool_call_sources[part.tool_call_id] = (stream.step, index)
     try:
@@ -884,15 +839,12 @@ async def _end_incomplete(
 
 def _partial_part(stream: _ModelStream, part_index: int) -> Part:
     part_type = stream.part_types[part_index]
-    if part_type == "text":
-        return TextPart(text="".join(stream.text_chunks))
+    if part_type in {"text", "reasoning"}:
+        cls = ReasoningPart if part_type == "reasoning" else TextPart
+        return cls(text="".join(stream.chunks.get(part_index, ())))
     if part_type == "tool_call":
-        tool_call_id = next(
-            call_id
-            for call_id, index in stream.tool_parts.items()
-            if index == part_index
-        )
-        raw_input = "".join(stream.tool_chunks.get(tool_call_id, ()))
+        tool_call_id = stream.tool_ids.get(part_index, f"tool-call-{part_index}")
+        raw_input = "".join(stream.chunks.get(part_index, ()))
         try:
             decoded = json.loads(raw_input) if raw_input else {}
         except json.JSONDecodeError:

@@ -131,6 +131,26 @@ values from the run-pinned setup. Both calls are asynchronous, and streaming
 adapters await their model-part handler. External adapters must adopt these
 signatures; there is no separate route argument.
 
+Every `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` requires `part: int`.
+Assign zero-based ordinals on first observation, for every Part kind, and return
+the final assistant message in that order. Each Part begins and ends once; its
+end payload must equal the final Part. Text and `ReasoningDelta` fragments must
+concatenate to their Part's text. Reconcile final snapshots by emitting only an
+unobserved suffix; reject contradictions. Final-only Parts need no synthetic
+deltas. `ReasoningDelta` carries text only: assemble signature fragments inside
+the adapter and attach native fields to the completed Part.
+
+Reasoning uses `ReasoningPart`, not `ToolCallPart.reasoning`. Native signatures
+and minimal JSON metadata belong to their original Part. Nonempty native fields
+require `provider` and metadata keys `adapter` and `model`. Encode them only for
+matching assistant history. Before propagating graceful failure/cancellation,
+flush buffered readable reasoning and clear native fields on incomplete units.
+Call-level continuation must not accumulate per-Part reasoning or signatures.
+
+This contract uses execution-store schema **48**. Incompatible stores are rejected
+before decoding or writing; there is no automatic migration or reset. External
+adapters must adopt the indexed stream contract alongside this data-format change.
+
 Adapters own one protocol shape and its optional default endpoint. They do not
 discover models, match providers, calculate availability, or own pricing.
 

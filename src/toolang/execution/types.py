@@ -22,6 +22,7 @@ from toolang.base.types.message import (
     MessageRole,
     Part,
     TextPart,
+    ReasoningPart,
     ToolCallPart,
     ToolResultPart,
     part_from_data,
@@ -857,6 +858,7 @@ class Pointer:
 
 _PART_TYPES = (
     TextPart,
+    ReasoningPart,
     ImagePart,
     AudioPart,
     DocumentPart,
@@ -866,6 +868,7 @@ _PART_TYPES = (
 _PART_TYPES_BY_NAME = {
     "Part": _PART_TYPES,
     "TextPart": TextPart,
+    "ReasoningPart": ReasoningPart,
     "ImagePart": ImagePart,
     "AudioPart": AudioPart,
     "DocumentPart": DocumentPart,
@@ -873,7 +876,7 @@ _PART_TYPES_BY_NAME = {
     "ToolResultPart": ToolResultPart,
 }
 _PART_PROTOCOL_TYPES = frozenset(
-    {"text", "image", "audio", "document", "tool_call", "tool_result"}
+    {"text", "reasoning", "image", "audio", "document", "tool_call", "tool_result"}
 )
 
 

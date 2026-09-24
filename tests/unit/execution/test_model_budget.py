@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from toolang.base.types.message import Message, ImagePart
+from toolang.base.types.message import Message, ImagePart, ReasoningPart
 from toolang.base.types.model import Model, ModelToolang, Reasoning
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
@@ -29,6 +29,24 @@ MODEL = Model(
     name="model",
     _toolang=ModelToolang(provider="test", ready=True),
 )
+
+
+def test_reasoning_is_counted_once_when_extending_a_calibrated_conversation():
+    part = ReasoningPart(
+        "α" * 120,
+        "opaque" * 30,
+        "provider",
+        {"adapter": "responses", "model": "model", "item_id": "rs"},
+    )
+    request = ModelCall("", [Message.user("input")])
+    estimate = InputEstimate()
+    estimate.observe(request, "binding", 500)
+    added = Message("assistant", (part,))
+    extended = replace(request, messages=[*request.messages, added])
+    assert estimate.count(extended, "binding") == 500 + message_tokens(added)
+    assert message_tokens(added) > message_tokens(
+        Message("assistant", (ReasoningPart(part.text),))
+    )
 
 
 def test_input_budget_reserves_output_and_an_estimation_margin() -> None:

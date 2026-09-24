@@ -372,7 +372,11 @@ class LocalChatSession:
                 result = self.history.get_output(run_id)
             except KeyError:
                 raise ValueError(f"Run not found: {run_id}") from None
-            output = parts_from_local(result.local) if result is not None else ()
+            output = (
+                parts_from_local(result.local, content_only=True)
+                if result is not None
+                else ()
+            )
             if not output:
                 raise ValueError(f"Run has no result: {run_id}")
             return ChatResult(run_id=run_id, output=output)
@@ -387,7 +391,11 @@ class LocalChatSession:
                 if run.status != "succeeded" or run.output is None:
                     continue
                 result = self.history.get_output(run.id)
-                output = parts_from_local(result.local) if result is not None else ()
+                output = (
+                    parts_from_local(result.local, content_only=True)
+                    if result is not None
+                    else ()
+                )
                 if output:
                     return ChatResult(run_id=run.id, output=output)
         raise ValueError("No run result is available in this chat.")

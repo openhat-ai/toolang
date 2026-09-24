@@ -1235,6 +1235,8 @@ def _append_model_message(
     for part_index, part in enumerate(parts):
         if not isinstance(part, Mapping):  # pragma: no cover - canonical data
             continue
+        if cast(Mapping[str, object], part).get("type") == "reasoning":
+            continue
         if part_index:
             lines.append(Text())
         lines.extend(
@@ -1425,9 +1427,6 @@ def _tool_part_renderables(
         lines.append(Text(_tool_invocation(name, part.get("input", {}))))
     if result and output != {}:
         lines.extend(_structured_renderables(output))
-    reasoning = part.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
-        lines.extend((Text(), Text("Reason", style="bold"), Text(reasoning)))
     error = part.get("error")
     if isinstance(error, str) and error:
         lines.extend((Text(), Text("Error", style="bold"), Text(error)))

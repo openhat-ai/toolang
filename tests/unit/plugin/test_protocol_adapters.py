@@ -171,6 +171,11 @@ def test_responses_continuation_requires_unchanged_context(change: str) -> None:
     )
     previous = ModelCall("original instructions", [Message.user("old history")])
     reasoning = ResponseReasoningItem(id="rs_1", summary=[], type="reasoning")
+    reasoning_message = responses.assistant_message(
+        SimpleNamespace(output=[reasoning]), model=model, tool_calls=()
+    )
+    assert reasoning_message is not None
+    call = replace(call, parts=(*reasoning_message.parts, *call.parts))
     continuation = responses.response_continuation(
         SimpleNamespace(
             id="resp_1",
@@ -217,7 +222,9 @@ def test_responses_continuation_requires_unchanged_context(change: str) -> None:
         )
 
 
-def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
+def test_responses_reasoning_tracks_retained_parts_without_growing_continuation() -> (
+    None
+):
     from openai.types.responses import ResponseReasoningItem
 
     request = ModelCall("instructions", [Message.user("input")])
@@ -231,6 +238,13 @@ def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
             type="reasoning",
             summary=[],
         )
+        reasoning_message = responses.assistant_message(
+            SimpleNamespace(output=[reasoning]),
+            model=_model("model", provider="openai"),
+            tool_calls=(),
+        )
+        assert reasoning_message is not None
+        call = replace(call, parts=(*reasoning_message.parts, *call.parts))
         continuation = responses.response_continuation(
             SimpleNamespace(
                 id=f"resp_{index}",
@@ -247,7 +261,11 @@ def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
             request, messages=[*request.messages, call], continuation=continuation
         )
     assert request.continuation is not None
-    assert set(request.continuation["reasoning"]) == {"fc_0", "fc_1", "fc_2"}
+    assert set(request.continuation) == {
+        "previous_response_id",
+        "baseline_count",
+        "prefix",
+    }
     compacted = replace(
         request, messages=[Message.user("summary"), *request.messages[2:]]
     )
@@ -271,7 +289,7 @@ def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
         stateful=True,
     )
     assert continuation is not None
-    assert set(continuation["reasoning"]) == {"fc_1", "fc_2"}
+    assert set(continuation) == {"previous_response_id", "baseline_count", "prefix"}
     json.dumps(continuation)
 
 
@@ -376,7 +394,8 @@ def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> N
                 "service_tier": "priority",
                 "inference_geo": "us",
             },
-        }
+        },
+        model=model.with_route(route),
     )
 
     assert payload["thinking"] == {"type": "adaptive"}
@@ -432,6 +451,9 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
         tool_name="shell__execute",
         tool_family="shell__execute",
         input={"command": "pwd"},
+        signature="opaque-signature",
+        provider="google",
+        provider_metadata={"adapter": "generate_content", "model": "gemini"},
     )
     result_part = ToolResultPart(
         tool_call_id="call-1",
@@ -455,7 +477,6 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
             Message(role="assistant", parts=(call,)),
             Message(role="tool", parts=(result_part,)),
         ],
-        continuation={"thought_signatures": {"call-1": "opaque-signature"}},
     )
 
     payload = generate_content_payload(model.with_route(route), request)
@@ -495,7 +516,8 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
                 "serviceTier": "PRIORITY",
                 "trafficType": "ON_DEMAND",
             },
-        }
+        },
+        model=model.with_route(route),
     )
 
     contents = cast(list[dict[str, Any]], payload["contents"])
@@ -512,8 +534,11 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
     assert tool_part["functionResponse"]["id"] == "call-1"
     assert payload["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "HIGH"}}
     assert result.message is not None
-    assert result.message.parts[0] == TextPart("Done.")
-    assert result.continuation == {"thought_signatures": {"call-2": "next-signature"}}
+    assert result.message.parts[1] == TextPart("Done.")
+    assert result.continuation is None
+    assert result.message is not None
+    assert isinstance(result.message.parts[-1], ToolCallPart)
+    assert result.message.parts[-1].signature == "next-signature"
     assert result.usage == ModelUsage(
         input_tokens=120,
         output_tokens=40,

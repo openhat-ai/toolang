@@ -519,6 +519,26 @@ assistant message, tool calls, normalized usage, and next continuation.
 Canonical and durable JSON use the compact `cont` key. Streaming emits ordered
 `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` updates.
 
+Returned reasoning is an assistant-only `ReasoningPart(text, signature=None)`.
+The text is exactly what the provider returns, which may be a summary. Opaque
+signatures or encrypted state are kept in `signature`; `provider` and JSON-only
+`provider_metadata` identify the resolved provider, adapter, model, and native
+block. Gemini signatures can also belong to `TextPart` or `ToolCallPart`, including
+empty text. These fields belong to Parts, independently of tool calls. A token
+count without returned reasoning does not create a Part.
+
+All four built-in adapters preserve these Parts in Step output and selected
+assistant history. Compatible provider/adapter/model history reconstructs native
+reasoning from the Parts after reopening or forking a thread. A different scope
+omits reasoning and native fields. Content transformations discard native fields.
+Continuation holds call-level state such as a Responses cursor, not a second
+copy of reasoning history. An interrupted native unit retains only its readable
+prefix; completed units retain their native fields.
+
+Raw Parts and machine inspection expose reasoning. Answer extraction, structured
+output, child-run user context, and human progress/results exclude it. This does
+not enable provider summaries automatically or add a reasoning display option.
+
 The runtime records inclusive token totals plus cache read/write, visible,
 reasoning, audio, and provider-specific meters. Each model step stores its model
 ref, setup revision, and normalized call, including effective reasoning. The

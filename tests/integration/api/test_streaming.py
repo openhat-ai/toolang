@@ -12,19 +12,38 @@ from typing import Any, cast
 from fastapi import Request
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
+import pytest
 
 from tests.support.execution_assertions import without_route_snapshots
 from tests.support.execution_fixtures import project_run_start, project_step
-from tests.support.execution_harness import TEST_MODEL_REF, ExecutionHarness
+from tests.support.execution_harness import (
+    TEST_MODEL_REF,
+    ExecutionHarness,
+    ScriptedModelTurn,
+)
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
-from toolang.base.types.message import DocumentPart, Message, TextPart
+from toolang.base.types.message import (
+    DocumentPart,
+    Message,
+    ReasoningDelta,
+    ReasoningPart,
+    TextPart,
+)
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults, RunLimits
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.run import (
+    ModelCallResult,
+    ModelPartStart,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelUsage,
+)
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.events import (
     PartBegin,
+    PartDelta,
+    PartEnd,
     RunBegin,
     RunEnd,
     StepBegin,
@@ -114,7 +133,20 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
         asyncio.run(core.close())
 
 
-def test_run_stream_emits_complete_canonical_event_sequence(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reasoning", [False, True])
+def test_run_stream_emits_complete_canonical_event_sequence(
+    tmp_path: Path, reasoning: bool
+) -> None:
+    part = ReasoningPart(
+        "thinking α",
+        "opaque",
+        "test",
+        {"adapter": "responses", "model": "scripted", "item_id": "rs"},
+    )
+    answer = TextPart("hello back")
+    result = ModelCallResult(
+        message=Message("assistant", (part, answer) if reasoning else (answer,))
+    )
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -124,7 +156,20 @@ agic answer(_: Part[]) -> Part[]:
   instruct = none
   user: {{_}}
 """,
-        responses=[ModelCallResult(message=Message.assistant("hello back"))],
+        responses=[
+            ScriptedModelTurn(
+                result,
+                updates=(
+                    ModelPartStart(0, "reasoning"),
+                    ModelPartDelta(0, ReasoningDelta(part.text)),
+                    ModelPartEnd(0, part),
+                    ModelPartEnd(1, answer),
+                ),
+            )
+            if reasoning
+            else result
+        ],
+        streaming=reasoning,
     )
     setup = replace(
         harness.setup,
@@ -184,8 +229,10 @@ agic answer(_: Part[]) -> Part[]:
         assert [event for event, _data in events] == [
             "run_begin",
             "step_begin",
+            *(["part_begin", "part_delta"] if reasoning else []),
             "part_begin",
             "part_end",
+            *(["part_end"] if reasoning else []),
             "step_end",
             "run_end",
         ]
@@ -195,8 +242,13 @@ agic answer(_: Part[]) -> Part[]:
         ]
         assert all(data["type"] == event for event, data in events)
         assert isinstance(decoded[2], PartBegin)
-        assert decoded[2].part_type == "text"
-        assert events[2][1]["part_type"] == "text"
+        assert decoded[2].part_type == ("reasoning" if reasoning else "text")
+        assert events[2][1]["part_type"] == ("reasoning" if reasoning else "text")
+        if reasoning:
+            assert isinstance(decoded[3], PartDelta)
+            assert decoded[3].delta == ReasoningDelta(part.text)
+            assert isinstance(decoded[5], PartEnd)
+            assert decoded[5].data == part
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "succeeded"
         assert without_route_snapshots(

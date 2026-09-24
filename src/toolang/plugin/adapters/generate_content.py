@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import json
-from typing import Any, cast
+import asyncio
+from typing import cast
 from urllib.parse import quote
 
 import httpx
@@ -25,7 +26,8 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Message,
-    TextDelta,
+    Part,
+    ReasoningPart,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -36,9 +38,6 @@ from ._credentials import credential_value
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelPartDelta,
-    ModelPartEnd,
-    ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
     ModelUsageMeter,
@@ -47,6 +46,7 @@ from toolang.base.types.run import (
 
 from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
+from ._parts import PartStream, compatible, native_metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,14 +82,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                 json=generate_content_payload(model, request),
             )
             await raise_for_model_status(response)
-            result = parse_generate_content(_json_object(response.json()))
-            return replace(
-                result,
-                continuation=_merge_continuation(
-                    request.continuation,
-                    result.continuation,
-                ),
-            )
+            return parse_generate_content(_json_object(response.json()), model=model)
 
     @model_transport
     async def stream(
@@ -100,84 +93,113 @@ class GenerateContentModelAdapter(ModelAdapter):
         environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
-        on_event = model_events(on_event)
-        text: list[str] = []
-        text_started = False
-        calls: list[ToolCall] = []
-        signatures: dict[str, str] = {}
+        parts = PartStream(model_events(on_event))
         usage: dict[str, object] = {}
+        active: int | None = None
+        calls: list[ToolCall] = []
         finish_reason = None
-        try:
-            with model_transport_errors(
-                usage=lambda: generate_content_usage(usage),
-                partial_text=lambda: "".join(text),
-            ):
-                async with httpx.AsyncClient() as client:
-                    async with client.stream(
-                        "POST",
-                        _generate_url(model, stream=True),
-                        headers=_generate_headers(model, environ=environ),
-                        json=generate_content_payload(model, request),
-                    ) as response:
-                        await raise_for_model_status(response)
-                        async for line in response.aiter_lines():
-                            if not line.startswith("data:"):
-                                continue
-                            raw = line.removeprefix("data:").strip()
-                            if not raw or raw == "[DONE]":
-                                continue
-                            chunk = _json_object(json.loads(raw))
-                            usage.update(_json_object(chunk.get("usageMetadata")))
-                            text.append(_response_text(chunk))
-                            _check_response(chunk)
-                            finish_reason = (
-                                _candidate(chunk).get("finishReason") or finish_reason
-                            )
-                            for part in _candidate_parts(chunk):
-                                value = _text(part.get("text"))
-                                if value and part.get("thought") is not True:
-                                    if not text_started:
-                                        text_started = True
-                                        await on_event(ModelPartStart(kind="text"))
-                                    await on_event(
-                                        ModelPartDelta(delta=TextDelta(value))
-                                    )
-                                function = _json_object(part.get("functionCall"))
-                                if function:
-                                    call = _function_call(function, fallback=len(calls))
-                                    calls.append(call)
-                                    signature = _text(part.get("thoughtSignature"))
-                                    if signature:
-                                        signatures[call.call_id] = signature
-                                    await on_event(ModelPartStart(kind="tool_call"))
-                                    await on_event(ModelPartEnd(data=_tool_part(call)))
-                if finish_reason is None:
-                    raise ModelResponseError(
-                        "model stream ended before a terminal finish reason",
-                        kind="incomplete_stream",
+        text: list[str] = []
+
+        async def close_active() -> None:
+            nonlocal active
+            if active is not None:
+                part = parts.parts[parts.indices[active]]
+                if isinstance(part, ReasoningPart):
+                    part = replace(
+                        part,
+                        provider=model._toolang.provider,
+                        provider_metadata=native_metadata(model, "generate_content"),
                     )
-        except ModelResponseError as exc:
-            # Keep a complete response if only the connection's tail was lost.
-            if finish_reason is None or exc.kind not in {
-                "transport_error",
-                "incomplete_stream",
-            }:
-                raise
-        parts: list[TextPart | ToolCallPart] = []
-        output = "".join(text)
-        if output:
-            part = TextPart(output)
-            parts.append(part)
-            await on_event(ModelPartEnd(data=part))
-        parts.extend(_tool_part(call) for call in calls)
+                await parts.finish(active, part)
+                active = None
+
+        try:
+            try:
+                with model_transport_errors(
+                    usage=lambda: generate_content_usage(usage),
+                    partial_text=lambda: "".join(text),
+                ):
+                    async with httpx.AsyncClient() as client:
+                        async with client.stream(
+                            "POST",
+                            _generate_url(model, stream=True),
+                            headers=_generate_headers(model, environ=environ),
+                            json=generate_content_payload(model, request),
+                        ) as response:
+                            await raise_for_model_status(response)
+                            async for line in response.aiter_lines():
+                                if not line.startswith("data:"):
+                                    continue
+                                raw = line.removeprefix("data:").strip()
+                                if not raw or raw == "[DONE]":
+                                    continue
+                                chunk = _json_object(json.loads(raw))
+                                usage.update(_json_object(chunk.get("usageMetadata")))
+                                text.append(_response_text(chunk))
+                                _check_response(chunk)
+                                finish_reason = (
+                                    _candidate(chunk).get("finishReason")
+                                    or finish_reason
+                                )
+                                for native in _candidate_parts(chunk):
+                                    part = _generate_part(
+                                        native, model=model, fallback=len(calls)
+                                    )
+                                    if part is None:
+                                        continue
+                                    if isinstance(part, ToolCallPart):
+                                        await close_active()
+                                        calls.append(
+                                            ToolCall(
+                                                part.tool_call_id,
+                                                part.call_id or part.tool_call_id,
+                                                part.tool_name,
+                                                part.input,
+                                            )
+                                        )
+                                        await parts.finish(len(parts.parts), part)
+                                    elif isinstance(part, TextPart | ReasoningPart):
+                                        if part.signature is not None:
+                                            # A signed chunk (including empty text) owns its signature.
+                                            await close_active()
+                                            await parts.finish(len(parts.parts), part)
+                                        else:
+                                            if (
+                                                active is not None
+                                                and parts.parts[
+                                                    parts.indices[active]
+                                                ].type
+                                                != part.type
+                                            ):
+                                                await close_active()
+                                            if active is None:
+                                                active = len(parts.parts)
+                                            await parts.text(
+                                                active,
+                                                part.text,
+                                                reasoning=isinstance(
+                                                    part, ReasoningPart
+                                                ),
+                                            )
+                    if finish_reason is None:
+                        raise ModelResponseError(
+                            "model stream ended before a terminal finish reason",
+                            kind="incomplete_stream",
+                        )
+            except ModelResponseError as exc:
+                if finish_reason is None or exc.kind not in {
+                    "transport_error",
+                    "incomplete_stream",
+                }:
+                    raise
+            await close_active()
+        except (Exception, asyncio.CancelledError):
+            await parts.interrupt()
+            raise
         return ModelCallResult(
-            message=Message(role="assistant", parts=tuple(parts)),
+            message=parts.message(),
             tool_calls=tuple(calls),
             usage=generate_content_usage(usage),
-            continuation=_merge_continuation(
-                request.continuation,
-                {_THOUGHT_SIGNATURES: signatures} if signatures else None,
-            ),
         )
 
 
@@ -212,11 +234,7 @@ def generate_content_payload(
     options = request_options(model._toolang.route.options)
     payload: dict[str, object] = {
         "contents": [
-            _encode_message(
-                message,
-                signatures=_continuation_signatures(request.continuation),
-            )
-            for message in request.messages
+            _encode_message(message, model=model) for message in request.messages
         ],
     }
     if instructions:
@@ -276,12 +294,13 @@ def _check_response(payload: Mapping[str, object]) -> None:
         )
 
 
-def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
-    """Parse one Gemini Generate Content response."""
+def parse_generate_content(
+    payload: Mapping[str, object], *, model: Model
+) -> ModelCallResult:
+    """Parse Gemini Parts without moving signatures across their boundaries."""
 
-    parts: list[TextPart | ToolCallPart] = []
+    parts: list[Part] = []
     calls: list[ToolCall] = []
-    signatures: dict[str, str] = {}
     with model_transport_errors(
         usage=lambda: generate_content_usage(
             _json_object(payload.get("usageMetadata"))
@@ -289,24 +308,59 @@ def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
         partial_text=lambda: _response_text(payload),
     ):
         _check_response(payload)
-        for part in _candidate_parts(payload):
-            value = _text(part.get("text"))
-            if value and part.get("thought") is not True:
-                parts.append(TextPart(value))
-            function = _json_object(part.get("functionCall"))
-            if function:
-                call = _function_call(function, fallback=len(calls))
-                calls.append(call)
-                parts.append(_tool_part(call))
-                signature = _text(part.get("thoughtSignature"))
-                if signature:
-                    signatures[call.call_id] = signature
+        for native in _candidate_parts(payload):
+            part = _generate_part(native, model=model, fallback=len(calls))
+            if part is not None:
+                parts.append(part)
+            if isinstance(part, ToolCallPart):
+                calls.append(
+                    ToolCall(
+                        part.tool_call_id,
+                        part.call_id or part.tool_call_id,
+                        part.tool_name,
+                        part.input,
+                    )
+                )
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=generate_content_usage(_json_object(payload.get("usageMetadata"))),
-        continuation={_THOUGHT_SIGNATURES: signatures} if signatures else None,
     )
+
+
+def _generate_part(
+    native: Mapping[str, object], *, model: Model, fallback: int
+) -> Part | None:
+    signature = _text(native.get("thoughtSignature")) or None
+    function = _json_object(native.get("functionCall"))
+    if function:
+        part = _tool_part(_function_call(function, fallback=fallback))
+        if signature is not None:
+            part = replace(
+                part,
+                signature=signature,
+                provider=model._toolang.provider,
+                provider_metadata=native_metadata(model, "generate_content"),
+            )
+        return part
+    text = _text(native.get("text"))
+    if text or signature is not None:
+        if native.get("thought") is True:
+            return ReasoningPart(
+                text,
+                signature=signature,
+                provider=model._toolang.provider,
+                provider_metadata=native_metadata(model, "generate_content"),
+            )
+        return TextPart(
+            text,
+            signature=signature,
+            provider=model._toolang.provider if signature is not None else None,
+            provider_metadata=native_metadata(model, "generate_content")
+            if signature is not None
+            else {},
+        )
+    return None
 
 
 def generate_content_usage(value: Mapping[str, object]) -> ModelUsage | None:
@@ -419,19 +473,32 @@ def _modality_meters(
     )
 
 
-_THOUGHT_SIGNATURES = "thought_signatures"
-
-
 def _encode_message(
     message: Message,
     *,
-    signatures: Mapping[str, str],
+    model: Model,
 ) -> dict[str, object]:
     role = "model" if message.role == "assistant" else "user"
     parts: list[dict[str, object]] = []
     for part in message.parts:
-        if isinstance(part, TextPart):
-            parts.append({"text": part.text})
+        if isinstance(part, ReasoningPart):
+            if message.role != "assistant" or not compatible(
+                part, model, "generate_content"
+            ):
+                continue
+            thought: dict[str, object] = {"text": part.text, "thought": True}
+            if part.signature is not None:
+                thought["thoughtSignature"] = part.signature
+            parts.append(thought)
+        elif isinstance(part, TextPart):
+            text: dict[str, object] = {"text": part.text}
+            if (
+                message.role == "assistant"
+                and compatible(part, model, "generate_content")
+                and part.signature is not None
+            ):
+                text["thoughtSignature"] = part.signature
+            parts.append(text)
         elif isinstance(part, ImagePart):
             if part.image_url is not None:
                 parts.append(
@@ -479,9 +546,12 @@ def _encode_message(
                     "args": dict(part.input),
                 }
             }
-            signature = signatures.get(call_id)
-            if signature:
-                function_part["thoughtSignature"] = signature
+            if (
+                message.role == "assistant"
+                and compatible(part, model, "generate_content")
+                and part.signature is not None
+            ):
+                function_part["thoughtSignature"] = part.signature
             parts.append(function_part)
         elif isinstance(part, ToolResultPart):
             output = dict(part.output)
@@ -583,35 +653,6 @@ def _text(value: object) -> str:
 
 def _int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _continuation_signatures(
-    continuation: Mapping[str, Any] | None,
-) -> dict[str, str]:
-    if not isinstance(continuation, Mapping):
-        return {}
-    value = continuation.get(_THOUGHT_SIGNATURES)
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        str(key): signature
-        for key, signature in value.items()
-        if isinstance(signature, str) and signature
-    }
-
-
-def _merge_continuation(
-    previous: Mapping[str, Any] | None,
-    current: Mapping[str, Any] | None,
-) -> dict[str, Any] | None:
-    merged = dict(previous or {})
-    current_values = dict(current or {})
-    signatures = _continuation_signatures(previous)
-    signatures.update(_continuation_signatures(current))
-    merged.update(current_values)
-    if signatures:
-        merged[_THOUGHT_SIGNATURES] = signatures
-    return merged or None
 
 
 def _apply_structured_output(

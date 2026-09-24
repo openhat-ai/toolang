@@ -444,3 +444,24 @@ def test_run_event_codec_round_trips_struct_output() -> None:
     )
 
     assert run_event_from_data(run_event_to_data(event)) == event
+
+
+@pytest.mark.parametrize(
+    "reasoning", [None, {"effort": "high"}, {"effort": "none"}, {"budget_tokens": 1024}]
+)
+def test_model_step_begin_preserves_requested_reasoning(reasoning):
+    import json
+    from toolang.base.types.model import Reasoning
+
+    control = Reasoning(**reasoning) if reasoning is not None else None
+    event = StepBegin(
+        step=StepRef.parse("run_root.0"),
+        kind="model",
+        given=ModelStepGiven(
+            model="test/model",
+            setup="test-setup",
+            call=ModelCall("", [], reasoning=control),
+        ),
+    )
+    payload = json.loads(json.dumps(run_event_to_data(event)))
+    assert run_event_from_data(payload) == event

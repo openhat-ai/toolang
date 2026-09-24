@@ -196,6 +196,7 @@ class ModelCallResult:
 class ModelPartStart:
     """One streamed model-part start update."""
 
+    part: int
     kind: PartType
 
 
@@ -203,6 +204,7 @@ class ModelPartStart:
 class ModelPartDelta:
     """One streamed model-part delta update."""
 
+    part: int
     delta: Delta
 
 
@@ -210,6 +212,7 @@ class ModelPartDelta:
 class ModelPartEnd:
     """One streamed model-part end update."""
 
+    part: int
     data: Part
 
 

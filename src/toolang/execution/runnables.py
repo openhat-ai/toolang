@@ -31,6 +31,7 @@ _BUILTIN_TYPES = frozenset(
         "Json",
         "Part",
         "TextPart",
+        "ReasoningPart",
         "ImagePart",
         "AudioPart",
         "DocumentPart",

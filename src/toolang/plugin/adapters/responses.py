@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
+from types import SimpleNamespace
 
 from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
@@ -17,7 +19,8 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Message,
-    TextDelta,
+    Part,
+    ReasoningPart,
     TextPart,
     ToolCallDelta,
     ToolCallPart,
@@ -29,9 +32,6 @@ from ._payload import clear_options, output_allowance, request_options
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelPartDelta,
-    ModelPartEnd,
-    ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
     ToolCall,
@@ -51,6 +51,7 @@ from ._structured_output import (
     openai_strict_object_schema,
 )
 from ._usage import billing_value, optional_int, reported_cost
+from ._parts import PartStream, compatible, native_metadata
 
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
@@ -215,6 +216,7 @@ async def invoke_response(
     )
     return parse_response(
         response,
+        model=model,
         request=request,
         stateful=stateful,
     )
@@ -242,20 +244,21 @@ async def stream_response(
         stateful=stateful,
         stream=True,
     )
+    parts = PartStream(on_event)
+    item_ids: dict[int, str] = {}
+    defer_text = _supports_openai_audio_input(model)
+    deferred: dict[tuple[object, ...], str] = {}
     text_deltas: list[str] = []
     latest_response = None
+    terminal_response = None
     try:
         with model_transport_errors():
             async with client.responses.stream(**payload) as stream:
-                seen_tool_inputs: set[str] = set()
-                text_started = False
-                terminal_response = None
-                defer_text = _supports_openai_audio_input(model)
                 async for event in stream:
                     latest_response = (
                         getattr(event, "response", None) or latest_response
                     )
-                    event_type = getattr(event, "type", None)
+                    event_type = getattr(event, "type", "")
                     if event_type in {
                         "response.completed",
                         "response.incomplete",
@@ -266,75 +269,160 @@ async def stream_response(
                     if event_type == "error":
                         raise provider_error({"code": getattr(event, "code", None)})
                     if event_type == "response.output_text.delta":
-                        delta = str(getattr(event, "delta", ""))
-                        if delta:
-                            text_deltas.append(delta)
-                            if not defer_text:
-                                if not text_started:
-                                    text_started = True
-                                    await on_event(ModelPartStart(kind="text"))
-                                await on_event(
-                                    ModelPartDelta(delta=TextDelta(text=delta))
-                                )
-                        continue
-                    if event_type != "response.function_call_arguments.delta":
-                        continue
-                    current_tool_call_id = tool_call_id(
-                        getattr(event, "item_id", ""),
-                        getattr(event, "call_id", ""),
-                        fallback=f"tool-call-{getattr(event, 'output_index', None) or 'unknown'}",
+                        text_deltas.append(str(getattr(event, "delta", "")))
+                    output_index = getattr(event, "output_index", 0)
+                    item = getattr(event, "item", None)
+                    if event_type in {
+                        "response.output_item.added",
+                        "response.output_item.done",
+                    }:
+                        item_ids[output_index] = getattr(item, "id", "") or str(
+                            output_index
+                        )
+                    identity = getattr(event, "item_id", "") or item_ids.get(
+                        output_index, str(output_index)
                     )
-                    if current_tool_call_id not in seen_tool_inputs:
-                        seen_tool_inputs.add(current_tool_call_id)
-                        await on_event(
-                            ModelPartStart(
-                                kind="tool_call",
-                            )
+                    field = (
+                        "summary" if "reasoning_summary" in event_type else "content"
+                    )
+                    content_index = getattr(
+                        event,
+                        "summary_index" if field == "summary" else "content_index",
+                        0,
+                    )
+                    if event_type in {
+                        "response.reasoning_summary_text.delta",
+                        "response.reasoning_text.delta",
+                        "response.output_text.delta",
+                    }:
+                        reasoning = event_type != "response.output_text.delta"
+                        key = (
+                            "reasoning" if reasoning else "text",
+                            identity,
+                            field,
+                            content_index,
                         )
-                    delta = str(getattr(event, "delta", ""))
-                    if delta:
-                        await on_event(
-                            ModelPartDelta(
-                                delta=ToolCallDelta(
-                                    text=delta,
-                                    tool_call_id=current_tool_call_id,
-                                ),
-                            )
+                        value = getattr(event, "delta", "")
+                        if not reasoning and defer_text:
+                            deferred[key] = deferred.get(key, "") + value
+                        else:
+                            await parts.text(key, value, reasoning=reasoning)
+                    elif event_type in {
+                        "response.reasoning_summary_text.done",
+                        "response.reasoning_text.done",
+                        "response.output_text.done",
+                    }:
+                        reasoning = event_type != "response.output_text.done"
+                        key = (
+                            "reasoning" if reasoning else "text",
+                            identity,
+                            field,
+                            content_index,
                         )
+                        value = getattr(event, "text", "")
+                        if not reasoning and defer_text:
+                            previous = deferred.get(key, "")
+                            if not value.startswith(previous):
+                                raise ToolangError(
+                                    "Responses text snapshot contradicts its deltas"
+                                )
+                            deferred[key] = value
+                        else:
+                            observed = (
+                                parts.parts[parts.indices[key]]
+                                if key in parts.indices
+                                else None
+                            )
+                            previous = (
+                                observed.text
+                                if isinstance(observed, TextPart | ReasoningPart)
+                                else ""
+                            )
+                            if not value.startswith(previous):
+                                raise ToolangError(
+                                    "Responses text snapshot contradicts its deltas"
+                                )
+                            await parts.text(
+                                key, value[len(previous) :], reasoning=reasoning
+                            )
+                    elif (
+                        event_type == "response.output_item.added"
+                        and getattr(item, "type", None) == "function_call"
+                    ):
+                        call_id = tool_call_id(
+                            getattr(item, "id", ""),
+                            getattr(item, "call_id", ""),
+                            fallback=identity,
+                        )
+                        await parts.start(
+                            ("tool", identity),
+                            ToolCallPart(
+                                call_id,
+                                getattr(item, "name", ""),
+                                getattr(item, "name", ""),
+                                call_id=getattr(item, "call_id", "") or None,
+                            ),
+                        )
+                    elif event_type == "response.function_call_arguments.delta":
+                        key = ("tool", identity)
+                        call_id = tool_call_id(
+                            identity, getattr(event, "call_id", ""), fallback=identity
+                        )
+                        await parts.start(key, ToolCallPart(call_id, "", ""))
+                        await parts.delta(
+                            key, ToolCallDelta(getattr(event, "delta", ""), call_id)
+                        )
+                    elif event_type == "response.output_item.done":
+                        for key, part in _response_item_parts(
+                            item, model=model, output_index=output_index
+                        ):
+                            if key in deferred:
+                                if not isinstance(
+                                    part, TextPart
+                                ) or not part.text.startswith(deferred[key]):
+                                    raise ToolangError(
+                                        "Responses text snapshot contradicts its deltas"
+                                    )
+                            await parts.finish(key, part)
                 if terminal_response is None:
                     raise ModelResponseError(
                         "model stream ended before a terminal Responses event",
                         kind="incomplete_stream",
-                        partial_text="".join(text_deltas),
                     )
                 response = terminal_response
-    except ModelResponseError as exc:
-        exc.usage = response_usage(latest_response)
-        exc.partial_text = "".join(text_deltas)
+                parse_response(
+                    response, model=model, request=request, stateful=stateful
+                )
+        final_parts = _response_parts(response, model=model)
+        final_keys = {key for key, _ in final_parts}
+        if parts.indices.keys() - final_keys:
+            raise ToolangError("Responses final snapshot omitted an observed Part")
+        for key, part in final_parts:
+            if (
+                key in deferred
+                and isinstance(part, TextPart)
+                and not part.text.startswith(deferred[key])
+            ):
+                raise ToolangError("Responses text snapshot contradicts its deltas")
+            await parts.finish(key, part)
+    except (Exception, asyncio.CancelledError) as exc:
+        if isinstance(exc, ModelResponseError):
+            if exc.usage is None:
+                exc.usage = response_usage(latest_response)
+            if not exc.partial_text:
+                exc.partial_text = "".join(text_deltas)
+        await parts.interrupt()
         raise
-    _log_api_response(
-        model,
-        response,
-        stateful=stateful,
-        stream=True,
+    _log_api_response(model, response, stateful=stateful, stream=True)
+    message = parts.message()
+    return ModelCallResult(
+        message=message,
+        tool_calls=tuple(parse_tool_calls(response)),
+        usage=response_usage(response),
+        continuation=response_continuation(
+            response, request=request, emitted_message=message, stateful=stateful
+        ),
     )
-    result = parse_response(
-        response,
-        request=request,
-        stateful=stateful,
-    )
-    if defer_text and _message_has_text(result.message):
-        await on_event(ModelPartStart(kind="text"))
-        for delta in text_deltas:
-            await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
-    if result.message is not None:
-        for part in result.message.parts:
-            if isinstance(part, (ImagePart, AudioPart)):
-                await on_event(ModelPartStart(kind=part.type))
-                await on_event(ModelPartEnd(data=part))
-            elif isinstance(part, (TextPart, ToolCallPart)):
-                await on_event(ModelPartEnd(data=part))
-    return result
 
 
 def response_payload(
@@ -362,7 +450,6 @@ def response_payload(
     previous_response_id = (
         continuation.get("previous_response_id") if stateful else None
     )
-    had_previous_response = bool(previous_response_id)
     baseline_count = continuation.get("baseline_count") if stateful else None
     message_offset = 0
     if (
@@ -382,13 +469,11 @@ def response_payload(
     payload: dict[str, Any] = {
         "model": model.id,
         "input": response_input(
+            model=model,
             instructions=instructions,
             messages=messages,
             include_instructions=not bool(previous_response_id),
-            replay_tool_items=not stateful or had_previous_response,
-            reasoning=continuation.get("reasoning", {})
-            if stateful and not previous_response_id
-            else {},
+            replay_tool_items=True,
         ),
     }
     if request.tools:
@@ -451,7 +536,11 @@ def _apply_reasoning(
         return
     if budget is not None:
         raise ToolangError("Responses does not support reasoning token budgets")
-    wire: dict[str, object] = {}
+    extra = payload.get("extra_body")
+    raw = payload.get(
+        "reasoning", extra.get("reasoning") if isinstance(extra, Mapping) else None
+    )
+    wire = dict(raw) if isinstance(raw, Mapping) else {}
     if isinstance(effort, str):
         wire["effort"] = effort
     clear_options(payload, "reasoning")
@@ -462,6 +551,7 @@ def _apply_reasoning(
 def parse_response(
     response: Any,
     *,
+    model: Model,
     request: ModelCall,
     stateful: bool,
 ) -> ModelCallResult:
@@ -499,7 +589,7 @@ def parse_response(
         if any(
             getattr(part, "type", None) == "refusal"
             for item in getattr(response, "output", [])
-            for part in getattr(item, "content", [])
+            for part in (getattr(item, "content", None) or ())
         ):
             raise ModelResponseError(
                 "provider refused the response", kind="provider_rejection"
@@ -509,7 +599,7 @@ def parse_response(
         exc.usage = response_usage(response)
         exc.partial_text = response_text(response)
         raise
-    message = assistant_message(response, tool_calls=tool_calls)
+    message = assistant_message(response, model=model, tool_calls=tool_calls)
     return ModelCallResult(
         message=message,
         tool_calls=tool_calls,
@@ -525,11 +615,11 @@ def parse_response(
 
 def response_input(
     *,
+    model: Model | None = None,
     instructions: str,
     messages: list[Message],
     include_instructions: bool,
     replay_tool_items: bool,
-    reasoning: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one replayable typed Responses API input list."""
 
@@ -544,14 +634,13 @@ def response_input(
     for message_index, message in enumerate(messages):
         encoded = encode_message(
             message,
+            model=model,
             replay_tool_items=replay_tool_items,
             message_index=message_index,
         )
         if encoded is None:
             continue
         for item in encoded if isinstance(encoded, list) else (encoded,):
-            if item["type"] == "function_call" and reasoning:
-                results.extend(reasoning.get(item["id"], ()))
             results.append(item)
     return results
 
@@ -559,6 +648,7 @@ def response_input(
 def encode_message(
     message: Message,
     *,
+    model: Model | None = None,
     replay_tool_items: bool = True,
     message_index: int | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -568,6 +658,7 @@ def encode_message(
     if role in {"user", "assistant"}:
         return _encode_actor_message(
             message,
+            model=model,
             replay_tool_items=replay_tool_items,
             message_index=message_index,
         )
@@ -646,34 +737,134 @@ def parse_tool_calls(response: Any) -> list[ToolCall]:
 
 
 def assistant_message(
-    response: Any,
-    *,
-    tool_calls: tuple[ToolCall, ...],
+    response: Any, *, model: Model, tool_calls: tuple[ToolCall, ...]
 ) -> Message | None:
-    """Return one canonical assistant message from one response."""
+    """Return Parts in native item order, including standalone reasoning."""
 
-    audio_parts = _response_audio_parts(response)
-    image_parts = _response_image_parts(response)
-    parts: list[TextPart | ImagePart | AudioPart | ToolCallPart] = []
+    del tool_calls
+    parts = tuple(part for _, part in _response_parts(response, model=model))
+    return Message(role="assistant", parts=parts) if parts else None
+
+
+def _response_parts(
+    response: Any, *, model: Model
+) -> list[tuple[tuple[object, ...], Part]]:
+    parts: list[tuple[tuple[object, ...], Part]] = []
+    for index, item in enumerate(getattr(response, "output", ())):
+        parts.extend(_response_item_parts(item, model=model, output_index=index))
+    # Some compatible APIs only provide the convenience output_text field.
     text = response_text(response)
-    transcripts = {part.transcript for part in audio_parts if part.transcript}
-    if text and text not in transcripts:
-        parts.append(TextPart(text=text))
-    parts.extend(image_parts)
-    parts.extend(audio_parts)
-    for call in tool_calls:
+    transcripts = {part.transcript for _, part in parts if isinstance(part, AudioPart)}
+    if (
+        text
+        and text not in transcripts
+        and not any(isinstance(part, TextPart) for _, part in parts)
+    ):
+        parts.append((("text", "0", "content", 0), TextPart(text)))
+    return parts
+
+
+def _response_item_parts(
+    item: Any, *, model: Model, output_index: int
+) -> list[tuple[tuple[object, ...], Part]]:
+    identity = getattr(item, "id", "") or str(output_index)
+    kind = getattr(item, "type", None)
+    if kind == "reasoning":
+        return _reasoning_item_parts(item, model=model, output_index=output_index)
+    single = SimpleNamespace(output=[item])
+    if kind == "function_call":
+        call = parse_tool_calls(single)[0]
+        return [
+            (
+                ("tool", identity),
+                ToolCallPart(
+                    call.tool_call_id,
+                    call.name,
+                    call.name,
+                    dict(call.input),
+                    call_id=call.call_id,
+                ),
+            )
+        ]
+    parts: list[tuple[tuple[object, ...], Part]] = []
+    audio = _response_audio_parts(single)
+    transcripts = {part.transcript for part in audio if part.transcript}
+    if kind == "message":
+        for index, content in enumerate(getattr(item, "content", ())):
+            text = _value_text(content, "text")
+            if (
+                getattr(content, "type", None) in {"output_text", "text"}
+                and text
+                and text not in transcripts
+            ):
+                parts.append((("text", identity, "content", index), TextPart(text)))
+    parts.extend(
+        (("image", identity, index), part)
+        for index, part in enumerate(_response_image_parts(single))
+    )
+    parts.extend((("audio", identity, index), part) for index, part in enumerate(audio))
+    return parts
+
+
+def _reasoning_item_parts(
+    item: Any, *, model: Model, output_index: int
+) -> list[tuple[tuple[object, ...], Part]]:
+    identity = getattr(item, "id", "") or str(output_index)
+    summary = list(getattr(item, "summary", ()) or ())
+    content = list(getattr(item, "content", ()) or ())
+    common = native_metadata(
+        model, "responses", item_id=getattr(item, "id", None), output_index=output_index
+    )
+    shared: dict[str, object] = {
+        "summary_count": len(summary),
+        "content_count": len(content),
+    }
+    status = getattr(item, "status", None)
+    if status is not None:
+        shared["status"] = status
+    signature = _value_text(item, "encrypted_content") or None
+    parts: list[tuple[tuple[object, ...], Part]] = []
+    for field, blocks, native_type in (
+        ("summary", summary, "summary_text"),
+        ("content", content, "reasoning_text"),
+    ):
+        for index, block in enumerate(blocks):
+            text = _value_text(block, "text")
+            block_type = getattr(block, "type", native_type)
+            if block_type != native_type:
+                raise ToolangError(
+                    f"unsupported Responses reasoning content type: {block_type}"
+                )
+            metadata = {
+                **common,
+                "field": field,
+                "index": index,
+                "content_type": block_type,
+            }
+            if not parts:
+                metadata.update(shared)
+            part = ReasoningPart(
+                text,
+                signature=signature if not parts else None,
+                provider=model._toolang.provider,
+                provider_metadata=metadata,
+            )
+            if status in {"in_progress", "incomplete"}:
+                part = ReasoningPart(text)
+            parts.append((("reasoning", identity, field, index), part))
+    if not parts and status not in {"in_progress", "incomplete"}:
         parts.append(
-            ToolCallPart(
-                tool_call_id=call.tool_call_id,
-                call_id=call.call_id,
-                tool_name=call.name,
-                tool_family=call.name,
-                input=dict(call.input),
+            (
+                ("reasoning", identity, "opaque", 0),
+                ReasoningPart(
+                    "",
+                    signature=signature,
+                    provider=model._toolang.provider,
+                    provider_metadata={**common, **shared},
+                ),
             )
         )
-    if not parts:
-        return None
-    return Message(role="assistant", parts=tuple(parts))
+    return parts
 
 
 def _response_audio_parts(response: Any) -> list[AudioPart]:
@@ -763,28 +954,6 @@ def response_continuation(
         "baseline_count": len(messages),
         "prefix": _context_prefix(request, messages),
     }
-    # Keep opaque reasoning with the call it precedes. A compacted request can
-    # then replay retained tool exchanges without inheriting old server history.
-    retained_calls = {
-        part.tool_call_id
-        for message in request.messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
-    }
-    reasoning = {
-        key: value
-        for key, value in (request.continuation or {}).get("reasoning", {}).items()
-        if key in retained_calls
-    }
-    pending = []
-    for item in getattr(response, "output", ()):
-        if getattr(item, "type", None) == "reasoning":
-            pending.append(_response_data(item))
-        elif getattr(item, "type", None) == "function_call" and pending:
-            reasoning[item.id] = pending
-            pending = []
-    if reasoning:
-        continuation["reasoning"] = reasoning
     return continuation
 
 
@@ -853,6 +1022,7 @@ def tool_call_id(*values: object, fallback: str) -> str:
 def _encode_actor_message(
     message: Message,
     *,
+    model: Model | None,
     replay_tool_items: bool,
     message_index: int | None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -877,7 +1047,13 @@ def _encode_actor_message(
         text_buffer = []
         text_item_index += 1
 
-    for part in message.parts:
+    reasoning = _encode_reasoning_items(message, model=model)
+    for index, part in enumerate(message.parts):
+        if isinstance(part, ReasoningPart):
+            _flush_text_buffer()
+            if index in reasoning:
+                items.append(reasoning[index])
+            continue
         if isinstance(part, TextPart):
             text_buffer.append({"type": text_type, "text": part.text})
             continue
@@ -922,6 +1098,94 @@ def _encode_actor_message(
     if not items:
         return None
     return items[0] if len(items) == 1 else items
+
+
+def _encode_reasoning_items(
+    message: Message, *, model: Model | None
+) -> dict[int, dict[str, Any]]:
+    groups: dict[tuple[object, object], list[tuple[int, ReasoningPart]]] = {}
+    for index, part in enumerate(message.parts):
+        if (
+            not isinstance(part, ReasoningPart)
+            or model is None
+            or message.role != "assistant"
+            or not compatible(part, model, "responses")
+        ):
+            continue
+        meta = part.provider_metadata
+        output_index, item_id = meta.get("output_index"), meta.get("item_id")
+        if (
+            type(output_index) is not int
+            or output_index < 0
+            or (item_id is not None and (not isinstance(item_id, str) or not item_id))
+        ):
+            raise ToolangError("Responses reasoning requires a native item identity")
+        groups.setdefault((meta.get("output_index"), meta.get("item_id")), []).append(
+            (index, part)
+        )
+    items: dict[int, dict[str, Any]] = {}
+    for group in groups.values():
+        # Canonical order follows observation; shared native state belongs to
+        # the first native summary/content block, which may arrive later.
+        owners = [
+            part
+            for _, part in group
+            if "summary_count" in part.provider_metadata
+            or "content_count" in part.provider_metadata
+        ]
+        if len(owners) != 1:
+            raise ToolangError("Responses reasoning item is incomplete or malformed")
+        owner = owners[0]
+        meta = owner.provider_metadata
+        opaque = len(group) == 1 and meta.get("field") is None and not owner.text
+        if not opaque and any(
+            part.provider_metadata.get("field") not in {"summary", "content"}
+            or type(part.provider_metadata.get("index")) is not int
+            for _, part in group
+        ):
+            raise ToolangError("Responses reasoning item has malformed content indices")
+        item: dict[str, Any] = {"type": "reasoning", "summary": []}
+        if meta.get("item_id") is not None:
+            item["id"] = meta["item_id"]
+        if "status" in meta:
+            item["status"] = meta["status"]
+        if owner.signature is not None:
+            item["encrypted_content"] = owner.signature
+        if not item.get("id") and not item.get("encrypted_content"):
+            raise ToolangError(
+                "Responses reasoning requires a native item ID or encrypted content"
+            )
+        for field, expected in (
+            ("summary", "summary_text"),
+            ("content", "reasoning_text"),
+        ):
+            values = [
+                part
+                for _, part in group
+                if part.provider_metadata.get("field") == field
+            ]
+            values.sort(
+                key=lambda part: cast(int, part.provider_metadata.get("index", -1))
+            )
+            count = meta.get(f"{field}_count")
+            if (
+                type(count) is not int
+                or count != len(values)
+                or any(
+                    part.provider_metadata.get("index") != index
+                    or part.provider_metadata.get("content_type") != expected
+                    for index, part in enumerate(values)
+                )
+            ):
+                raise ToolangError(
+                    "Responses reasoning item is incomplete or malformed"
+                )
+            if values:
+                item[field] = [{"type": expected, "text": part.text} for part in values]
+        if any(part.signature is not None and part is not owner for _, part in group):
+            raise ToolangError("Responses reasoning signature has multiple owners")
+        items[group[0][0]] = item
+    return items
 
 
 def _message_item(

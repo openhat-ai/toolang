@@ -556,10 +556,10 @@ agic stream(_: Part[]) -> Part[]:
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant("hello")),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("hel")),
-                    ModelPartDelta(delta=TextDelta("lo")),
-                    ModelPartEnd(data=TextPart("hello")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("hel")),
+                    ModelPartDelta(part=0, delta=TextDelta("lo")),
+                    ModelPartEnd(part=0, data=TextPart("hello")),
                 ),
             )
         ],
@@ -617,8 +617,8 @@ agic stream(_: Part[]) -> Part[]:
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant("different")),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("prefix")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("prefix")),
                 ),
             )
         ],
@@ -683,9 +683,9 @@ agic stream(_: Part[]) -> Part[]:
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant("prefix result")),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("prefix")),
-                    ModelPartEnd(data=TextPart("prefix closure")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("prefix")),
+                    ModelPartEnd(part=0, data=TextPart("prefix closure")),
                 ),
             )
         ],
@@ -721,6 +721,7 @@ agic stream(_: Part[]) -> Part[]:
                 f"run_begin:{record.id}",
                 f"step_begin:{record.id}.0:model",
                 f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
                 f"part_delta:{record.id}.0:0",
                 f"part_end:{record.id}.0:0:text",
                 f"step_end:{record.id}.0:model:failed",
@@ -764,10 +765,14 @@ agic calculate(_: Text) -> Text:
                     tool_calls=(call,),
                 ),
                 updates=(
-                    ModelPartStart(kind="tool_call"),
-                    ModelPartDelta(delta=ToolCallDelta('{"value":', call.tool_call_id)),
-                    ModelPartDelta(delta=ToolCallDelta("3}", call.tool_call_id)),
-                    ModelPartEnd(data=call_part),
+                    ModelPartStart(part=0, kind="tool_call"),
+                    ModelPartDelta(
+                        part=0, delta=ToolCallDelta('{"value":', call.tool_call_id)
+                    ),
+                    ModelPartDelta(
+                        part=0, delta=ToolCallDelta("3}", call.tool_call_id)
+                    ),
+                    ModelPartEnd(part=0, data=call_part),
                 ),
             ),
             ModelCallResult(message=Message.assistant("six")),
@@ -836,9 +841,9 @@ agic illustrate(_: Text) -> Part[]:
                     )
                 ),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("caption")),
-                    ModelPartEnd(data=TextPart("caption")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("caption")),
+                    ModelPartEnd(part=0, data=TextPart("caption")),
                 ),
             )
         ],
@@ -890,21 +895,22 @@ def test_interrupted_model_persists_partial_output(
         tool_call_id="complete", tool_name="unused", tool_family="unused", input={}
     )
     updates = [
-        ModelPartEnd(data=image),
-        ModelPartDelta(delta=TextDelta("partial")),
+        ModelPartEnd(part=0, data=image),
+        ModelPartDelta(part=1, delta=TextDelta("partial")),
     ]
     if completed_text:
-        updates.append(ModelPartEnd(data=TextPart("partial complete")))
+        updates.append(ModelPartEnd(part=1, data=TextPart("partial complete")))
     updates.extend(
         [
-            ModelPartEnd(data=call),
-            ModelPartDelta(delta=ToolCallDelta('{"unfinished":', "incomplete")),
+            ModelPartEnd(part=2, data=call),
+            ModelPartDelta(part=3, delta=ToolCallDelta('{"unfinished":', "incomplete")),
         ]
     )
     expected = (
         image,
         TextPart("partial complete" if completed_text else "partial"),
         call,
+        ToolCallPart("incomplete", "", ""),
     )
     harness = ExecutionHarness.create(
         tmp_path,
@@ -971,6 +977,12 @@ def test_interrupted_model_persists_partial_output(
             assert len(harness.adapter.invocations) == (
                 2 if interruption == "steer" else 1
             )
+            if interruption == "steer":
+                assert not any(
+                    isinstance(part, ToolCallPart) and part.tool_call_id == "incomplete"
+                    for message in harness.adapter.invocations[-1].call.messages
+                    for part in message.parts
+                )
             assert_run_event_integrity(tracer.events)
         reopened = RunStore(tmp_path / "agents/alice/.runtime/runs.db")
         try:
@@ -1051,7 +1063,10 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
         responses=[
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message(role="assistant", parts=parts)),
-                updates=tuple(ModelPartEnd(data=part) for part in parts),
+                updates=tuple(
+                    ModelPartEnd(part=index, data=part)
+                    for index, part in enumerate(parts)
+                ),
             )
         ],
         streaming=True,
@@ -1173,8 +1188,8 @@ agic stream(_: Text) -> Text:
             ScriptedModelTurn(
                 result=ModelCallResult(),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("partial")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("partial")),
                 ),
                 error=RuntimeError("stream disconnected"),
             )
@@ -1234,8 +1249,8 @@ agic stream(_: Text) -> Text:
             ScriptedModelTurn(
                 result=ModelCallResult(),
                 updates=(
-                    ModelPartStart(kind="text"),
-                    ModelPartDelta(delta=TextDelta("partial")),
+                    ModelPartStart(part=0, kind="text"),
+                    ModelPartDelta(part=0, delta=TextDelta("partial")),
                 ),
                 after_updates_gate=gate,
             )

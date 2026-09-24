@@ -664,11 +664,9 @@ class ProgressProjector:
                 raise _PresentationError(
                     f"TextDelta changed Part type for {event.step} part {event.part}"
                 )
-            if state.model.text_part not in {None, event.part}:
-                raise _PresentationError(
-                    f"Model Step has multiple streamed Text Parts for {event.step}"
-                )
-            state.model.text_part = event.part
+            state.model.text_parts[event.part] = (
+                state.model.text_parts.get(event.part, "") + event.delta.text
+            )
             state.model.streamed += event.delta.text
             state.model.pending += event.delta.text
             if state.lane_owner is not None:
@@ -709,18 +707,16 @@ class ProgressProjector:
             raise _PresentationError(
                 f"PartEnd changed Part type for {event.step} part {event.part}"
             )
-        if state.model.text_part not in {None, event.part}:
-            raise _PresentationError(
-                f"Model Step has multiple streamed Text Parts for {event.step}"
-            )
-        state.model.text_part = event.part
-        if not event.data.text.startswith(state.model.streamed):
+        streamed = state.model.text_parts.get(event.part, "")
+        if not event.data.text.startswith(streamed):
             raise _PresentationError(
                 f"PartEnd text does not extend TextDelta for {event.step} part "
                 f"{event.part}"
             )
-        state.model.pending += event.data.text[len(state.model.streamed) :]
-        state.model.streamed = event.data.text
+        suffix = event.data.text[len(streamed) :]
+        state.model.pending += suffix
+        state.model.streamed += suffix
+        state.model.text_parts[event.part] = event.data.text
         if state.lane_owner is not None:
             return None
         pending = state.model.pending
