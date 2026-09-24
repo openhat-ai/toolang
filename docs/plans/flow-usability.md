@@ -137,7 +137,7 @@ repeat 5 times windowing 3:
 - Save one pair per successful round, including unchanged values. Failed rounds
   add nothing; retries do not duplicate entries. Settle saves after each reducer call.
 - Capture only ordinary locals and the primary `_` on both entry and exit.
-  Exclude injected runtime bindings such as `_1`, `_2`, `_f`, `_n`, and `_h`,
+  Exclude injected runtime bindings such as `_1`, `_2`, `_far`, `_near`, and `_past`,
   even when present in iteration input; generate entry selectors only for the
   retained bindings. Neither `_k._1` nor `_k.__1` retains earlier history frames.
 - Filtering applies to frame bindings, not fields inside ordinary data values.
@@ -150,9 +150,9 @@ repeat 5 times windowing 3:
 
 | Variable | Value |
 | --- | --- |
-| `_f` | Older thread-history summary as Text; empty Text when absent |
-| `_n` | Ordered recent messages with roles/content; empty array when absent |
-| `_h` | Combined messages: summary followed by recent messages |
+| `_far` | Older thread-history summary as Text; empty Text when absent |
+| `_near` | Ordered recent messages with roles/content; empty array when absent |
+| `_past` | Combined messages: summary followed by recent messages |
 
 - The root runtime owns the full versioned thread-history snapshot for root agics
   and flows. All descendants, including flow Content and until, use that source;
@@ -160,11 +160,12 @@ repeat 5 times windowing 3:
 - Only root agics automatically include messages selected by recall. Child agics
   choose whether to reference the supplied variables and keep their own model/tool
   conversation. Nested loops preserve thread context while replacing iteration history.
-- Proposed recall view: runtime derives `_f/_n/_h` from each runnable's effective
-  recall and the root snapshot. All three bindings remain present; excluded sources
-  become typed empty values. `_h` always combines the selected `_f` and `_n`.
+- Proposed recall view: runtime derives `_far/_near/_past` from each runnable's
+  effective recall and the root snapshot. All three bindings remain present;
+  excluded sources become typed empty values. `_past` always combines the
+  selected `_far` and `_near`.
 
-| Effective recall | `_f` | `_n` | `_h` |
+| Effective recall | `_far` | `_near` | `_past` |
 | --- | --- | --- | --- |
 | `auto` / `far, near` | Summary | Recent messages | Summary followed by recent messages |
 | `far` | Summary | `[]` | Summary message, or `[]` if absent |
@@ -177,7 +178,7 @@ repeat 5 times windowing 3:
   Missing source history remains empty.
 - Successful compaction atomically publishes a new version for subsequent model
   calls and flow frame evaluations. Each evaluation's automatic recall and
-  `_f/_n/_h` use one version and one effective policy. In-flight evaluations keep
+  `_far/_near/_past` use one version and one effective policy. In-flight evaluations keep
   theirs; failed compaction keeps the old version. Record version and policy for replay.
 - Current progress travels through `_`, named arguments, or iteration frames;
   compaction does not add active-run intermediates to prior thread history.
@@ -290,8 +291,9 @@ Proposed inheritance, pending confirmation:
 ## 9. Open Decisions
 
 - Define required iteration-history depth for until flows and indirect/dynamic
-  dependencies. This concerns `_k`, not the shared thread variables `_f/_n/_h`;
+  dependencies. This concerns `_k`, not the shared thread variables `_far/_near/_past`;
   local agic inference does not determine callee requirements.
 - Confirm the proposed inheritance rules, including parent resource boundaries
   across public calls/transfers, module-local capability restrictions, overridable
-  route/prompt defaults, and recall-filtered `_f/_n/_h` views from a shared root snapshot.
+  route/prompt defaults, and recall-filtered `_far/_near/_past` views from a shared
+  root snapshot.
