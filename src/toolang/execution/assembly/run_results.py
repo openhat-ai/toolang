@@ -3,8 +3,9 @@
 from collections.abc import Callable
 from dataclasses import replace
 from html import escape
+import json
 
-from toolang.base.types.message import TextPart, ToolResultPart
+from toolang.base.types.message import Part, TextPart, ToolCallPart, ToolResultPart
 
 from ..records import RunRecord, StepRecord
 from ..types import (
@@ -66,8 +67,11 @@ def run_completion(
     content = ()
     if run.status == "succeeded" and run.output is not None:
         value = run.output.local
+        parts = parts_from_local(replace(value, value=resolve(value.value)))
         attributes += f' output-type="{escape(value.type, quote=True)}"'
-        if value.type in {"Text", "Part", "Part[]"}:
+        if value.type in {"Text", "Part", "Part[]"} and not any(
+            isinstance(part, ToolCallPart | ToolResultPart) for part in parts
+        ):
             content = (
                 TypedRef(
                     FieldRef.from_path(RunRef(run.id), "output", "local", "value"),
@@ -75,12 +79,7 @@ def run_completion(
                 ),
             )
         else:
-            content = tuple(
-                TextPart(escape(part.text, quote=False))
-                if isinstance(part, TextPart)
-                else part
-                for part in parts_from_local(replace(value, value=resolve(value.value)))
-            )
+            content = tuple(_context_part(part) for part in parts)
     elif run.error is not None:
         content = (escape(resolve_error(run.error), quote=False),)
     return MessageTemplate(
@@ -88,4 +87,16 @@ def run_completion(
         (f"<toolang:run-result {attributes}>", *content, "</toolang:run-result>"),
         tag="run-result",
         escape_text=True,
+    )
+
+
+def _context_part(part: Part) -> Part:
+    """Return control-shaped output as data, never as a caller tool exchange."""
+
+    if isinstance(part, ToolCallPart | ToolResultPart):
+        part = TextPart(
+            json.dumps(part.to_data(), ensure_ascii=False, separators=(",", ":"))
+        )
+    return (
+        TextPart(escape(part.text, quote=False)) if isinstance(part, TextPart) else part
     )

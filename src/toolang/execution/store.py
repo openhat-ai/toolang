@@ -3362,9 +3362,9 @@ class RunStore:
         return _recent_valid_model_history(results, limit=limit)
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
-        current = list(
-            self.list_thread_history_chronological(thread_id=thread_id, limit=None)
-        )
+        # Child exchanges belong to their caller's completion context, not to
+        # the thread conversation as separate input/model/tool messages.
+        current = list(self._thread_projection().history(thread_id))
         return current[-limit:]
 
     def get_run_control(self, *, run_id: str, index: int) -> ControlRecord | None:

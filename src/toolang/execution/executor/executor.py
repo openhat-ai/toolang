@@ -1178,6 +1178,16 @@ class RunExecutor:
             def interrupt() -> None:
                 if cancel.done():
                     return
+                previous = active.interruption
+                if (
+                    previous is not None
+                    and previous.kind == "cancel"
+                    and str(previous.target)
+                    in self.store.run_ancestry(run_id=str(control.target))
+                ):
+                    # A descendant control cannot supersede cancellation of
+                    # its enclosing Run or interrupt that Run's cleanup again.
+                    return
                 if control.kind == "cancel":
                     claimed = self.store.claim_run_controls(
                         run_id=str(control.target), indexes=(control.index,)
@@ -1476,6 +1486,16 @@ class RunExecutor:
             iter(self.store.pending_run_controls(run_id=run_id, kind="cancel")),
             None,
         )
+        with self._active_lock:
+            active = self._active.get(run_id)
+            interruption = active.interruption if active is not None else None
+        if (
+            interruption is not None
+            and interruption.kind == "cancel"
+            and interruption.target == RunRef(run_id)
+        ):
+            # Receipt delivery may already have applied the target's cancel.
+            cancellation = interruption
         await emit(
             RunEnd(
                 run=run_id,
@@ -2646,6 +2666,16 @@ class _Execution:
         return any(
             control.timing == "immediate"
             for control in self.pending_controls(run_id, "steer")
+        )
+
+    def canceled_within(self, run_id: str) -> bool:
+        """Whether the interruption cancels this target or one of its descendants."""
+
+        control = self._active.interruption if self._active is not None else None
+        return (
+            control is not None
+            and control.kind == "cancel"
+            and run_id in self.store.run_ancestry(run_id=str(control.target))
         )
 
     def raise_if_canceling(self, run_id: str, *, call: bool) -> None:

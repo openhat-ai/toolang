@@ -439,16 +439,20 @@ that reference does not imply overlapping lifetimes. Each scheduled child finish
 before the next tool call starts. All paired tool replies precede the batch's
 `run-result` context messages, which identify the child, terminal status, and typed
 output or error. The caller keeps its conversation and provider continuation.
-Target failure or cancellation leaves the receipt unchanged. Root cancellation
-also cancels an accepted child that has not started, without applying its entry
-control. A steer during receipt delivery preserves the accepted request; a steer
-during execution interrupts the child and resumes the caller with its outcome.
+Target failure or cancellation leaves the receipt unchanged and lets the caller
+continue the batch. Cancellation of an enclosing Run takes precedence over a
+target-only cancellation. Root cancellation also cancels an accepted child that
+has not started, without applying its entry control. A steer during receipt
+delivery preserves the accepted request; a steer during execution interrupts the
+child and resumes the caller with its outcome.
 
 Completion context is derived from the child's durable terminal record and included
-once in caller history, even without another Model Call. Child internals are not
-flattened into the caller. Explicit retry retains its existing behavior: retrying
-an agic replaces its Step history and children. Automatic resumption of pending
-scheduled Runs after process loss is not implemented yet.
+once in caller history, even without another Model Call. Returned tool-call and
+tool-result Parts become text data, not caller tool exchanges; media Parts remain
+native. Child internals are not flattened into the caller. Explicit retry retains
+its existing behavior: retrying an agic replaces its Step history and children.
+Automatic resumption of pending scheduled Runs after process loss is not
+implemented yet.
 
 A successful `_toolang__execute` records one applied execute control during its
 Tool Step, then finishes that Step before transferring to the target. It creates

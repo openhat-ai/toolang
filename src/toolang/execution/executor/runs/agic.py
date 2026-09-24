@@ -359,13 +359,28 @@ async def _execute(state: _AgicState) -> Message | None:
                 continue
             completions: list[MessageTemplate] = []
             for index, call in enumerate(result.tool_calls):
+                interrupted = False
                 try:
-                    await tool_step.execute(
-                        state,
-                        call,
-                        tool_call_count=len(result.tool_calls),
-                        routes=routes,
-                    )
+                    try:
+                        await tool_step.execute(
+                            state,
+                            call,
+                            tool_call_count=len(result.tool_calls),
+                            routes=routes,
+                        )
+                    except asyncio.CancelledError:
+                        if state.immediate_steer():
+                            interrupted = True
+                        elif not (
+                            state.scheduled_run is not None
+                            and state.execution is not None
+                            and state.execution.canceled_within(
+                                state.scheduled_run[0].run_id
+                            )
+                        ):
+                            raise
+                        # An accepted request survives delivery interruption. A
+                        # target-local cancel terminates only that scheduled Run.
                     await _dispatch_run(state, completions)
                 except asyncio.CancelledError:
                     if not state.immediate_steer():
@@ -382,8 +397,8 @@ async def _execute(state: _AgicState) -> Message | None:
                             state, result.tool_calls[index + 1 :], canceled=True
                         )
                         raise
-                    # A receipt committed before steering still schedules its Run.
-                    await _dispatch_run(state, completions)
+                    interrupted = True
+                if interrupted:
                     await tool_step.skip(state, result.tool_calls[index + 1 :])
                     break
             if state.execution is not None:
@@ -412,15 +427,21 @@ async def _dispatch_run(state: _AgicState, completions: list[MessageTemplate]) -
     state.scheduled_run = None
     binding, runnable = scheduled
     try:
-        await execution.execute(binding, runnable, output_binding=None)
+        if execution.canceled_within(binding.run_id):
+            await execution.executor._ensure_terminal(
+                binding.run_id, emit=state.emit, status="canceled"
+            )
+        else:
+            await execution.execute(binding, runnable, output_binding=None)
     except asyncio.CancelledError:
         await execution.executor._ensure_terminal(
             binding.run_id, emit=state.emit, status="canceled"
         )
-        completion = execution.store.run_completion(binding.run_id)
-        if completion is not None:
-            completions.append(completion)
-        raise
+        if not execution.canceled_within(binding.run_id):
+            completion = execution.store.run_completion(binding.run_id)
+            if completion is not None:
+                completions.append(completion)
+            raise
     except Exception:
         child = execution.store.get_run(run_id=binding.run_id)
         if child is None or child.status in {"pending", "running"}:
