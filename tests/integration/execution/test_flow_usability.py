@@ -166,6 +166,31 @@ flow main():
     assert output == "abc"
 
 
+def test_settle_keeps_leading_markdown_in_the_model_prompt(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic seed() -> Text[]:
+  Seed.
+flow main():
+  scatter using seed
+  settle:
+    # Reducer instructions
+    ## Preserve this heading
+    Combine {{_}} with {{_1._}}.
+    from: Initial.
+""",
+        responses=['["item"]', "combined"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "combined"
+    assert (
+        "# Reducer instructions\n## Preserve this heading\nCombine item with Initial."
+        in _texts(harness)[1]
+    )
+
+
 @pytest.mark.parametrize(
     "initial,output,responses,expected",
     [

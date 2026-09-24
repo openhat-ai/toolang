@@ -347,7 +347,10 @@ def _validate_directives(
             or len(directive.values) != 1
             or (
                 directive.values[0] != "default"
-                and re.fullmatch(r"[1-9][0-9]*", directive.values[0]) is None
+                and (
+                    re.fullmatch(r"[0-9]+", directive.values[0]) is None
+                    or int(directive.values[0]) < 1
+                )
             )
         ):
             raise ToolangValidationError(

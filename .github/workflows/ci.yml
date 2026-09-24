@@ -43,15 +43,15 @@ jobs:
         run: uv run ruff check
 
       - name: Export runtime dependencies
-        run: >-
-          uv export --frozen --no-dev --no-emit-project
-          --output-file "${RUNNER_TEMP}/requirements-audit.txt"
+        run: |
+          mkdir -p "${RUNNER_TEMP}/runtime-audit"
+          uv export --frozen --no-dev --no-emit-project --quiet --format pylock.toml \
+            --output-file "${RUNNER_TEMP}/runtime-audit/pylock.toml"
 
       - name: Audit runtime dependencies
         run: >-
           uvx --from pip-audit==2.10.1 pip-audit
-          --requirement "${RUNNER_TEMP}/requirements-audit.txt"
-          --disable-pip
+          --locked "${RUNNER_TEMP}/runtime-audit"
 
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})

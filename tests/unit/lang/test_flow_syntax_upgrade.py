@@ -11,6 +11,7 @@ from toolang.lang.ast import (
     flow_stmt_from_data,
 )
 from toolang.lang.errors import ToolangError
+from toolang.execution.settings import resolve_settings
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -113,3 +114,11 @@ def test_settle_comments_keep_their_authored_scope(named, tab_size):
     assert " " * (2 * tab_size) + "# Next statement comment.\n" in formatted
     assert format_source(formatted, tab_size=tab_size) == formatted
     Program.from_source(formatted)
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_lane_literals_use_the_same_integer_rules_as_statement_clauses(kind):
+    body = "user: Work." if kind == "agic" else "storm 1 in 04 lanes using: Work."
+    program = Program.from_source(f"{kind} work:\n  lanes = 04\n  {body}\n")
+    runnable = program.agics[0] if kind == "agic" else program.flows[0]
+    assert resolve_settings(runnable, "agent").lanes == 4
