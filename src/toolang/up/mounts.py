@@ -26,6 +26,15 @@ def prepare_root_mounts(
             hosted_path=hosted_root / "config.toml",
         )
     ]
+    catalog_path = local_root / "catalog.json"
+    if catalog_path.is_file():
+        mounts.append(
+            SandboxMount(
+                local_path=catalog_path.resolve(strict=True),
+                hosted_path=hosted_root / "catalog.json",
+                read_only=True,
+            )
+        )
     for directory_name in (".setup", ".state", *_ROOT_MOUNT_DIR_NAMES):
         local_path = local_root / directory_name
         local_path.mkdir(parents=True, exist_ok=True)

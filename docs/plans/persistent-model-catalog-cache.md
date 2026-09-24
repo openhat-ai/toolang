@@ -46,6 +46,15 @@ versions: exclude the injected `models_dev.path`, file timestamps, and unrelated
 host/guest environment variables. Default, explicit, and environment-selected
 catalogs follow the same rule. Changed credentials, configurations, plugin versions,
 or local discovery facts still invalidate; a shared cache remains one replaceable slot.
+Mount an existing root `catalog.json` read-only, resolving symbolic links, so default
+source selection survives the move. Explicit selection of that same file adds no
+duplicate mount. Verify against the actual sandbox mount plan, not a whole-root copy.
+
+Privileged cache writers inherit the mounted parent directory's UID/GID for new
+directories, lock files, and atomically replaced documents. Keep existing file modes
+and the process umask; do not broaden access or change the container's execution UID.
+This covers both source and merged caches and both host-first and guest-first writes.
+Unprivileged writers still require filesystem access to the shared directory.
 
 ## Dependency detection
 
@@ -94,6 +103,8 @@ selection; config and static-source capture; watcher and models CLI; focused tes
    source-name collisions, corrupt records/checksums, probe errors, and write failure.
    Verify host-to-sandbox and sandbox-to-sandbox remounts hit without static parsing
    for default, explicit, and environment-selected catalogs in root and agent contexts.
+   On Linux, verify root guest writes remain readable and writable by the host UID,
+   including first writes, replacements, directory traversal, and lock reopening.
 5. Run default offline verification. Benchmark fresh processes on the same complete
    catalog/configuration against main, reporting cache size, confirmed warm hits,
    cache-to-query-ready time, and default/all/filtered command latency. Keep timing

@@ -61,7 +61,7 @@ def store_document(
     document: Mapping[str, object],
     scan_content: bool = True,
 ) -> bool:
-    """Write atomically; trusted catalog callers opt out of heuristic scanning."""
+    """Write atomically under the directory owner; catalogs may skip scanning."""
 
     payload = {
         "schema": CACHE_SCHEMA,
@@ -76,8 +76,8 @@ def store_document(
         return False
     if scan_content and _serialized_data_is_unsafe(content, payload):
         return False
-    with file_write_lock(path.with_name(f".{path.name}.lock")):
-        atomic_write_text(path, content)
+    with file_write_lock(path.with_name(f".{path.name}.lock"), inherit_owner=True):
+        atomic_write_text(path, content, inherit_owner=True)
     return True
 
 

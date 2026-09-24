@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_linked_state_source_mounts,
@@ -78,3 +80,19 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
         )
         for logical, target in sources.items()
     }
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_root_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
+    local_root = tmp_path / "toolang"
+    local_root.mkdir()
+    catalog = local_root / "catalog.json"
+    source = tmp_path / "external.json" if linked else catalog
+    source.write_text("{}")
+    if linked:
+        catalog.symlink_to(source)
+    hosted_root = Path("/root/.toolang")
+
+    assert SandboxMount(
+        source.resolve(), hosted_root / "catalog.json", read_only=True
+    ) in prepare_root_mounts(local_root, hosted_root)

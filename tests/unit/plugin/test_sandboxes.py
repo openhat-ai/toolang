@@ -27,6 +27,7 @@ from toolang.plugin.sandboxes.docker import _guest as docker_guest
 from toolang.plugin.sandboxes.docker import sandbox as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.loading import create_sandbox
+from toolang.up.mounts import prepare_root_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
@@ -475,19 +476,45 @@ def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
     assert str(external) not in guest_env_mount.local_path.read_text(encoding="utf-8")
 
 
-def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
+def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "models.json"
+    request = _request(tmp_path)
+    (tmp_path / "catalog.json").symlink_to(tmp_path / "missing.json")
+    selected = tmp_path / "selected.json"
+    selected.write_text("{}")
+    request = replace(
+        request,
+        envs={MODEL_CATALOG_ENV: str(selected)},
+        mounts=prepare_root_mounts(request.local_root, request.hosted_root),
+    )
+
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+
+    assert (
+        SandboxMount(
+            selected.resolve(), request.hosted_root / "selected.json", read_only=True
+        )
+        in plan.mounts
+    )
+
+
+@pytest.mark.parametrize("filename", ["models.json", "catalog.json"])
+def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    source = tmp_path / filename
     source.write_text("{}", encoding="utf-8")
     request = _request(tmp_path)
     request = replace(
         request,
         dotenv_envs={**request.dotenv_envs, MODEL_CATALOG_ENV: str(source)},
+        mounts=prepare_root_mounts(request.local_root, request.hosted_root),
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)
-    expected = request.hosted_root / "models.json"
+    expected = request.hosted_root / filename
     source_mount = next(
         mount for mount in plan.mounts if mount.local_path == source.resolve()
     )
@@ -498,6 +525,7 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     )
 
     assert source_mount == SandboxMount(source.resolve(), expected, read_only=True)
+    assert sum(mount.hosted_path == expected for mount in plan.mounts) == 1
     assert dotenv_values(guest_env_mount.local_path, interpolate=False)[
         MODEL_CATALOG_ENV
     ] == str(expected)

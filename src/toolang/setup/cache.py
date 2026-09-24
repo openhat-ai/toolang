@@ -122,7 +122,6 @@ class ModelCatalogCache:
             return None
 
     def _write(self, name: str, document: Mapping[str, object]) -> bool:
-        self._directory.mkdir(parents=True, exist_ok=True)
         return store_document(
             self._path(name),
             kind=_CATALOG_KIND,

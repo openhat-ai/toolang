@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 from typing import cast
 
+from dotenv import dotenv_values
 import pytest
 
 from toolang.base.types.model import (
@@ -21,6 +22,7 @@ from toolang.base.types.model import (
     Model,
     ProviderToolang,
 )
+from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.cache import load_document, store_document
 from toolang.common.layout import AgentLayout
 from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
@@ -33,6 +35,8 @@ from toolang.setup.model_listing import ModelListing, build_model_listing
 from toolang.setup.records import ModelListingCache
 from toolang.setup.routes import catalog_environment_names, resolve_catalog_providers
 from toolang.setup.watcher import SetupWatcher
+from toolang.plugin.sandboxes.docker.sandbox import DockerSandbox
+from toolang.up.mounts import prepare_root_mounts
 
 
 def _catalog(*, provider="test", api="https://example.test/v1", env=()):
@@ -400,13 +404,40 @@ def test_cache_survives_sandbox_remounts(tmp_path, monkeypatch, agent, selector)
     )
     for name in ("sandbox-a", "sandbox-b"):
         guest_root = tmp_path / name
-        shutil.copytree(host_root, guest_root)
         harness.layout = AgentLayout.resident(guest_root, "alice")
-        guest_source = guest_root / "catalog.json"
-        if selector != "default":
-            guest_source = guest_root / ".inputs" / "models" / "catalog-remounted.json"
-            guest_source.parent.mkdir(parents=True)
-            shutil.copyfile(harness.source, guest_source)
+        request = SandboxRequest(
+            local_root=host_root,
+            local_home=host_root / "agents" / "alice",
+            hosted_root=guest_root,
+            hosted_home=harness.layout.home,
+            agent_name="alice",
+            bind_host="127.0.0.1",
+            endpoint_host="localhost",
+            port=8123,
+            endpoint="http://localhost:8123",
+            command=("too",),
+            working_directory=harness.layout.home,
+            output="inherit",
+            log_path=None,
+            envs={"TOOLANG_MODEL_CATALOG": str(harness.source)}
+            if selector != "default"
+            else {},
+            mounts=prepare_root_mounts(host_root, guest_root),
+        )
+        plan = DockerSandbox(config={}).prepare("python:3.13-slim", request)
+        for mount in plan.mounts:
+            if mount.local_path.is_dir():
+                shutil.copytree(mount.local_path, mount.hosted_path, dirs_exist_ok=True)
+            else:
+                mount.hosted_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(mount.local_path, mount.hosted_path)
+        guest_env = dotenv_values(harness.layout.env, interpolate=False)
+        guest_source = (
+            Path(cast(str, guest_env["TOOLANG_MODEL_CATALOG"]))
+            if selector != "default"
+            else guest_root / "catalog.json"
+        )
+        assert guest_source.is_file()
         guest_source.touch()
         harness.env.update(
             HOME=f"/home/{name}",
