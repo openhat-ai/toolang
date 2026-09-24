@@ -807,10 +807,20 @@ class _Lowerer:
         return self._text(node).strip()
 
     def _required_int(self, node: CstNode, field: str) -> int:
-        return int(self._required_text(node, field).strip())
+        return self._integer(self._required(node, field))
 
     def _optional_int(self, node: CstNode | None) -> int | None:
-        return int(self._text(node).strip()) if node is not None else None
+        return self._integer(node) if node is not None else None
+
+    def _integer(self, node: CstNode) -> int:
+        try:
+            return int(self._text(node).strip())
+        except ValueError as exc:
+            raise ToolangValidationError(
+                "invalid or oversized integer literal",
+                line=self._line(node),
+                column=node.start_point.column + 1,
+            ) from exc
 
     def _span(self, node: CstNode) -> ast.Span:
         return ast.Span(line=self._line(node))

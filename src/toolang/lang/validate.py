@@ -412,19 +412,24 @@ def _validate_directives(
             f"{owner} may declare at most one lanes directive."
         )
     for directive in lanes:
-        if (
-            directive.operator != "="
-            or len(directive.values) != 1
-            or (
-                directive.values[0] != "default"
+        try:
+            valid = (
+                directive.operator == "="
+                and len(directive.values) == 1
                 and (
-                    re.fullmatch(r"[0-9]+", directive.values[0]) is None
-                    or int(directive.values[0]) < 1
+                    directive.values[0] == "default"
+                    or (
+                        re.fullmatch(r"[0-9]+", directive.values[0]) is not None
+                        and int(directive.values[0]) >= 1
+                    )
                 )
             )
-        ):
+        except ValueError:
+            valid = False
+        if not valid:
             raise ToolangValidationError(
-                f"{owner} lanes requires a positive integer or 'default' with '='."
+                f"{owner} lanes requires a positive integer or 'default' with '='.",
+                line=directive.span.line,
             )
     models = [item for item in directives if item.name == "models"]
     for directive in models:

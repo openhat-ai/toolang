@@ -175,10 +175,16 @@ def _collect_source_paths(
     collected: list[Path] = []
     seen: set[Path] = set()
 
-    def walk_error(error: OSError) -> None:
-        if on_error is None:
+    def report(path: Path, error: Exception) -> None:
+        if on_error is not None:
+            on_error(path, error)
+        elif isinstance(error, ClickException):
             raise error
-        on_error(Path(error.filename) if error.filename else candidate, error)
+        else:
+            raise ClickException(f"{path}: {error}") from error
+
+    def walk_error(error: OSError) -> None:
+        report(Path(error.filename) if error.filename else candidate, error)
 
     for path in paths:
         candidate = path
@@ -191,26 +197,28 @@ def _collect_source_paths(
                     for directory, _, names in os.walk(candidate, onerror=walk_error)
                     for name in names
                     if name.endswith(".too")
-                    and (item := Path(directory) / name).is_file()
+                    if (item := Path(directory) / name).is_file()
+                    or (item.is_symlink() and not item.exists())
                 )
-            elif candidate.is_file():
+            elif candidate.is_file() or (
+                candidate.is_symlink() and not candidate.exists()
+            ):
                 if candidate.suffix != ".too":
                     raise ClickException(f"not a .too file: {candidate}")
                 candidates = [candidate]
             else:
                 raise ClickException(f"path not found: {candidate}")
-            for source_path in candidates:
+        except (OSError, RuntimeError, ClickException) as exc:
+            report(candidate, exc)
+            continue
+        for source_path in candidates:
+            try:
                 resolved = source_path.resolve()
                 if resolved not in seen:
                     seen.add(resolved)
                     collected.append(source_path)
-        except (OSError, RuntimeError, ClickException) as exc:
-            if on_error is not None:
-                on_error(candidate, exc)
-            elif isinstance(exc, ClickException):
-                raise
-            else:
-                raise ClickException(f"{candidate}: {exc}") from exc
+            except (OSError, RuntimeError) as exc:
+                report(source_path, exc)
     return collected
 
 
