@@ -49,7 +49,9 @@ class MergedModelCatalog(ModelCatalog):
                 models[identity] = model
         return ModelCatalogSnapshot(
             providers=providers,
-            models=tuple(models[key] for key in sorted(models)),
+            models=tuple(
+                sorted(models.values(), key=lambda model: model._toolang.provider)
+            ),
             revision=snapshots[0].revision,
             source=snapshots[0].source,
         )

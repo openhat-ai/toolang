@@ -229,6 +229,30 @@ def test_round_trip_preserves_every_query_field_export_and_order(tmp_path):
         assert isinstance(cast(dict[str, object], model)["provider"], str)
 
 
+def test_listing_preserves_preferred_order_and_invalidates_old_order_cache(harness):
+    data = _catalog()
+    data["test"]["models"] = dict(reversed(list(data["test"]["models"].items())))
+    harness.source.write_text(json.dumps(data))
+    for _ in range(2):
+        listing = harness.load()
+        assert [model.id for model in listing.all.items] == ["two", "one"]
+        assert [model.id for model in listing.default.items] == ["two", "one"]
+        exported = cast(dict, listing.export(listing.all.items))
+        assert list(exported["test"]["models"]) == ["two", "one"]
+    assert harness.builds == 1
+    document = harness.document()
+    document["metadata"]["version"] = 2
+    assert store_document(
+        harness.layout.root_model_cache / "merged.json",
+        kind="model_listing",
+        key="merged",
+        document=document,
+        scan_content=False,
+    )
+    harness.load()
+    assert harness.builds == 2
+
+
 def test_warm_hit_skips_parsing_routes_build_and_scanning(harness, monkeypatch):
     first = harness.load()
 

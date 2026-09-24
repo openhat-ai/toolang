@@ -73,7 +73,7 @@ def models_command(
     except ToolangError as error:
         raise ClickException(str(error)) from error
     if json_:
-        content = dumps(listing.export(selected))
+        content = dumps(listing.export(selected), sort_keys=False)
         typer.echo(content, nl=False)
         return
     headers, raw_rows = dataset.table(selected)
@@ -150,7 +150,8 @@ def providers_command(
                         models={model.id: model for model in by_provider[provider.id]}
                     )
                     for provider in providers
-                }
+                },
+                sort_keys=False,
             ),
             nl=False,
         )

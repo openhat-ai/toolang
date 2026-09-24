@@ -40,7 +40,7 @@ from toolang.common.json import dumps
 _SNAPSHOT_DECODER = msgspec.json.Decoder(ModelCatalogSnapshot)
 
 _CATALOG_KIND = "catalog"
-_CATALOG_SCHEMA = 2
+_CATALOG_SCHEMA = 3
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 

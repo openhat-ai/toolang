@@ -420,8 +420,7 @@ class Provider:
                 "name": self.name,
                 "env": list(self.env),
                 "models": {
-                    key: model.to_data()
-                    for key, model in sorted((models or {}).items())
+                    key: model.to_data() for key, model in (models or {}).items()
                 },
             }
         )

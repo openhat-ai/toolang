@@ -130,7 +130,7 @@ class ModelListing:
             data["env"] = list(self.providers[provider_id].env)
             result[provider_id] = {
                 **{key: value for key, value in data.items() if value is not None},
-                "models": dict(sorted(grouped[provider_id].items())),
+                "models": grouped[provider_id],
             }
         return result
 

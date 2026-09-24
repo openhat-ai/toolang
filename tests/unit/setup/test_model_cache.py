@@ -108,6 +108,39 @@ def test_source_cache_preserves_provider_adapter_trust(
     assert model_adapter(warm, loaded.models[0]) == model_adapter(cold, model)
 
 
+def test_cache_preserves_preference_order_and_rejects_alphabetical_schema(tmp_path):
+    from toolang.common.cache import store_document
+    from toolang.setup.cache import _snapshot_document, catalog_loader
+
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider(id="test", name="Test")},
+        models=tuple(
+            Model(id=name, name=name, _toolang=ModelToolang(provider="test"))
+            for name in ("z-default", "a-image")
+        ),
+        revision="same-source",
+    )
+    cache = ModelCatalogCache(tmp_path)
+    cache.store_source("models_dev", revision=snapshot.revision, snapshot=snapshot)
+    loaded = cache.load_source("models_dev", revision=snapshot.revision)
+    assert loaded is not None
+    assert [model.id for model in loaded.models] == ["z-default", "a-image"]
+    assert [
+        model.id for model in catalog_loader(snapshot, revision="test")().models
+    ] == ["z-default", "a-image"]
+    assert store_document(
+        tmp_path / "models_dev.json",
+        kind="catalog",
+        key="models_dev",
+        document={
+            **_snapshot_document(snapshot),
+            "revision": snapshot.revision,
+            "catalog_schema": 2,
+        },
+    )
+    assert cache.load_source("models_dev", revision=snapshot.revision) is None
+
+
 def test_catalog_snapshot_detaches_readonly_views_from_plugin_owned_data():
     from types import MappingProxyType
 

@@ -76,40 +76,60 @@ The commands do not display `default.model`/`compact.model`. Availability reflec
 the invoking process's configuration and environment, not a running agent's
 session or sandbox.
 
-### Bundled Providers and Provider-Only Export
+### Bundled Providers, Model Order, and Updates
 
-The bundled catalog includes 36 providers: the IDs in the export command below.
-Each selected provider includes all its models from the captured models.dev
-snapshot, including deprecated, preview, and non-text models. Presence in the
-catalog does not guarantee that an adapter supports every model's modalities;
-credentials, endpoint resolution, model capabilities, and allow rules still
-determine runtime use. Regional entries have distinct IDs and endpoints; some
-share an API-key variable, so one key can make both entries eligible.
+The bundled catalog includes all models from 36 selected providers, including
+preview, deprecated, and non-text entries. Provider IDs and preferred model
+IDs are maintained in [catalog-preferences.json](../scripts/catalog-preferences.json).
+Each list moves those models to the front in order; all remaining models stay
+in the catalog, sorted by ID. Prefer general-purpose text models with tool
+calls when the provider offers them. Perplexity currently offers text models
+without tool calls.
 
-Use `models -q 'provider/*' --json` to export by provider. Repeat `-q` (or
-`--query`) to include more providers. `--all` retains models regardless of
-credentials and allow rules. The following regenerates the bundled provider
-selection from the latest upstream catalog:
+Within each provider, catalog model order is preserved through loading,
+merging, caching, and JSON export. The first eligible model becomes the implicit
+default, including for automatic compaction when it supports tools. Explicit
+model choices and authored allow-query ordering still take precedence; provider
+priority is unchanged. Regional entries have distinct IDs and endpoints, but
+some share an API-key variable. Catalog presence does not establish live API
+compatibility for every modality.
+
+From the repository root, refresh the bundled catalog with:
 
 ```bash
-curl -fsSL https://models.dev/catalog.json -o catalog.full.json
-queries=()
-for provider in \
-  alibaba alibaba-cn anthropic cerebras deepinfra deepseek fireworks-ai \
-  google groq huggingface llama meta minimax minimax-cn mistral modelscope \
-  moonshotai moonshotai-cn nebius novita-ai nvidia openai openrouter \
-  perplexity siliconflow siliconflow-cn stepfun stepfun-ai tencent-tokenhub \
-  togetherai vercel volcengine xai xiaomi zai zhipuai
-do
-  queries+=(-q "$provider/*")
-done
-too models --catalog catalog.full.json --all "${queries[@]}" --json > catalog.json
+uv run python scripts/update_model_catalog.py
 ```
 
-The result is a provider-map catalog accepted by `--catalog` or implicit
-`catalog.json` discovery. Export uses the normalization described below and
-does not include runtime credentials or readiness fields. No model ranking,
-capability, status, or representative-model filter is applied.
+The updater downloads models.dev, uses the existing `models --all -q
+'provider/*' --json` export for every configured provider, and applies the
+preference lists. It fails before replacing the output if a provider or
+preferred model disappears, or a preference is deprecated, lacks text support,
+or lacks tools when that provider offers tool-capable models. Review preference
+changes explicitly; a newly released model never silently replaces a preference.
+No model is removed because of its capabilities or status.
+
+Use a saved upstream snapshot for a reproducible update or a read-only check:
+
+```bash
+uv run python scripts/update_model_catalog.py --source catalog.full.json
+uv run python scripts/update_model_catalog.py --source catalog.full.json --check
+```
+
+The updater prints the source SHA-256. `--check` exits nonzero if the generated
+file differs. Update preferences in the small JSON file; do not hand-edit the
+bundled snapshot. Startup never runs this updater or downloads a catalog.
+
+For an ad hoc provider subset, repeat `-q` (or `--query`); `--all` retains
+models regardless of credentials and allow rules:
+
+```bash
+too models --catalog catalog.full.json --all \
+  -q 'openai/*' -q 'anthropic/*' -q 'google/*' --json > catalog.json
+```
+
+The result is a provider-map catalog accepted by `--catalog` and implicit
+`catalog.json` discovery. It preserves the selected models' order and uses the
+normalization below, without runtime credentials or readiness fields.
 
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top

@@ -38,9 +38,7 @@ def parse_model_catalog_data(
         )
         providers[provider_id] = provider
         models.extend(entries)
-    return providers, tuple(
-        sorted(models, key=lambda model: (model._toolang.provider, model.id))
-    )
+    return providers, tuple(sorted(models, key=lambda model: model._toolang.provider))
 
 
 def model_catalog_snapshot_from_data(

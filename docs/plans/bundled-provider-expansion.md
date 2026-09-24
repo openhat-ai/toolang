@@ -1,7 +1,8 @@
 # Expand Bundled Provider Coverage
 
 Status: approved on 2026-09-24, with provider-only selection and all upstream
-models retained, as requested by the human.
+models retained. The human subsequently requested natural per-provider defaults
+and a maintainable update process to fix the review's default-model regression.
 
 ## Goal and Success Criteria
 
@@ -53,11 +54,31 @@ Do not invent prices, capabilities, endpoints, or reasoning controls.
 
 The captured source produces 1,772 models and approximately 1.76 MB of JSON.
 Remove the obsolete 64 KiB test bound; use the loader's existing maximum catalog
-size. Keep the CLI's deterministic JSON formatting so regeneration is direct.
+size. The generator keeps metadata canonical and model preferences explicit.
 
-This change covers catalog data, focused acceptance tests, and a short coverage
-note in `docs/models.md`. It adds no adapters, route mappings, credential
-behavior, network access at startup, update command, or provider ordering rule.
+### Model Order and Maintenance
+
+- Preserve model order within each provider through parsing, merging, caches,
+  and both catalog CLI JSON exports. Keep provider priority, explicit model
+  selection, and authored allow-query ordering unchanged.
+- Maintain provider IDs and ordered preferred model IDs in
+  `scripts/catalog-preferences.json`. Prefer general-purpose text models with
+  tools; text-only providers such as Perplexity remain selectable without tools.
+- `scripts/update_model_catalog.py` downloads a full source or accepts
+  `--source PATH`, exports all selected providers through the existing CLI,
+  promotes the preference lists, then orders remaining models by ID. It retains
+  all models and metadata, including models unsuitable as automatic defaults.
+- Missing providers/preferences, duplicate or empty preference lists, deprecated
+  or non-text preferences, and non-tool preferences when tools are available
+  fail without replacing the output. `--check` verifies reproducibility without
+  writing. The script prints source provenance and replaces output atomically.
+- Bump the catalog and listing cache schemas so preexisting alphabetical snapshots cannot
+  silently restore the wrong default. The preference file is a maintenance
+  input; installed runtimes need only the generated catalog.
+
+This change covers catalog data, order preservation, a maintenance script,
+focused acceptance tests, and documentation. It adds no adapters, route mappings,
+credential behavior, network access at startup, or provider ordering rule.
 It refreshes all selected providers from the same upstream snapshot, rather
 than preserving stale model records. Unselected providers, including separate
 subscription/coding-plan variants, remain outside this expansion.
@@ -77,6 +98,12 @@ claim of execution support.
   fallback with an isolated root, disabled local discovery, and synthetic env.
 - `docs/models.md`: describe bundled coverage, regional entries, readiness
   requirements, and reproducible provider-only export commands.
+- `scripts/catalog-preferences.json`, `scripts/update_model_catalog.py`: the
+  single maintained provider/preference list and reproducible generator.
+- Catalog parsing/merging, `base/types/model.py`, catalog CLI serialization,
+  `common/json.py`, and setup cache/listing records: preserve semantic model order.
+- `tests/unit/test_update_model_catalog.py` and cache tests: safe regeneration,
+  stale preference failures, cache order, and old-schema invalidation.
 
 ## Acceptance Tests
 
@@ -99,6 +126,12 @@ claim of execution support.
    added records do not leak into that result.
 6. Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
    `uv run pytest -n auto`, and `git diff --check` before implementation commits.
+7. With only an OpenAI key, cold and warm setup select the maintained preferred
+   model for normal execution and compaction, never `chatgpt-image-latest`.
+   That image model remains present and exportable. Non-alphabetical model order
+   survives parsing, merge, cache, repeated CLI queries, and JSON reload.
+8. Repeated regeneration from the same source is byte-identical. New unpreferred
+   models are retained; invalid preferences leave the existing output untouched.
 
 ## Risks and Tradeoffs
 
@@ -121,4 +154,5 @@ claim of execution support.
 ## Open Questions
 
 None. The provider set and implementation are approved with provider-only
-selection; representative-model filtering is explicitly excluded.
+selection and maintained model ordering; representative-model filtering is
+explicitly excluded.

@@ -16,7 +16,7 @@ from .cache_environment import environment_fingerprint
 Text = Annotated[str, msgspec.Meta(min_length=1)]
 Positive = Annotated[int, msgspec.Meta(gt=0)]
 Rank = Annotated[int, msgspec.Meta(ge=0)]
-_LISTING_SCHEMA = 2
+_LISTING_SCHEMA = 3
 
 
 class ProviderRecord(

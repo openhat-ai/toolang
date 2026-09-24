@@ -169,7 +169,12 @@ def test_provider_queries_export_every_model_and_reload_as_a_catalog(
     result = runner.invoke(cli.app, [*base, *queries, "--json"])
 
     assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout) == bundled
+    exported_data = json.loads(result.stdout)
+    assert exported_data == bundled
+    for provider in bundled:
+        assert list(exported_data[provider]["models"]) == list(
+            bundled[provider]["models"]
+        )
     assert "_toolang" not in result.stdout
     exported = tmp_path / "exported.json"
     exported.write_text(result.stdout)
@@ -186,7 +191,12 @@ def test_provider_queries_export_every_model_and_reload_as_a_catalog(
         ],
     )
     assert reloaded.exit_code == 0, reloaded.stderr
-    assert json.loads(reloaded.stdout) == bundled
+    reloaded_data = json.loads(reloaded.stdout)
+    assert reloaded_data == bundled
+    for provider in bundled:
+        assert list(reloaded_data[provider]["models"]) == list(
+            bundled[provider]["models"]
+        )
 
     # A provider selector must not include its regional sibling; nested model IDs survive.
     subset = runner.invoke(
@@ -223,6 +233,33 @@ def test_bundled_catalog_is_complete_offline_and_respects_credentials(
     available = runner.invoke(cli.app, base)
     assert available.exit_code == 0, available.stderr
     assert json.loads(available.stdout) == {"cerebras": bundled["cerebras"]}
+
+
+def test_bundled_openai_default_survives_cold_and_warm_setup(tmp_path, monkeypatch):
+    import asyncio
+    import os
+    from unittest.mock import patch
+
+    from toolang.common.layout import AgentLayout
+    from toolang.setup.models import select_compact_model
+    from toolang.setup.watcher import load_setup
+
+    _disable_local_discovery(monkeypatch)
+    preferred = next(
+        iter(json.loads(PACKAGED_MODEL_CATALOG.read_text())["openai"]["models"])
+    )
+    expected = f"openai/{preferred}"
+    assert expected != "openai/chatgpt-image-latest"
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "synthetic-key"}, clear=True):
+        for _ in range(2):
+            setup = asyncio.run(
+                load_setup(
+                    AgentLayout.resident(tmp_path, "default"), agent_context=False
+                )
+            )
+            assert setup.models.effective_default(None) == expected
+            assert select_compact_model(setup.models, None).ref == expected
+            assert setup.models.resolve("openai/chatgpt-image-latest")
 
 
 def test_models_query_exports_a_valid_complete_catalog(

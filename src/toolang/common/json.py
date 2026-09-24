@@ -14,12 +14,13 @@ def _encode_mapping(value: object) -> object:
 
 
 _ENCODER = msgspec.json.Encoder(order="sorted", enc_hook=_encode_mapping)
+_ORDERED_ENCODER = msgspec.json.Encoder(enc_hook=_encode_mapping)
 
 
-def dumps(data: object, *, indent: int | None = 2) -> str:
-    """Serialize catalog data deterministically using native JSON numbers."""
+def dumps(data: object, *, indent: int | None = 2, sort_keys: bool = True) -> str:
+    """Serialize native JSON numbers, optionally preserving semantic key order."""
 
-    payload = _ENCODER.encode(data)
+    payload = (_ENCODER if sort_keys else _ORDERED_ENCODER).encode(data)
     if indent is not None:
         payload = msgspec.json.format(payload, indent=indent)
     return payload.decode("utf-8") + "\n"

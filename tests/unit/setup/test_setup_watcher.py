@@ -885,7 +885,7 @@ def test_setup_model_order_survives_cached_publication(tmp_path, monkeypatch, qu
         else ("aardvark", "openai", "google")
     )
     expected = tuple(
-        f"{provider}/{model}" for provider in providers for model in ("a", "z")
+        f"{provider}/{model}" for provider in providers for model in ("z", "a")
     )
     assert first.models.refs() == expected
     warm = asyncio.run(SetupWatcher(watcher.layout).refresh())

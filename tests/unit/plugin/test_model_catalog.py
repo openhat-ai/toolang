@@ -57,46 +57,17 @@ def test_packaged_catalog_covers_approved_providers_and_all_captured_models() ->
 
     assert PACKAGED_MODEL_CATALOG.name == "catalog.json"
     assert not PACKAGED_MODEL_CATALOG.with_name("models.json").exists()
-    assert set(snapshot.providers) == {
-        "alibaba",
-        "alibaba-cn",
-        "anthropic",
-        "cerebras",
-        "deepinfra",
-        "deepseek",
-        "fireworks-ai",
-        "google",
-        "groq",
-        "huggingface",
-        "llama",
-        "meta",
-        "minimax",
-        "minimax-cn",
-        "mistral",
-        "modelscope",
-        "moonshotai",
-        "moonshotai-cn",
-        "nebius",
-        "novita-ai",
-        "nvidia",
-        "openai",
-        "openrouter",
-        "perplexity",
-        "siliconflow",
-        "siliconflow-cn",
-        "stepfun",
-        "stepfun-ai",
-        "tencent-tokenhub",
-        "togetherai",
-        "vercel",
-        "volcengine",
-        "xai",
-        "xiaomi",
-        "zai",
-        "zhipuai",
-    }
-    # All models in the selected providers from the 2026-09-24 upstream capture.
-    assert len(snapshot.models) == 1772
+    preferences = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "scripts/catalog-preferences.json"
+        ).read_text()
+    )
+    assert set(snapshot.providers) == set(preferences)
+    for provider, preferred in preferences.items():
+        models = [
+            model for model in snapshot.models if model._toolang.provider == provider
+        ]
+        assert [model.id for model in models[: len(preferred)]] == preferred
     assert {model._toolang.provider for model in snapshot.models} == set(
         snapshot.providers
     )
@@ -178,6 +149,25 @@ def test_merged_catalog_reuses_records_with_complete_origin() -> None:
 
     assert merged.models[0] is model
     assert merged.providers["test"] is provider
+
+
+def test_catalog_preserves_provider_model_order_through_merge_and_export(
+    tmp_path,
+) -> None:
+    data = _catalog_data()
+    data["test"]["models"] = {
+        name: {**data["test"]["models"]["one"], "id": name, "name": name}
+        for name in ("z-default", "a-image", "m-other")
+    }
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(data))
+    snapshot = read_model_catalog_snapshot(path)
+    expected = ("z-default", "a-image", "m-other")
+    assert tuple(model.id for model in snapshot.models) == expected
+    merged = asyncio.run(MergedModelCatalog((_SnapshotCatalog(snapshot),)).snapshot())
+    assert tuple(model.id for model in merged.models) == expected
+    exported = cast(dict[str, Any], merged.to_data())
+    assert tuple(exported["test"]["models"]) == expected
 
 
 def test_catalog_reader_attaches_origin_without_rematerializing_records(
