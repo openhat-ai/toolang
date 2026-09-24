@@ -536,3 +536,19 @@ flow main() -> Number[]:
     assert run.status == "succeeded", error
     assert "Merge a into [1,2]." in _texts(harness)[1]
     assert output == "[1,2,3]"
+
+
+def test_singleton_settle_skips_unrendered_reducer_history(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+flow main():
+  storm 1 using: Seed
+  settle: {{_}} {{_2._}}
+""",
+        responses=["seed"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "seed"
+    assert len(harness.adapter.invocations) == 1

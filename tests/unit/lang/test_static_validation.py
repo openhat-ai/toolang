@@ -67,7 +67,7 @@ def test_source_determined_errors_are_rejected(source, message):
         "agic reducer(_):\n  {{_}} {{_1._}}\n",
         "flow work:\n  scatter: Values\n  map using -> Text[]: {{_}}\n  gather using: {{_}}\n",
         "flow work:\n  repeat 0 times:\n    map using: {{_}}\n",
-        "flow work:\n  storm 0 using: {{missing}}\n",
+        "flow work:\n  storm 0 using: No calls\n",
         "flow work:\n  repeat 2 times:\n    run: {{_}}\n    until: {{_3._}}\n",
         "flow work:\n  repeat 2 times:\n    scatter: Values\n    settle:\n"
         "      {{_}} {{_1._}}\n      from: {{_2._}}\n",
@@ -195,4 +195,65 @@ flow main:
   repeat 0 times:
     run: {{_}}
     until: {{missing}}
+""")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "storm 0 using: {{missing}}",
+        "storm 0 using: {{_}}",
+        "storm 0 using: Values\n  map using: {{_}} {{missing}}",
+        "storm 0 using: Values\n  keep if: {{_}} {{missing}}",
+        "storm 0 using: Values\n  drop if: {{_}} {{missing}}",
+        "storm 0 using: Values\n  sort ascending by: {{_}} {{missing}}",
+    ],
+)
+def test_empty_parallel_operations_still_validate_required_inputs(statement):
+    with pytest.raises(ToolangError, match="missing input"):
+        Program.from_source(f"flow main():\n  {statement}\n")
+
+
+@pytest.mark.parametrize(
+    "operation", ["map using", "keep if", "drop if", "sort ascending by"]
+)
+def test_empty_parallel_operations_do_not_render_child_history(operation):
+    Program.from_source(f"""
+flow main():
+  repeat 1 time windowing 1:
+    storm 0 using: Values
+    {operation}: {{{{_}}}} {{{{_2._}}}}
+""")
+
+
+def test_zero_storm_does_not_render_child_history():
+    Program.from_source("""
+flow main():
+  repeat 1 time windowing 1:
+    storm 0 using: {{_2._}}
+""")
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        "storm 1 using: Seed",
+        "storm 1 using: Seed\n  map using: {{_}}",
+        "storm 1 using: Seed\n  sort ascending by: {{_}}",
+        "storm 3 using: Seed\n  keep first 1",
+        "storm 2 using: Seed\n  drop last 1",
+    ],
+)
+def test_singleton_settle_does_not_render_reducer_history(steps):
+    Program.from_source(f"flow main():\n  {steps}\n  settle: {{{{_}}}} {{{{_2._}}}}\n")
+
+
+def test_singleton_settle_with_initializer_still_checks_reducer_history():
+    with pytest.raises(ToolangError, match="outside the active window"):
+        Program.from_source("""
+flow main():
+  storm 1 using: Seed
+  settle:
+    {{_}} {{_2._}}
+    from: Initial
 """)

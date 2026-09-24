@@ -12,6 +12,8 @@ through the shared language validator and `too parse --check` before execution.
   until uses post-body locals. Missing historic frames remain normal warm-up.
   Unknown inherited scopes, dynamic values, and conversions remain runtime checks.
 - Analyze loops conservatively, including zero iterations and changing locals.
+  Empty parallel operations and implicit-seed singleton settle validate inputs
+  without checking unused child history templates.
   Do not infer signatures through callees or prepare execution resources.
 - `parse --check PATH...` accepts files/directories or sole stdin, recursively
   discovers and deduplicates `.too` files, emits no AST, reports the first error

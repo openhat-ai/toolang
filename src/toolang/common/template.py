@@ -89,7 +89,7 @@ def template_runtime_names(template: str) -> tuple[str, ...]:
         runtime = historic or root in {"_far", "_near", "_past"}
         if root.startswith("_") and root != "_" and not runtime and not any(sections):
             raise ToolangError(f"unknown runtime reference: {root}")
-        if historic and (int(root[1:]) < 1 or root != f"_{int(root[1:])}"):
+        if historic and re.fullmatch(r"_[1-9][0-9]*", root) is None:
             raise ToolangError(
                 f"iteration history reference is outside the active window: {root}"
             )
@@ -106,14 +106,17 @@ def template_runtime_names(template: str) -> tuple[str, ...]:
 def template_history_depth(template: str, window: int) -> int:
     """Check a known retention window; availability of frames is a runtime fact."""
     required = 0
+    limit = str(window)
     for name in template_runtime_names(template):
         if name[1:].isdigit():
-            depth = int(name[1:])
-            if depth > window:
+            digits = name[1:]
+            # Compare canonical decimal strings before conversion: an authored
+            # index may exceed Python's integer-string conversion limit.
+            if (len(digits), digits) > (len(limit), limit):
                 raise ToolangError(
                     f"iteration history reference is outside the active window: {name}"
                 )
-            required = max(required, depth)
+            required = max(required, int(digits))
     return required
 
 

@@ -16,7 +16,7 @@ class _Local:
     # Full value type: Text[][] for a list of Text[] elements.
     type_name: str | None = None
     shape: Literal["item", "list"] | None = None
-    empty: bool | None = None
+    length: int | None = None
 
 
 _Locals = dict[str, _Local]
@@ -48,7 +48,7 @@ def _join(left: _Locals, right: _Locals) -> _Locals:
         result[name] = _Local(
             a.type_name if a.type_name == b.type_name else None,
             a.shape if a.shape == b.shape else None,
-            a.empty if a.empty == b.empty else None,
+            a.length if a.length == b.length else None,
         )
     return result
 
@@ -63,12 +63,10 @@ class _FlowChecker:
         if window is not None:
             template_history_depth(text, window)
 
-    def call(
+    def inputs(
         self,
         runnable: ast.AgicDecl | ast.FlowDecl,
         locals: _Locals,
-        window: int | None,
-        settings: Mapping[str, str | None],
     ) -> None:
         for parameter in (
             *runnable.params,
@@ -78,7 +76,6 @@ class _FlowChecker:
                 raise ToolangValidationError(
                     f"missing input {parameter.name!r} for {runnable.name or 'inline agic'}"
                 )
-        self.history(runnable, window, settings)
 
     def history(
         self,
@@ -138,7 +135,7 @@ class _FlowChecker:
                 stmt.stmts, entry, window=stmt.window, settings=settings
             )
             if stmt.runnable is not None:
-                self.call(self.runnables[stmt.runnable], result, stmt.window, settings)
+                self.inputs(self.runnables[stmt.runnable], result)
             return result
 
         result = body(locals)
@@ -186,10 +183,7 @@ class _FlowChecker:
                 raise ToolangValidationError(
                     f"{stmt.kind} requires current shape list, got {actual}"
                 )
-            if (
-                isinstance(stmt, ast.GatherStmt | ast.SettleStmt)
-                and source.empty is True
-            ):
+            if isinstance(stmt, ast.GatherStmt | ast.SettleStmt) and source.length == 0:
                 raise ToolangValidationError(f"{stmt.kind} requires a nonempty list")
 
         child_name = getattr(stmt, "runnable", None)
@@ -229,35 +223,50 @@ class _FlowChecker:
                 stmt, ast.MapStmt | ast.KeepStmt | ast.DropStmt | ast.SortStmt
             )
             and source is not None
-            and source.empty is True
+            and source.length == 0
+            or isinstance(stmt, ast.SettleStmt)
+            and stmt.initial is None
+            and source is not None
+            and source.length == 1
         )
-        if child is not None and not no_calls:
-            self.call(
-                child,
-                child_locals,
-                1 if isinstance(stmt, ast.SettleStmt) else window,
-                settings,
-            )
+        if child is not None:
+            # Zero-call operations still preflight inputs, but never render the
+            # child's history templates (including implicit-seed singleton settle).
+            self.inputs(child, child_locals)
+            if not no_calls:
+                self.history(
+                    child,
+                    1 if isinstance(stmt, ast.SettleStmt) else window,
+                    settings,
+                )
 
         transform = operation_transform(stmt.kind)
         if transform in {"filter", "sort"}:
             assert source is not None
-            return _Local(
-                source.type_name,
-                "list",
-                True
-                if isinstance(stmt, ast.KeepStmt) and stmt.count == 0
-                else source.empty,
-            )
+            length = source.length
+            if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
+                if stmt.count is None:
+                    length = 0 if length == 0 else None
+                elif isinstance(stmt, ast.KeepStmt):
+                    length = (
+                        min(length, stmt.count)
+                        if length is not None
+                        else 0
+                        if stmt.count == 0
+                        else None
+                    )
+                elif length is not None:
+                    length = max(0, length - stmt.count)
+            return _Local(source.type_name, "list", length)
         if transform == "list":
             if isinstance(stmt, ast.ScatterStmt):
                 return _Local(output, "list")
             return _Local(
                 f"{output}[]" if output else None,
                 "list",
-                stmt.count == 0
+                stmt.count
                 if isinstance(stmt, ast.StormStmt)
-                else source.empty
+                else source.length
                 if source
                 else None,
             )

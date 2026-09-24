@@ -160,6 +160,13 @@ def _stdin_path_arg(paths: list[Path]) -> Path | None:
     return None
 
 
+def _expand_source_path(path: Path) -> Path:
+    try:
+        return path.expanduser()
+    except RuntimeError as exc:
+        raise ClickException(f"{path}: {exc}") from exc
+
+
 def _collect_source_paths(
     paths: list[Path],
     *,
@@ -167,12 +174,24 @@ def _collect_source_paths(
 ) -> list[Path]:
     collected: list[Path] = []
     seen: set[Path] = set()
+
+    def walk_error(error: OSError) -> None:
+        if on_error is None:
+            raise error
+        on_error(Path(error.filename) if error.filename else candidate, error)
+
     for path in paths:
-        candidate = path.expanduser()
+        candidate = path
         try:
+            candidate = _expand_source_path(path)
             if candidate.is_dir():
+                # pathlib.rglob silently suppresses unreadable-directory errors.
                 candidates = sorted(
-                    item for item in candidate.rglob("*.too") if item.is_file()
+                    item
+                    for directory, _, names in os.walk(candidate, onerror=walk_error)
+                    for name in names
+                    if name.endswith(".too")
+                    and (item := Path(directory) / name).is_file()
                 )
             elif candidate.is_file():
                 if candidate.suffix != ".too":
@@ -185,7 +204,7 @@ def _collect_source_paths(
                 if resolved not in seen:
                     seen.add(resolved)
                     collected.append(source_path)
-        except (OSError, ClickException) as exc:
+        except (OSError, RuntimeError, ClickException) as exc:
             if on_error is not None:
                 on_error(candidate, exc)
             elif isinstance(exc, ClickException):
@@ -223,14 +242,14 @@ def _check_sources(paths: list[Path], *, stdin_filepath: Path | None) -> None:
         paths if paths == [Path("-")] else _collect_source_paths(paths, on_error=report)
     )
     for source in sources:
-        label = (
-            stdin_filepath or Path("<stdin>")
-            if str(source) == "-"
-            else source.expanduser()
-        )
+        label = stdin_filepath or Path("<stdin>") if str(source) == "-" else source
         try:
+            # Discovered filenames are filesystem paths, not fresh CLI input:
+            # an absolute path keeps a literal leading '~' from being expanded.
             _, text = _read_source(
-                source, stdin_filepath=stdin_filepath, preserve_newlines=False
+                source if str(source) == "-" else source.absolute(),
+                stdin_filepath=stdin_filepath,
+                preserve_newlines=False,
             )
             Program.from_source(text)
         except (ToolangError, ClickException) as exc:
@@ -380,7 +399,7 @@ def _read_source(
     else:
         if stdin_filepath is not None:
             raise UsageError("--stdin-filepath can only be combined with '-'")
-        label = source.expanduser()
+        label = _expand_source_path(source)
         if label.is_dir():
             raise UsageError(f"expected one .too file, not a directory: {label}")
         if label.suffix != ".too":
