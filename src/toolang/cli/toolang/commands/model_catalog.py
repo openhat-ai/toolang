@@ -240,28 +240,6 @@ def _listing_sync_cached(
     return asyncio.run(watcher.load_catalog_listing())
 
 
-def _listing_sync(
-    ctx: typer.Context,
-    *,
-    model_catalog: Path | None = None,
-) -> ModelCatalogListing:
-    if model_catalog is None:
-        try:
-            return _listing_from_published_setup(_setup(ctx))
-        except AssertionError:
-            raise
-        except (OSError, ValueError, TypeError):
-            pass
-    layout, agent_context = _layout(ctx)
-    watcher = SetupWatcher(
-        layout,
-        model_catalog=resolve_model_catalog_option(model_catalog),
-        agent_context=agent_context,
-        validate_defaults=False,
-    )
-    return asyncio.run(watcher.load_catalog_listing())
-
-
 def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
     """Build one setup version for the catalog commands."""
 

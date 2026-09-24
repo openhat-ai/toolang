@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -119,23 +119,6 @@ def listing_from_snapshot(
         statuses=statuses,
         allowed_refs=tuple(allowed_refs),
         default_refs=tuple(default_refs),
-    )
-
-
-def _strip_routes(snapshot: ModelCatalogSnapshot) -> ModelCatalogSnapshot:
-    """Drop runtime-only routes while keeping portable provider/model records."""
-
-    providers = {
-        key: replace(provider, _toolang=replace(provider._toolang, route=ModelRoute()))
-        for key, provider in snapshot.providers.items()
-    }
-    models = tuple(model.with_route(ModelRoute()) for model in snapshot.models)
-    return ModelCatalogSnapshot(
-        providers=providers,
-        models=models,
-        revision=snapshot.revision,
-        source=snapshot.source,
-        local=snapshot.local,
     )
 
 
