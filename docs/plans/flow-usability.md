@@ -1,7 +1,7 @@
 # Flow Rules Outline
 
-Goal: local signatures, validated operation contracts, and bounded iteration/thread
-context. This is a design outline; resolve open decisions before implementation.
+Goal: local signatures, validated operation contracts, consistent runtime scheduling,
+and bounded iteration/thread context. Resolve open decisions before implementation.
 tree-sitter-toolang is outside scope.
 
 ## 1. Determine the Signature
@@ -148,29 +148,30 @@ repeat 5 times windowing 3:
 
 ## 6. Project and Select Thread History
 
-- Runs contain Steps; child Runs attach to their parent's calling Steps. A Step's
-  owning Run, not its nesting depth, determines whether it belongs to a root Run.
+- Runs own Steps; child Runs retain caller/root ownership. Triggering Steps and
+  controls record causality without requiring execution inside the triggering
+  Step's lifetime. A Step's owning Run determines whether it belongs to a root Run.
 - Thread history projects each prior root Run's retained execution segment.
   `recall` controls consuming this history, not whether the current Run contributes
   to later roots; `recall = none` still records the current exchange.
 
 | Root Run's retained Steps | Contribution to later root history |
 | --- | --- |
-| Contains model Steps, normally an agic | Its own model conversation: new input messages, assistant outputs, and matched replies from tool/runnable calls, including the terminal exchange |
+| Contains model Steps, normally an agic | Its own model conversation: new input messages, assistant outputs, paired tool replies, and runtime context from completed runnable calls |
 | Contains no model Steps, normally a flow | Entry `_` as a user message and recorded root output as an assistant message, when present; successful runs use their final output |
 
-- Never recursively flatten child Runs. A child's return value can appear through
-  its parent's call reply or the root output, without exposing the child's internal
-  messages. Flow Step inputs/outputs are not individually appended to history.
+- Never recursively flatten child Runs. A child's outcome can appear through its
+  caller's runtime context or the root output, without exposing internal messages.
+  Flow Step inputs/outputs are not individually appended to history.
 - Count each conversation contribution once. Exclude automatically recalled
-  prefixes and repeated model-input prefixes; include completed call replies after
-  the last model Step, preserving call/result pairing.
+  prefixes and repeated model-input prefixes. Include terminal tool replies and
+  committed run-completion messages even without a subsequent model Step;
+  preserve call/result pairing and keep scheduling receipts distinct from outcomes.
 - Model input means recorded conversation messages, including rendered context;
   instructions, tool definitions, and provider settings are not history messages.
 - Preserve existing retry/execute segment selection and control/failure/cancellation
-  handling, including retained partial outputs. Step representation does not change
-  the boundary: today `_toolang/run` is a tool Step with a child Run, while a flow
-  `run` statement has a run Step.
+  handling, including retained partial outputs. Scheduling a child through a control
+  does not make it a new root or expose its internal Steps to thread history.
 
 | Variable | Value |
 | --- | --- |
@@ -208,7 +209,47 @@ repeat 5 times windowing 3:
 - Current progress travels through `_`, named arguments, or iteration frames;
   compaction does not add active-run intermediates to prior thread history.
 
-## 7. Configure Execution
+## 7. Schedule Runtime Calls
+
+| Runtime call | Execution decision | Continuation |
+| --- | --- | --- |
+| `_toolang/run` | Schedule a separate target Run | Resume the caller after the target ends |
+| `_toolang/execute` | Replace the runnable in the same Run | The caller never resumes |
+
+- Both tool results acknowledge committed controls, not target execution outcomes.
+  Return control references; `run` also identifies its target Run. Validate target,
+  authorization, recursion, and input contracts before acknowledging acceptance.
+- Run sequence: prepare inputs and inherited settings -> persist the pending target
+  Run and entry control -> acknowledge and end the Tool Step -> runtime applies
+  the control and executes the target -> record its outcome -> resume the caller.
+  Retain caller/root ownership and causal links to the originating call/control;
+  no extra Step is needed solely to dispatch the target.
+- Preserve the caller's conversation and continuation while it waits. Before its
+  next model call, add one recorded runtime context message containing the target
+  Run reference, terminal status, and output type/value or error. Deliver it without
+  model polling; keep the receipt unchanged and emit no second tool result.
+- Process tool calls in existing order, finishing each scheduled Run before the
+  next call. Present the batch's paired tool replies before completion context.
+  `execute` remains the only tool call allowed in its model call.
+- Target failure/cancellation is reported through completion context; acceptance
+  remains successful. Caller/root cancellation propagates and stops continuation.
+  Persist acceptance and its receipt consistently; recovery reuses the same target
+  Run and delivers each completion once, including after interrupted delivery.
+- Control `applied` means its decision has taken effect; the target Run records
+  execution status. Preserve each control's actual application boundary.
+- Execute keeps its current sequence: commit an applied control -> record the tool
+  result and end the Tool Step -> switch the execution loop to the target. The
+  target starts its own conversation; a committed transfer is not rolled back on
+  target failure. Preserve the original Run's output contract.
+- Existing related behavior remains: pick/honor record recall controls; reload
+  applies State; compact publishes history for adoption. Honor/compact are runtime
+  initiated. Honor reports the intercepted operation as unexecuted and lets the
+  model reconsider it after reading rules.
+- Current `run` awaits a child inside its Tool Step and returns the child's output.
+  Replace that path with control scheduling and separate completion context.
+  Authored flow `run` statements retain their statement result binding.
+
+## 8. Configure Execution
 
 - Agics and flows share the same directives and inheritance rules across calls
   in either direction. Omission inherits the direct parent's effective setting.
@@ -280,11 +321,11 @@ repeat 5 times windowing 3:
 | Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
 | Recall | Each agic independently selects history for model calls; variables remain unfiltered | Inherit/override on agic/flow; filtered views; automatic inclusion only at root agic |
 
-## 8. Syntax Requirements
+## 9. Syntax Requirements
 
 | Area | Required syntax |
 | --- | --- |
-| Shared directives | Agic and flow bodies accept all directives in section 7; preserve existing `instruct:` / `context:` reference and content forms. |
+| Shared directives | Agic and flow bodies accept all directives in section 8; preserve existing `instruct:` / `context:` reference and content forms. |
 | Lanes | Add `lanes = N` to both runnable kinds; retain optional `in N lanes` on parallel statements. |
 | Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
 | Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
@@ -297,11 +338,11 @@ repeat 5 times windowing 3:
   `_1._name`, `_1._`, `_1.__` use existing template syntax. Reserved binding names,
   type/operation contracts, and count/window constraints are semantic checks.
 
-## 9. Validate and Migrate
+## 10. Validate and Migrate
 
 - Validate signatures, arguments, types/shapes, operation contracts, configuration,
   counts, lanes, and runtime availability; report known failures before model calls.
-- Verify parsing/formatting round trips for section 8, preserving omitted fields
+- Verify parsing/formatting round trips for section 9, preserving omitted fields
   and clause ownership; reject the removed scatter count form.
 - Acceptance: signature defaults/inference and use-site contracts; empty inputs;
   lane precedence; initializer timing; repeat window defaults/overrides and fixed
@@ -313,9 +354,17 @@ repeat 5 times windowing 3:
   successful round, and distinguishes missing frames from invalid references/fields.
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
-- Verify root-Step projection without recursive child transcripts, child returns
-  through parent call replies, excluded flow intermediates, terminal call/result
-  pairs, no duplicated recalled prefixes, and contributions with recall none.
+- Verify root-Step projection without recursive child transcripts, child outcomes
+  through caller completion context, excluded flow intermediates, terminal receipts
+  and completions, no duplicated recalled prefixes, and contributions with recall none.
+- Verify run-control persistence before acknowledgment, Tool Step completion before
+  target execution, serial caller suspension/resumption, batch reply ordering,
+  and separate completion messages for success/failure/cancellation. Recovery must
+  preserve continuation without duplicate dispatch or completion delivery.
+- Verify run/execute control references and causal ownership, unchanged execute
+  transfer/output contracts, caller cancellation, and flow statement result binding.
+- Migrate runtime tool descriptions and result consumers to scheduling receipts
+  with final outcomes delivered through completion context.
 - Verify every recall view, omission versus explicit auto, child near under parent
   none, missing sources, and policy/version consistency across compaction and replay.
 - Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,
@@ -337,12 +386,13 @@ repeat 5 times windowing 3:
 - Documentation check: `git diff --check`. Implementation: repository default checks.
 - Touchpoints: `src/toolang/lang/{ast,lower,input,format,validate}.py`, template
   resolution, execution `executor/stmts/{repeat,settle}.py`, runnable frames,
-  `executor/{executor,resources,frame}.py`, `runnables.py`,
-  `assembly/{history,prompting}.py`, and store projections.
+  `executor/{executor,resources,frame,tool_runtime}.py`, `executor/runs/agic.py`,
+  `executor/steps/tool.py`, `runnables.py`, `tools/_toolang.py`, control/continuation
+  records, `assembly/{history,prompting}.py`, and store projections.
 - Risks: contract/resource-scope migration, inherited prompt dependencies,
-  frame retention, and mixed history versions.
+  frame retention, mixed history versions, and durable scheduling/completion delivery.
 
-## 10. Open Decisions
+## 11. Open Decisions
 
 - Define required iteration-history depth for until flows and indirect/dynamic
   dependencies. This concerns `_k`, not the shared thread variables `_far/_near/_past`;
