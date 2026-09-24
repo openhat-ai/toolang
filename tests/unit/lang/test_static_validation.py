@@ -177,3 +177,22 @@ def test_duplicate_declaration_diagnostic_points_to_the_second_declaration(kind)
         Program.from_source(f"{kind} {name}:\n{body}\n{kind} {name}:\n{body}\n")
     assert caught.value.line == 3
     assert caught.value.column == 1
+
+
+def test_zero_repeat_still_checks_until_history_window():
+    with pytest.raises(ToolangError, match="outside the active window"):
+        Program.from_source("""
+flow main:
+  repeat 0 times windowing 1:
+    run: {{_}}
+    until: {{_2._}}
+""")
+
+
+def test_zero_repeat_does_not_require_condition_call_inputs():
+    Program.from_source("""
+flow main:
+  repeat 0 times:
+    run: {{_}}
+    until: {{missing}}
+""")

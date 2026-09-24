@@ -78,6 +78,14 @@ class _FlowChecker:
                 raise ToolangValidationError(
                     f"missing input {parameter.name!r} for {runnable.name or 'inline agic'}"
                 )
+        self.history(runnable, window, settings)
+
+    def history(
+        self,
+        runnable: ast.AgicDecl | ast.FlowDecl,
+        window: int | None,
+        settings: Mapping[str, str | None],
+    ) -> None:
         # Flow signatures are checked locally. Do not descend through callees.
         if not isinstance(runnable, ast.AgicDecl) or window is None:
             return
@@ -119,6 +127,9 @@ class _FlowChecker:
         locals: _Locals,
         settings: Mapping[str, str | None],
     ) -> _Locals:
+        # Runtime preflights the condition window even when the body is skipped.
+        if stmt.runnable is not None:
+            self.history(self.runnables[stmt.runnable], stmt.window, settings)
         if stmt.count == 0:
             return locals
 
