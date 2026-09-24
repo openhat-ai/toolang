@@ -1756,3 +1756,55 @@ def test_null_alias_does_not_override_the_authored_output_field():
     )
     assert payload["max_tokens"] == 1024
     assert "max_completion_tokens" not in payload
+
+
+@pytest.mark.parametrize("protocol", ["messages", "generate_content"])
+def test_native_stream_network_failure_retains_reported_usage(
+    monkeypatch, protocol
+) -> None:
+    import httpx
+    from toolang.base.errors import ModelResponseError
+
+    class BrokenResponse(_FakeStreamResponse):
+        async def aiter_lines(self):
+            async for line in super().aiter_lines():
+                yield line
+            raise httpx.ReadError("disconnected")
+
+    class BrokenClient(_FakeAsyncClient):
+        def stream(self, *args, **kwargs):
+            return BrokenResponse(self._lines)
+
+    lines: tuple[dict[str, object], ...]
+    if protocol == "messages":
+        lines = (
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 5, "output_tokens": 8}},
+            },
+        )
+        adapter = messages_adapter.MessagesModelAdapter()
+    else:
+        lines = ({"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 8}},)
+        adapter = generate_content_adapter.GenerateContentModelAdapter()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda: BrokenClient(lines))
+    with pytest.raises(ModelResponseError) as caught:
+        asyncio.run(
+            adapter.stream(
+                _model("test", provider="test", name="test").with_route(
+                    _route(
+                        provider="test",
+                        adapter=protocol,
+                        api="https://example.invalid",
+                        options={},
+                    )
+                ),
+                ModelCall(instructions="", messages=[], max_output_tokens=1024),
+                environ={},
+                on_event=_ignore_event,
+            )
+        )
+    assert caught.value.kind == "transport_error"
+    assert caught.value.usage is not None
+    assert caught.value.usage.input_tokens == 5
+    assert caught.value.usage.output_tokens == 8

@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from toolang.base.errors import ToolangError
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import (
     Part,
     PartType,
@@ -446,6 +446,15 @@ async def execute(state: _AgicState) -> ModelCallResult:
     except asyncio.CancelledError:
         await _end_incomplete(state, stream)
         raise
+    except ModelResponseError as exc:
+        if exc.partial_text and not stream.text_chunks:
+            stream.completed_parts[_ensure_text_part_index(stream)] = TextPart(
+                text=exc.partial_text
+            )
+        await _end_incomplete(
+            state, stream, error=ErrorMessage(str(exc)), response_error=exc
+        )
+        raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
         await _end_incomplete(state, stream, error=ErrorMessage(message))
@@ -800,7 +809,11 @@ async def _emit_part_end(
 
 
 async def _end_incomplete(
-    state: _AgicState, stream: _ModelStream, *, error: ErrorMessage | None = None
+    state: _AgicState,
+    stream: _ModelStream,
+    *,
+    error: ErrorMessage | None = None,
+    response_error: ModelResponseError | None = None,
 ) -> None:
     """Retain execution facts even when interrupted while closing display events."""
 
@@ -812,7 +825,8 @@ async def _end_incomplete(
     output = tuple(
         part
         for index, part in parts.items()
-        if index in stream.completed_parts or isinstance(part, TextPart)
+        if (index in stream.completed_parts or isinstance(part, TextPart))
+        and (response_error is None or isinstance(part, TextPart))
     )
     step = StepRef.from_local(state.prepared.run.run_id, (stream.step,))
     local = Local.typed("Part[]", output) if output else None
@@ -826,7 +840,8 @@ async def _end_incomplete(
         for part in output
         if isinstance(part, ToolCallPart)
     )
-    if local is not None:
+    accounting = state.account_usage(response_error.usage) if response_error else None
+    if local is not None and response_error is None:
         state.messages.append_ref(
             "assistant", FieldRef.from_path(step, "output", "local", "value"), local
         )
@@ -851,10 +866,15 @@ async def _end_incomplete(
                     status="failed" if error is not None else "canceled",
                     output=Output(local, "_") if local is not None else None,
                     error=error,
+                    noted=_model_step_noted(accounting, continuation=None)
+                    if response_error is not None
+                    else None,
                     finished_at=utc_now(),
                 )
             )
         finally:
+            if response_error is not None:
+                state.record_accounting(accounting)
             if error is None:
                 await tool_step.skip(state, calls, canceled=not state.immediate_steer())
 

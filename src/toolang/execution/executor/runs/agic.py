@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import sleep
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import Message
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ModelContinuation, ModelUsage
@@ -36,6 +38,7 @@ from ...types import (
 )
 from ..iteration import iteration_values
 from ..common import (
+    _StepFailed,
     BoundRun,
     EventEmitter,
     Local,
@@ -100,6 +103,7 @@ class _AgicState:
     last_step: int | None = None
     next_model_inputs: tuple[FieldRef, ...] | None = None
     model_calls: int = 0
+    model_recoveries: int = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     visible_recalls: dict[RecallTarget, str] = field(default_factory=dict)
@@ -334,10 +338,41 @@ def _output_repair_message(type_name: str | None) -> Message:
     )
 
 
+async def _recover_model_response(state: _AgicState, error: ModelResponseError) -> None:
+    """Retry before tool execution, sharing a bounded allowance across the run."""
+
+    step = StepRef.from_local(state.prepared.run.run_id, (state.next_step - 1,))
+    limit = state.limits.agic_model_calls
+    if (
+        not error.recoverable
+        or state.model_recoveries >= 2
+        or (limit is not None and state.model_calls >= limit)
+        or (error.retry_after is not None and error.retry_after > 30)
+    ):
+        raise _StepFailed(step, error) from error
+    state.model_recoveries += 1
+    state.next_model_inputs = (FieldRef.from_path(step, "error"),)
+    if error.kind == "transport_error":
+        await sleep(max(float(state.model_recoveries), error.retry_after or 0))
+    else:
+        state.messages.append(
+            Message.user(
+                "Your previous model response could not be used "
+                f"({error.kind}). None of its tool calls were executed. "
+                "Return a complete response; use a function name and a JSON object "
+                "for every tool call. Keep the response concise."
+            )
+        )
+
+
 async def _execute(state: _AgicState) -> Message | None:
     while True:
         try:
-            result = await model_step.execute(state)
+            try:
+                result = await model_step.execute(state)
+            except ModelResponseError as exc:
+                await _recover_model_response(state, exc)
+                continue
         except asyncio.CancelledError:
             if state.immediate_steer():
                 continue

@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+from toolang.base.errors import ModelResponseError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
@@ -564,8 +565,7 @@ def test_chat_completions_stream_sends_openrouter_reasoning_as_sdk_extra_body(
 
     class _Stream:
         async def __aiter__(self):
-            if False:  # pragma: no cover - establishes an async iterator
-                yield None
+            yield SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop")])
 
         async def close(self) -> None:
             return None
@@ -700,12 +700,45 @@ def test_chat_completions_adapter_rejects_tool_calls_without_names() -> None:
         chat_completions_models.parse_tool_calls(raw_tool_calls)
 
 
+@pytest.mark.parametrize("adapter", [chat_completions_models, responses_models])
+@pytest.mark.parametrize("arguments", ["", "  "])
+def test_empty_tool_arguments_are_an_empty_object(adapter, arguments):
+    assert adapter.parse_tool_arguments(arguments) == {}
+
+
+def test_chat_output_limit_precedes_json_parsing_and_preserves_usage():
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="length",
+                message=SimpleNamespace(
+                    content="Working.",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_1",
+                            function=SimpleNamespace(
+                                name="shell__execute", arguments='{"command":'
+                            ),
+                        )
+                    ],
+                ),
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=4096),
+    )
+    with pytest.raises(ModelResponseError, match="output limit") as caught:
+        chat_completions_models.parse_chat_completion(response)
+    assert caught.value.usage == ModelUsage(input_tokens=100, output_tokens=4096)
+    assert caught.value.partial_text == "Working."
+
+
 def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) -> None:
     class _Stream:
         async def __aiter__(self):
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
+                        finish_reason="stop",
                         delta=SimpleNamespace(
                             tool_calls=(
                                 SimpleNamespace(
@@ -716,7 +749,7 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
                                     ),
                                 ),
                             )
-                        )
+                        ),
                     ),
                 )
             )
@@ -771,11 +804,12 @@ def test_chat_completions_stream_collects_usage(monkeypatch, provider: str) -> N
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
+                        finish_reason="stop",
                         delta=SimpleNamespace(
                             reasoning_content="Thinking.",
                             content=None,
                             tool_calls=(),
-                        )
+                        ),
                     ),
                 ),
                 usage=None,
@@ -783,11 +817,12 @@ def test_chat_completions_stream_collects_usage(monkeypatch, provider: str) -> N
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
+                        finish_reason="stop",
                         delta=SimpleNamespace(
                             reasoning_content=None,
                             content="done",
                             tool_calls=(),
-                        )
+                        ),
                     ),
                 ),
                 usage=None,
@@ -1528,6 +1563,7 @@ def test_chat_completions_audio_stream_does_not_open_duplicate_text_part(
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
+                        finish_reason="stop",
                         delta=SimpleNamespace(
                             reasoning_content=None,
                             content="hello",
@@ -1536,7 +1572,7 @@ def test_chat_completions_audio_stream_does_not_open_duplicate_text_part(
                                 transcript="hello",
                             ),
                             tool_calls=(),
-                        )
+                        ),
                     ),
                 ),
                 usage=None,
@@ -1981,8 +2017,7 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
                 delta="hello",
             )
 
-        async def get_final_response(self):
-            return response
+            yield SimpleNamespace(type="response.completed", response=response)
 
     class _Responses:
         def stream(self, **payload):
@@ -2250,3 +2285,206 @@ def test_explicit_reasoning_budget_respects_known_bounds():
     for value in (512, 8192):
         with pytest.raises(ToolangError, match="reasoning budget"):
             resolve_model_reasoning(model, Reasoning(budget_tokens=value))
+
+
+@pytest.mark.parametrize("protocol", ["chat", "responses"])
+@pytest.mark.parametrize(
+    ("name", "arguments", "kind"),
+    [
+        ("lookup", "", None),
+        ("lookup", " ", None),
+        ("lookup", '{"path":', "invalid_json"),
+        ("lookup", "[]", "non_object_arguments"),
+        ("lookup", "null", "non_object_arguments"),
+        ("", "{}", "missing_name"),
+    ],
+)
+def test_tool_argument_response_classification(protocol, name, arguments, kind) -> None:
+    if protocol == "chat":
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="partial",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call",
+                                function=SimpleNamespace(
+                                    name=name, arguments=arguments
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=7),
+        )
+
+        def parse():
+            return chat_completions_models.parse_chat_completion(response)
+    else:
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="function_call",
+                    id="call",
+                    call_id="call",
+                    name=name,
+                    arguments=arguments,
+                )
+            ],
+            usage=SimpleNamespace(input_tokens=3, output_tokens=7),
+        )
+
+        def parse():
+            return responses_models.parse_response(
+                response,
+                request=ModelCall(instructions="", messages=[]),
+                stateful=False,
+            )
+
+    if kind is None:
+        assert parse().tool_calls[0].input == {}
+    else:
+        with pytest.raises(ModelResponseError) as caught:
+            parse()
+        assert caught.value.kind == kind
+        assert caught.value.usage == ModelUsage(3, 7)
+
+
+@pytest.mark.parametrize("protocol", ["chat", "responses"])
+@pytest.mark.parametrize(
+    "ending", ["truncated", "eof", "network", "rejected", "malformed"]
+)
+def test_stream_failure_retains_usage_and_does_not_emit_tool_end(
+    monkeypatch, protocol, ending
+) -> None:
+    import httpx
+    from toolang.base.types.run import ModelPartEnd
+
+    usage = SimpleNamespace(
+        prompt_tokens=5, completion_tokens=8, input_tokens=5, output_tokens=8
+    )
+    call = SimpleNamespace(
+        type="function_call",
+        id="call",
+        call_id="call",
+        name="lookup",
+        arguments='{"x":',
+    )
+    response = SimpleNamespace(
+        id="resp",
+        status="incomplete"
+        if ending == "truncated"
+        else "failed"
+        if ending == "rejected"
+        else "completed",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[call],
+        usage=usage,
+    )
+    events = []
+
+    async def record(event):
+        events.append(event)
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def close(self):
+            pass
+
+        async def __aiter__(self):
+            if protocol == "chat":
+                yield SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content="partial",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        index=0,
+                                        id="call",
+                                        function=SimpleNamespace(
+                                            name="lookup", arguments='{"x":'
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ],
+                    usage=usage,
+                )
+                if ending not in {"eof", "network"}:
+                    yield SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                finish_reason="length"
+                                if ending == "truncated"
+                                else "content_filter"
+                                if ending == "rejected"
+                                else "tool_calls"
+                            )
+                        ]
+                    )
+            else:
+                yield SimpleNamespace(
+                    type="response.in_progress", response=SimpleNamespace(usage=usage)
+                )
+                yield SimpleNamespace(
+                    type="response.output_text.delta", delta="partial"
+                )
+                if ending not in {"eof", "network"}:
+                    yield SimpleNamespace(
+                        type=f"response.{response.status}", response=response
+                    )
+            if ending == "network":
+                raise httpx.ReadError("disconnected")
+
+    async def create(**kwargs):
+        return Stream()
+
+    module = chat_completions_models if protocol == "chat" else responses_models
+    client = (
+        SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+        if protocol == "chat"
+        else SimpleNamespace(
+            responses=SimpleNamespace(stream=lambda **kwargs: Stream())
+        )
+    )
+    monkeypatch.setattr(module, "create_client", lambda *args, **kwargs: client)
+    adapter = module.create_model_adapter({})
+    with pytest.raises(ModelResponseError) as caught:
+        asyncio.run(
+            adapter.stream(
+                _model("test", provider="openai", name="test").with_route(
+                    _route(
+                        provider="openai", adapter=adapter.name, api=None, options={}
+                    )
+                ),
+                ModelCall(instructions="", messages=[]),
+                environ={},
+                on_event=record,
+            )
+        )
+    assert (
+        caught.value.kind
+        == {
+            "truncated": "output_limit",
+            "eof": "incomplete_stream",
+            "network": "transport_error",
+            "rejected": "provider_rejection",
+            "malformed": "invalid_json",
+        }[ending]
+    )
+    assert caught.value.usage == ModelUsage(5, 8)
+    assert not any(
+        isinstance(event, ModelPartEnd) and isinstance(event.data, ToolCallPart)
+        for event in events
+    )

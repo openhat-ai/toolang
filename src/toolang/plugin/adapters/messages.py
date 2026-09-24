@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import httpx
 
+from ._errors import model_transport, model_transport_errors
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
@@ -52,6 +53,7 @@ class MessagesModelAdapter(ModelAdapter):
 
         return output_allowance(options, "max_tokens")
 
+    @model_transport
     async def invoke(
         self,
         model: Model,
@@ -75,6 +77,7 @@ class MessagesModelAdapter(ModelAdapter):
                 ),
             )
 
+    @model_transport
     async def stream(
         self,
         model: Model,
@@ -88,72 +91,77 @@ class MessagesModelAdapter(ModelAdapter):
         tool_blocks: dict[int, dict[str, object]] = {}
         thinking_blocks: dict[int, dict[str, object]] = {}
         usage: dict[str, object] = {}
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                _messages_url(model),
-                headers=_headers(model, environ=environ),
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line.removeprefix("data:").strip()
-                    if not raw or raw == "[DONE]":
-                        continue
-                    event = _json_object(json.loads(raw))
-                    event_type = event.get("type")
-                    if event_type == "message_start":
-                        message = _json_object(event.get("message"))
-                        usage.update(_json_object(message.get("usage")))
-                    elif event_type == "message_delta":
-                        usage.update(_json_object(event.get("usage")))
-                    elif event_type == "content_block_start":
-                        index = _int(event.get("index"))
-                        block = _json_object(event.get("content_block"))
-                        if index is not None and block.get("type") == "tool_use":
-                            tool_blocks[index] = dict(block)
-                            await on_event(ModelPartStart(kind="tool_call"))
-                        elif index is not None and block.get("type") in {
-                            "thinking",
-                            "redacted_thinking",
-                        }:
-                            thinking_blocks[index] = dict(block)
-                    elif event_type == "content_block_delta":
-                        delta = _json_object(event.get("delta"))
-                        if delta.get("type") == "text_delta":
-                            value = _text(delta.get("text"))
-                            if value:
-                                if not text:
-                                    await on_event(ModelPartStart(kind="text"))
-                                text.append(value)
-                                await on_event(ModelPartDelta(delta=TextDelta(value)))
-                        elif delta.get("type") == "input_json_delta":
+        with model_transport_errors(
+            usage=lambda: messages_usage(usage), partial_text=lambda: "".join(text)
+        ):
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    _messages_url(model),
+                    headers=_headers(model, environ=environ),
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line.removeprefix("data:").strip()
+                        if not raw or raw == "[DONE]":
+                            continue
+                        event = _json_object(json.loads(raw))
+                        event_type = event.get("type")
+                        if event_type == "message_start":
+                            message = _json_object(event.get("message"))
+                            usage.update(_json_object(message.get("usage")))
+                        elif event_type == "message_delta":
+                            usage.update(_json_object(event.get("usage")))
+                        elif event_type == "content_block_start":
                             index = _int(event.get("index"))
-                            value = _text(delta.get("partial_json"))
-                            if index is not None and value:
-                                block = tool_blocks.setdefault(index, {})
-                                block["partial_json"] = (
-                                    _text(block.get("partial_json")) + value
-                                )
-                        elif delta.get("type") in {
-                            "thinking_delta",
-                            "signature_delta",
-                        }:
-                            index = _int(event.get("index"))
-                            if index is not None:
-                                block = thinking_blocks.setdefault(
-                                    index, {"type": "thinking"}
-                                )
-                                key = (
-                                    "thinking"
-                                    if delta.get("type") == "thinking_delta"
-                                    else "signature"
-                                )
-                                value = _text(delta.get(key))
+                            block = _json_object(event.get("content_block"))
+                            if index is not None and block.get("type") == "tool_use":
+                                tool_blocks[index] = dict(block)
+                                await on_event(ModelPartStart(kind="tool_call"))
+                            elif index is not None and block.get("type") in {
+                                "thinking",
+                                "redacted_thinking",
+                            }:
+                                thinking_blocks[index] = dict(block)
+                        elif event_type == "content_block_delta":
+                            delta = _json_object(event.get("delta"))
+                            if delta.get("type") == "text_delta":
+                                value = _text(delta.get("text"))
                                 if value:
-                                    block[key] = _text(block.get(key)) + value
+                                    if not text:
+                                        await on_event(ModelPartStart(kind="text"))
+                                    text.append(value)
+                                    await on_event(
+                                        ModelPartDelta(delta=TextDelta(value))
+                                    )
+                            elif delta.get("type") == "input_json_delta":
+                                index = _int(event.get("index"))
+                                value = _text(delta.get("partial_json"))
+                                if index is not None and value:
+                                    block = tool_blocks.setdefault(index, {})
+                                    block["partial_json"] = (
+                                        _text(block.get("partial_json")) + value
+                                    )
+                            elif delta.get("type") in {
+                                "thinking_delta",
+                                "signature_delta",
+                            }:
+                                index = _int(event.get("index"))
+                                if index is not None:
+                                    block = thinking_blocks.setdefault(
+                                        index, {"type": "thinking"}
+                                    )
+                                    key = (
+                                        "thinking"
+                                        if delta.get("type") == "thinking_delta"
+                                        else "signature"
+                                    )
+                                    value = _text(delta.get(key))
+                                    if value:
+                                        block[key] = _text(block.get(key)) + value
         calls = tuple(
             _tool_call(block, fallback=f"tool-call-{index}")
             for index, block in sorted(tool_blocks.items())

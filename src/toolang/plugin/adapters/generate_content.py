@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
+from ._errors import model_transport, model_transport_errors
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
@@ -59,6 +60,7 @@ class GenerateContentModelAdapter(ModelAdapter):
             else None
         )
 
+    @model_transport
     async def invoke(
         self,
         model: Model,
@@ -82,6 +84,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                 ),
             )
 
+    @model_transport
     async def stream(
         self,
         model: Model,
@@ -94,38 +97,42 @@ class GenerateContentModelAdapter(ModelAdapter):
         calls: list[ToolCall] = []
         signatures: dict[str, str] = {}
         usage: dict[str, object] = {}
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                _generate_url(model, stream=True),
-                headers=_generate_headers(model, environ=environ),
-                json=generate_content_payload(model, request),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line.removeprefix("data:").strip()
-                    if not raw or raw == "[DONE]":
-                        continue
-                    chunk = _json_object(json.loads(raw))
-                    usage.update(_json_object(chunk.get("usageMetadata")))
-                    for part in _candidate_parts(chunk):
-                        value = _text(part.get("text"))
-                        if value and part.get("thought") is not True:
-                            if not text:
-                                await on_event(ModelPartStart(kind="text"))
-                            text.append(value)
-                            await on_event(ModelPartDelta(delta=TextDelta(value)))
-                        function = _json_object(part.get("functionCall"))
-                        if function:
-                            call = _function_call(function, fallback=len(calls))
-                            calls.append(call)
-                            signature = _text(part.get("thoughtSignature"))
-                            if signature:
-                                signatures[call.call_id] = signature
-                            await on_event(ModelPartStart(kind="tool_call"))
-                            await on_event(ModelPartEnd(data=_tool_part(call)))
+        with model_transport_errors(
+            usage=lambda: generate_content_usage(usage),
+            partial_text=lambda: "".join(text),
+        ):
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    _generate_url(model, stream=True),
+                    headers=_generate_headers(model, environ=environ),
+                    json=generate_content_payload(model, request),
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line.removeprefix("data:").strip()
+                        if not raw or raw == "[DONE]":
+                            continue
+                        chunk = _json_object(json.loads(raw))
+                        usage.update(_json_object(chunk.get("usageMetadata")))
+                        for part in _candidate_parts(chunk):
+                            value = _text(part.get("text"))
+                            if value and part.get("thought") is not True:
+                                if not text:
+                                    await on_event(ModelPartStart(kind="text"))
+                                text.append(value)
+                                await on_event(ModelPartDelta(delta=TextDelta(value)))
+                            function = _json_object(part.get("functionCall"))
+                            if function:
+                                call = _function_call(function, fallback=len(calls))
+                                calls.append(call)
+                                signature = _text(part.get("thoughtSignature"))
+                                if signature:
+                                    signatures[call.call_id] = signature
+                                await on_event(ModelPartStart(kind="tool_call"))
+                                await on_event(ModelPartEnd(data=_tool_part(call)))
         parts: list[TextPart | ToolCallPart] = []
         output = "".join(text)
         if output:
