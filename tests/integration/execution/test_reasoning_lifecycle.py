@@ -39,7 +39,8 @@ from toolang.execution.events import (
     run_event_to_data,
 )
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.types import Array
+from toolang.execution.store import RunStore
+from toolang.lang.types import Array, Struct
 
 
 SOURCE = """agic chat(_: Part[]) -> Part[]:
@@ -191,6 +192,59 @@ def test_interleaved_reasoning_events_match_durable_output(tmp_path: Path):
                     == event
                 )
             assert_run_event_integrity(tracer.events)
+        assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("output_type", "text", "expected"),
+    [
+        ("Text", "answer", "answer"),
+        ("Answer", '{"result":42}', Struct("Answer", {"result": 42})),
+    ],
+)
+def test_typed_output_ignores_reasoning_without_losing_durable_parts(
+    tmp_path: Path, output_type, text, expected
+):
+    parts = (signed_reasoning("not the output: {invalid JSON}"), TextPart(text))
+    source = "struct Answer:\n  result: Number\n\n" + SOURCE.replace(
+        "-> Part[]:", f"-> {output_type}:"
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[ModelCallResult(message=Message("assistant", parts))],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            assert len(harness.adapter.invocations) == 1
+        reopened = RunStore(harness.store.db_path, read_only=True)
+        try:
+            saved_run = reopened.get_run(run_id=run.id)
+            assert saved_run is not None and saved_run.output is not None
+            assert reopened.resolve_output(saved_run.output).local.value == expected
+            step = reopened.list_steps(run_id=run.id)[0]
+            assert step.output is not None
+            assert isinstance(step.output.local.value, Array)
+            assert tuple(step.output.local.value) == parts
+            assert (
+                tuple(e.data for e in tracer.events if isinstance(e, PartEnd)) == parts
+            )
+        finally:
+            reopened.close()
+        assert_run_event_integrity(tracer.events)
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())

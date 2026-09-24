@@ -12,6 +12,7 @@ from toolang.base.types.message import (
     ImagePart,
     Message,
     Part,
+    ReasoningPart,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -705,6 +706,27 @@ def test_output_coercion_accepts_one_explicit_json_fence() -> None:
     )
 
     assert coerce_output(value, "Text[]") == Array("Text[]", ("one", "two"))
+
+
+@pytest.mark.parametrize(
+    ("type_name", "text", "expected"),
+    [
+        ("Text", "answer", "answer"),
+        ("Number", "42", 42),
+        ("Boolean", "true", True),
+        ("Json", '{"ok":true}', {"ok": True}),
+        ("Number[]", "[1,2]", Array("Number[]", (1, 2))),
+    ],
+)
+def test_output_coercion_uses_visible_text_without_reasoning(
+    type_name, text, expected
+) -> None:
+    parts = (ReasoningPart("not the output: {invalid JSON}"), TextPart(text))
+    for value in (Message("assistant", parts), Array("Part[]", parts)):
+        assert coerce_output(value, type_name) == expected
+    assert coerce_output(Message("assistant", parts), "Part[]") == Array(
+        "Part[]", parts
+    )
 
 
 def test_output_coercion_does_not_guess_unfenced_or_ambiguous_json() -> None:
