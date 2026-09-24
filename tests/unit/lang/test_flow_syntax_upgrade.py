@@ -102,7 +102,7 @@ def test_settle_comments_keep_their_authored_scope(named, tab_size):
     reducer = "" if named else "      Merge {{_}} with {{_1._}}.\n"
     source = (
         "agic merge(_):\n  Merge {{_}} with {{_1._}}.\n"
-        "flow work(_):\n  repeat 2 times:\n"
+        "flow work(_):\n  repeat 2 times:\n    scatter: Items\n"
         f"    settle{' using merge' if named else ''}:\n"
         "      # Reducer or initializer comment.\n"
         f"{reducer}      from: Initial content.\n"

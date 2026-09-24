@@ -21,7 +21,7 @@ _REFERENCE_TAG_RE = re.compile(
 def render_text_template(template: str, context: Mapping[str, object]) -> str:
     """Render one restricted execution template."""
 
-    _validate_template(template)
+    validate_template(template)
     _validate_context(context)
     template, getter = _runtime_template(template, context)
     try:
@@ -50,7 +50,7 @@ def template_root_names(template: str) -> tuple[str, ...]:
 
 def template_dependencies(template: str) -> tuple[str, ...]:
     """Infer free template roots, excluding fields inside positive sections."""
-    _validate_template(template)
+    validate_template(template)
     result: list[str] = []
     scopes: list[bool] = []
     for match in _REFERENCE_TAG_RE.finditer(template):
@@ -77,11 +77,55 @@ def require_template_inputs(template: str, values: Mapping[str, object]) -> None
             raise ToolangError(f"template input is missing: {name}")
 
 
+def template_runtime_names(template: str) -> tuple[str, ...]:
+    """Validate reserved roots without requiring a particular execution frame."""
+    validate_template(template)
+    names: list[str] = []
+    sections: list[bool] = []
+    for match in _REFERENCE_TAG_RE.finditer(template):
+        sigil, name = match.group("sigil", "name")
+        root = name.partition(".")[0]
+        historic = root.startswith("_") and root[1:].isdigit()
+        runtime = historic or root in {"_far", "_near", "_past"}
+        if root.startswith("_") and root != "_" and not runtime and not any(sections):
+            raise ToolangError(f"unknown runtime reference: {root}")
+        if historic and re.fullmatch(r"_[1-9][0-9]*", root) is None:
+            raise ToolangError(
+                f"iteration history reference is outside the active window: {root}"
+            )
+        if sigil == "/":
+            sections.pop()
+        else:
+            if runtime:
+                names.append(root)
+            if sigil in {"#", "^"}:
+                sections.append(sigil == "#" and not historic)
+    return tuple(names)
+
+
+def template_history_depth(template: str, window: int) -> int:
+    """Check a known retention window; availability of frames is a runtime fact."""
+    required = 0
+    limit = str(window)
+    for name in template_runtime_names(template):
+        if name[1:].isdigit():
+            digits = name[1:]
+            # Compare canonical decimal strings before conversion: an authored
+            # index may exceed Python's integer-string conversion limit.
+            if (len(digits), digits) > (len(limit), limit):
+                raise ToolangError(
+                    f"iteration history reference is outside the active window: {name}"
+                )
+            required = max(required, int(digits))
+    return required
+
+
 def _runtime_template(
     template: str, context: Mapping[str, object]
 ) -> tuple[str, Callable[..., Any]]:
     """Check reserved names statically; resolve history only in rendered branches."""
     aliases: dict[str, tuple[str, bool]] = {}
+    template_runtime_names(template)
     authored_names = set(template_root_names(template))
     replacements: list[tuple[int, int, str]] = []
     sections: list[tuple[str | None, bool]] = []
@@ -90,16 +134,7 @@ def _runtime_template(
         root = name.partition(".")[0]
         historic = root.startswith("_") and root[1:].isdigit()
         runtime = historic or root in {"_far", "_near", "_past"}
-        if (
-            root.startswith("_")
-            and root != "_"
-            and not runtime
-            and not any(data for _, data in sections)
-        ):
-            raise ToolangError(f"unknown runtime reference: {root}")
-        if historic and (
-            root not in context or root != f"_{int(root[1:])}" or int(root[1:]) < 1
-        ):
+        if historic and root not in context:
             raise ToolangError(
                 f"iteration history reference is outside the active window: {root}"
             )
@@ -156,7 +191,8 @@ def _runtime_template(
     return template, getter
 
 
-def _validate_template(template: str) -> None:
+def validate_template(template: str) -> None:
+    """Validate template syntax without resolving values or runtime history."""
     stack: list[str] = []
     index = 0
     while index < len(template):

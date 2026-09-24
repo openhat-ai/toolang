@@ -1135,7 +1135,7 @@ flow research(_: Text):
   let topic = {{_}}
   ## Broaden [bold]the question[/bold].
   ## Keep diverse perspectives.
-  let queries = scatter using expand
+  scatter using expand
   map using search in 4 lanes
   keep first 1
 
@@ -1185,7 +1185,7 @@ agic search:
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
         "[1] Broaden [bold]the question[/bold]. Keep diverse perspectives.",
-        "    Scatter into items with expand, save result to queries",
+        "    Scatter into items with expand",
         "[2] Map each item with search, up to 4 at once",
         "[3] Keep the first item",
     ]
@@ -1244,6 +1244,7 @@ def test_script_flow_outline_truncates_each_description_and_doc_line(
     source = _write_source(
         tmp_path,
         f"""flow pipeline(_: Text):
+  scatter: Items
   ## {"Evidence 証拠 " * 30}DOC_END
   sort descending by score_{"x" * 100}
   keep first 1
@@ -1266,12 +1267,12 @@ agic score_{"x" * 100} -> Number:
     )
 
     rows = _flow_outline_lines(capsys.readouterr().out)
-    assert len(rows) == 3
-    assert rows[0].startswith("[0] Evidence 証拠 ")
-    assert rows[1].startswith("    Sort items by score_")
-    assert rows[0].endswith("…") and rows[1].endswith("…")
+    assert len(rows) == 4
+    assert rows[1].startswith("[1] Evidence 証拠 ")
+    assert rows[2].startswith("    Sort items by score_")
+    assert rows[1].endswith("…") and rows[2].endswith("…")
     assert all(cell_len(row) <= width - 2 for row in rows), rows
-    assert rows[2] == "[1] Keep the first item"
+    assert rows[3] == "[2] Keep the first item"
 
 
 def test_script_empty_flow_outline_has_a_placeholder() -> None:
@@ -1288,7 +1289,7 @@ def test_script_flow_outline_uses_normal_style_and_separates_sibling_steps() -> 
     run review
   run review
 
-agic review:
+agic review():
   Review the draft.
 """)
     outline = script._flow_outline(program.flows[0])

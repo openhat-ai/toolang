@@ -9,8 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Iterator
 
 from toolang.common.immutable import freeze_mapping
-from toolang.common.template import template_root_names
-from toolang.common.errors import ToolangError
+from toolang.common.template import template_history_depth
 
 from .common import Local, json_value, value_parts, value_text
 
@@ -86,18 +85,11 @@ def iteration_values() -> dict[str, object]:
 def history_available(templates: tuple[str, ...]) -> bool:
     """Until waits for valid in-window dependencies, including guarded reads."""
     scope = _SCOPE.get()
-    required = 0
-    for template in templates:
-        for root in template_root_names(template):
-            if root.startswith("_") and root[1:].isdigit():
-                depth = int(root[1:])
-                if (
-                    scope is None
-                    or not 1 <= depth <= scope.window
-                    or root != f"_{depth}"
-                ):
-                    raise ToolangError(
-                        f"iteration history reference is outside the active window: {root}"
-                    )
-                required = max(required, depth)
+    required = max(
+        (
+            template_history_depth(template, scope.window if scope else 0)
+            for template in templates
+        ),
+        default=0,
+    )
     return required <= (len(scope.frames) if scope else 0)

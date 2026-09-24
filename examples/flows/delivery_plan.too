@@ -106,7 +106,7 @@ agic review_plan(_, draft: Part[], project: Part[], constraints?):
   exit criteria. Recommend a small number of high-value corrections.
   Do not rewrite the complete plan.
 
-agic apply_review(_, item: Part[], draft: Part[], project: Part[], constraints?):
+agic apply_review(_, draft: Part[], project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -120,13 +120,12 @@ agic apply_review(_, item: Part[], draft: Part[], project: Part[], constraints?)
   {{draft}}
 
   Current revision:
-  {{_}}
+  {{_1._}}
 
   Review to apply:
-  {{item}}
+  {{_}}
 
   Update the complete delivery plan using this review.
-  When Current revision is empty, start from Original draft.
   Apply useful corrections without discarding sound details or inventing
   unsupported constraints.
   Return only the complete revised plan.
@@ -168,7 +167,8 @@ flow(_: Text, constraints?):
   ## Challenge the draft from each perspective concurrently
   map using review_plan in 3 lanes
   ## Apply the independent reviews sequentially to one evolving plan
-  settle using apply_review
+  settle using apply_review:
+    from: {{draft}}
 
   ## Make two bounded improvements to the reviewed plan
   repeat 2 times:

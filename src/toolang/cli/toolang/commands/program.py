@@ -108,7 +108,7 @@ def fmt(
         )
         return
 
-    source_paths = _collect_format_paths(path_args)
+    source_paths = _collect_source_paths(path_args)
     changed: list[Path] = []
     for source_path in source_paths:
         try:
@@ -160,39 +160,127 @@ def _stdin_path_arg(paths: list[Path]) -> Path | None:
     return None
 
 
-def _collect_format_paths(paths: list[Path]) -> list[Path]:
+def _expand_source_path(path: Path) -> Path:
+    try:
+        return path.expanduser()
+    except RuntimeError as exc:
+        raise ClickException(f"{path}: {exc}") from exc
+
+
+def _collect_source_paths(
+    paths: list[Path],
+    *,
+    on_error: Callable[[Path, Exception], None] | None = None,
+) -> list[Path]:
     collected: list[Path] = []
     seen: set[Path] = set()
-    for path in paths:
-        candidate = path.expanduser()
-        if candidate.is_dir():
-            candidates = sorted(
-                item for item in candidate.rglob("*.too") if item.is_file()
-            )
-        elif candidate.is_file():
-            if candidate.suffix != ".too":
-                raise ClickException(f"not a .too file: {candidate}")
-            candidates = [candidate]
+
+    def report(path: Path, error: Exception) -> None:
+        if on_error is not None:
+            on_error(path, error)
+        elif isinstance(error, ClickException):
+            raise error
         else:
-            raise ClickException(f"path not found: {candidate}")
+            raise ClickException(f"{path}: {error}") from error
+
+    def walk_error(error: OSError) -> None:
+        report(Path(error.filename) if error.filename else candidate, error)
+
+    for path in paths:
+        candidate = path
+        try:
+            candidate = _expand_source_path(path)
+            if candidate.is_dir():
+                # pathlib.rglob silently suppresses unreadable-directory errors.
+                candidates = sorted(
+                    item
+                    for directory, _, names in os.walk(candidate, onerror=walk_error)
+                    for name in names
+                    if name.endswith(".too")
+                    if (item := Path(directory) / name).is_file()
+                    or (item.is_symlink() and not item.exists())
+                )
+            elif candidate.is_file() or (
+                candidate.is_symlink() and not candidate.exists()
+            ):
+                if candidate.suffix != ".too":
+                    raise ClickException(f"not a .too file: {candidate}")
+                candidates = [candidate]
+            else:
+                raise ClickException(f"path not found: {candidate}")
+        except (OSError, RuntimeError, ClickException) as exc:
+            report(candidate, exc)
+            continue
         for source_path in candidates:
-            resolved = source_path.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            collected.append(source_path)
+            try:
+                resolved = source_path.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    collected.append(source_path)
+            except (OSError, RuntimeError) as exc:
+                report(source_path, exc)
     return collected
+
+
+def _source_diagnostic(label: Path, error: Exception) -> None:
+    from toolang.lang.errors import ToolangSourceError
+
+    line = (error.line or 1) if isinstance(error, ToolangSourceError) else 1
+    column = (error.column or 1) if isinstance(error, ToolangSourceError) else 1
+    message = (
+        str(error.__cause__)
+        if isinstance(error, ClickException) and error.__cause__
+        else str(error)
+    )
+    write_source(f"{label}:{line}:{column}: {message}\n", sys.stderr)
+
+
+def _check_sources(paths: list[Path], *, stdin_filepath: Path | None) -> None:
+    from toolang.lang import Program
+    from toolang.common.errors import ToolangError
+
+    failed = False
+
+    def report(label: Path, error: Exception) -> None:
+        nonlocal failed
+        failed = True
+        _source_diagnostic(label, error)
+
+    sources = (
+        paths if paths == [Path("-")] else _collect_source_paths(paths, on_error=report)
+    )
+    for source in sources:
+        label = stdin_filepath or Path("<stdin>") if str(source) == "-" else source
+        try:
+            # Discovered filenames are filesystem paths, not fresh CLI input:
+            # an absolute path keeps a literal leading '~' from being expanded.
+            _, text = _read_source(
+                source if str(source) == "-" else source.absolute(),
+                stdin_filepath=stdin_filepath,
+                preserve_newlines=False,
+            )
+            Program.from_source(text)
+        except (ToolangError, ClickException) as exc:
+            report(label, exc)
+    if failed:
+        raise typer.Exit(1)
 
 
 def parse_program(
     source: Annotated[
-        Path,
+        list[Path],
         typer.Argument(
             metavar="SOURCE",
             click_type=PathType(),
-            help="Toolang file to parse, or '-' for stdin",
+            help="Toolang file or stdin; --check also accepts files and directories",
         ),
     ],
+    check: Annotated[
+        bool,
+        typer.Option(
+            "--check", help="Validate files or directories without printing an AST"
+        ),
+    ] = False,
     ast: Annotated[
         bool, typer.Option("--ast", help="Show the semantic AST (default)")
     ] = False,
@@ -217,8 +305,21 @@ def parse_program(
 
     if ast and cst:
         raise UsageError("--ast and --cst are mutually exclusive")
+    if Path("-") in source and len(source) != 1:
+        raise UsageError("'-' cannot be combined with other sources")
+    if stdin_filepath is not None and source != [Path("-")]:
+        raise UsageError("--stdin-filepath can only be combined with '-'")
+    if check:
+        if cst or json_output or compact:
+            raise UsageError(
+                "--check cannot be combined with --cst, --json, or --compact"
+            )
+        _check_sources(source, stdin_filepath=stdin_filepath)
+        return
+    if len(source) != 1:
+        raise UsageError("tree output requires exactly one file or '-'")
     label, source_text = _read_source(
-        source, stdin_filepath=stdin_filepath, preserve_newlines=cst
+        source[0], stdin_filepath=stdin_filepath, preserve_newlines=cst
     )
     errors = []
     if cst:
@@ -233,7 +334,8 @@ def parse_program(
         try:
             program = Program.from_source(source_text)
         except ToolangError as exc:
-            raise ClickException(f"{label}: {exc}") from exc
+            _source_diagnostic(label, exc)
+            raise typer.Exit(1) from exc
         output = (
             _json(to_data(program), compact=compact)
             if json_output or compact
@@ -305,7 +407,7 @@ def _read_source(
     else:
         if stdin_filepath is not None:
             raise UsageError("--stdin-filepath can only be combined with '-'")
-        label = source.expanduser()
+        label = _expand_source_path(source)
         if label.is_dir():
             raise UsageError(f"expected one .too file, not a directory: {label}")
         if label.suffix != ".too":

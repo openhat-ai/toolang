@@ -173,46 +173,46 @@ def test_statement_description_covers_every_statement(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("Review the findings.", "Run agic:<adhoc:2>"),
-        ("run: Review the findings.", "Run agic:<adhoc:2>"),
+        ("Review the findings.", "Run agic:<adhoc:3>"),
+        ("run: Review the findings.", "Run agic:<adhoc:3>"),
         (
             "seek researcher: Find evidence.",
-            "Ask agent researcher to run agic:<adhoc:2>",
+            "Ask agent researcher to run agic:<adhoc:3>",
         ),
         (
             "scatter using: Expand the query.",
-            "Scatter into items with agic:<adhoc:2>",
+            "Scatter into items with agic:<adhoc:3>",
         ),
         (
             "storm 3 in 2 lanes using: Review the findings.",
-            "Storm into 3 items with agic:<adhoc:2> independently, up to 2 at once",
+            "Storm into 3 items with agic:<adhoc:3> independently, up to 2 at once",
         ),
         (
             "gather using: Combine {{_}}.",
-            "Gather all items into one with agic:<adhoc:2>",
+            "Gather all items into one with agic:<adhoc:3>",
         ),
         (
             "settle using: Merge {{_}}.",
-            "Settle all items into one with agic:<adhoc:2> sequentially",
+            "Settle all items into one with agic:<adhoc:3> sequentially",
         ),
         (
             "let results = map in 2 lanes using:\n    Search for {{_}}.",
-            "Map each item with agic:<adhoc:2>, up to 2 at once, save result to results",
+            "Map each item with agic:<adhoc:3>, up to 2 at once, save result to results",
         ),
-        ("keep if: Check {{_}}.", "Keep items where agic:<adhoc:2> is true"),
+        ("keep if: Check {{_}}.", "Keep items where agic:<adhoc:3> is true"),
         (
             "let drop if: Check {{_}}.",
-            "Drop items where agic:<adhoc:2> is true, discard result",
+            "Drop items where agic:<adhoc:3> is true, discard result",
         ),
         (
             "sort descending by: Score {{_}}.",
-            "Sort items by agic:<adhoc:2> in descending order",
+            "Sort items by agic:<adhoc:3> in descending order",
         ),
     ],
 )
 def test_descriptions_preserve_lowered_inline_runnable_names(
     source: str, expected: str
 ) -> None:
-    program = Program.from_source(f"flow work:\n  {source}\n")
+    program = Program.from_source(f"flow work:\n  scatter: Items\n  {source}\n")
 
-    assert statement_description(program.flows[0].stmts[0]) == expected
+    assert statement_description(program.flows[0].stmts[-1]) == expected

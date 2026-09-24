@@ -221,7 +221,7 @@ def test_prompt_parameters_are_inferred_from_ordered_mustache_roots() -> None:
         """
 prompt render:
   {{user.name}} {{#items}}{{items.title}}{{/items}}
-  {{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}
+  {{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}}
   {{user-name}} {{records.0}} {{.}}
 """
     )
@@ -229,7 +229,7 @@ prompt render:
     prompt = program.caps[0]
     assert prompt.body == (
         "{{user.name}} {{#items}}{{items.title}}{{/items}}\n"
-        "{{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}\n"
+        "{{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}}\n"
         "{{user-name}} {{records.0}} {{.}}"
     )
     assert [
@@ -366,8 +366,8 @@ flow pipeline:
   ask: Continue?
   scatter using action
   storm 3 using action in 2 lanes
-  gather using action
-  settle using action
+  let gather using action
+  let settle using action
   map using action in 4 lanes
   keep first 2
   keep if predicate in 2 lanes
@@ -434,12 +434,13 @@ def test_inline_settle_exposes_the_current_item() -> None:
     program = Program.from_source(
         """
 flow summarize(_: Text[]) -> Text:
+  scatter: {{_}}
   settle using -> Text:
     {{_}}{{_1._}}
 """
     )
 
-    statement = program.flows[0].stmts[0]
+    statement = program.flows[0].stmts[-1]
     assert isinstance(statement, SettleStmt)
     generated = next(
         agic
@@ -504,6 +505,7 @@ agic action:
   pass
 
 flow evaluate:
+  storm 2 using action
   keep if: Return true when {{_}} is useful.
   sort descending by: Return a relevance score for {{_}}.
   repeat 2 times:
@@ -714,12 +716,13 @@ agic predicate -> Boolean:
   pass
 
 flow work:
-  gather using action
-  settle using action
+  storm 2 using action
+  let gather using action
+  let settle using action
   keep if predicate
   drop if predicate
   repeat 2 times:
-    settle using action
+    let settle using action
     drop if predicate
 """
     )
@@ -1037,9 +1040,9 @@ def test_historical_nested_statements_load_new_default_fields() -> None:
     from toolang.lang.ast import flow_stmt_from_data
 
     program = Program.from_source(
-        "agic fold:\n  pass\nflow work:\n  repeat 2 times:\n    settle using fold\n"
+        "agic fold:\n  pass\nflow work:\n  storm 2 using fold\n  repeat 2 times:\n    let settle using fold\n"
     )
-    statement = program.flows[0].stmts[0]
+    statement = program.flows[0].stmts[-1]
     encoded = cast(dict[str, Any], to_data(statement))
     encoded.pop("window")
     encoded["stmts"][0].pop("initial")

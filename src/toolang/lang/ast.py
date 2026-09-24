@@ -388,9 +388,19 @@ class Program(Node):
     def from_source(cls, source: str) -> Program:
         from .lower import _lower
         from .validate import _validate
+        from .errors import ToolangSourceError, source_location
 
-        program = _lower(_parse_source(source))
-        _validate(program)
+        try:
+            with source_location(1):
+                program = _lower(_parse_source(source))
+                _validate(program)
+        except ToolangSourceError as exc:
+            if exc.column is None:
+                lines = source_lines(source)
+                line = exc.line or 1
+                raw = lines[line - 1] if line <= len(lines) else ""
+                exc.column = len(raw) - len(raw.lstrip(" \t")) + 1
+            raise
         return program
 
 
@@ -408,8 +418,15 @@ def _parse_source(source: str) -> _ParsedSource:
             from .validate import _raise_empty_cap_property
 
             kind, name, property_name = details
-            _raise_empty_cap_property(kind, name, property_name, line=line)
-        raise ToolangSyntaxError(_syntax_error_message(line, raw))
+            from .errors import source_location
+
+            with source_location(line, error.start_point.column + 1):
+                _raise_empty_cap_property(kind, name, property_name, line=line)
+        raise ToolangSyntaxError(
+            _syntax_error_message(line, raw),
+            line=line,
+            column=error.start_point.column + 1,
+        )
     return _ParsedSource(tree=tree, source=encoded)
 
 

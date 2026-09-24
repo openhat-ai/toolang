@@ -70,6 +70,11 @@ def validate_struct_type(type_name: str) -> str:
     return type_name
 
 
+def is_builtin_type(type_name: str) -> bool:
+    """Whether a scalar type is supplied by the language rather than a struct."""
+    return type_name in _RESERVED_STRUCT_TYPES
+
+
 @dataclass(frozen=True, slots=True)
 class RunnableRef:
     """One parsed runnable reference, including optional module and kind."""

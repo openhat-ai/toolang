@@ -16,6 +16,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import ThreadPrefix
 from toolang.lang import Program
+from toolang.lang.errors import ToolangError
 
 
 def _create(
@@ -220,6 +221,12 @@ flow main() -> {output}:
         source = source.replace(
             "  settle using reduce\n", f"  settle using reduce:\n    from: {initial}\n"
         )
+    if initial is None and output != "Text":
+        with pytest.raises(
+            ToolangError, match="settle without from requires Text output"
+        ):
+            Program.from_source(source)
+        return
     harness = _create(tmp_path, source=source, responses=responses)
     run, output, error = _run(harness)
     assert run.status == ("succeeded" if expected is not None else "failed"), run.error
@@ -320,18 +327,15 @@ flow main:
     assert "outer=c; previous=b" in _texts(harness)[3]
 
 
-def test_until_window_is_local_and_out_of_window_is_an_error(tmp_path: Path) -> None:
+def test_until_out_of_window_reference_is_rejected_before_execution() -> None:
     source = """
 flow main:
   repeat 1 time windowing 1:
     run: Improve {{_}}.
     until: {{#_2}}true{{/_2}}
 """
-    harness = _create(tmp_path, source=source, responses=["a"])
-    run, output, error = _run(harness, primary="seed")
-    assert run.status == "failed"
-    assert "outside the active window" in str(error)
-    assert harness.adapter.invocations == []
+    with pytest.raises(ToolangError, match="outside the active window"):
+        Program.from_source(source)
 
 
 def test_inherited_until_template_adds_history_requirement(tmp_path: Path) -> None:
@@ -532,3 +536,19 @@ flow main() -> Number[]:
     assert run.status == "succeeded", error
     assert "Merge a into [1,2]." in _texts(harness)[1]
     assert output == "[1,2,3]"
+
+
+def test_singleton_settle_skips_unrendered_reducer_history(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+flow main():
+  storm 1 using: Seed
+  settle: {{_}} {{_2._}}
+""",
+        responses=["seed"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "seed"
+    assert len(harness.adapter.invocations) == 1
