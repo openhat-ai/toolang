@@ -1276,8 +1276,9 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("context", [None, 32768])
 @pytest.mark.parametrize("control", [None, "high", "none", 8192])
+@pytest.mark.parametrize("capability", [None, True])
 def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
-    tmp_path, streaming, context, control
+    tmp_path, streaming, context, control, capability
 ):
     from toolang.base.types.model import ModelRequest, Reasoning
     from toolang.plugin.models.resolution import build_model_collection
@@ -1291,7 +1292,7 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
     model = replace(
         harness.setup.models.resolve("test/scripted"),
         limit={} if context is None else {"context": context},
-        reasoning=True,
+        reasoning=capability,
         reasoning_options=None,
     )
     harness.setup = replace(harness.setup, models=build_model_collection((model,)))
@@ -1316,14 +1317,9 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
             assert run.status == "succeeded", run.error
             (invocation,) = harness.adapter.invocations
             assert invocation.call.reasoning == reasoning
-            # Unbudgeted reasoning raises the automatic floor; an explicit
-            # token control keeps its own exceeding allowance.
-            if control == "none":
-                expected_output = 4096
-            elif control == 8192:
+            expected_output = 32768 if context is None else 8192
+            if context is not None and control == 8192:
                 expected_output = 9216
-            else:
-                expected_output = 8192
             assert invocation.call.max_output_tokens == expected_output
             (step,) = harness.store.list_steps(run_id=run.id)
             assert harness.store.rebuild_model_call(step) == invocation.call
@@ -1359,6 +1355,179 @@ def test_auto_output_does_not_reinherit_a_cleared_default(tmp_path):
             )
             run = await harness.executor.run(spec)
             assert run.status == "succeeded", run.error
-            assert harness.adapter.invocations[0].call.max_output_tokens == 4096
+            assert harness.adapter.invocations[0].call.max_output_tokens == 32768
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("reasoning_capable", [None, True])
+def test_automatic_output_leaves_room_after_reasoning(
+    tmp_path, monkeypatch, streaming, reasoning_capable
+):
+    from toolang.base.types.model import ModelRequest
+    from toolang.base.types.run import ModelUsage
+    from toolang.plugin.models.resolution import build_model_collection
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        streaming=streaming,
+        responses=[ModelCallResult(), ModelCallResult()],
+    )
+    model = replace(
+        harness.setup.models.resolve("test/scripted"),
+        limit={},
+        reasoning=reasoning_capable,
+        reasoning_options=None,
+    )
+    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    take_turn = harness.adapter._take_turn
+
+    def respond(model, request):
+        turn = take_turn(model, request)
+        # Observed in run_er8qnyzz.9: 4583 reasoning + 991 visible tokens.
+        # Model the original 4096-token exhaustion without a live provider.
+        allowance = request.max_output_tokens
+        assert allowance is not None
+        completed = allowance >= 5574
+        return replace(
+            turn,
+            result=ModelCallResult(
+                message=Message.assistant("done") if completed else None,
+                usage=ModelUsage(
+                    input_tokens=100,
+                    output_tokens=5574 if completed else allowance,
+                    output_reasoning_tokens=4583 if completed else allowance,
+                    output_visible_tokens=991 if completed else 0,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(harness.adapter, "_take_turn", respond)
+
+    async def scenario():
+        async with harness:
+            for demand in (4096, None):
+                spec = replace(
+                    harness.run_spec(
+                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        runnable="seed",
+                        primary=(TextPart("hello"),),
+                    ),
+                    model_request=ModelRequest(model.ref, max_output=demand),
+                )
+                run = await harness.executor.run(spec)
+                if demand is not None:
+                    assert run.status == "failed"
+                    assert "reasoning consumed" in str(run.error)
+                else:
+                    assert run.status == "succeeded", run.error
+                    call = harness.adapter.invocations[-1].call
+                    assert call.max_output_tokens == 32768
+                    assert call.reasoning is None
+                    (step,) = harness.store.list_steps(run_id=run.id)
+                    assert harness.store.rebuild_model_call(step) == call
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "authored,demand,expected",
+    [(None, None, 32768), (16384, None, 16384), (16384, 8192, 8192)],
+)
+def test_authored_output_and_explicit_demand_precede_the_fallback(
+    tmp_path, monkeypatch, streaming, authored, demand, expected
+):
+    from toolang.base.types.model import ModelRequest
+    from toolang.plugin.adapters._payload import output_allowance
+    from toolang.plugin.models.resolution import build_model_collection
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        streaming=streaming,
+        responses=[ModelCallResult(message=Message.assistant("hello"))],
+    )
+    model = harness.setup.models.resolve("test/scripted")
+    model = replace(
+        model,
+        limit={},
+        _toolang=replace(
+            model._toolang,
+            route=replace(
+                model._toolang.route,
+                options={} if authored is None else {"max_tokens": authored},
+            ),
+        ),
+    )
+    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    monkeypatch.setattr(
+        harness.adapter,
+        "output_allowance",
+        lambda options: output_allowance(options, "max_tokens"),
+        raising=False,
+    )
+
+    async def scenario():
+        async with harness:
+            spec = replace(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="seed",
+                    primary=(TextPart("hello"),),
+                ),
+                model_request=ModelRequest(model.ref, max_output=demand),
+            )
+            run = await harness.executor.run(spec)
+            assert run.status == "succeeded", run.error
+            (invocation,) = harness.adapter.invocations
+            assert invocation.call.max_output_tokens == expected
+            (step,) = harness.store.list_steps(run_id=run.id)
+            assert harness.store.rebuild_model_call(step) == invocation.call
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("demand", [None, 32768])
+def test_impossible_reservation_names_route_and_output_source(tmp_path, demand):
+    from toolang.base.types.model import ModelRequest, Reasoning
+    from toolang.plugin.models.resolution import build_model_collection
+
+    harness = ExecutionHarness.create(tmp_path, source=SOURCE, responses=[])
+    model = replace(
+        harness.setup.models.resolve("test/scripted"),
+        limit={"context": 32768},
+        reasoning=True,
+        reasoning_options=None,
+    )
+    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+
+    async def scenario():
+        async with harness:
+            spec = replace(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="seed",
+                    primary=(TextPart("hello"),),
+                ),
+                model_request=ModelRequest(
+                    model.ref,
+                    max_output=demand,
+                    reasoning=Reasoning(budget_tokens=32768)
+                    if demand is None
+                    else None,
+                ),
+            )
+            run = await harness.executor.run(spec)
+            assert run.status == "failed"
+            error = str(run.error)
+            assert model.ref in error
+            assert "no input budget" in error
+            assert "limit.context=32768" in error
+            source = "automatic" if demand is None else "max_output"
+            assert f"output source: {source}" in error
+            assert not harness.adapter.invocations
 
     asyncio.run(scenario())

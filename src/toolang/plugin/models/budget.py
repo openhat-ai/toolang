@@ -8,10 +8,9 @@ from toolang.base.types.model import Reasoning
 
 # Host policy constants. They bound one call and are never catalog facts or
 # service defaults.
-AUTOMATIC_FLOOR = 4096
+AUTOMATIC_FALLBACK = 32768
 CONTEXT_FRACTION = 4
 REASONING_HEADROOM = 1024
-UNBUDGETED_REASONING_FLOOR = 8192
 
 
 def output_budget(
@@ -19,19 +18,17 @@ def output_budget(
     *,
     demand: int | None = None,
     reasoning: Reasoning | None = None,
-    reasoning_capable: bool = False,
-    automatic_floor: int = AUTOMATIC_FLOOR,
+    automatic_fallback: int = AUTOMATIC_FALLBACK,
     context_fraction: int = CONTEXT_FRACTION,
     reasoning_headroom: int = REASONING_HEADROOM,
-    reasoning_floor: int = UNBUDGETED_REASONING_FLOOR,
 ) -> int:
     """Resolve an output allowance from normalized facts and consumer policy.
 
     An explicit demand wins and is clamped to a known route output allowance.
-    The automatic allowance claims a known route output allowance in full and
-    keeps the host floor when it is unknown. Either way it stays below a
-    fraction of a known joint context, so reserved output cannot consume the
-    input admission budget or the retained near history.
+    The automatic allowance starts from a known route output allowance and
+    uses one host fallback when it is unknown, regardless of reasoning metadata.
+    A known joint context limits the automatic candidate; explicit reasoning
+    tokens can raise it again. Input admission must still check the result.
     """
 
     if demand is not None and (type(demand) is not int or demand <= 0):
@@ -40,20 +37,16 @@ def output_budget(
         if type(value) is not int or value <= 0:
             raise ValueError(f"model limit.{name} must be a positive integer")
     for value in (
-        automatic_floor,
+        automatic_fallback,
         context_fraction,
         reasoning_headroom,
-        reasoning_floor,
     ):
         if type(value) is not int or value <= 0:
             raise ValueError("output policy values must be positive integers")
     thinking = reasoning.budget_tokens if reasoning is not None else None
-    disabled = reasoning is not None and reasoning.effort == "none"
     budget = demand
     if budget is None:
-        budget = limits.get("output", automatic_floor)
-        if reasoning_capable and thinking is None and not disabled:
-            budget = max(budget, reasoning_floor)
+        budget = limits.get("output", automatic_fallback)
         if (context := limits.get("context")) is not None:
             budget = min(budget, context // context_fraction)
         if thinking is not None:
@@ -64,7 +57,8 @@ def output_budget(
         raise ValueError("max_output must be a positive integer")
     if thinking is not None and budget <= thinking:
         raise ValueError(
-            f"max_output {budget} must exceed the reasoning budget {thinking}"
+            f"max_output {budget} must exceed the reasoning budget {thinking} "
+            f"(limit.output={limits.get('output', 'unknown')})"
         )
     return budget
 
@@ -95,9 +89,12 @@ def input_budget(limits: Mapping[str, int], output: int | None) -> int | None:
     if not capacities:
         return None
     capacity = min(capacities)
-    budget = min(available) - max(1024, (capacity + 19) // 20)
+    margin = max(1024, (capacity + 19) // 20)
+    budget = min(available) - margin
     if budget <= 0:
         raise ValueError(
-            "model output allowance and estimation margin leave no input budget"
+            "model output allowance and estimation margin leave no input budget "
+            f"(max_output={output}, limit.context={context or 'unknown'}, "
+            f"limit.input={independent or 'unknown'}, margin={margin})"
         )
     return budget

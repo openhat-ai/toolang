@@ -42,8 +42,8 @@ def test_minimal_neutral_catalog_is_assembled_routed_and_cached(tmp_path):
     model = routed.models[0]
     assert model._toolang.ready
     assert model.to_data() == raw.models[0].to_data()
-    assert output_budget(model.limit) == 4096
-    assert input_budget(model.limit, 4096) is None
+    assert output_budget(model.limit) == 32768
+    assert input_budget(model.limit, 32768) is None
     cache = ModelCatalogCache(tmp_path)
     cache.store_source("custom", revision="1", snapshot=routed)
     restored = cache.load_source("custom", revision="1")
@@ -63,8 +63,8 @@ def test_budget_is_invariant_to_catalog_origin(provider):
         revision="1",
     )
     model = assemble_catalog(raw).models[0]
-    assert output_budget(model.limit) == 4096
-    assert input_budget(model.limit, 4096) == 27033
+    assert output_budget(model.limit) == 8192
+    assert input_budget(model.limit, 8192) == 22937
     assert model.limit == {"context": 32768}
 
 

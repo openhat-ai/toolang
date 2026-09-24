@@ -45,9 +45,9 @@ def test_context_capacity_tracks_the_joint_window() -> None:
     assert context_capacity({"context": 32000}) == 32000
 
 
-def test_output_allowance_keeps_the_host_floor_without_a_route_limit() -> None:
-    assert output_budget(MODEL.limit) == 4096
-    assert output_budget({"context": 100_000}) == 4096
+def test_output_allowance_uses_one_fallback_without_a_route_limit() -> None:
+    assert output_budget(MODEL.limit) == 32768
+    assert output_budget({"context": 100_000}) == 25000
 
 
 def test_output_allowance_claims_a_confirmed_route_limit() -> None:
@@ -76,15 +76,12 @@ def test_output_allowance_must_exceed_an_explicit_reasoning_budget() -> None:
     assert output_budget({"context": 32_768}, reasoning=reasoning) == 9_024
 
 
-def test_unbudgeted_reasoning_raises_the_automatic_floor() -> None:
-    assert output_budget(MODEL.limit, reasoning_capable=True) == 8_192
-    assert output_budget({"context": 32_768}, reasoning_capable=True) == 8_192
-    assert output_budget({"context": 16_384}, reasoning_capable=True) == 4_096
-    assert output_budget({"output": 2_048}, reasoning_capable=True) == 2_048
-    disabled = Reasoning(effort="none")
-    assert (
-        output_budget(MODEL.limit, reasoning=disabled, reasoning_capable=True) == 4_096
-    )
+@pytest.mark.parametrize("effort", [None, "none", "high"])
+def test_unbudgeted_reasoning_uses_the_same_fallback(effort) -> None:
+    reasoning = Reasoning(effort=effort) if effort is not None else None
+    assert output_budget({}, reasoning=reasoning) == 32768
+    assert output_budget({"context": 32768}, reasoning=reasoning) == 8192
+    assert output_budget({"output": 2048}, reasoning=reasoning) == 2048
 
 
 def test_output_allowance_rejects_a_nonpositive_value() -> None:
@@ -136,7 +133,7 @@ def test_reported_context_overflow_is_rejected_before_dispatch(calibrated) -> No
 def test_known_context_requires_a_resolvable_output_and_positive_input_room(output):
     with pytest.raises(ValueError):
         input_budget({"context": 32000}, output)
-    assert output_budget({"context": 32000}) == 4096
+    assert output_budget({"context": 32000}) == 8000
 
 
 @pytest.mark.parametrize(
@@ -311,9 +308,9 @@ def test_continuation_changes_count_new_content_without_recounting_retained_cont
 @pytest.mark.parametrize(
     "limits,reasoning,expected,input_expected",
     [
-        ({}, None, 4096, None),
-        ({"context": 32768}, None, 4096, 27033),
-        ({"context": 131072}, None, 4096, 120422),
+        ({}, None, 32768, None),
+        ({"context": 32768}, None, 8192, 22937),
+        ({"context": 131072}, None, 32768, 91750),
         ({"context": 4096}, None, 1024, 2048),
         ({"context": 32768}, Reasoning(budget_tokens=8192), 9216, 21913),
         ({"output": 2048}, None, 2048, None),
@@ -343,3 +340,77 @@ def test_tiny_context_and_reasoning_conflicts_fail_before_dispatch():
 def test_invalid_normalized_limits_are_not_treated_as_missing(value):
     with pytest.raises(ValueError, match="positive integer"):
         output_budget({"output": value})
+
+
+@pytest.mark.parametrize(
+    "limits,automatic,input_automatic,input_explicit",
+    [
+        ({}, 32768, None, None),
+        ({"context": 131072}, 32768, 91750, 108134),
+        ({"input": 65536}, 32768, 62259, 62259),
+        ({"output": 65536}, 65536, None, None),
+        ({"context": 131072, "input": 65536}, 32768, 62259, 62259),
+        ({"context": 131072, "output": 65536}, 32768, 91750, 108134),
+        ({"input": 65536, "output": 65536}, 65536, 62259, 62259),
+        (
+            {"context": 131072, "input": 65536, "output": 65536},
+            32768,
+            62259,
+            62259,
+        ),
+    ],
+)
+@pytest.mark.parametrize("demand", [None, 16384])
+def test_all_limit_combinations(
+    limits, automatic, input_automatic, input_explicit, demand
+):
+    before = dict(limits)
+    output = output_budget(limits, demand=demand)
+    assert output == (automatic if demand is None else demand)
+    assert input_budget(limits, output) == (
+        input_automatic if demand is None else input_explicit
+    )
+    assert limits == before
+
+
+@pytest.mark.parametrize(
+    "limits,tokens,expected",
+    [
+        ({}, 0, 32768),
+        ({}, 8192, 32768),
+        ({}, 65536, 66560),
+        ({"context": 32768}, 8192, 9216),
+        ({"output": 8193}, 8192, 8193),
+    ],
+)
+def test_reasoning_reserve_respects_known_output(limits, tokens, expected):
+    assert output_budget(limits, reasoning=Reasoning(budget_tokens=tokens)) == expected
+
+
+@pytest.mark.parametrize(
+    "limits,demand,reasoning,output",
+    [
+        ({"context": 32768}, 32768, None, 32768),
+        ({"context": 32768}, None, Reasoning(budget_tokens=32768), 33792),
+        ({"input": 1024}, None, None, 32768),
+    ],
+)
+def test_impossible_input_reservation_reports_the_conflicting_values(
+    limits, demand, reasoning, output
+):
+    assert output_budget(limits, demand=demand, reasoning=reasoning) == output
+    with pytest.raises(ValueError, match="no input budget") as error:
+        input_budget(limits, output)
+    assert f"max_output={output}" in str(error.value)
+    assert f"limit.context={limits.get('context', 'unknown')}" in str(error.value)
+    assert f"limit.input={limits.get('input', 'unknown')}" in str(error.value)
+    assert "margin=" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "name", ["automatic_fallback", "context_fraction", "reasoning_headroom"]
+)
+@pytest.mark.parametrize("value", [True, 0, -1])
+def test_invalid_host_policy_values(name, value):
+    with pytest.raises(ValueError, match="policy values must be positive integers"):
+        output_budget({}, **{name: value})

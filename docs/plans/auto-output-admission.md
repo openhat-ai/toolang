@@ -56,11 +56,12 @@ wire-option normalization and encoding; budget code never checks provider names.
 
 - Explicit `max_output`, otherwise an authored supported output option, wins;
   reject conflicting aliases and clamp to known route output limit H.
-- Otherwise choose O=H for a known route output limit H, else the host floor
-  4096; raise to at least 8192 when the route can reason without an explicit
-  token budget; cap at `floor(C/4)` for known context C; raise to at least R+1024
-  for explicit reasoning tokens R; then clamp to H. Require O>0 and O>R. These
-  are host constants, never catalog facts or service defaults.
+- Otherwise start O at known route output allowance H, or the host fallback
+  32768 when H is unknown. Cap the candidate at `floor(C/4)` for known context C,
+  raise to R+1024 for explicit reasoning tokens R, then clamp to H. Require O>0
+  and O>R. Reasoning capability metadata and effort do not change this fallback.
+  The context fraction is a preference that explicit R can exceed, not an input
+  admission guarantee. See [Model output budget](model-output-budget.md).
 - `auto` clears inherited caps but preserves authored provider options. Send and
   record the same O; prompt growth uses existing compaction, not output reduction.
 - Preserve input admission: M=`max(1024, ceil(min(known C, known L)/20))`;
@@ -89,5 +90,5 @@ run default Ruff, ty, and pytest checks before implementation commits.
 
 Exclude server mutation, new adapters/flags, pricing, media/history changes,
 retries, and auto-continuation. Risks: stale facts, truncated output, and unknown
-context preventing guaranteed local admission. Release-note the cloud automatic
-output change from advertised maximum to host policy. No open design questions.
+context preventing guaranteed local admission. The model documentation describes
+the automatic allowance and its effect on input admission. No open design questions.

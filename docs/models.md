@@ -323,15 +323,21 @@ downgrade a request after provider rejection.
 
 Explicit `max_output` takes precedence over an authored provider output option
 and is clamped to the catalog route's `limit.output` when known. Otherwise the
-automatic allowance claims that route output limit, keeps the host floor of 4096
-when the route publishes none, and in every case stays below a quarter of a known
-joint context. A route that can reason without an explicit token budget raises the
-allowance to at least 8192, and explicit reasoning tokens `R` raise it above `R`.
-Output must be positive and exceed explicit reasoning tokens. These are host
-policy values, never inferred service defaults or catalog fields. **Behavior
-change:** the automatic allowance now claims the route's confirmed output limit
-instead of a fixed 4096, so long answers and reasoning no longer truncate; pass
-`max_output` explicitly to lower it.
+automatic allowance starts from that route output limit, or 32768 when it is
+unknown, regardless of reasoning capability metadata or effort. A known joint
+context caps this candidate at one quarter; explicit reasoning tokens `R` can
+raise it again to `R+1024`. The known route output limit clamps the final allowance.
+Output must be positive and exceed explicit reasoning tokens. Explicit output
+controls bypass the automatic context fraction and reasoning headroom. Known
+context/input limits still require room for input and the estimation margin;
+explicit output or reasoning controls can leave no room and fail before dispatch.
+
+These are host policy values, never inferred service defaults or catalog fields.
+An independent input limit does not imply an output limit. With neither context
+nor input capacity known, local input admission is unavailable. Unknown limits
+can still lead to provider rejection; a larger allowance reduces truncation risk
+but cannot guarantee a complete response. See the
+[output budget policy](plans/model-output-budget.md) for the full missing-data matrix.
 
 Adapters can implement `ModelOutputOptions.output_allowance(options)` to normalize
 authored output aliases before admission. They send the resolved allowance unchanged. Known context/input limits reserve output and an estimation

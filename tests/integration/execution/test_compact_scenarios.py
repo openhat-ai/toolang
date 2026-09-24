@@ -70,8 +70,9 @@ def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
 
 
 @pytest.mark.parametrize("next_root", ["run", "rerun"])
+@pytest.mark.parametrize("output_limit", [None, 512])
 def test_compact_before_model_and_freeze_horizon_for_next_root(
-    tmp_path: Path, next_root: str
+    tmp_path: Path, next_root: str, output_limit: int | None
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -88,6 +89,16 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             recent = await harness.executor.run(spec(harness, thread, "recent input"))
             assert old.status == recent.status == "succeeded"
             constrain(harness)
+            if output_limit is None:
+                harness.setup = replace(
+                    harness.setup,
+                    models=ModelCollection(
+                        tuple(
+                            replace(model, limit={"context": 14000})
+                            for model in harness.setup.models.entries
+                        )
+                    ),
+                )
             summary = {
                 "thread": thread,
                 "begin": None,
@@ -173,7 +184,12 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             ] == [i.call for i in harness.adapter.invocations[3:-1]]
             request = history.get_model_call(model.ref)
             assert request == harness.adapter.invocations[-1].call
-            assert request.max_output_tokens == 512
+            expected_output = 3500 if output_limit is None else output_limit
+            assert request.max_output_tokens == expected_output
+            assert all(
+                i.call.max_output_tokens == expected_output
+                for i in harness.adapter.invocations[3:]
+            )
             assert not any(t.name.startswith("history__") for t in request.tools)
             text = str([m.to_data() for m in request.messages])
             assert (
