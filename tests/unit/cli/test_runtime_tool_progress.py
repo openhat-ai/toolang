@@ -117,7 +117,7 @@ def test_runtime_tools_use_owned_wording_and_progress_marker(name, arguments, te
     assert [row.text for row in rows] == [f"✧ {text}"]
     assert rows[0].surface == "tool_summary"
     assert rows[0].tone == "progress"
-    assert trace_live_rows(begin, "")[0].tone == "progress"
+    assert trace_live_rows(begin, "")[0].tone == "active"
 
 
 def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():

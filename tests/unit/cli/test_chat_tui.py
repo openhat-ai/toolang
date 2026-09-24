@@ -278,8 +278,8 @@ def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
         if not isinstance(block, blocks.RunSummaryBlock)
     )
     control_bottom = " " * 80
-    assert f"{control_bottom}\n\n• Thinking..." in transcript
-    assert f"{control_bottom}\n\n\n• Thinking..." not in transcript
+    assert f"{control_bottom}\n\n• Thinking" in transcript
+    assert f"{control_bottom}\n\n\n• Thinking" not in transcript
 
 
 def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
@@ -291,7 +291,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "ExecutionProgressBlock",
         "RunSummaryBlock",
     ]
-    assert "• Thinking..." in _render_text(app.live_blocks[0].render())
+    assert "• Thinking" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(
         PartBegin(
@@ -311,7 +311,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     )
     streamed = _render_text(app.live_blocks[0].render())
     assert "• drafting" in streamed
-    assert "Thinking..." not in streamed
+    assert "Thinking" not in streamed
     events.handle_run_event(
         PartEnd(
             step=StepRef.parse("run_1.1"),
@@ -390,7 +390,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
     assert app.live_blocks[-1] is summary
     rendered = _render_text(app.live_blocks[0].render())
     assert "executing shell__execute" in rendered
-    assert "Thinking..." not in rendered
+    assert "Thinking" not in rendered
     assert "requested" not in rendered
 
 
@@ -497,8 +497,8 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         )
 
     live = _render_text(app.live_blocks[0].render())
-    assert "0 | #0 | • Thinking..." in live
-    assert "1 | #1 | • Thinking..." in live
+    assert "0 | #0 | • Thinking" in live
+    assert "1 | #1 | • Thinking" in live
 
     events.handle_run_event(
         StepEnd(
@@ -889,15 +889,11 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all("─" not in line for line in lines)
 
 
-def test_chat_tool_step_has_dim_marker_and_running_description() -> None:
+def test_chat_tool_step_has_normal_marker_and_running_description() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (
-                ProgressRow(
-                    "› Running a command...", "progress", surface="tool_summary"
-                ),
-            ),
+            (ProgressRow("› Running a command", "active", surface="tool_summary"),),
         ),
         live=True,
         max_width=32,
@@ -905,8 +901,8 @@ def test_chat_tool_step_has_dim_marker_and_running_description() -> None:
     segments = list(rendering.render_segments(block.render(), width=80))
     marker = next(segment for segment in segments if "›" in segment.text)
     content = next(segment for segment in segments if "Running" in segment.text)
-    assert marker.style is not None and marker.style.dim
-    assert content.style is not None and content.style.dim
+    assert marker.style is None or not marker.style.dim
+    assert content.style is None or not content.style.dim
     assert all(
         segment.style is None or segment.style.bgcolor is None for segment in segments
     )
@@ -985,7 +981,7 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
     model = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_review.0",
-            (ProgressRow("• Thinking...", "active"),),
+            (ProgressRow("• Thinking", "active"),),
         ),
         live=True,
     )
@@ -993,8 +989,8 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
     transcript = _render_text(header.render()) + _render_text(model.render())
 
     assert "--- iteration 1 of 3 ---\n\n[0] Run review" in transcript
-    assert "[0] Run review\n\n• Thinking..." in transcript
-    assert "[0] Run review\n\n\n• Thinking..." not in transcript
+    assert "[0] Run review\n\n• Thinking" in transcript
+    assert "[0] Run review\n\n\n• Thinking" not in transcript
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
@@ -5362,7 +5358,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     app._commit_ui_update()
 
     app.handle_run_event(_model_step_begin(model="openai/gpt-5"))
-    assert "Thinking..." in "".join(
+    assert "Thinking" in "".join(
         _render_text(block.render()) for block in app.unfinalized_blocks
     )
     app._commit_ui_update()
@@ -5380,7 +5376,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
 
     assert erases == [False]
     assert len(writes) == 1
-    assert "Thinking..." not in writes[0]
+    assert "Thinking" not in writes[0]
     assert "You have no credits remaining." in writes[0]
     assert all(
         not isinstance(block, blocks.ExecutionProgressBlock)
@@ -5848,15 +5844,12 @@ def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -
     events.handle_run_event(_model_step_begin(), app)
     steers = [_submit_test_steer(app, str(i), "identical") for i in range(3)]
     before = [_render_text(s.render()) for s in steers]
-    assert _steer_feedback(app).strip() == "• Sending 3 steers"
+    assert _steer_feedback(app).strip() == "• 3 steers pending"
     for i in (2, 0):
         app.presenter.handle_steer_receipt(
             SteerReceipt(str(i), "run_1", _steer_control(i + 1)), app
         )
-    assert (
-        _steer_feedback(app).strip()
-        == "• 2 steers will apply after the current step · sending 1 more"
-    )
+    assert _steer_feedback(app).strip() == "• 3 steers pending"
     assert [b for b in app.live_blocks if isinstance(b, blocks.RunSteerBlock)] == steers
     app.presenter.handle_steer_receipt(
         SteerReceipt("1", "run_1", _steer_control(2)), app
@@ -5864,9 +5857,7 @@ def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -
     events.handle_run_event(_model_step_begin(run_id="run_child"), app)
     events.handle_run_event(_tool_step_begin(step_index=2), app)
     assert all(s in app.live_blocks for s in steers)
-    assert (
-        _steer_feedback(app).strip() == "• 3 steers will apply after the current step"
-    )
+    assert _steer_feedback(app).strip() == "• 3 steers pending"
     events.handle_run_event(
         replace(
             _model_step_begin(step_index=3),
@@ -5880,7 +5871,7 @@ def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -
     assert any(b is steers[0] for b in app.finalized)
     assert any(b is steers[2] for b in app.finalized)
     assert any(b is steers[1] for b in app.live_blocks)
-    assert _steer_feedback(app).strip() == "• 1 steer will apply after the current step"
+    assert _steer_feedback(app).strip() == "• 1 steer pending"
     events.handle_run_event(
         replace(
             _model_step_begin(step_index=4),
@@ -5926,10 +5917,7 @@ def test_chat_terminal_steer_labels_require_known_non_adoption(
     app.presenter.handle_steer_receipt(
         SteerReceipt("accepted", "run_1", _steer_control(1)), app
     )
-    assert (
-        _steer_feedback(app).strip()
-        == "• 1 steer waiting for the next model call · sending 1 more"
-    )
+    assert _steer_feedback(app).strip() == "• 2 steers pending"
     if disconnected:
         app.presenter.mark_disconnected()
     events.handle_run_event(_run_end(status=status), app)
@@ -5961,7 +5949,7 @@ def test_chat_failed_steer_keeps_message_with_error_and_updates_count() -> None:
     assert isinstance(app.finalized[-1], blocks.SubmissionErrorBlock)
     assert "connection lost" in _render_text(app.finalized[-1].render())
     assert not failed.not_applied
-    assert _steer_feedback(app).strip() == "• Sending 1 steer"
+    assert _steer_feedback(app).strip() == "• 1 steer pending"
 
 
 @pytest.mark.parametrize(
@@ -6105,19 +6093,48 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         )
 
 
+@pytest.mark.parametrize("active_step", [False, True])
+@pytest.mark.parametrize(
+    ("accepted", "sending", "message"),
+    [
+        (0, 1, "• 1 steer pending"),
+        (1, 0, "• 1 steer pending"),
+        (0, 3, "• 3 steers pending"),
+        (3, 0, "• 3 steers pending"),
+        (3, 1, "• 4 steers pending"),
+    ],
+)
+def test_chat_steer_feedback_is_dim_with_one_combined_pending_count(
+    active_step: bool, accepted: int, sending: int, message: str
+) -> None:
+    feedback = blocks.SteerFeedbackBlock(
+        accepted=accepted, sending=sending, active_step=active_step
+    )
+    segments = rendering.render_segments(feedback.render(), width=80)
+    assert "".join(segment.text for segment in segments).strip() == message
+    assert all(
+        segment.style is not None and segment.style.dim
+        for segment in segments
+        if segment.text.strip()
+    )
+    fragments = rendering.renderable_to_prompt_toolkit(feedback.render())
+    assert "".join(fragment[1] for fragment in fragments).strip() == message
+    assert all(
+        "dim" in fragment[0].split() for fragment in fragments if fragment[1].strip()
+    )
+
+
 def test_chat_steer_feedback_has_blank_rows_and_wraps_after_the_marker() -> None:
-    feedback = blocks.SteerFeedbackBlock(accepted=3, active_step=True, max_width=30)
-    lines = _render_text(feedback.render(), width=30).splitlines()
+    feedback = blocks.SteerFeedbackBlock(accepted=3, active_step=True, max_width=14)
+    lines = _render_text(feedback.render(), width=14).splitlines()
     assert lines[0] == lines[-1] == ""
     assert rendering.renderables_height([feedback]) == len(lines)
     lines = lines[1:-1]
     assert lines[0].startswith("• ")
     assert all(line.startswith("  ") for line in lines[1:])
-    assert all(get_cwidth(line) <= 28 for line in lines)
-    assert (
-        " ".join(line[2:] for line in lines)
-        == "3 steers will apply after the current step"
-    )
+    assert len(lines) > 1
+    assert all(get_cwidth(line) <= 12 for line in lines)
+    assert " ".join(line[2:] for line in lines) == "3 steers pending"
 
 
 @pytest.mark.parametrize("accepted", [1, 3])
@@ -6133,7 +6150,7 @@ def test_chat_live_steer_feedback_has_blank_rows_before_queue(accepted: int) -> 
             screen = _render_chat_layout(app)
             lines = _screen_lines(screen, output.columns)
             status_row = next(i for i, line in enumerate(lines) if "• " in line)
-            assert "will apply after the current step" in lines[status_row]
+            assert "pending" in lines[status_row]
             assert not lines[status_row - 1].strip()
             assert not lines[status_row + 1].strip()
             assert "3 queued" in lines[status_row + 2]
@@ -6171,9 +6188,7 @@ def test_chat_short_live_view_keeps_steer_feedback_and_queue_focus(
                 )
             app.prompt.buffer.text = "draft\n" * 8
             lines = _screen_lines(_render_chat_layout(app), output.columns)
-            assert any(
-                "• 3 steers waiting for the next model call" in line for line in lines
-            )
+            assert any("• 3 steers pending" in line for line in lines)
             assert any("3 queued" in line for line in lines)
             assert any("draft" in line for line in lines)
             assert app.app.layout.current_control is original_focus
@@ -6232,7 +6247,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
     )
 
 
-@pytest.mark.parametrize("width", [20, 40])
+@pytest.mark.parametrize("width", [16, 40])
 @pytest.mark.parametrize("focused", [False, True])
 def test_chat_live_clipping_preserves_the_entire_wrapped_steer_feedback(
     width: int, focused: bool, monkeypatch: pytest.MonkeyPatch
@@ -6265,7 +6280,10 @@ def test_chat_live_clipping_preserves_the_entire_wrapped_steer_feedback(
             assert expected in fragments
             lines = _screen_lines(_render_chat_layout(app), width)
             assert not any("Window too small" in line for line in lines)
-            assert any("• 1 steer waiting" in line for line in lines)
+            assert all(
+                any(expected_line in line for line in lines)
+                for expected_line in expected.splitlines()
+            )
 
     asyncio.run(exercise())
 
@@ -6359,7 +6377,7 @@ def test_chat_reordered_receipts_preserve_a_consumed_batch_in_history(
     app.presenter.handle_steer_receipt(
         SteerReceipt("second", "run_1", _steer_control(2)), app
     )
-    assert _steer_feedback(app).strip() == "• Sending 1 steer"
+    assert _steer_feedback(app).strip() == "• 1 steer pending"
     assert not any(b is second for b in app.finalized)
     if first_result == "receipt":
         app.presenter.handle_steer_receipt(

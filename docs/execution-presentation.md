@@ -144,8 +144,9 @@ dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is 
 an inline facts separator.
 
 - Model activity and output use `•` and normal text.
-- Ordinary and runtime Tool markers and summaries are dim in every state, with
-  a separate red error line on failure.
+- Ordinary and runtime Tool markers and summaries use normal intensity while
+  running and dim intensity when finished, with a separate red error line on
+  failure.
 - Flow activity and terminal output use `•` and normal text.
 - Model and Flow failures use red; cancellation uses yellow.
 - Parallel lanes place the Step marker after the lane columns. The lane number
@@ -301,7 +302,7 @@ Outside parallel work, every leaf Step leaves a complete trace. Model text is
 incrementally projected as Markdown. The initial live row:
 
 ```text
-• Thinking...
+• Thinking
 ```
 
 is replaced once text arrives, while stable Markdown progressively enters
@@ -332,8 +333,11 @@ Tool activity uses the persisted running description, replaced at completion:
 › Searched for “Toolang plugin protocol”
 ```
 
-Completed traces contain the terminal description only. Tool-owned descriptions
-can provide clearer wording and logical workspace labels:
+Active tool markers and their full summaries use normal intensity, matching
+`• Thinking`. Completed tool markers and summaries are dim; error diagnostics
+retain their error styling. Completed traces contain the terminal description
+only. Tool-owned descriptions can provide clearer wording and logical workspace
+labels:
 
 ```text
 › Listed workspaces
@@ -442,7 +446,7 @@ are truncated rather than wrapped:
 
 ```text
 • Running · 3 active · 4/18 succeeded
-  0 | #4 | • Thinking...
+  0 | #4 | • Thinking
   1 | #5 | › Searching for “agent runtimes”...
   2 | #6 | • Source summary prepared
 ```
@@ -501,7 +505,7 @@ normal trace-or-lane rule for its child statement:
 
 <?> Run completion_check to check whether to break
 
-• Thinking...
+• Thinking
 • true
 ```
 
@@ -675,12 +679,14 @@ interactions from a new root Run. Quick-command result, help, table, and
 reopened-output content align to the same output boundary.
 
 Steer bars keep their original purple accent regardless of adoption. Pending
-bars have one aggregate `•` explanation below them, such as `3 steers will apply
-after the current step`; between steps it says `waiting for the next model
-call`. Until receipts arrive it says `Sending N steers`, or appends `· sending
-M more` to an accepted count. Continuations align after the marker, and live
-clipping reserves this feedback while preserving Input and Queue focus. A blank
-row above and below separates the explanation from surrounding areas. Very short
+bars have one aggregate dim row below them, including its marker:
+`• 1 steer pending` or `• 3 steers pending`. The count combines locally submitted
+requests awaiting receipts and accepted controls awaiting consumption. Receipt
+acceptance alone does not change the count. The wording is the same during and
+between steps, with no separate sending label. Continuations align after the
+marker, and live clipping reserves this feedback while preserving Input and Queue
+focus. A blank row above and below separates the explanation from surrounding
+areas. Very short
 viewports omit this spacing before clipping the explanation.
 Only matching `StepBegin.preceded_by` control references or durable applied
 status commit an adopted bar. Receipt/event reordering does not imply adoption.

@@ -1004,7 +1004,7 @@ class ProgressProjector:
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
-                    "progress" if tool else "active",
+                    "progress" if tool and lane.activity_finished else "active",
                     surface="tool_summary" if tool else "none",
                 )
             )
@@ -1351,6 +1351,7 @@ class ProgressProjector:
         lane = self._lane_state(owner)
         if lane is not None:
             lane.activity = one_line(activity)
+            lane.activity_finished = False
 
     def _set_lane_terminal(
         self,
@@ -1367,6 +1368,7 @@ class ProgressProjector:
             lane.terminal_tool = tool
             if terminal:
                 lane.activity = one_line(" · ".join(terminal))
+                lane.activity_finished = True
 
     def _lane_state(self, owner: LaneOwner) -> LaneState | None:
         par = self._steps.get(owner.step)
@@ -1383,6 +1385,7 @@ class ProgressProjector:
         for lane in state.par.lanes.values():
             if lane.active:
                 lane.activity = "• canceling"
+                lane.activity_finished = False
 
     def _mark_cancellation_reported(self, path: StepRef) -> None:
         current: StepRef | None = path

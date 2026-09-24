@@ -41,6 +41,7 @@ class LaneState:
     run_id: str
     item: int
     activity: str = "• starting"
+    activity_finished: bool = False
     terminal: tuple[str, ...] = ()
     terminal_status: RunStatus | None = None
     terminal_tool: bool = False
