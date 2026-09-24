@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import FIXTURES_ROOT
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
@@ -1309,40 +1310,44 @@ flow mapped(_: Text) -> Text[]:
     asyncio.run(scenario())
 
 
-def test_deep_search_example_uses_explicit_flow_reshaping(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "scores,ranked",
+    [
+        ((3, 1, 2), ["evidence 0", "evidence 4", "evidence 2"]),
+        ((1, 3, 3), ["evidence 2", "evidence 4", "evidence 0"]),
+    ],
+    ids=["descending", "stable-ties"],
+)
+def test_research_pipeline_reshapes_filters_and_sorts(
+    tmp_path: Path, scores: tuple[int, ...], ranked: list[str]
 ) -> None:
-    source = (
-        Path(__file__).parents[3] / "examples" / "flows" / "deep_search.too"
-    ).read_text(encoding="utf-8")
+    source = (FIXTURES_ROOT / "flows" / "research_pipeline.too").read_text(
+        encoding="utf-8"
+    )
+    topic = "agent framework/sdk"
+    queries = [f"query {index}" for index in range(1, 7)]
+    evidence = [f"evidence {index}" for index in range(6)]
+    relevant = ["evidence 0", "evidence 2", "evidence 4"]
+    selected = ranked[:2]
+    findings = [f"finding for {item}" for item in selected]
+    responses = [
+        json.dumps(queries),
+        *evidence,
+        "true",
+        "false",
+        "true",
+        "false",
+        "true",
+        "false",
+        *(str(score) for score in scores),
+        *findings,
+        "report",
+    ]
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         responses=[
-            ModelCallResult(
-                message=Message.assistant(
-                    '["query 1","query 2","query 3","query 4","query 5","query 6"]'
-                )
-            ),
-            *[
-                ModelCallResult(message=Message.assistant(f"evidence {index}"))
-                for index in range(6)
-            ],
-            *[
-                ModelCallResult(
-                    message=Message.assistant("true" if index % 2 == 0 else "false")
-                )
-                for index in range(6)
-            ],
-            *[
-                ModelCallResult(message=Message.assistant(score))
-                for score in ("3", "1", "2")
-            ],
-            *[
-                ModelCallResult(message=Message.assistant(f"finding {index}"))
-                for index in range(3)
-            ],
-            ModelCallResult(message=Message.assistant("report")),
+            ModelCallResult(message=Message.assistant(text)) for text in responses
         ],
     )
 
@@ -1353,7 +1358,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 harness.run_spec(
                     thread=thread,
                     runnable="<entry>",
-                    primary=resolve_input_parts("agent framework/sdk"),
+                    primary=resolve_input_parts(topic),
                 )
             )
 
@@ -1376,30 +1381,42 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             ]
             assert root_steps[3].noted == CollectionStepNoted(6, 3)
             assert root_steps[4].noted == CollectionStepNoted(3, 3)
-            assert len(harness.adapter.invocations) == 20
-            predicate_messages = [
+            assert root_steps[5].noted == CollectionStepNoted(3, 2)
+            for step, expected in zip(
+                root_steps[1:7],
+                [queries, evidence, relevant, ranked, selected, findings],
+                strict=True,
+            ):
+                assert step.output is not None
+                assert harness.store.resolve_output(step.output).local.value == Array(
+                    "Text[]", tuple(expected)
+                )
+            assert len(harness.adapter.invocations) == 19
+            assert harness.adapter.pending_responses == 0
+            prompts = [
                 message_text(
                     without_route_snapshots(invocation.call.messages)[-1].parts
-                )
-                for invocation in harness.adapter.invocations[7:13]
+                ).strip()
+                for invocation in harness.adapter.invocations
             ]
+            assert prompts[0] == f"Research question:\n{topic}"
+            assert prompts[1:7] == [f"Query:\n{query}" for query in queries]
             assert all(
                 len(without_route_snapshots(invocation.call.messages)) == 1
                 for invocation in harness.adapter.invocations[7:13]
             )
-            assert all(
-                "Research question:\nagent framework/sdk" in message
-                for message in predicate_messages
-            )
-            final_message = without_route_snapshots(
-                harness.adapter.invocations[-1].call.messages
-            )[-1]
-            assert any(
-                isinstance(part, TextPart)
-                and "Research question:\nagent framework/sdk" in part.text
-                and "Findings:" in part.text
-                for part in final_message.parts
-            )
+            assert prompts[7:13] == [
+                f"Research question:\n{topic}\n\nEvidence bundle:\n{item}"
+                for item in evidence
+            ]
+            assert prompts[13:16] == [
+                f"Research question:\n{topic}\n\nEvidence bundle:\n{item}"
+                for item in relevant
+            ]
+            assert prompts[16:18] == [f"Evidence bundle:\n{item}" for item in selected]
+            question, gathered = prompts[-1].split("\n\nFindings:\n", 1)
+            assert question == f"Research question:\n{topic}"
+            assert json.loads(gathered) == findings
 
     asyncio.run(scenario())
 

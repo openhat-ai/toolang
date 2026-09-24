@@ -53,13 +53,25 @@ def test_clause_order_preserves_semantics_and_lane_limit(
 @pytest.mark.parametrize(
     ("header", "output"),
     [
+        ("run: Work.", "Text"),
         ("scatter using -> Text[]: Work.", "Text[]"),
         ("scatter using: Work.", "Text[]"),
+        ("scatter using -> Number[]: Work.", "Number[]"),
         ("storm 2 in 1 lane using -> Text: Work.", "Text"),
+        ("storm 2 using: Work.", "Text"),
+        ("storm 2 using -> Number[]: Work.", "Number[]"),
         ("gather using: Work with {{_}}.", "Text"),
+        ("gather using -> Number[]: Work with {{_}}.", "Number[]"),
         ("settle using: Work with {{_}} and {{_1._}}.", "Text"),
+        (
+            "settle using -> Number[]:\n    Work with {{_}}.\n    from: [0]",
+            "Number[]",
+        ),
+        ("map using: Work with {{_}}.", "Text"),
         ("map using -> Text: Work with {{_}}.", "Text"),
+        ("map using -> Number[]: Work with {{_}}.", "Number[]"),
         ("keep if: Decide {{_}}.", "Boolean"),
+        ("drop if: Decide {{_}}.", "Boolean"),
         ("drop if -> Boolean: Decide {{_}}.", "Boolean"),
         ("sort descending by: Score {{_}}.", "Number"),
         ("sort ascending by -> Number: Score {{_}}.", "Number"),
@@ -121,17 +133,68 @@ def test_invalid_and_legacy_headers_fail_before_lowering_or_execution(
 @pytest.mark.parametrize(
     "header",
     [
+        "scatter using -> Text: Items.",
+        "scatter using -> Number: Items.",
         "keep if -> Text: Decide.",
+        "keep if -> Boolean[]: Decide.",
         "drop if -> Number: Decide.",
         "sort ascending by -> Boolean: Score.",
+        "sort ascending by -> Number[]: Score.",
         "keep if worker",
         "drop if score",
         "sort descending by predicate",
     ],
 )
-def test_evaluator_return_types_are_not_silently_replaced(header: str) -> None:
-    with pytest.raises(ToolangError, match=r"requires (Boolean|Number) output"):
+def test_incompatible_return_types_are_not_silently_replaced(header: str) -> None:
+    with pytest.raises(ToolangError, match=r"requires (array|Boolean|Number) output"):
         Program.from_source(RUNNABLES + f"flow work:\n  {header}\n")
+
+
+@pytest.mark.parametrize("annotation", ["", " -> Text"], ids=["default", "explicit"])
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        ("scatter using worker", "array"),
+        ("keep if worker", "Boolean"),
+        ("drop if worker", "Boolean"),
+        ("sort ascending by worker", "Number"),
+        ("settle using worker", "Number"),
+    ],
+)
+def test_named_agic_output_is_not_reinterpreted_at_the_call_site(
+    annotation: str, header: str, expected: str
+) -> None:
+    declaration = f"agic worker{annotation}:\n  Work.\n"
+    assert Program.from_source(declaration).agics[0].output == "Text"
+    with pytest.raises(ToolangError, match=f"requires {expected} output"):
+        Program.from_source(
+            declaration + f"flow work:\n  scatter -> Number[]: Items\n  {header}\n"
+        )
+
+
+@pytest.mark.parametrize("count", [0, 2], ids=["empty", "nonempty"])
+@pytest.mark.parametrize("named", [False, True], ids=["adhoc", "named"])
+@pytest.mark.parametrize(
+    "header,output",
+    [
+        ("map using", "Text"),
+        ("keep if", "Boolean"),
+        ("drop if", "Boolean"),
+        ("sort ascending by", "Number"),
+        ("gather using", "Text"),
+        ("settle using", "Text"),
+    ],
+)
+def test_collection_call_sites_require_primary_input(
+    count: int, named: bool, header: str, output: str
+) -> None:
+    declaration = f"agic worker() -> {output}:\n  Work.\n" if named else ""
+    target = " worker" if named else ": Work."
+    with pytest.raises(ToolangError, match="requires primary input '_'"):
+        Program.from_source(
+            declaration
+            + f"flow work:\n  storm {count} using: Items\n  {header}{target}\n"
+        )
 
 
 def test_numeric_agreement_uses_value_and_zero_counts_remain_valid() -> None:

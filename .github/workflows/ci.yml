@@ -42,6 +42,9 @@ jobs:
       - name: Check lint
         run: uv run ruff check
 
+      - name: Check example sources
+        run: uv run --frozen too parse examples --check
+
       - name: Export runtime dependencies
         run: >-
           uv export --frozen --no-dev --no-emit-project
