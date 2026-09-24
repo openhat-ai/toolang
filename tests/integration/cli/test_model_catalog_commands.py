@@ -1192,6 +1192,77 @@ def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object
     }
 
 
+def test_models_persistent_listing_cache_skips_projection_on_unchanged_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    root = tmp_path / "root"
+    cache_dir = root / ".setup" / "models"
+    from toolang.setup import watcher as watcher_module
+
+    calls = {"build": 0, "resolve": 0}
+    original_build = watcher_module._build_catalog_listing
+    original_resolve = watcher_module._resolve_catalog
+
+    def count_build(*args, **kwargs):
+        calls["build"] += 1
+        return original_build(*args, **kwargs)
+
+    def count_resolve(*args, **kwargs):
+        calls["resolve"] += 1
+        return original_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(watcher_module, "_build_catalog_listing", count_build)
+    monkeypatch.setattr(watcher_module, "_resolve_catalog", count_resolve)
+
+    first = runner.invoke(
+        cli.app,
+        ["--root", str(root), "models", "--catalog", str(catalog), "--all", "--json"],
+        env={"TEST_API_KEY": "synthetic-key"},
+    )
+    assert first.exit_code == 0, first.stderr
+    assert calls == {"build": 1, "resolve": 1}
+    assert (cache_dir / "merged.json").is_file()
+    full_count = sum(
+        len(provider["models"]) for provider in json.loads(first.stdout).values()
+    )
+    assert full_count == 2
+
+    # Change query only: reuse the exact complete cache and filter after load.
+    second = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(root),
+            "models",
+            "--catalog",
+            str(catalog),
+            "--all",
+            "--query",
+            "test/one",
+            "--json",
+        ],
+        env={"TEST_API_KEY": "synthetic-key"},
+    )
+    assert second.exit_code == 0, second.stderr
+    assert calls == {"build": 1, "resolve": 1}
+    data = json.loads(second.stdout)
+    assert tuple(data["test"]["models"]) == ("one",)
+
+    # A relevant value change invalidates; source and process state stay isolated.
+    third = runner.invoke(
+        cli.app,
+        ["--root", str(root), "models", "--catalog", str(catalog), "--all", "--json"],
+        env={"TEST_API_KEY": "rotated-key"},
+    )
+    assert third.exit_code == 0, third.stderr
+    assert calls == {"build": 2, "resolve": 2}
+
+
 @pytest.mark.parametrize("agent", [False, True])
 @pytest.mark.parametrize("command", ["models", "providers"])
 def test_catalog_commands_share_default_and_complete_views(

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+from hashlib import sha256
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import Tool
@@ -39,6 +40,13 @@ from .cache import (
     catalog_loader,
     environment_identity,
     model_projection_key,
+)
+from .cache_environment import environment_fingerprint, environment_names
+from .model_listing import (
+    ModelCatalogListing,
+    ModelCatalogListingCache,
+    listing_revision,
+    listing_from_snapshot,
 )
 from .catalog import MergedModelCatalog, assemble_catalog
 from .config import (
@@ -148,9 +156,11 @@ class SetupWatcher:
         self._catalog_identity: FileObservation | None = None
         self._catalog_source: ModelCatalogSource | None = None
         self._source_revisions: tuple[tuple[str, str], ...] | None = None
-        self._model_cache = ModelCatalogCache(
+        cache_directory = (
             layout.home_model_cache if agent_context else layout.root_model_cache
         )
+        self._model_cache = ModelCatalogCache(cache_directory)
+        self.model_listing_cache = ModelCatalogListingCache(cache_directory)
         self._model_plugin_provenance = tuple(
             item.to_data()
             for group in ("toolang.model_catalog", "toolang.model_adapter")
@@ -176,6 +186,137 @@ class SetupWatcher:
         """
 
         self._setup = setup
+
+    async def load_catalog_listing(self) -> ModelCatalogListing:
+        """Load or rebuild the complete persistent model-list projection."""
+
+        inputs = self._load_inputs()
+        configs = (inputs.root_config, inputs.agent_config)
+        validate_models_config(configs)
+        allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
+        adapter_configs = merge_plugin_configs(configs, family="model_adapter")
+        catalog_path = resolve_model_catalog_path(
+            self.layout,
+            explicit=self._model_catalog_override,
+            environ=inputs.envs,
+            include_agent=self._agent_context,
+        )
+        catalog_configs = self._runtime_catalog_configs(
+            configs,
+            inputs.envs,
+            catalog_path=catalog_path,
+        )
+        catalogs = (
+            self._catalogs
+            if self._catalog_configs == catalog_configs
+            else load_model_catalogs(catalog_configs)
+        )
+        models_dev = catalogs.get("models_dev")
+        if not isinstance(models_dev, ModelsDevModelCatalog):
+            raise RuntimeError("models_dev catalog plugin is not installed")
+        observation, source = await asyncio.to_thread(models_dev.capture)
+        ordered_catalogs = _ordered_additional_catalogs(catalogs)
+        probes = await asyncio.gather(
+            *(catalog.snapshot() for catalog in ordered_catalogs)
+        )
+        dynamic = tuple(
+            (
+                catalog.name,
+                assemble_catalog(probe),
+                self._model_cache.content_revision(assemble_catalog(probe)),
+            )
+            for catalog, probe in zip(ordered_catalogs, probes, strict=True)
+        )
+        source_revisions = (
+            ("models_dev", source.revision),
+            *((name, revision) for name, _snapshot, revision in dynamic),
+        )
+        config_fingerprints = _config_byte_fingerprints(
+            self.layout, self._agent_context
+        )
+        plugin_values = tuple(
+            item.to_data()
+            for group in ("toolang.model_catalog", "toolang.model_adapter")
+            for item in plugin_provenance(group=group)
+        )
+        names = self.model_listing_cache.environment_names_for(
+            static_revision=source.revision,
+            dynamic_revisions=tuple(
+                (name, revision) for name, _snapshot, revision in dynamic
+            ),
+        )
+        if names is None:
+            static_for_names = await asyncio.to_thread(source.snapshot)
+            names_set = set(environment_names(static_for_names))
+            for _name, dynamic_snapshot, _revision in dynamic:
+                names_set.update(environment_names(dynamic_snapshot))
+            names_set.difference_update(_LOCAL_CATALOG_ENV)
+            names = tuple(sorted(names_set))
+        base_inputs: dict[str, object] = {
+            "projection_schema": 1,
+            "sources": [list(item) for item in source_revisions],
+            "config_files": config_fingerprints,
+            "adapter_config": _configuration_digest(adapter_configs),
+            "catalog_config": _configuration_digest(
+                {
+                    name: {
+                        key: value for key, value in config.items() if key != "environ"
+                    }
+                    for name, config in catalog_configs.items()
+                }
+            ),
+            "allow_models": None if allow.models is None else list(allow.models),
+            "plugins": list(plugin_values),
+        }
+        cached = self.model_listing_cache.load(
+            base_inputs=base_inputs,
+            environment_names=names,
+            environ=inputs.envs,
+        )
+        if cached is not None:
+            return cached
+
+        static = await asyncio.to_thread(source.snapshot)
+        try:
+            await asyncio.to_thread(
+                self._model_cache.store_source,
+                "models_dev",
+                revision=source.revision,
+                snapshot=static,
+            )
+        except Exception:
+            logger.warning("setup.model_cache_write_failed agent=%s", self.layout.name)
+        adapters = (
+            self._adapters
+            if self._adapter_configs == adapter_configs
+            else load_model_adapters(adapter_configs)
+        )
+        additional = tuple((name, snapshot) for name, snapshot, _revision in dynamic)
+        merged = await _merge_catalogs(static, additional)
+        resolved = _resolve_catalog(merged, adapters=adapters, envs=inputs.envs)
+        names = set(environment_names(static))
+        for _name, dynamic_snapshot, _revision in dynamic:
+            names.update(environment_names(dynamic_snapshot))
+        names.difference_update(_LOCAL_CATALOG_ENV)
+        environment = environment_fingerprint(tuple(names), inputs.envs)
+        listing_key = listing_revision(base_inputs, environment)
+        listing = _build_catalog_listing(
+            resolved,
+            allow_models=allow.models,
+            revision=listing_key,
+        )
+        try:
+            self.model_listing_cache.store(
+                listing,
+                base_inputs=base_inputs,
+                environment_names=tuple(names),
+                environ=inputs.envs,
+            )
+        except Exception:
+            logger.warning(
+                "setup.model_listing_cache_write_failed agent=%s", self.layout.name
+            )
+        return listing
 
     def diagnostics(self) -> tuple[SetupDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
@@ -617,6 +758,52 @@ def _build_setup(
         _catalog_loader=catalog_loader(snapshot, revision=revision),
         _all_tools=all_tools,
         _allowed_model_refs=frozenset(allowed_models.refs()),
+    )
+
+
+def _configuration_digest(value: object) -> str:
+    from toolang.common.cache import digest
+
+    return digest(value)
+
+
+def _config_byte_fingerprints(
+    layout: AgentLayout, agent_context: bool
+) -> list[list[str | None]]:
+    paths = (layout.root_config, *((layout.config,) if agent_context else ()))
+    values: list[list[str | None]] = []
+    for path in paths:
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            values.append([str(path.name), None])
+        else:
+            values.append([str(path.name), sha256(payload).hexdigest()])
+    return values
+
+
+def _build_catalog_listing(
+    snapshot: ModelCatalogSnapshot,
+    *,
+    allow_models: tuple[str, ...] | None,
+    revision: str,
+) -> ModelCatalogListing:
+    """Build full query facts and policy indexes without dropping catalog rows."""
+
+    dataset = catalog_model_dataset(snapshot)
+    all_models = ModelCollection(snapshot.models, query_views=dataset.items)
+    allowed = order_models(all_models, allow_models)
+    defaults = allowed.match("*[available]").compact()
+    return listing_from_snapshot(
+        ModelCatalogSnapshot(
+            providers=snapshot.providers,
+            models=snapshot.models,
+            revision=revision,
+            source=snapshot.source,
+            local=snapshot.local,
+        ),
+        allowed_refs=allowed.refs(),
+        default_refs=defaults.refs(),
     )
 
 

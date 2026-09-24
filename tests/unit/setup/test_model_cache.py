@@ -304,3 +304,94 @@ def test_source_cache_never_restores_persisted_effective_routes(tmp_path: Path) 
     assert loaded.providers["test"]._toolang.route == ModelRoute()
     assert loaded.models[0]._toolang.ready is False
     assert loaded.models[0]._toolang.route == ModelRoute()
+
+
+# Persistent derived model-list cache coverage.
+def test_model_listing_cache_round_trips_full_projection_and_hashes_environment(
+    tmp_path: Path,
+) -> None:
+    from toolang.plugin.catalogs.models_dev.parsing import (
+        model_catalog_snapshot_from_data,
+    )
+    from toolang.setup.model_listing import (
+        ModelCatalogListingCache,
+        listing_from_snapshot,
+    )
+    from toolang.setup.routes import resolve_catalog_providers
+    from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
+
+    raw = {
+        "test": {
+            "id": "test",
+            "name": "Test",
+            "env": ["TEST_API_KEY"],
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://${TEST_HOST}/v1",
+            "models": {
+                "one": {
+                    "id": "one",
+                    "name": "One",
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "limit": {},
+                    "tool_call": True,
+                },
+                "two": {
+                    "id": "two",
+                    "name": "Two",
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "limit": {},
+                },
+            },
+        }
+    }
+    source = model_catalog_snapshot_from_data(raw, revision="source-v1")
+    resolved = resolve_catalog_providers(
+        source,
+        adapters={"chat_completions": ChatCompletionsModelAdapter()},
+        environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
+    )
+    listing = listing_from_snapshot(
+        resolved,
+        allowed_refs=("test/one", "test/two"),
+        default_refs=("test/one",),
+    )
+    cache = ModelCatalogListingCache(tmp_path)
+    assert cache.store(
+        listing,
+        base_inputs={"sources": [["models_dev", "source-v1"]]},
+        environment_names=("TEST_HOST", "TEST_API_KEY"),
+        environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
+    )
+    serialized = (tmp_path / "merged.json").read_text(encoding="utf-8")
+    assert "secret-credential" not in serialized
+    assert "api.test" not in serialized
+    assert (
+        cache.load(
+            base_inputs={"sources": [["models_dev", "source-v1"]]},
+            environment_names=("TEST_HOST", "TEST_API_KEY"),
+            environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
+        )
+        is not None
+    )
+    assert (
+        cache.load(
+            base_inputs={"sources": [["models_dev", "source-v1"]]},
+            environment_names=("TEST_HOST", "TEST_API_KEY"),
+            environ={"TEST_API_KEY": "rotated-credential", "TEST_HOST": "api.test"},
+        )
+        is None
+    )
+    loaded = cache.load(
+        base_inputs={"sources": [["models_dev", "changed"]]},
+        environment_names=("TEST_HOST", "TEST_API_KEY"),
+        environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
+    )
+    assert loaded is None
+
+
+def test_model_listing_cache_rejects_corrupt_and_unsafe_data(tmp_path: Path) -> None:
+    from toolang.setup.model_listing import ModelCatalogListingCache
+
+    cache = ModelCatalogListingCache(tmp_path)
+    (tmp_path / "merged.json").write_text("{broken", encoding="utf-8")
+    assert cache.load(base_inputs={}, environment_names=(), environ={}) is None

@@ -35,7 +35,8 @@ from toolang.plugin.models.collections import (
     catalog_provider_views,
 )
 from toolang.setup import AgentSetup
-from toolang.setup.watcher import load_setup
+from toolang.setup.watcher import SetupWatcher, load_setup
+from toolang.setup.model_listing import ModelCatalogListing, ModelListStatus
 
 
 def models_command(
@@ -62,11 +63,13 @@ def models_command(
     """List or export model catalog entries."""
 
     try:
-        setup = _setup(ctx, model_catalog=model_catalog)
+        listing = _listing_sync_cached(ctx, model_catalog=model_catalog)
+    except AssertionError:
+        raise
     except TypeError as error:
         raise ClickException(str(error)) from error
-    snapshot = setup.model_catalog(all=all_)
-    dataset = catalog_model_dataset(snapshot)
+    snapshot, all_views = listing.view(all_models=all_)
+    dataset = catalog_model_dataset(snapshot, query_views=all_views)
     try:
         if query:
             MODEL_SCHEMA.parse(query)
@@ -88,7 +91,10 @@ def models_command(
         rows = [
             (
                 *row,
-                _model_status(model, allowed=setup.model_allowed(model.ref)),
+                _model_status(
+                    model,
+                    allowed=listing.status_by_ref[model.ref].allowed,
+                ),
             )
             for row, model in zip(rows, selected, strict=True)
         ]
@@ -192,6 +198,70 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     )
 
 
+def _listing_from_published_setup(setup: AgentSetup) -> ModelCatalogListing:
+    snapshot = setup.model_catalog(all=True)
+    dataset = catalog_model_dataset(snapshot)
+    views = cast(tuple[ModelQueryView, ...], dataset.items)
+    statuses = tuple(
+        ModelListStatus(
+            allowed=setup.model_allowed(model.ref),
+            ready=model._toolang.ready,
+            adapter=model._toolang.route.adapter,
+            api_present=model._toolang.route.api is not None,
+            env_present=model._toolang.route.env is not None,
+        )
+        for model in snapshot.models
+    )
+    return ModelCatalogListing(
+        snapshot=snapshot,
+        query_views=views,
+        statuses=statuses,
+        allowed_refs=tuple(
+            model.ref for model in snapshot.models if setup.model_allowed(model.ref)
+        ),
+        default_refs=setup.models.refs(),
+    )
+
+
+def _listing_sync_cached(
+    ctx: typer.Context,
+    *,
+    model_catalog: Path | None = None,
+) -> ModelCatalogListing:
+    if model_catalog is None and _setup is not _ORIGINAL_SETUP:
+        return _listing_from_published_setup(_setup(ctx))
+    layout, agent_context = _layout(ctx)
+    watcher = SetupWatcher(
+        layout,
+        model_catalog=resolve_model_catalog_option(model_catalog),
+        agent_context=agent_context,
+        validate_defaults=False,
+    )
+    return asyncio.run(watcher.load_catalog_listing())
+
+
+def _listing_sync(
+    ctx: typer.Context,
+    *,
+    model_catalog: Path | None = None,
+) -> ModelCatalogListing:
+    if model_catalog is None:
+        try:
+            return _listing_from_published_setup(_setup(ctx))
+        except AssertionError:
+            raise
+        except (OSError, ValueError, TypeError):
+            pass
+    layout, agent_context = _layout(ctx)
+    watcher = SetupWatcher(
+        layout,
+        model_catalog=resolve_model_catalog_option(model_catalog),
+        agent_context=agent_context,
+        validate_defaults=False,
+    )
+    return asyncio.run(watcher.load_catalog_listing())
+
+
 def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
     """Build one setup version for the catalog commands."""
 
@@ -204,6 +274,9 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
             validate_defaults=False,
         )
     )
+
+
+_ORIGINAL_SETUP = _setup
 
 
 def _provider_adapters(provider: Provider, models: Sequence[Model]) -> tuple[str, ...]:
