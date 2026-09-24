@@ -35,8 +35,8 @@ from toolang.plugin.models.collections import ModelCollection
 
 
 SOURCE = """agic chat(_: Part[]) -> Text:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 
@@ -544,7 +544,7 @@ def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversiz
 def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
     harness = ExecutionHarness.create(
         tmp_path,
-        source=SOURCE.replace("  context:", "  models = test/scripted\n  context:"),
+        source=SOURCE.replace("  context =", "  models = test/scripted\n  context ="),
         responses=[reply("old " * 18000), reply("middle"), reply("recent")],
     )
 
@@ -716,7 +716,7 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
                     from toolang.state.prepare import prepare_agent_state
 
                     (harness.setup.layout.home / "agent.too").write_text(
-                        SOURCE.replace("  context:", "  recall = none\n  context:"),
+                        SOURCE.replace("  context =", "  recall = none\n  context ="),
                         encoding="utf-8",
                     )
                     state = prepare_agent_state(harness.setup.layout)
@@ -1126,24 +1126,15 @@ def test_child_fixed_input_does_not_compact_unused_root_history(tmp_path):
 def test_compact_budget_rerenders_explicit_history_in_all_prompt_layers(
     tmp_path, layer, root
 ):
-    source = (
-        SOURCE
-        + f"""
-agic reader() -> Text:
-  context: none
-  instruct: none
-  {layer}: History: {{{{_past}}}}
-flow parent() -> Text:
-  run reader
-"""
-    )
-    # Each setting can appear only once; the selected layer contains history.
-    source = source.replace(f"  {layer}: none\n  {layer}:", f"  {layer}:")
-    if layer == "context":
-        source = source.replace(
-            "  context: none\n  instruct: none\n  context:",
-            "  instruct: none\n  context:",
-        )
+    source = SOURCE
+    if layer != "user":
+        source += f"\n{layer} history: History: {{{{_past}}}}\n"
+    source += "\nagic reader() -> Text:\n"
+    for setting in ("context", "instruct"):
+        source += f"  {setting} = {'history' if setting == layer else 'none'}\n"
+    if layer == "user":
+        source += "  user: History: {{_past}}\n"
+    source += "flow parent() -> Text:\n  run reader\n"
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,

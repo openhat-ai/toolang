@@ -35,8 +35,8 @@ from toolang.lang.input import resolve_input_parts
 _CHAT_SOURCE = """
 agic chat(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 

@@ -203,7 +203,7 @@ def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
 def test_recall_values_map_to_current_history_only_when_near_is_selected() -> None:
     for values, expected in [
         ((), True),
-        (("auto",), True),
+        (("default",), True),
         (("none",), False),
         (("far",), False),
         (("near",), True),

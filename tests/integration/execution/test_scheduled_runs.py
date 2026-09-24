@@ -44,14 +44,14 @@ SOURCE = """
 agic parent() -> Text:
   recall = none
   hands = agic:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Parent task.
 
 agic child() -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Private child task.
 """
 
@@ -386,8 +386,8 @@ def test_completion_keeps_returned_tool_parts_as_data(
 agic parent() -> Text:
   recall = none
   hands = flow:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Parent.
 
 flow child(_: Part[]) -> Part[]:

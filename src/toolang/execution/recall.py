@@ -24,7 +24,9 @@ from .types import (
 def recall_sources(values: Sequence[str] = ()) -> tuple[str, ...]:
     """Resolve the agic's history policy before assembling its messages."""
 
-    return ("far", "near") if not values or "auto" in values else tuple(values)
+    if not values or tuple(values) in (("default",), ("*",)):
+        return ("far", "near")
+    return () if tuple(values) == ("none",) else tuple(values)
 
 
 def history_variables(

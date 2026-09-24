@@ -41,20 +41,20 @@ from toolang.setup import AgentSetup
 _CHAT_SOURCE = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic session(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic selected(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 
@@ -623,14 +623,14 @@ def test_local_client_qualified_agic_fallback_skips_same_named_flow(
         source="""
 agic relay(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow chat(_: Part[]) -> Part[]:

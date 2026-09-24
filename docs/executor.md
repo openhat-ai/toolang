@@ -247,7 +247,7 @@ The implementation is divided by semantic level:
   instruct, context, and compact program.
 
 Tool-use conventions belong to the static `prompts/protocol.md`. Protocol stays
-first and unchanged across tool selection, `instruct: none`, and output repair.
+first and unchanged across tool selection, `instruct = none`, and output repair.
 Tool definitions remain structured `ToolDefinition` values; adapters choose their
 provider-specific representation. The model step decides whether tools are enabled.
 
@@ -326,7 +326,7 @@ ordinary tool-capable Agic call receives `_toolang__run`,
 execute targets; they do not select definitions. All tools use plugin registration
 and the same Tool Step lifecycle. Every call includes `toolang:hands` and
 `toolang:handoffs` in messages, as siblings before `toolang:context`, even with
-`context: none`. Each snapshot has `enabled="true"` and a complete JSON target
+`context = none`. Each snapshot has `enabled="true"` and a complete JSON target
 list, or `enabled="false"` and no body. Entries contain refs, descriptions and
 signatures, without redundant actions. Only the latest runtime snapshots apply;
 they have no revision, withdrawal, or recall metadata. Instructions stay stable

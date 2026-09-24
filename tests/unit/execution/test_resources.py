@@ -318,3 +318,42 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     )
     assert tuple(item.model_name for item in inner_agic.tools) == ("beta__two",)
     assert tuple(item.model_name for item in outer_sibling.tools) == ("alpha__one",)
+
+
+@pytest.mark.parametrize(
+    "key", ["models", "tools", "psyches", "skills", "services", "prompts"]
+)
+@pytest.mark.parametrize("operator", ["=", "+=", "-="])
+def test_none_resource_selector_has_empty_set_semantics(tmp_path, key, operator):
+    from toolang.lang import Program
+
+    setup, state, selection = _snapshots(tmp_path)
+    base = resolve_agent_resources(setup, state, AgentCeiling())
+    program = Program.from_source(
+        f"agic worker:\n  {key} {operator} none\n  user: Work.\n"
+    )
+    result = resolve_runnable_resources(
+        selection, runnable=program.agics[0], base=base, setup=setup, state=state
+    )
+    if operator == "=" and key in {"models", "tools"}:
+        assert getattr(result, key) == ()
+        assert getattr(result, "tools" if key == "models" else "models") == getattr(
+            base, "tools" if key == "models" else "models"
+        )
+    else:
+        assert result == base
+
+
+def test_none_then_include_stays_inside_the_parent_resource_ceiling(tmp_path):
+    from toolang.lang import Program
+
+    setup, state, selection = _snapshots(tmp_path)
+    base = resolve_agent_resources(setup, state, AgentCeiling(tools=("alpha/*",)))
+    program = Program.from_source(
+        "agic worker:\n  tools = none\n  tools += *\n  user: Work.\n"
+    )
+    result = resolve_runnable_resources(
+        selection, runnable=program.agics[0], base=base, setup=setup, state=state
+    )
+    assert result.tools == base.tools
+    assert [item.model_name for item in result.tools] == ["alpha__one"]

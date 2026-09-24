@@ -50,7 +50,7 @@ def test_named_main_can_be_called_through_authorized_routes(
     tmp_path: Path, kind: str, directive: str
 ) -> None:
     target = (
-        "agic main() -> Text:\n  recall = none\n  context: none\n  user: Main.\n"
+        "agic main() -> Text:\n  recall = none\n  context = none\n  user: Main.\n"
         if kind == "agic"
         else "flow main() -> Text:\n  run helper\n"
     )
@@ -62,7 +62,7 @@ agic caller() -> Text:
 
 agic helper() -> Text:
   recall = none
-  context: none
+  context = none
   user: Main.
 
 ## Use this entry for the general request.
@@ -130,14 +130,14 @@ def test_agic_dynamic_run_is_one_tool_step_and_one_child(tmp_path: Path) -> None
 agic parent(_: Text) -> Text:
   recall = none
   hands = agic:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic child(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Child {{_}}
 """,
         responses=(
@@ -252,14 +252,14 @@ def test_dynamic_run_decodes_part_array_wire_input(
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:check
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic reviewer(_: Part[]) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Review {{_}}
 
 flow check(_: Part[]) -> Text:
@@ -315,8 +315,8 @@ def test_dynamic_run_input_failure_returns_the_expected_signature(
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:check
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow check(_: Text, threshold: Number) -> Text:
@@ -393,8 +393,8 @@ def test_dynamic_run_input_failure_can_be_corrected(tmp_path: Path) -> None:
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:check
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow check(_: Text, threshold: Number) -> Text:
@@ -485,13 +485,13 @@ def test_wildcard_routes_hide_active_lineage_and_keep_completed_children(
 agic default() -> Text:
   hands = *
   handoffs = *
-  context: none
+  context = none
   Delegate the task.
 
 agic helper() -> Text:
   hands = *
   handoffs = *
-  context: none
+  context = none
   Help.
 """,
         responses=responses,
@@ -564,8 +564,8 @@ def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
 agic parent(_: Text, threshold: Number) -> Text:
   recall = none
   hands = agic:parent
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=(
@@ -627,8 +627,8 @@ def test_dynamic_run_rejects_an_ancestor_flow_and_model_recovers(
 agic caller(_: Text) -> Text:
   recall = none
   hands = flow:outer
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow outer(_: Text) -> Text:
@@ -701,8 +701,8 @@ agic default(_: Text) -> Text:
 agic caller(_: Text) -> Text:
   recall = none
   hands = flow:outer
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow -> Text:
@@ -816,8 +816,8 @@ def test_invalid_dynamic_run_records_failure_and_model_recovers(
 agic parent(_: Text) -> Text:
   recall = none
   hands = missing
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=(
@@ -870,14 +870,14 @@ def test_dynamic_child_failure_reports_completion_and_model_recovers(
 agic parent(_: Text) -> Text:
   recall = none
   hands = agic:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic child(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=(
@@ -947,8 +947,8 @@ def test_reload_records_a_tool_step_and_new_flow_runs_in_same_root(
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:new_flow
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1083,8 +1083,8 @@ def test_reload_then_run_does_not_rebuild_the_calling_agic_frame(
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow target(_: Text) -> Text:
@@ -1172,8 +1172,8 @@ def test_model_reload_applies_state_and_next_model_step_reports_missing_agic(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1243,8 +1243,8 @@ def test_dynamic_run_store_failure_fails_the_root(
 agic parent(_: Text) -> Text:
   recall = none
   hands = flow:child
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow child(_: Text) -> Text:
@@ -1308,8 +1308,8 @@ def test_reload_returns_candidate_diagnostics_without_a_control(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1376,8 +1376,8 @@ def test_reload_of_unchanged_state_records_an_applied_noop_control(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1453,8 +1453,8 @@ def test_reload_worker_failure_finishes_control_and_wakes_model(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1532,8 +1532,8 @@ def test_dynamic_run_uses_target_module_types_and_optional_arrays(
 agic parent(_: Text) -> Text:
   recall = none
   hands = research
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1548,8 +1548,8 @@ agic parent(_: Text) -> Text:
 
 agic echo(brief: Brief, prefix?: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{prefix}} {{brief.title}}
 
 flow research(brief: Brief, prefix?: Text) -> Text:
@@ -1633,14 +1633,14 @@ def test_execute_replaces_the_runnable_without_a_transition_step(
 agic caller(_: Text) -> Text:
   recall = none
   handoffs = agic:target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Caller {{_}}
 
 agic target(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Target {{_}}
 """,
         responses=(
@@ -1752,14 +1752,14 @@ def test_execute_resolves_a_fresh_structured_output_contract(tmp_path: Path) -> 
 agic caller(_: Text) -> Json:
   recall = none
   handoffs = agic:target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Caller {{_}}
 
 agic target(_: Text) -> Boolean:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Target {{_}}
 """,
         responses=(
@@ -1808,8 +1808,8 @@ def test_execute_failure_returns_to_the_calling_agic_without_a_control(
 agic caller(_: Text) -> Text:
   recall = none
   handoffs = agic:allowed
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic allowed -> Text:
@@ -1870,8 +1870,8 @@ def test_runtime_tools_are_available_without_routes_or_refresh(
         source="""
 agic caller() -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Call.
 """,
         responses=(
@@ -1928,8 +1928,8 @@ def test_reload_without_refresh_returns_a_correlated_runtime_error(
         source="""
 agic caller() -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Call.
 """,
         responses=(
@@ -1976,8 +1976,8 @@ def test_execute_must_be_the_only_model_tool_call(tmp_path: Path) -> None:
 agic caller() -> Text:
   recall = none
   handoffs = target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Call.
 
 agic target() -> Text:
@@ -2046,15 +2046,15 @@ def test_chained_execute_rejects_a_runnable_already_in_the_lineage(
 agic caller() -> Text:
   recall = none
   handoffs = target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Call.
 
 agic target() -> Text:
   recall = none
   handoffs = caller
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Target.
 """,
         responses=(
@@ -2127,15 +2127,15 @@ def test_chained_execute_controls_keep_one_run_and_reach_the_final_target(
 agic caller() -> Text:
   recall = none
   handoffs = middle
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Call.
 
 agic middle(_: Text) -> Text:
   recall = none
   handoffs = flow:deliver
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Middle {{_}}.
 
 flow deliver(_: Text) -> Text:
@@ -2206,8 +2206,8 @@ flow outer() -> Text:
 agic inner() -> Text:
   recall = none
   hands = flow:outer
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   Inner.
 """,
         responses=(
@@ -2348,24 +2348,26 @@ agic target() -> Text:
 def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
     tmp_path: Path,
 ) -> None:
-    source = """
+    source = """instruct target_instruct:
+  old target state
+  bound route {{runnable.name}}
+
+
 flow outer(_: Text) -> Text:
   run caller
 
 agic caller(_: Text) -> Text:
   recall = none
   hands = agic:target
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic target(_: Text) -> Text:
   recall = none
   tools = beta/*
-  context: none
-  instruct:
-    old target state
-    bound route {{runnable.name}}
+  context = none
+  instruct = target_instruct
   user: {{_}}
 """
     target = "target"

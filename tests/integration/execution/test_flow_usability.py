@@ -1,12 +1,11 @@
 """Flow contracts, inherited frames, and iteration history at execution boundaries.
 
-New clauses are supplied as AST fields until the tree-sitter grammar is updated.
+Authored clauses are parsed from source through the installed grammar.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,6 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import ThreadPrefix
 from toolang.lang import Program
-from toolang.lang.ast import RepeatStmt, SettleStmt
 
 
 def _create(
@@ -91,7 +89,7 @@ agic predicate -> Boolean:
 agic score -> Number:
   Score.
 flow main() -> {output}:
-  scatter 1 using seed
+  scatter using seed
   {operation}
 """,
         responses=["[]"],
@@ -116,7 +114,7 @@ agic seed() -> Text[]:
 agic reduce:
   Reduce.
 flow main():
-  scatter 1 using seed
+  scatter using seed
   {operation} using reduce
 """,
         responses=["[]"],
@@ -134,7 +132,7 @@ def test_scatter_and_storm_can_omit_primary_and_keep_nested_arrays(
         tmp_path,
         source="""
 flow main() -> Text[][]:
-  scatter 9 using:
+  scatter using:
     Make two strings.
   storm 2 in 1 lane using -> Text[]:
     Make a pair.
@@ -155,7 +153,7 @@ def test_settle_uses_first_element_then_passes_current_and_previous_output(
 agic seed() -> Text[]:
   Seed.
 flow main():
-  scatter 3 using seed
+  scatter using seed
   settle using:
     current={{_}}; previous={{_1._}}
 """,
@@ -190,20 +188,14 @@ agic seed() -> Text[]:
 agic reduce -> {output}:
   user: current={{{{_}}}}; previous={{{{_1._}}}}
 flow main() -> {output}:
-  scatter 1 using seed
+  scatter using seed
   settle using reduce
 """
-    program = Program.from_source(source)
-    flow = program.flows[0]
-    settle = flow.stmts[-1]
-    assert isinstance(settle, SettleStmt)
-    program = replace(
-        program,
-        flows=(
-            replace(flow, stmts=(*flow.stmts[:-1], replace(settle, initial=initial))),
-        ),
-    )
-    harness = _create(tmp_path, source=source, program=program, responses=responses)
+    if initial is not None:
+        source = source.replace(
+            "  settle using reduce\n", f"  settle using reduce:\n    from: {initial}\n"
+        )
+    harness = _create(tmp_path, source=source, responses=responses)
     run, output, error = _run(harness)
     assert run.status == ("succeeded" if expected is not None else "failed"), run.error
     if expected is not None:
@@ -222,23 +214,16 @@ agic seed() -> Text[]:
 agic reduce(_: Number) -> Text:
   user: Add {{_}} to {{_1._}}.
 flow main():
-  scatter 3 using seed
+  scatter using seed
   settle using reduce
 """
-    program = Program.from_source(source)
-    flow = program.flows[0]
-    settle = flow.stmts[-1]
-    assert isinstance(settle, SettleStmt)
-    program = replace(
-        program,
-        flows=(
-            replace(flow, stmts=(*flow.stmts[:-1], replace(settle, initial=initial))),
-        ),
-    )
+    if initial is not None:
+        source = source.replace(
+            "  settle using reduce\n", f"  settle using reduce:\n    from: {initial}\n"
+        )
     harness = _create(
         tmp_path,
         source=source,
-        program=program,
         responses=[items, "seed+2", "seed+2+3"],
     )
     run, output, error = _run(harness)
@@ -313,17 +298,11 @@ flow main:
 def test_until_window_is_local_and_out_of_window_is_an_error(tmp_path: Path) -> None:
     source = """
 flow main:
-  repeat 1 time:
+  repeat 1 time windowing 1:
     run: Improve {{_}}.
     until: {{#_2}}true{{/_2}}
 """
-    program = Program.from_source(source)
-    repeat = program.flows[0].stmts[0]
-    assert isinstance(repeat, RepeatStmt)
-    program = replace(
-        program, flows=(replace(program.flows[0], stmts=(replace(repeat, window=1),)),)
-    )
-    harness = _create(tmp_path, source=source, program=program, responses=["a"])
+    harness = _create(tmp_path, source=source, responses=["a"])
     run, output, error = _run(harness, primary="seed")
     assert run.status == "failed"
     assert "outside the active window" in str(error)
@@ -335,13 +314,12 @@ def test_inherited_until_template_adds_history_requirement(tmp_path: Path) -> No
 instruct condition:
   Compare against {{_2._}}.
 flow main:
+  instruct = condition
   repeat 4 times:
     let note = unchanged
     until: Return true.
 """
-    program = Program.from_source(source)
-    program = replace(program, flows=(replace(program.flows[0], instruct="condition"),))
-    harness = _create(tmp_path, source=source, program=program, responses=["true"])
+    harness = _create(tmp_path, source=source, responses=["true"])
     run, output, error = _run(harness, primary="seed")
     assert run.status == "succeeded", run.error
     assert len(harness.adapter.invocations) == 1
@@ -352,8 +330,6 @@ flow main:
 def test_lane_defaults_inherit_and_statement_override_is_local(
     tmp_path: Path, child_lanes: int | None
 ) -> None:
-    from toolang.lang.ast import Directive, Span
-
     source = """
 agic worker():
   Work.
@@ -361,32 +337,17 @@ flow child() -> Text[]:
   storm 1 in 1 lane using worker
   storm 3 using worker
 flow main() -> Text[][]:
+  lanes = 2
   storm 1 using child
 """
-    program = Program.from_source(source)
-    child, main = program.flows
-    main = replace(
-        main,
-        directives=(
-            Directive(name="lanes", operator="=", values=("2",), span=Span(line=1)),
-        ),
-    )
     if child_lanes is not None:
-        child = replace(
-            child,
-            directives=(
-                Directive(
-                    name="lanes",
-                    operator="=",
-                    values=(str(child_lanes),),
-                    span=Span(line=1),
-                ),
-            ),
+        source = source.replace(
+            "flow child() -> Text[]:\n",
+            f"flow child() -> Text[]:\n  lanes = {child_lanes}\n",
         )
     harness = _create(
         tmp_path,
         source=source,
-        program=replace(program, flows=(child, main)),
         responses=["a", "b", "c", "d"],
     )
 
@@ -421,11 +382,11 @@ def test_child_recall_can_override_flow_none_without_automatic_history(
         tmp_path,
         source="""
 agic seed():
-  context: none
+  context = none
   user: old question
 agic worker(note):
   recall = near
-  context: none
+  context = none
   user: flow={{note}}; history={{_past}}
 flow main():
   recall = none
@@ -463,7 +424,7 @@ instruct secret:
   Use {{topic}}.
 agic parent(topic):
   hands = worker
-  instruct: secret
+  instruct = secret
   user: Delegate.
 agic worker():
   user: Work.
@@ -513,23 +474,14 @@ agic seed() -> Text[]:
   Seed.
 flow main():
   repeat 2 times:
-    scatter 1 using seed
+    scatter using seed
     settle using:
       current={{_}}; seed={{_1._}}
+      from: {{#_1}}{{_1._}}{{/_1}}{{^_1}}start{{/_1}}
 """
-    program = Program.from_source(source)
-    flow = program.flows[0]
-    repeat = flow.stmts[0]
-    assert isinstance(repeat, RepeatStmt)
-    settle = repeat.stmts[1]
-    assert isinstance(settle, SettleStmt)
-    initial = "{{#_1}}{{_1._}}{{/_1}}{{^_1}}start{{/_1}}"
-    repeat = replace(repeat, stmts=(repeat.stmts[0], replace(settle, initial=initial)))
-    program = replace(program, flows=(replace(flow, stmts=(repeat,)),))
     harness = _create(
         tmp_path,
         source=source,
-        program=program,
         responses=['["a"]', "first", '["b"]', "second"],
     )
     run, output, error = _run(harness)
@@ -546,20 +498,11 @@ agic seed() -> Text[]:
 agic fold -> Number[]:
   user: Merge {{_}} into {{_1._}}.
 flow main() -> Number[]:
-  scatter 1 using seed
-  settle using fold
+  scatter using seed
+  settle using fold:
+    from: [1,2]
 """
-    program = Program.from_source(source)
-    flow = program.flows[0]
-    settle = flow.stmts[1]
-    assert isinstance(settle, SettleStmt)
-    program = replace(
-        program,
-        flows=(replace(flow, stmts=(flow.stmts[0], replace(settle, initial="[1,2]"))),),
-    )
-    harness = _create(
-        tmp_path, source=source, program=program, responses=['["a"]', "[1,2,3]"]
-    )
+    harness = _create(tmp_path, source=source, responses=['["a"]', "[1,2,3]"])
     run, output, error = _run(harness)
     assert run.status == "succeeded", error
     assert "Merge a into [1,2]." in _texts(harness)[1]

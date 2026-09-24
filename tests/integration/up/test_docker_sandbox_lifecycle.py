@@ -32,11 +32,12 @@ pytestmark = pytest.mark.live_docker
 
 _MODEL = "ollama/test-ollama:latest"
 _MODEL_REPLY = "reply from the host model"
-_ECHO_PROGRAM = """\
+_ECHO_PROGRAM = """instruct echo_instruct: Return the input exactly.
+
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: Return the input exactly.
+  context = none
+  instruct = echo_instruct
   user: {{_}}
 """
 _AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"

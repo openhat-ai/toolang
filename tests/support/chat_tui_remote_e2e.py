@@ -37,8 +37,8 @@ def main() -> None:
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("hello from remote e2e"))],

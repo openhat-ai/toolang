@@ -24,8 +24,8 @@ from tests.support.execution_harness import ExecutionHarness
 _SOURCE = """
 agic echo(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 

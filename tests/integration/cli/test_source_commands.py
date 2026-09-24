@@ -52,7 +52,7 @@ def test_tree_and_representation_are_independent(tree, representation):
     "bad,kind,line",
     [
         ("flow broken:\n  run\n", "invalid", 2),
-        ("struct :\n  field: Text\n", "missing", 1),
+        ("struct X:\n  field:\n", "missing", 2),
         ("@", "error", 1),
     ],
 )
@@ -91,8 +91,8 @@ instruct concise:
 ## @param _ Input documentation.
 agic action(_: Text, focus?) -> Review:
   models = model-name
-  context: shared
-  instruct: concise
+  context = shared
+  instruct = concise
   user: Review {{_}}.
 agic pieces -> Text[]:
   pass
@@ -104,7 +104,7 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter 2 using pieces
+  scatter using pieces
   storm 3 using action in 2 lanes
   gather using action
   settle using action

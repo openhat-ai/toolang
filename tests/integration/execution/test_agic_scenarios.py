@@ -85,8 +85,8 @@ def test_agic_executes_perceived_text_and_typed_arguments(
         source="""
 agic reply(_: Part[], tone: Text) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Reply to {{_}} in {{tone}}.
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -145,8 +145,8 @@ agic decide(_: Text) -> Boolean:
   hands = helper
   handoffs = helper
   tools = lookup/*
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic helper(_: Text) -> Boolean:
@@ -225,8 +225,8 @@ def test_retry_restarts_an_agic_cycle_with_a_fresh_step_index(
         source="""
 agic reply(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -299,8 +299,8 @@ def test_reasoning_effort_reaches_accounting_and_restart_persistence(
         source="""
 agic reply(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=responses,
@@ -471,8 +471,8 @@ def test_named_only_agic_records_only_the_local_it_reads(tmp_path: Path) -> None
         source="""
 agic reply(topic: Text) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Discuss {{topic}}.
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -512,8 +512,8 @@ def test_agic_preserves_multimodal_input_and_output(tmp_path: Path) -> None:
         source="""
 agic inspect(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message(role="assistant", parts=(audio,)))],
@@ -548,8 +548,8 @@ def test_streaming_agic_traces_deltas_and_persists_final_output(
         source="""
 agic stream(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -609,8 +609,8 @@ def test_streaming_agic_rejects_a_final_result_that_rewrites_deltas(
         source="""
 agic stream(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -675,8 +675,8 @@ def test_streaming_agic_rejects_a_result_that_rewrites_the_part_end(
         source="""
 agic stream(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -753,8 +753,8 @@ def test_streaming_tool_call_deltas_share_one_terminal_part(
         source="""
 agic calculate(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -823,8 +823,8 @@ def test_streaming_model_preserves_text_and_image_part_order(
         source="""
 agic illustrate(_: Text) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1165,8 +1165,8 @@ def test_streaming_failure_closes_the_model_step_after_partial_output(
         source="""
 agic stream(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1226,8 +1226,8 @@ def test_streaming_cancellation_closes_the_model_step_after_partial_output(
         source="""
 agic stream(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1302,8 +1302,8 @@ def test_agic_tool_loop_persists_and_replays_each_call(tmp_path: Path) -> None:
         source="""
 agic calculate(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1392,8 +1392,8 @@ def test_multiple_tool_failures_are_reported_in_order_and_can_recover(
         source="""
 agic calculate(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1479,8 +1479,8 @@ def test_recovered_tool_failure_does_not_hide_a_later_runtime_failure(
         source="""
 agic calculate(_: Text) -> Number:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1537,8 +1537,8 @@ def test_agic_model_call_limit_records_a_direct_run_error(
         source="""
 agic loop(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(tool_calls=(call,)) for call in calls],
@@ -1585,8 +1585,8 @@ def test_agent_setup_limits_are_used_and_run_can_override_them(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -1655,8 +1655,8 @@ def test_agic_tool_call_limit_counts_each_emitted_call(
         source="""
 agic loop(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(tool_calls=calls)],
@@ -1690,8 +1690,8 @@ def test_run_token_limit_uses_model_usage(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1752,8 +1752,8 @@ def test_model_step_records_cost_and_enforces_run_cost_limit(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1806,8 +1806,8 @@ def test_run_cost_limit_allows_unknown_pricing_as_partial_coverage(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("unused"))],
@@ -1840,8 +1840,8 @@ def test_run_token_limit_requires_provider_usage(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("done"))],
@@ -1879,8 +1879,8 @@ def test_run_time_limit_cancels_an_inflight_model_as_failure(
         source="""
 agic reply(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -1922,8 +1922,8 @@ def test_invalid_input_is_rejected_before_run_acceptance(
         source="""
 agic text_only(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("unused"))],
@@ -1956,8 +1956,8 @@ def test_model_failure_records_one_failed_model_step(
         source="""
 agic fail(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[RuntimeError("provider unavailable")],
@@ -2000,8 +2000,8 @@ def test_agic_rejects_a_reasoning_exhausted_final_output(tmp_path: Path) -> None
         tmp_path,
         source="""
 agic chat(_: Text):
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -2043,8 +2043,8 @@ def test_agic_rejects_a_blank_final_output(tmp_path: Path) -> None:
         tmp_path,
         source="""
 agic chat(_: Text):
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(usage=ModelUsage(input_tokens=8, output_tokens=1))],
@@ -2072,7 +2072,7 @@ def test_model_step_keeps_the_setup_revision_after_refresh(tmp_path):
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic reply(_: Text) -> Text:\n  recall = none\n  context: none\n  instruct: none\n  user: {{_}}\n",
+        source="agic reply(_: Text) -> Text:\n  recall = none\n  context = none\n  instruct = none\n  user: {{_}}\n",
         responses=[
             ScriptedModelTurn(
                 gate=gate,

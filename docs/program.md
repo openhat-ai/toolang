@@ -384,8 +384,8 @@ agic review(_, focus?: Text) -> ReviewResult:
   skills += review
   tools = shell/*
   recall = near
-  context: default
-  instruct: strict
+  context = default
+  instruct = strict
 
   user:
     Review {{_}} with focus {{focus}}.
@@ -403,28 +403,21 @@ resource base. Use `<toolset>/*`, such as `web/*`, to narrow it to one toolset.
 
 ### Directives
 
-Common directives are:
+Agics and flows share these directives:
 
-```text
-models
-psyches
-skills
-services
-prompts
-tools
-recall
-hands
-handoffs
-```
+| Type | Directives | Operators | Values |
+| --- | --- | --- | --- |
+| Q | models, tools, psyches, skills, services, prompts | `=`, `+=`, `-=` | Match union query; `none` or `*` |
+| L | hands, handoffs | `=` | CSV runnable references; standalone `none` or `*` |
+| L | recall | `=` | CSV `far`/`near`; standalone `none`, `default`, or `*` |
+| V | lanes | `=` | Positive integer or `default` (4) |
+| V | instruct, context | `=` | Declaration name, `none`, or `default` |
 
-Selection directives apply ordered set operations to the immutable run
-snapshot:
-
-```text
-=   keep only matching selected items
-+=  add matching program-scoped items
--=  remove matching selected items
-```
+Values cannot be empty. Directives precede messages or flow statements.
+Configuration directives occur at most once. Resource operations apply in source
+order: `=` retains matching selected items, `+=` includes matches from the fixed
+base, and `-=` excludes matches. `none` is the empty set, so `= none` clears the
+selection and `+= none` / `-= none` leave it unchanged.
 
 Resource selectors (`models`, `tools`, `psyches`, `skills`, `services`, and
 `prompts`) operate within the immediate parent's effective resources, intersected
@@ -433,15 +426,18 @@ fixed base. Roots start from agent resources; calls and execute transfers cannot
 expand the caller's boundary.
 
 Both agics and flows accept `recall`, `hands`, and `handoffs`. Omission inherits
-the immediate parent's value. `recall = auto` selects both history sources;
-`none`, `far`, `near`, and `far, near` select a view of the full root snapshot.
+the immediate parent's value. Root recall defaults to `far, near`; `default`
+selects that default and `*` selects all available sources. `none`, `far`, `near`,
+and either CSV source order select a view of the full root snapshot. `auto` is
+not supported; use `far, near` to explicitly select those two sources.
 The runtime exposes `_far` (summary text), `_near` (recent message data), and
 `_past` (summary followed by recent messages). Excluded sources are empty.
 Only root agics prepend historical messages automatically; child agics reference
 these variables explicitly. Compaction updates subsequent frames throughout
 the run tree.
 
-`hands` and `handoffs` select public runnable routes with `=`. An explicit
+`hands` and `handoffs` select exact public runnable references with `=`.
+`none` disables routes; `*` selects all public runnables. They do not accept queries. An explicit
 selection replaces inherited routes independently of resource restrictions:
 
 ```too
@@ -505,12 +501,12 @@ context:
 `timezone` is `UTC`. Both remain fixed for the complete recursive run tree so
 child runs and later model calls observe the same temporal context.
 
-An agic may select one of each:
+An agic or flow may select one of each:
 
 ```too
 agic report(_):
-  context: report
-  instruct: strict
+  context = report
+  instruct = strict
   Write the report.
 ```
 
@@ -522,16 +518,16 @@ none     disable this layer
 NAME     named declaration
 ```
 
-An inline `context:` or `instruct:` body is lowered into a generated top-level
-declaration named `<context:LINE>` or `<instruct:LINE>`. Omitting the statement
-leaves the AST reference as `None`; runtime inherits the parent's resolved
-selection and declaring module. Roots select their module/built-in default.
-`default` explicitly selects the current module; `none` disables the layer.
-Inherited templates render using the child's bound parameters and runtime
-variables; missing dependencies fail rather than capturing parent locals.
+Declare prompt content at module level; runnable-local inline definitions are
+not supported. An unnamed declaration overrides the module's default. `default`
+always exists: absent a module declaration, runtime uses the system fallback.
+Only an explicitly selected nonexistent name causes a reference error.
 
-`system:` is not an agic message block. Use `instruct:` for instructions and
-`context:` for data.
+Omission inherits the parent's resolved selection and declaring module; roots
+use their module/system default. Explicit `default` selects the current module,
+while `none` disables the layer. Inherited templates render using the child's
+bound parameters and runtime variables; missing dependencies fail rather than
+capturing parent locals. The runtime protocol remains independent of instruct.
 
 
 ### Messages
@@ -564,7 +560,7 @@ A flow is an ordered list of static statements:
 
 ```too
 flow research(_: Text) -> Report:
-  scatter 8 using expand
+  scatter using expand
   keep if relevant in 4 lanes
   sort descending by score in 3 lanes
   keep first 3
@@ -576,9 +572,6 @@ configuration as agics. Every call inherits the immediate parent's resource
 boundary, including nested flows and public run/execute calls. Configuration
 can be overridden; resources can only be narrowed.
 
-The current tree-sitter dependency still needs syntax support for `lanes`, flow
-`instruct/context`, and empty route selectors. Their AST/runtime behavior is
-implemented; see the [syntax requirements](./plans/flow-usability.md#9-syntax-requirements).
 Statement syntax, bindings, inline agics, and result shapes are defined in
 [flow-syntax.md](./flow-syntax.md).
 
@@ -683,7 +676,7 @@ output schema; each model adapter maps those fields to its provider API.
 | Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
 | Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
 | Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
-| Hands/handoffs | Complete current call authorization and signatures, with explicit `enabled` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context: none` |
+| Hands/handoffs | Complete current call authorization and signatures, with explicit `enabled` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context = none` |
 | Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` prepended to the last authored user message; repeated as a user message on later calls |
 | Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
 | Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
@@ -698,12 +691,12 @@ filters run before snapshot size limits; execution still rejects recursive calls
 
 ### Selection And Priority
 
-Runtime protocol is always present: program-default, named, inline, and disabled
-instruct selections cannot remove it. `instruct: none` disables only the
+Runtime protocol is always present: program-default, named, and disabled
+instruct selections cannot remove it. `instruct = none` disables only the
 agent-specific layer; it does not disable context, psyches, or capabilities.
 Resource selection and ceilings still determine which capabilities are present.
-`context: none` independently disables context. The runtime wraps every nonempty
-rendered context in `<toolang:context>`, including program-default, named, and inline
+`context = none` independently disables context. The runtime wraps every nonempty
+rendered context in `<toolang:context>`, including program-default and named
 selections. Empty rendered context adds no block. Authors should supply only the
 context body, not its wrapper.
 

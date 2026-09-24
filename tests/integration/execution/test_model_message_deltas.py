@@ -67,8 +67,8 @@ from toolang.state.prepare import prepare_agent_state
 SOURCE = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 
@@ -84,11 +84,15 @@ agic chat(_: Part[]) -> Part[]:
 def test_replay_after_reload_needs_only_execution_records(
     tmp_path: Path, target: RecallTarget
 ) -> None:
-    source = """
+    source = """instruct chat_instruct: original instructions
+
+context chat_context: original context
+
+
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  instruct: original instructions
-  context: original context
+  instruct = chat_instruct
+  context = chat_context
   user: {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")

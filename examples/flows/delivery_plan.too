@@ -154,7 +154,7 @@ flow(_: Text, constraints?):
     {{_}}
 
   ## Decompose the project into independently actionable workstreams
-  scatter 5 using decompose
+  scatter using decompose
   ## Plan independent workstreams concurrently
   map using plan_workstream in 4 lanes
   ## Reconcile the workstreams into one dependency-aware draft
@@ -164,7 +164,7 @@ flow(_: Text, constraints?):
     {{_}}
 
   ## Select review perspectives suited to this particular plan
-  scatter 3 using review_lenses
+  scatter using review_lenses
   ## Challenge the draft from each perspective concurrently
   map using review_plan in 3 lanes
   ## Apply the independent reviews sequentially to one evolving plan

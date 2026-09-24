@@ -43,7 +43,7 @@ from toolang.setup import ModelCollection
 
 SOURCE = """
 agic chat() -> Text:
-  context: none
+  context = none
   user: Complete the task.
 """
 GUIDANCE = "Unique guidance <body>: test before publishing."
@@ -152,25 +152,26 @@ def _assert_replay_without_state(harness, tracer, monkeypatch):
         ),
         pytest.param(
             "instruct: Program behavior.\n",
-            "  instruct: default\n",
+            "  instruct = default\n",
             "Program behavior.",
             id="explicit-default",
         ),
         pytest.param(
             "instruct: Unselected behavior.\ninstruct specialist: Named behavior.\n",
-            "  instruct: specialist\n",
+            """  instruct = specialist
+""",
             "Named behavior.",
             id="named",
         ),
         pytest.param(
-            "instruct: Unselected behavior.\n",
-            "  instruct:\n    Inline behavior.\n",
-            "Inline behavior.",
-            id="inline",
+            "instruct: Unselected behavior.\ninstruct selected:\n  Selected behavior.\n",
+            "  instruct = selected\n",
+            "Selected behavior.",
+            id="named-block",
         ),
         pytest.param(
             "instruct: Unselected behavior.\n",
-            "  instruct: none\n",
+            "  instruct = none\n",
             None,
             id="none",
         ),
@@ -183,7 +184,7 @@ def test_instruct_selection_preserves_layers_and_guidance_delivery(
         tmp_path,
         [_calls(_pick(kind=kind)), _answer()],
         source=declarations
-        + SOURCE.replace("  context: none", selection + "  context: none"),
+        + SOURCE.replace("  context = none", selection + "  context = none"),
         psyche="Apply the precise psyche.",
     )
     tracer = RecordingRunTracer()
@@ -298,9 +299,12 @@ def test_catalog_escaping_preserves_pick_targets_and_recalled_source(
 
 @pytest.mark.parametrize("restriction", ["directive", "ceiling"])
 def test_instruct_cannot_restore_excluded_capabilities(tmp_path: Path, restriction):
-    source = SOURCE.replace(
-        "  context: none",
-        "  instruct: Use the precise psyche and all guidance.\n  context: none",
+    source = (
+        "instruct selected: Use the precise psyche and all guidance.\n"
+        + SOURCE.replace(
+            "  context = none",
+            "  instruct = selected\n  context = none",
+        )
     )
     if restriction == "directive":
         source = source.replace(
@@ -350,8 +354,8 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
         tmp_path,
         [_answer()],
         source=SOURCE.replace(
-            "  context: none",
-            "  hands = helper\n  handoffs = helper\n  instruct: none\n  context: none",
+            "  context = none",
+            "  hands = helper\n  handoffs = helper\n  instruct = none\n  context = none",
         )
         + "\nagic helper:\n  Help.\n",
         psyche="Apply the precise psyche.",
@@ -465,12 +469,12 @@ def test_pick_reuses_pending_then_visible_guidance(
     _assert_replay_without_state(harness, tracer, monkeypatch)
 
 
-@pytest.mark.parametrize("recall", ["auto", "none"])
+@pytest.mark.parametrize("recall", ["default", "none"])
 def test_only_selected_near_counts_in_the_next_run(tmp_path: Path, recall):
     harness, _ = _harness(
         tmp_path,
         [_calls(_pick()), _answer(), _calls(_pick()), _answer()],
-        source=SOURCE.replace("context: none", f"recall = {recall}\n  context: none"),
+        source=SOURCE.replace("context = none", f"recall = {recall}\n  context = none"),
     )
     tracer = RecordingRunTracer()
 
@@ -485,7 +489,7 @@ def test_only_selected_near_counts_in_the_next_run(tmp_path: Path, recall):
             ]
             assert all(run.status == "succeeded" for run in runs)
             assert len(_recalls(harness, runs[0])) == 1
-            assert len(_recalls(harness, runs[1])) == (0 if recall == "auto" else 1)
+            assert len(_recalls(harness, runs[1])) == (0 if recall == "default" else 1)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -501,7 +505,7 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
         SOURCE
         if ceiling
         else SOURCE.replace(
-            "context: none", f"{kind}s = {kind}/{name}\n  context: none"
+            "context = none", f"{kind}s = {kind}/{name}\n  context = none"
         )
     )
     harness, _ = _harness(
@@ -580,7 +584,7 @@ def test_pick_intersects_caller_resources_with_target_module_visibility(
   {module_guidance}
 
 agic worker() -> Text:
-  context: none
+  context = none
   user: Complete the module task.
 
 flow research() -> Text:
@@ -616,7 +620,7 @@ flow research() -> Text:
             ),
         ],
         source=SOURCE.replace(
-            "context: none", f"{directive} = research\n  context: none"
+            "context = none", f"{directive} = research\n  context = none"
         ),
     )
     tracer = RecordingRunTracer()
@@ -689,7 +693,7 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
             ):
                 harness.setup.layout.program.write_text(
                     SOURCE.replace(
-                        "context: none", "skills = skill/testing\n  context: none"
+                        "context = none", "skills = skill/testing\n  context = none"
                     ),
                     encoding="utf-8",
                 )
@@ -973,10 +977,10 @@ def test_fork_visibility_survives_source_rewind(tmp_path: Path):
 
 def test_execute_starts_a_new_now_without_restoring_guidance(tmp_path: Path):
     source = (
-        SOURCE.replace("context: none", "handoffs = agic:target\n  context: none")
+        SOURCE.replace("context = none", "handoffs = agic:target\n  context = none")
         + """
 agic target() -> Text:
-  context: none
+  context = none
   user: Continue in the target.
 """
     )
@@ -1028,7 +1032,7 @@ def test_parallel_children_keep_pending_and_adopted_recalls_isolated(tmp_path: P
         SOURCE
         + """
 agic child(_: Part[]) -> Part[]:
-  context: none
+  context = none
   user: Child task.
 
 flow parent(_: Part[]) -> Part[][]:

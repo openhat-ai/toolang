@@ -386,8 +386,8 @@ def _run_steer_fixture() -> None:
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ScriptedModelTurn(result=result, gate=FileGate()), result, result],

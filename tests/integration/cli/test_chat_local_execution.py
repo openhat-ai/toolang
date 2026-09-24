@@ -213,8 +213,8 @@ def test_local_chat_defaults_materialize_configured_model(tmp_path: Path) -> Non
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=(),
@@ -241,8 +241,8 @@ def test_local_chat_model_list_uses_the_collection_default(tmp_path: Path) -> No
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=(),
@@ -413,8 +413,8 @@ def test_local_chat_uses_run_client_and_canonical_tracer(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """.replace("agic chat", "agic" if entry == "<entry>" else "agic chat"),
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
@@ -606,8 +606,8 @@ def test_local_chat_thread_title_comes_from_the_first_run(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("hello back"))],

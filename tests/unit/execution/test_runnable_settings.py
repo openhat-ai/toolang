@@ -37,7 +37,7 @@ def test_settings_inherit_across_runnable_kinds_without_changing_siblings():
             directives=(
                 directive("lanes", "8"),
                 directive("recall", "near"),
-                directive("hands"),
+                directive("hands", "none"),
                 directive("handoffs", "helper"),
             ),
         ),
@@ -45,7 +45,7 @@ def test_settings_inherit_across_runnable_kinds_without_changing_siblings():
         flow,
     )
     assert child.lanes == 8 and child.recall == ("near",)
-    assert child.hands == () and child.handoffs == ("helper",)
+    assert child.hands == ("none",) and child.handoffs == ("helper",)
     assert child.context == PromptSetting("module", "default")
     assert child.instruct == PromptSetting("module", "none")
     assert parent.lanes == 2 and parent.hands == ("worker",)
@@ -58,7 +58,7 @@ def test_settings_inherit_across_runnable_kinds_without_changing_siblings():
 def test_root_defaults_are_concrete():
     settings = resolve_settings(FlowDecl(name="root", span=SPAN), "module")
     assert settings.lanes == 4
-    assert settings.recall == ("auto",)
+    assert settings.recall == ("far", "near")
     assert settings.hands == settings.handoffs == ()
     assert settings.context == settings.instruct == PromptSetting("module")
 
@@ -70,7 +70,8 @@ def test_recall_views_are_selected_from_the_full_snapshot():
     near = (Message.user("recent"),)
     summary = Message.user("summary").to_data()
     for policy, far, recent, past in (
-        (("auto",), "summary", [near[0].to_data()], [summary, near[0].to_data()]),
+        (("default",), "summary", [near[0].to_data()], [summary, near[0].to_data()]),
+        (("*",), "summary", [near[0].to_data()], [summary, near[0].to_data()]),
         (("far", "near"), "summary", [near[0].to_data()], [summary, near[0].to_data()]),
         (("far",), "summary", [], [summary]),
         (("near",), "", [near[0].to_data()], [near[0].to_data()]),
@@ -81,7 +82,7 @@ def test_recall_views_are_selected_from_the_full_snapshot():
             "_near": recent,
             "_past": past,
         }
-    assert history_variables("", (), ("auto",)) == {
+    assert history_variables("", (), ("far", "near")) == {
         "_far": "",
         "_near": [],
         "_past": [],

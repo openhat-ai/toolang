@@ -1598,7 +1598,6 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
             kind="run",
             given=ScatterStmt(
                 span=SPAN,
-                count=6,
                 runnable="expand_queries",
                 doc="Expand the research question into diverse search queries",
             ),

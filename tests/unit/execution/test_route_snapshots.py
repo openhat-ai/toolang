@@ -166,7 +166,7 @@ def test_protocol_requires_explicit_delegation_intent() -> None:
     assert 'a text part can be {"type":"text","text":"..."}' in instruction
 
 
-def test_authored_runnable_query_filters_typed_fields() -> None:
+def test_authored_routes_select_exact_csv_references() -> None:
     state = _state(
         """
 agic inspect(_: Text):
@@ -176,7 +176,7 @@ flow verify:
   pass
 
 agic caller:
-  hands = ins*[kind=agic;parameters=_], flow:*
+  hands = agic:inspect, flow:verify
 
   Call.
 """

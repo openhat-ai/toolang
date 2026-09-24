@@ -243,7 +243,7 @@ declaration's source line). For example, an inline map displays
 | `run` | `Run R` |
 | `seek` | `Ask agent AGENT to run R` |
 | `ask` | `Ask for human input` |
-| `scatter` | `Scatter into N items with R` |
+| `scatter` | `Scatter into items with R` |
 | `storm` | `Storm into N items with R independently` |
 | `gather` | `Gather all items into one with R` |
 | `settle` | `Settle all items into one with R sequentially` |
@@ -262,10 +262,8 @@ These describe Flow locals, not persistence. Plain statements have no binding
 suffix, and content `let` does not repeat its assignment as a suffix.
 
 Counts of one use singular `item` or `time`; positional selection omits the
-number for one item. Scatter's count is an authored target, not a guaranteed
-output count. Its description supports `Scatter into items with R` when a count
-is unknown; the current grammar still requires a count. Completion summaries
-report actual results independently of these descriptions.
+number for one item. Scatter has no authored count; its description is
+`Scatter into items with R`. Completion summaries report actual results.
 
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are

@@ -578,7 +578,7 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
 ):
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic task() -> Text:\n  context: none\n  user: Inspect history.\n",
+        source="agic task() -> Text:\n  context = none\n  user: Inspect history.\n",
         tools=load_tools(queries=("history/*",)),
         responses=[
             ModelCallResult(
@@ -702,7 +702,7 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
     original = RunStore.history_thread_ids
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic task() -> Text:\n  context: none\n  user: Read history.\n",
+        source="agic task() -> Text:\n  context = none\n  user: Read history.\n",
         tools=load_tools(queries=("history/*",)),
         responses=[
             ModelCallResult(

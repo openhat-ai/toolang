@@ -2112,8 +2112,8 @@ def test_retry_and_rerun_execute_locally_with_limit_overrides(
         source="""
 agic reply(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[
@@ -2282,8 +2282,8 @@ def test_retry_and_rerun_use_the_remote_run_client_for_an_active_runtime(
         source="""
 agic reply(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("source"))],

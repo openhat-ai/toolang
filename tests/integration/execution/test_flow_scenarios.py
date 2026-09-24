@@ -161,8 +161,8 @@ def test_child_input_distinguishes_missing_input_from_json_null(
     source = """
 agic produce() -> Json:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Return null.
 
 flow child(_: Json) -> Json:
@@ -337,8 +337,8 @@ def test_flow_calls_an_agic_as_a_nested_run(tmp_path: Path) -> None:
         source="""
 agic echo(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow relay(_: Part[]) -> Part[]:
@@ -420,8 +420,8 @@ def test_root_run_retains_captured_setup_for_child_runs(tmp_path: Path) -> None:
         source="""
 agic echo(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow relay(_: Part[]) -> Part[]:
@@ -496,8 +496,8 @@ prompt bracket:
 
 agic echo(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user:
     $bracket -- {{_}}
 
@@ -554,8 +554,8 @@ def test_discarded_step_keeps_output_without_updating_locals(tmp_path: Path) -> 
         source="""
 agic replace(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow retained(_: Text) -> Text:
@@ -593,8 +593,8 @@ def test_retry_reuses_committed_flow_prefix_and_keeps_the_root_run(
         source="""
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow staged(_: Part[]) -> Part[]:
@@ -707,8 +707,8 @@ def test_retry_succeeded_flow_replays_call_before_trailing_value(
         source="""
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow staged(_: Part[]) -> Part[]:
@@ -765,8 +765,8 @@ def test_rerun_reuses_source_invocation_in_a_new_root_run(tmp_path: Path) -> Non
         source="""
 agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Reply to {{_}} in {{tone}} with {{tags}}.
 """,
         responses=[
@@ -856,8 +856,8 @@ def test_repeated_retry_reuses_the_trimmed_step_paths(
         source="""
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow staged(_: Part[]) -> Part[]:
@@ -956,8 +956,8 @@ def test_retry_restores_effective_model_usage_before_enforcing_new_limits(
         source="""
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow twice(_: Part[]) -> Part[]:
@@ -1016,8 +1016,8 @@ def test_parallel_flow_failure_terminates_every_started_child(
         source="""
 agic worker(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow parallel(_: Part[]):
@@ -1150,8 +1150,8 @@ struct Brief:
 
 agic echo(brief: Brief) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{brief.title}}
 
 flow research(brief: Brief) -> Text:
@@ -1255,18 +1255,18 @@ def test_scatter_then_map_preserves_item_order_and_types(
         source="""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic upper(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow mapped(_: Text) -> Text[]:
-  scatter 2 using split
+  scatter using split
   map using upper in 2 lanes
 """,
         responses=[
@@ -1417,16 +1417,16 @@ def test_inline_sort_scorer_has_no_recalled_history_or_tools(
         source="""
 agic remember(_: Text) -> Text:
   recall = none
-  context: none
+  context = none
   user: {{_}}
 
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
+  context = none
   user: {{_}}
 
 flow select(_: Text) -> Text[]:
-  scatter 1 using split
+  scatter using split
   sort descending by: Return a numeric relevance score for {{_}} from 0 to 10.
   keep last 1
 """,
@@ -1479,8 +1479,8 @@ def test_storm_honors_parallel_limit_and_preserves_result_order(
         source="""
 agic worker(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow fanout(_: Text) -> Text[]:
@@ -1539,18 +1539,18 @@ def test_scatter_then_gather_reshapes_the_list_to_one_item(
         source="""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic merge(_: Text[]) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow summary(_: Text) -> Text:
-  scatter 3 using split
+  scatter using split
   gather using merge
 """,
         responses=[
@@ -1588,18 +1588,18 @@ def test_scatter_then_settle_carries_the_accumulator_sequentially(
         source="""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 agic fold(_: Part[]) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_1._}}{{_}}
 
 flow folded(_: Text) -> Text:
-  scatter 3 using split
+  scatter using split
   settle using fold
 """,
         responses=[
@@ -1641,12 +1641,12 @@ def test_inline_settle_seeds_from_first_item_and_records_remaining_iterations(
         source="""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow folded(_: Text) -> Text:
-  scatter 3 using split
+  scatter using split
   settle using -> Text:
     {{_1._}}{{_}}
 """,
@@ -1731,12 +1731,12 @@ def test_positional_keep_and_drop(
         source=f"""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter 4 using split
+  scatter using split
   {statement}
 """,
         responses=[
@@ -1785,18 +1785,18 @@ def test_predicate_keep_and_drop(
         source=f"""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 agic relevant(_: Text) -> Boolean:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter 3 using split
+  scatter using split
   {statement}
 """,
         responses=[
@@ -1848,18 +1848,18 @@ def test_sort_is_stable_and_composes_with_positional_selection(
         source=f"""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 agic score(_: Text) -> Number:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 flow ranked(_: Text) -> Text[]:
-  scatter 4 using split
+  scatter using split
   sort descending in 2 lanes by score
   keep {selection}
 """,
@@ -1902,8 +1902,8 @@ def test_repeat_count_chains_each_iteration_output(tmp_path: Path) -> None:
         source="""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
@@ -1957,8 +1957,8 @@ def test_retry_restores_locals_written_inside_a_committed_repeat(
         source="""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
@@ -2021,8 +2021,8 @@ def test_run_limits_reset_agic_calls_but_share_root_token_usage(
         source="""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
@@ -2082,8 +2082,8 @@ def test_repeat_until_stops_before_the_count_limit(tmp_path: Path) -> None:
         source="""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
@@ -2181,8 +2181,8 @@ def test_list_statements_fail_inside_their_own_step_boundary(
         source=f"""
 agic echo(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{{{_}}}}
 
 flow invalid(_: Text) -> Text:
@@ -2237,12 +2237,12 @@ def test_scatter_uses_the_returned_list_length_instead_of_authored_count(
         source="""
 agic split(_: Text) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow scattered(_: Text) -> Text[]:
-  scatter 3 using split
+  scatter using split
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b"]')),
@@ -2292,7 +2292,7 @@ flow scattered(_: Text) -> Text[]:
   let source =
     {{_}}
 
-  scatter 3 using -> Text[]:
+  scatter using -> Text[]:
     Return distinct pieces of this source:
     {{source}}
 """,
@@ -2335,8 +2335,8 @@ def test_recursive_run_forwards_named_arguments_and_primary_local(
         source="""
 agic combine(_: Text, suffix: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}{{suffix}}
 
 flow relay(_: Text, suffix: Text) -> Text:
@@ -2403,8 +2403,8 @@ def test_recursive_run_persists_the_coerced_child_primary_value(
         source="""
 agic number(_: Number) -> Number:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow relay(_: Text) -> Number:
@@ -2447,8 +2447,8 @@ def test_flow_output_coercion_drops_incompatible_step_provenance(
         source="""
 agic text_number(_: Text) -> Text:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 
 flow number(_: Text) -> Number:

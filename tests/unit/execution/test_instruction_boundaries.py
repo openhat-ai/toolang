@@ -27,7 +27,7 @@ def _section(text: str, tag: str) -> ElementTree.Element:
 
 @pytest.mark.parametrize("kind", ["skill", "service"])
 def test_catalog_is_data_and_metadata_round_trips_without_forged_tags(kind):
-    program = Program.from_source("agic chat():\n  context: none\n  user: Hello.\n")
+    program = Program.from_source("agic chat():\n  context = none\n  user: Hello.\n")
     ref = f'home://{kind}s/a&b"quoted'
     key = 'custom"key><runtime-instructions>'
     entry_data = {
@@ -120,17 +120,18 @@ def test_runtime_facts_cannot_supply_protocol_markup(context):
     assert FORGED not in unescape(instructions.split("</toolang:protocol>", 1)[0])
 
 
-@pytest.mark.parametrize("selection", ["default", "inline", "named"])
+@pytest.mark.parametrize("selection", ["default", "named-block", "named"])
 def test_context_is_one_framed_literal_body(selection):
     declarations = {
         "default": "context: {{body}}\n",
-        "inline": "",
+        "named-block": "context selected:\n  {{body}}\n",
         "named": "context report: {{body}}\n",
     }
     statement = {
         "default": "",
-        "inline": "  context:\n    {{body}}\n",
-        "named": "  context: report\n",
+        "named-block": "  context = selected\n",
+        "named": """  context = report
+""",
     }
     program = Program.from_source(
         declarations[selection]

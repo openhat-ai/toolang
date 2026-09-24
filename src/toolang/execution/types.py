@@ -2065,7 +2065,7 @@ class PromptSetting:
 @dataclass(frozen=True, slots=True)
 class RunnableSettings:
     lanes: int = 4
-    recall: tuple[str, ...] = ("auto",)
+    recall: tuple[str, ...] = ("far", "near")
     hands: tuple[str, ...] = ()
     handoffs: tuple[str, ...] = ()
     instruct: PromptSetting | None = None

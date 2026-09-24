@@ -59,7 +59,7 @@ flow(_: Text):
     {{_}}
 
   ## Expand the research question into diverse search queries
-  scatter 6 using expand_queries
+  scatter using expand_queries
   ## Search the web for each query
   map using search_web in 4 lanes
   ## Keep evidence bundles that answer the research task

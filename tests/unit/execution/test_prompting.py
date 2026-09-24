@@ -32,7 +32,7 @@ from toolang.state.state import AgentState
 
 @pytest.mark.parametrize("skills,services", tuple(product((False, True), repeat=2)))
 def test_resources_are_individual_resident_triggers(skills, services):
-    program = Program.from_source("agic chat:\n  instruct: none\n  Hello.\n")
+    program = Program.from_source("agic chat:\n  instruct = none\n  Hello.\n")
     context = {
         "skills": [
             {
@@ -93,7 +93,7 @@ def test_resources_are_individual_resident_triggers(skills, services):
 def test_triggers_preserve_literal_description_and_sorted_metadata(
     kind, description, metadata, expected
 ):
-    program = Program.from_source("agic chat:\n  instruct: none\n  Hello.\n")
+    program = Program.from_source("agic chat:\n  instruct = none\n  Hello.\n")
     inputs = instruction_inputs(
         program,
         program.agics[0],
@@ -122,7 +122,7 @@ def test_triggers_preserve_literal_description_and_sorted_metadata(
     assert trigger.attrib["ref"] == f"{kind}/test"
 
 
-@pytest.mark.parametrize("selection", ["", "  instruct: none\n"])
+@pytest.mark.parametrize("selection", ["", "  instruct = none\n"])
 def test_protocol_is_static_and_first_across_runtime_facts(selection):
     program = Program.from_source("agic chat:\n" + selection + "  Hello.\n")
     for name in ("alice", "bob"):
@@ -186,7 +186,7 @@ def test_assembly_preserves_template_selection(kind, selection, expected):
         f"{kind} named: Named {{{{value}}}}.\n"
         f"{kind} empty: {{{{empty}}}}\n"
         "agic chat:\n"
-        + (f"  {kind}: {selection}\n" if selection is not None else "")
+        + (f"  {kind} = {selection}\n" if selection is not None else "")
         + "  Hello.\n"
     )
 
@@ -232,7 +232,7 @@ class _DefinitionTool(Tool):
 
 
 def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None:
-    program = Program.from_source("agic chat:\n  context: none\n  {{_}}\n")
+    program = Program.from_source("agic chat:\n  context = none\n  {{_}}\n")
     agic = program.agics[0]
     primary = (
         TextPart("Review {{literal}}"),
@@ -378,3 +378,47 @@ def test_output_schema_uses_the_adopted_programs_language_semantics(
     agic = replace(program.agics[0], output=type_name)
     state = cast(AgentState, SimpleNamespace(program=program))
     assert prompting.output_schema(state, agic, module="agent") == expected
+
+
+@pytest.mark.parametrize("kind", ["instruct", "context"])
+@pytest.mark.parametrize("overridden", [False, True])
+def test_explicit_default_always_resolves_with_module_or_system_content(
+    monkeypatch, kind, overridden
+):
+    monkeypatch.setattr(
+        prompting, f"_DEFAULT_{kind.upper()}_TEMPLATE", "System default."
+    )
+    declaration = f"{kind}: Module default.\n" if overridden else ""
+    program = Program.from_source(
+        declaration + f"agic work:\n  {kind} = default\n  user: Work.\n"
+    )
+    render = render_instructions if kind == "instruct" else prompting._render_context
+    text = render(program, program.agics[0], {})
+    assert ("Module default." if overridden else "System default.") in text
+    assert ("System default." if overridden else "Module default.") not in text
+
+
+def test_inherited_default_uses_its_original_module_and_explicit_default_rebinds():
+    from toolang.execution.settings import resolve_settings
+
+    parent = Program.from_source(
+        "instruct: Parent default.\nflow parent:\n  instruct = default\n  run: Work.\n"
+    )
+    child = Program.from_source(
+        "instruct: Child default.\nagic worker:\n  user: Work.\n"
+    )
+    parent_settings = resolve_settings(parent.flows[0], "parent")
+    inherited = resolve_settings(child.agics[0], "child", parent_settings)
+    rebound = resolve_settings(
+        replace(child.agics[0], instruct="default"), "child", parent_settings
+    )
+    inputs = instruction_inputs(child, child.agics[0], {})
+    for settings, expected in (
+        (inherited, "Parent default."),
+        (rebound, "Child default."),
+    ):
+        configured = SimpleNamespace(**vars(inputs))
+        configured.state = SimpleNamespace(modules={"parent": parent, "child": child})
+        configured.instruct = settings.instruct
+        rendered = prompting.instructions(cast(prompting.PromptInputs, configured))[0]
+        assert expected in rendered

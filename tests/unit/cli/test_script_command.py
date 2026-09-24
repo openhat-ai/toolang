@@ -1135,7 +1135,7 @@ flow research(_: Text):
   let topic = {{_}}
   ## Broaden [bold]the question[/bold].
   ## Keep diverse perspectives.
-  let queries = scatter 3 using expand
+  let queries = scatter using expand
   map using search in 4 lanes
   keep first 1
 
@@ -1185,7 +1185,7 @@ agic search:
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
         "[1] Broaden [bold]the question[/bold]. Keep diverse perspectives.",
-        "    Scatter into 3 items with expand, save result to queries",
+        "    Scatter into items with expand, save result to queries",
         "[2] Map each item with search, up to 4 at once",
         "[3] Keep the first item",
     ]

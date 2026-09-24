@@ -74,10 +74,10 @@ def test_cst_syntax_does_not_validate_parameter_documentation():
 
 
 def test_missing_nodes_keep_native_markers_and_zero_width_ranges():
-    source = "struct :\n  field: Text\n"
+    source = "struct X:\n  field:\n"
     tree = cst.parse(source.encode())
     errors = cst.diagnostics(tree.root_node)
     missing = next(item for item in errors if item["kind"] == "missing")
     assert missing["start_byte"] == missing["end_byte"]
-    assert "(MISSING pascal_name)" in cst_sexp(tree.root_node)
+    assert '(MISSING "Text")' in cst_sexp(tree.root_node)
     assert " ".join(cst_sexp(tree.root_node).split()) == str(tree.root_node)

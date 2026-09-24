@@ -23,7 +23,7 @@ Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Order = Literal["ascending", "descending"]
 _QUERY_DIRECTIVE_RE = re.compile(
-    rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts|hands|handoffs)"
+    rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts)"
     rb"[ \t]*(?:\+=|-=|=)"
 )
 _EMPTY_CAP_PROPERTY_RE = re.compile(
@@ -187,7 +187,6 @@ class ScatterStmt(Node):
     kind: ClassVar[str] = "scatter"
 
     binding: str | None = "_"
-    count: int
     runnable: str
 
 
@@ -532,6 +531,11 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     def legacy_defaults(raw: object, encoded: dict[str, Any]) -> None:
         if not isinstance(raw, Mapping):
             return
+        if encoded.get("kind") == "scatter" and "count" in raw:
+            count = cast(Mapping[str, object], raw)["count"]
+            if type(count) is not int or count < 0:
+                raise ValueError("legacy scatter count requires a non-negative integer")
+            encoded["count"] = count
         for name, default in (("window", 3), ("initial", None)):
             if name not in raw and encoded.get(name) == default:
                 encoded.pop(name, None)

@@ -213,7 +213,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
             _calls(_call("retry", path=uri, text="done")),
             _answer(),
         ],
-        source=SOURCE.replace("context: none", "instruct: none\n  context: none"),
+        source=SOURCE.replace("context = none", "instruct = none\n  context = none"),
     )
     external = tmp_path / "external"
     external.mkdir()
@@ -336,7 +336,7 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
     harness, _repo, publication = _harness(
         tmp_path,
         [_answer()],
-        source=SOURCE.replace("context: none", "tools = shell/*\n  context: none"),
+        source=SOURCE.replace("context = none", "tools = shell/*\n  context = none"),
     )
 
     async def scenario():
@@ -535,7 +535,7 @@ def test_parallel_children_recheck_workspace_rules_after_root_reload(tmp_path):
     source = """
 agic chat(_: Part[]) -> Text:
   recall = none
-  context: none
+  context = none
   user: Complete the task.
 
 flow parent(_: Part[]) -> Text[]:

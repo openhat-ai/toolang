@@ -28,21 +28,21 @@ from toolang.state.watcher import StateRefresh
 _SOURCE = """
 agic echo(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """
 
 _FLOW_SOURCE = """
 agic expand(_: Part[]) -> Text[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Return exactly two short JSON strings for {{_}}.
 
 flow research(_: Part[]) -> Text[]:
   ## Expand the topic.
-  scatter 2 using expand
+  scatter using expand
 """
 
 

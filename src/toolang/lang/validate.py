@@ -6,12 +6,9 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from toolang.common.errors import ToolangError
-
 from . import ast
 from .contracts import validate_operation_contract
 from .errors import ToolangValidationError
-from .runnable_query import RUNNABLE_SCHEMA
 from .types import parse_runnable_ref_parts, validate_struct_type
 
 _CAP_SOURCE_FIELDS: dict[ast.CapKind, frozenset[str]] = {
@@ -348,10 +345,13 @@ def _validate_directives(
         if (
             directive.operator != "="
             or len(directive.values) != 1
-            or re.fullmatch(r"[1-9][0-9]*", directive.values[0]) is None
+            or (
+                directive.values[0] != "default"
+                and re.fullmatch(r"[1-9][0-9]*", directive.values[0]) is None
+            )
         ):
             raise ToolangValidationError(
-                f"{owner} lanes requires a positive integer with '='."
+                f"{owner} lanes requires a positive integer or 'default' with '='."
             )
     models = [item for item in directives if item.name == "models"]
     for directive in models:
@@ -372,12 +372,18 @@ def _validate_directives(
             raise ToolangValidationError(
                 f"{owner} must use '=' for its {name} directive."
             )
+        if directive.values in (("none",), ("*",)):
+            continue
+        if not directive.values or any(
+            value in {"none", "*", "default"} for value in directive.values
+        ):
+            raise ToolangValidationError(f"{owner} has invalid {name} values.")
         for value in directive.values:
             try:
-                RUNNABLE_SCHEMA.parse(value)
-            except ToolangError as exc:
+                parse_runnable_ref_parts(value)
+            except ValueError as exc:
                 raise ToolangValidationError(
-                    f"{owner} declares invalid runnable query {value!r} in its {name} directive."
+                    f"{owner} declares invalid runnable reference {value!r} in its {name} directive."
                 ) from exc
 
     for directive in (item for item in directives if item.name == "tools"):
@@ -407,7 +413,8 @@ def _validate_directives(
     values = set(recall.values)
     if values in (
         {"none"},
-        {"auto"},
+        {"default"},
+        {"*"},
         {"far"},
         {"near"},
         {"far", "near"},
@@ -492,7 +499,7 @@ def _validate_stmts(
 
         runnable = _stmt_runnable(stmt)
         _require_runnable(runnable, runnables, stmt=stmt)
-        if isinstance(stmt, ast.ScatterStmt | ast.StormStmt):
+        if isinstance(stmt, ast.StormStmt):
             _non_negative(stmt.count, field="count", line=stmt.span.line)
         if isinstance(stmt, ast.StormStmt | ast.MapStmt):
             _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)

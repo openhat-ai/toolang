@@ -47,7 +47,7 @@ def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
     tool = PreparingTool("test__work", output={})
     harness = ExecutionHarness.create(
         tmp_path,
-        source="agic task() -> Text:\n  context: none\n  user: Task.\n",
+        source="agic task() -> Text:\n  context = none\n  user: Task.\n",
         tools={tool.name: tool},
         responses=[
             ModelCallResult(tool_calls=(ToolCall("call", "provider", tool.name, {}),)),
@@ -111,8 +111,8 @@ def test_runtime_trigger_records_without_model_delivery(
         tmp_path,
         source="""
 agic task() -> Text:
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Task.
 """,
         tools={tool.name: tool, runtime_tool.name: runtime_tool},
@@ -190,8 +190,8 @@ def test_reload_keeps_runtime_routes_for_the_whole_model_batch(tmp_path: Path) -
     source = """
 agic parent() -> Text:
   hands = flow:permitted
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: Parent.
 
 flow permitted(_: Text) -> Text:

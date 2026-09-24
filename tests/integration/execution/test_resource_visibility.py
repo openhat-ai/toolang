@@ -50,7 +50,7 @@ def _declarations(harness, run, kind):
     ]
 
 
-@pytest.mark.parametrize("recall", ["auto", "none"])
+@pytest.mark.parametrize("recall", ["default", "none"])
 def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
     tmp_path, monkeypatch, recall
 ):
@@ -59,7 +59,7 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
     harness, repo, _ = _harness(
         tmp_path,
         [_answer(), _answer()],
-        source=SOURCE.replace("context: none", f"recall = {recall}\n  context: none"),
+        source=SOURCE.replace("context = none", f"recall = {recall}\n  context = none"),
     )
     # Assembly must not probe a root, even when it is temporarily unavailable.
     publication = _workspace_state(harness, {"z": repo.with_name("missing"), "a": repo})
@@ -94,7 +94,7 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
                 assert "Root rules." not in text
             assert len(_declarations(harness, runs[0], "workspace")) == 2
             assert len(_declarations(harness, runs[1], "workspace")) == (
-                0 if recall == "auto" else 2
+                0 if recall == "default" else 2
             )
             for run in runs:
                 for step in harness.store.list_steps(run_id=run.id):
@@ -213,7 +213,7 @@ def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
 
 def test_reload_withdraws_psyches_and_runnable_authority(tmp_path):
     source = "agic helper:\n  Help.\n" + SOURCE.replace(
-        "context: none", "hands = helper\n  context: none"
+        "context = none", "hands = helper\n  context = none"
     )
     harness, _ = capability_harness(
         tmp_path,
@@ -271,7 +271,7 @@ def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, co
             "context custom: User context.\n"
             f"agic helper(_: {type_name}) -> Text:\n  Help.\n"
             f"agic chat() -> Text:\n{directives}"
-            f"  context: {context}\n  user: Complete the task.\n"
+            f"  context = {context}\n  user: Complete the task.\n"
         )
 
     versions = [
@@ -356,7 +356,9 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
         return "\n\n".join(
             f"## {description}\nagic action_{i:02d}:\n  Act." for i in range(64)
         ) + (
-            "\n\nagic chat() -> Text:\n  hands = agic:action_*\n  context: none\n  Complete the task.\n"
+            "\n\nagic chat() -> Text:\n  hands = "
+            + ", ".join(f"agic:action_{i:02d}" for i in range(64))
+            + "\n  context = none\n  Complete the task.\n"
         )
 
     harness, _ = capability_harness(
@@ -450,7 +452,7 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
 def test_definition_changes_withdraw_guidance_until_explicit_pick(tmp_path, kind, name):
     ref = f"{kind}/{name}"
     source = SOURCE.replace(
-        "context: none", f"{kind}s = {kind}/{name}\n  context: none"
+        "context = none", f"{kind}s = {kind}/{name}\n  context = none"
     )
 
     def reload(index):

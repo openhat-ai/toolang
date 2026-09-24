@@ -306,8 +306,8 @@ def test_remote_chat_defaults_and_latest_result_endpoints(
         source="""
 agic chat(_: Part[]) -> Part[]:
   recall = none
-  context: none
-  instruct: none
+  context = none
+  instruct = none
   user: {{_}}
 """,
         responses=[ModelCallResult(message=Message.assistant("remote answer"))],
