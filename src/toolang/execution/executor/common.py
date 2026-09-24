@@ -38,6 +38,7 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
+from toolang.lang.contracts import FlowTransform, operation_transform
 from toolang.lang.input import CallInput, RunnableInput
 from toolang.lang.types import Array, Value
 from toolang.state.state import AgentState, state_program
@@ -67,7 +68,7 @@ from ..types import (
 )
 
 Shape = Literal["none", "item", "list"]
-FlowTransform = Literal["item", "list", "filter", "sort", "none"]
+
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
 StepBoundary = Callable[
     [Callable[[AgentState, ControlRef], StepBegin]],
@@ -434,16 +435,7 @@ def transform_flow_result(
 
 def flow_transform(statement: FlowStmt) -> FlowTransform:
     """Return the result transform implied by one lowered statement."""
-
-    if isinstance(statement, RepeatStmt):
-        return "none"
-    if isinstance(statement, ScatterStmt | StormStmt | MapStmt):
-        return "list"
-    if isinstance(statement, KeepStmt | DropStmt):
-        return "filter"
-    if isinstance(statement, SortStmt):
-        return "sort"
-    return "item"
+    return operation_transform(statement.kind)
 
 
 def statement_input_refs(

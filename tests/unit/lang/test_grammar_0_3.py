@@ -37,10 +37,13 @@ agic score -> Number:
 def test_clause_order_preserves_semantics_and_lane_limit(
     first: str, second: str
 ) -> None:
-    sources = [RUNNABLES + f"flow work:\n  {header}\n" for header in (first, second)]
+    sources = [
+        RUNNABLES + f"flow work:\n  storm 2 using worker\n  {header}\n"
+        for header in (first, second)
+    ]
     programs = [Program.from_source(source) for source in sources]
     assert programs[0] == programs[1]
-    assert getattr(programs[0].flows[0].stmts[0], "lanes") == 2
+    assert getattr(programs[0].flows[0].stmts[-1], "lanes") == 2
     for source, header in zip(sources, (first, second), strict=True):
         formatted = format_source(source)
         assert header in formatted
@@ -65,8 +68,8 @@ def test_clause_order_preserves_semantics_and_lane_limit(
 def test_inline_runnable_fields_preserve_the_operation_contract(
     header: str, output: str
 ) -> None:
-    program = Program.from_source(f"flow work:\n  {header}\n")
-    statement = program.flows[0].stmts[0]
+    program = Program.from_source(f"flow work:\n  scatter: Items\n  {header}\n")
+    statement = program.flows[0].stmts[-1]
     agic = program.find_agic(getattr(statement, "runnable"))
     assert agic is not None
     assert agic.output == output
@@ -155,9 +158,10 @@ def test_numeric_agreement_uses_value_and_zero_counts_remain_valid() -> None:
 
 def test_sort_direction_and_binding_round_trip_as_canonical_step_data() -> None:
     program = Program.from_source(
-        RUNNABLES + "flow work:\n  let sorted_items = sort descending by score\n"
+        RUNNABLES
+        + "flow work:\n  storm 2 using worker\n  let sorted_items = sort descending by score\n"
     )
-    statement = program.flows[0].stmts[0]
+    statement = program.flows[0].stmts[-1]
     assert isinstance(statement, SortStmt)
     assert statement.order == "descending"
     assert statement.binding == "sorted_items"
@@ -176,6 +180,7 @@ def test_formatter_preserves_prose_continuations_and_statement_boundaries() -> N
   Explain the options.
   Sort     is a word in this prompt.
 
+  scatter: Items
   map in 2 lanes using:
     Rewrite {{_}}.
 
@@ -184,7 +189,12 @@ def test_formatter_preserves_prose_continuations_and_statement_boundaries() -> N
     before = Program.from_source(source)
     formatted = format_source(source)
     after = Program.from_source(formatted)
-    assert [item.kind for item in before.flows[0].stmts] == ["run", "map", "run"]
+    assert [item.kind for item in before.flows[0].stmts] == [
+        "run",
+        "scatter",
+        "map",
+        "run",
+    ]
     assert [item.messages for item in before.agics] == [
         item.messages for item in after.agics
     ]

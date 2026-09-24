@@ -54,6 +54,7 @@ from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
 )
+from toolang.lang import Program
 from toolang.lang.input import CallInput, resolve_input_parts
 from toolang.lang.types import Array
 from toolang.state.prepare import prepare_agent_state
@@ -174,12 +175,14 @@ flow parent() -> Json:
     if supplied:
         source += "  run produce\n"
     source += "  run child\n"
+    if not supplied:
+        with pytest.raises(ToolangError, match="missing input.*_.*child"):
+            Program.from_source(source)
+        return
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
-        responses=[ModelCallResult(message=Message.assistant("null"))]
-        if supplied
-        else [],
+        responses=[ModelCallResult(message=Message.assistant("null"))],
     )
 
     async def scenario() -> None:
@@ -191,22 +194,15 @@ flow parent() -> Json:
             assert root.status == "failed"
             assert root.error is not None
             error = harness.store.resolve_error(root.error)
-            assert error == (
-                "primary input cannot be null; omit '_' for no input"
-                if supplied
-                else "child requires primary input"
-            )
+            assert error == "primary input cannot be null; omit '_' for no input"
             children = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
                 if run.parent is not None
             ]
-            assert len(children) == int(supplied)
-            if supplied:
-                assert children[0].output is not None
-                assert (
-                    harness.store.resolve_output(children[0].output).local.value is None
-                )
+            assert len(children) == 1
+            assert children[0].output is not None
+            assert harness.store.resolve_output(children[0].output).local.value is None
 
     asyncio.run(scenario())
 
@@ -2163,32 +2159,35 @@ flow repeated(_: Text) -> Text:
 
 
 @pytest.mark.parametrize(
-    ("statement", "step_kind", "operation"),
+    "operation,step_kind,responses",
     [
-        ("map using echo", "par", "map"),
-        ("gather using echo", "run", "gather"),
-        ("settle using echo", "loop", "settle"),
+        ("map", "par", ['["a","b"]', "a", "b", "item"]),
+        ("gather", "run", ['["a","b"]', "joined", "item"]),
+        ("settle", "loop", ['["a","b"]', "joined", "item"]),
     ],
 )
-def test_list_statements_fail_inside_their_own_step_boundary(
-    tmp_path: Path,
-    statement: str,
-    step_kind: str,
-    operation: str,
+def test_dynamic_list_errors_remain_inside_their_own_step_boundary(
+    tmp_path: Path, operation: str, step_kind: str, responses: list[str]
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=f"""
-agic echo(_: Text) -> Text:
+agic echo(_: {"Text[]" if operation == "gather" else "Text"}) -> Text:
   recall = none
   context = none
   instruct = none
   user: {{{{_}}}}
-
+agic finish():
+  Finished.
 flow invalid(_: Text) -> Text:
-  {statement}
+  scatter: Items
+  repeat 2 times:
+    {operation} using echo
+    run finish
 """,
-        responses=[],
+        responses=[
+            ModelCallResult(message=Message.assistant(text)) for text in responses
+        ],
     )
     tracer = RecordingRunTracer()
 
@@ -2199,32 +2198,22 @@ flow invalid(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="invalid",
-                    primary=resolve_input_parts("not a list"),
+                    primary=resolve_input_parts("input"),
                 ),
                 tracer=tracer,
             )
-
             error = f"{operation} requires current shape list, got item"
             assert root.status == "failed"
-            assert root.error == ErrorRef(
-                FieldRef.from_path(StepRef.from_local(root.id, (0,)), "error")
-            )
-            steps = [
+            assert root.error is not None
+            assert harness.store.resolve_error(root.error) == error
+            failed = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
-                if step.parent is None
+                if step.status == "failed" and step.kind == step_kind
             ]
-            assert [(step.kind, step.status, step.error) for step in steps] == [
-                (step_kind, "failed", ErrorMessage(error))
-            ]
-            assert harness.adapter.invocations == []
+            assert any(step.error == ErrorMessage(error) for step in failed)
+            assert len(harness.adapter.invocations) == len(responses)
             assert_run_event_integrity(tracer.events)
-            assert event_labels(tracer.events) == [
-                f"run_begin:{root.id}",
-                f"step_begin:{root.id}.0:{step_kind}",
-                f"step_end:{root.id}.0:{step_kind}:failed",
-                f"run_end:{root.id}:failed",
-            ]
 
     asyncio.run(scenario())
 

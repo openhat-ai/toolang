@@ -1187,7 +1187,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
-        "agic helper:\n  Research.\n\nflow:\n  settle using helper\n",
+        "agic helper:\n  Research.\n\nflow:\n  storm 2 using helper\n  settle using helper\n",
         encoding="utf-8",
     )
 

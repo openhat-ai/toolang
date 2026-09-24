@@ -12,6 +12,7 @@ too parse work.too                    # Semantic AST, S-expression
 too parse work.too --ast --json       # Semantic AST, JSON
 too parse work.too --cst              # Raw CST, S-expression
 too parse work.too --cst --json       # Complete CST, JSON
+too parse scripts/ other.too --check  # Validate sources without printing trees
 ```
 
 `--ast` (default) and `--cst` select the tree; `--json` independently selects
@@ -27,6 +28,22 @@ The AST is the lowered, validated Toolang `Program`. It includes declarations,
 flow statements, signatures, and module/runnable/parameter documentation.
 Validation checks source semantics without resolving installed capabilities or
 preparing execution. Invalid input produces an error and no partial AST.
+
+`--check` accepts multiple files/directories, recursively discovers `.too` files,
+and deduplicates resolved paths. It emits nothing on success, reports the first
+error per file as `path:line:column: message`, continues checking other files,
+and exits 1 if any source fails. It never rewrites files or requires canonical
+formatting. Stdin is supported as the sole source. `--cst`, `--json`, and
+`--compact` cannot accompany `--check`; explicit `--ast` is allowed.
+
+Both AST modes check template syntax, reserved references, declared inputs,
+known types, and operation contracts. Flow checks follow local bindings and
+item/list shapes, detect definitely missing call inputs, and validate known
+repeat/settle windows. An array-valued item is distinct from a flow list.
+Unknown inherited context, dynamic values, and value conversions remain runtime
+checks; insufficient history within a valid window remains normal until warm-up.
+These checks do not infer signatures through calls. Diagnostic positions are
+one-based declaration/statement anchors when a precise token is unavailable.
 
 The CST parses the original UTF-8 bytes, including incomplete source. Unlike
 the AST path, it neither masks query-data hashes nor adds a final newline, so

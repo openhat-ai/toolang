@@ -35,8 +35,8 @@ flow work:
   ask: Continue?
   scatter using pieces
   storm 3 using action in 2 lanes
-  gather using action
-  settle using action
+  let gather using action
+  let settle using action
   map using action in 4 lanes
   keep first 2
   keep if predicate in 2 lanes
@@ -59,8 +59,8 @@ flow work:
         "ask",
         "scatter using pieces",
         "storm 3 in 2 lanes using action",
-        "gather using action",
-        "settle using action",
+        "let gather using action",
+        "let settle using action",
         "map in 4 lanes using action",
         "keep first 2",
         "keep in 2 lanes if predicate",
@@ -75,7 +75,7 @@ def test_format_statement_head_hides_generated_inline_agic_names() -> None:
     program = Program.from_source(
         """
 flow work:
-  run: Draft a report.
+  scatter: Draft report sections.
   map in 3 lanes using: Rewrite {{_}}.
   sort descending in 3 lanes by: Score {{_}}.
   keep first 2
@@ -85,7 +85,7 @@ flow work:
     assert [
         format_statement_head(statement) for statement in program.flows[0].stmts
     ] == [
-        "run",
+        "scatter using",
         "map in 3 lanes using",
         "sort descending in 3 lanes by",
         "keep first 2",

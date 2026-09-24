@@ -957,6 +957,7 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
         source.replace("Old current", "New current")
         .replace(f"transform -> {output}:", f"transform -> {updated_output}:")
         .replace(f"worker -> {output}:", f"worker -> {updated_output}:")
+        .replace(f"seed() -> {output}[]:", f"seed() -> {updated_output}[]:")
         .replace("unused: Text", "unused: Number")
     )
     if changes_contract and output.startswith("Item"):

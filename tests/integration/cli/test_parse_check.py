@@ -1,0 +1,95 @@
+"""Batch source validation is quiet, offline, and independent of formatting."""
+
+import pytest
+from typer.testing import CliRunner
+
+from toolang.cli.toolang.main import app
+
+runner = CliRunner()
+
+
+def test_parse_check_reports_each_file_once_and_never_writes(tmp_path):
+    good = tmp_path / "good.too"
+    good.write_text("agic good():\n    Hello\n")
+    bad = tmp_path / "bad.too"
+    bad.write_text("# Heading\nagic bad():\n  {{_typo}}\n")
+    second = tmp_path / "second.too"
+    second.write_text("agic bad() -> Missing:\n  Hello\n")
+    before = {p: p.read_bytes() for p in (good, bad, second)}
+    result = runner.invoke(app, ["parse", str(tmp_path), str(bad), "--check"])
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert result.stderr.count(f"{bad}:3:") == 1
+    assert f"{second}:1:" in result.stderr
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_parse_check_accepts_unformatted_stdin_and_labels_errors():
+    good = runner.invoke(
+        app, ["parse", "-", "--check", "--ast"], input="agic work():\n    Hi"
+    )
+    assert good.exit_code == 0 and good.output == ""
+    bad = runner.invoke(
+        app,
+        ["parse", "-", "--check", "--stdin-filepath", "work.too"],
+        input="agic work():\n  {{_bad}}\n",
+    )
+    assert bad.exit_code == 1
+    assert bad.stdout == ""
+    assert "work.too:2:" in bad.stderr
+
+
+@pytest.mark.parametrize("option", ["--cst", "--json", "--compact"])
+def test_parse_check_rejects_tree_output_options(option):
+    result = runner.invoke(app, ["parse", "-", "--check", option], input="")
+    assert result.exit_code == 2
+
+
+def test_parse_check_continues_after_read_failure(tmp_path):
+    bad = tmp_path / "bytes.too"
+    bad.write_bytes(b"\xff")
+    other = tmp_path / "other.too"
+    other.write_text("agic bad():\n  {{_bad}}\n")
+    result = runner.invoke(app, ["parse", str(bad), str(other), "--check"])
+    assert result.exit_code == 1
+    assert str(bad) in result.stderr and str(other) in result.stderr
+
+
+def test_regular_parse_still_requires_one_file(tmp_path):
+    result = runner.invoke(app, ["parse", str(tmp_path), str(tmp_path)])
+    assert result.exit_code == 2
+
+
+def test_parse_check_continues_after_missing_path_and_ignores_non_sources(tmp_path):
+    missing = tmp_path / "missing.too"
+    source = tmp_path / "nested" / "bad.too"
+    source.parent.mkdir()
+    source.write_text("agic bad():\n  {{missing}}\n")
+    (source.parent / "ignore.txt").write_text("not Toolang")
+    result = runner.invoke(app, ["parse", str(missing), str(tmp_path), "--check"])
+    assert result.exit_code == 1
+    assert f"{missing}:1:1:" in result.stderr
+    assert f"{source}:2:3:" in result.stderr
+    assert "ignore.txt" not in result.stderr
+
+
+def test_parse_check_deduplicates_symlinks(tmp_path):
+    source = tmp_path / "bad.too"
+    source.write_text("agic bad():\n  {{missing}}\n")
+    alias = tmp_path / "alias.too"
+    alias.symlink_to(source)
+    result = runner.invoke(app, ["parse", str(source), str(alias), "--check"])
+    assert result.exit_code == 1
+    assert result.stderr.count("template input is missing") == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-", "file.too", "--check"],
+        ["file.too", "--check", "--stdin-filepath", "label.too"],
+    ],
+)
+def test_parse_check_rejects_mixed_stdin_and_files(arguments):
+    result = runner.invoke(app, ["parse", *arguments], input="")
+    assert result.exit_code == 2

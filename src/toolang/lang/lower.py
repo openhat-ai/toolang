@@ -10,7 +10,7 @@ from tree_sitter import Node as CstNode
 from toolang.common.template import template_root_names, template_dependencies
 
 from . import ast
-from .errors import ToolangValidationError
+from .errors import ToolangValidationError, source_location
 from .text import dedent_text_lines, source_lines
 from .validate import _validate_cap_source
 
@@ -177,7 +177,8 @@ class _Lowerer:
             node = self._item(child)
             if node.type in _TRIVIA:
                 continue
-            self._lower_item(node, doc=self.docs.for_node(node))
+            with source_location(self._line(node), node.start_point.column + 1):
+                self._lower_item(node, doc=self.docs.for_node(node))
 
         return ast.Program(
             span=ast.Span(line=1),
@@ -463,7 +464,8 @@ class _Lowerer:
         for child in node.named_children:
             if child.type in _TRIVIA:
                 continue
-            stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
+            with source_location(self._line(child), child.start_point.column + 1):
+                stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return stmts
 
     def _lower_stmt(self, node: CstNode, *, doc: str | None) -> ast.FlowStmt:

@@ -157,7 +157,7 @@ def test_home_layer_loads_program_without_reparsing_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = _layout(tmp_path)
-    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle using hello\n"
+    source_text = "agic hello:\n  Hello.\n\nflow work:\n  storm 2 using hello\n  settle using hello\n"
     revision = _write_home(layout, source_text)
     publish_layer_current(layout, "home", revision)
 
@@ -170,7 +170,7 @@ def test_home_layer_loads_program_without_reparsing_source(
     assert program.find_agic("hello")
     flow = program.find_flow("work")
     assert flow is not None
-    assert isinstance(flow.stmts[0], SettleStmt)
+    assert isinstance(flow.stmts[-1], SettleStmt)
 
 
 @pytest.mark.parametrize("order", ["ascending", "descending"])
@@ -183,7 +183,7 @@ def test_home_layer_preserves_nested_sort_without_reparsing_source(
     revision = _write_home(
         layout,
         "agic score -> Number:\n  Score.\n"
-        "flow work:\n  repeat 2 times:\n"
+        "flow work:\n  storm 2 using score\n  repeat 2 times:\n"
         f"    let ordered = sort {order} in 2 lanes by score\n",
     )
 
@@ -194,7 +194,7 @@ def test_home_layer_preserves_nested_sort_without_reparsing_source(
 
     flow = load_home_layer(layout, revision).modules["agent"].find_flow("work")
     assert flow is not None
-    repeat = flow.stmts[0]
+    repeat = flow.stmts[-1]
     assert isinstance(repeat, RepeatStmt)
     assert repeat.count == 2
     statement = repeat.stmts[0]

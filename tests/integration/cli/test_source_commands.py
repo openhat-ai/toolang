@@ -106,8 +106,8 @@ flow pipeline:
   ask: Continue?
   scatter using pieces
   storm 3 using action in 2 lanes
-  gather using action
-  settle using action
+  let gather using action
+  let settle using action
   map using action in 4 lanes
   keep first 2
   drop last 1

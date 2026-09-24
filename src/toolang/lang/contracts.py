@@ -3,9 +3,25 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 from .ast import AgicDecl, FlowDecl, StructDecl
 from .errors import ToolangValidationError
+
+FlowTransform = Literal["item", "list", "filter", "sort", "none"]
+
+
+def operation_transform(operation: str) -> FlowTransform:
+    """Return the flow result transform shared by execution and source checks."""
+    if operation == "repeat":
+        return "none"
+    if operation in {"scatter", "storm", "map"}:
+        return "list"
+    if operation in {"keep", "drop"}:
+        return "filter"
+    if operation == "sort":
+        return "sort"
+    return "item"
 
 
 @dataclass(frozen=True, slots=True)

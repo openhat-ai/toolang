@@ -89,7 +89,7 @@ agic work:
     "header, depth",
     [
         ("flow work:\n  run:", 4),
-        ("flow work:\n  map using:", 4),
+        ("flow work:\n  scatter: Items\n  map using:", 4),
         ("flow work:\n  repeat 2 times:\n    run: Work.\n    until:", 6),
         ("flow work:\n  let note =", 4),
         ("flow work:\n  ask:", 4),

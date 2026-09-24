@@ -6,10 +6,21 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from toolang.common.template import (
+    require_template_inputs,
+    template_runtime_names,
+    validate_template,
+)
+
 from . import ast
 from .contracts import validate_operation_contract
-from .errors import ToolangValidationError
-from .types import parse_runnable_ref_parts, validate_struct_type
+from .errors import ToolangValidationError, source_location
+from .types import (
+    is_builtin_type,
+    parse_runnable_ref_parts,
+    validate_struct_type,
+    validate_type,
+)
 
 _CAP_SOURCE_FIELDS: dict[ast.CapKind, frozenset[str]] = {
     "psyche": frozenset(),
@@ -37,6 +48,14 @@ def _validate(program: ast.Program) -> None:
 
     _validate_caps(program.caps)
     _validate_structs(program.structs)
+    _validate_type_references(program)
+    for declaration in (*program.contexts, *program.instructs):
+        with source_location(declaration.span.line):
+            template_runtime_names(declaration.body)
+    for cap in program.caps:
+        if cap.kind == "prompt":
+            with source_location(cap.span.line):
+                validate_template(cap.body)
     contexts = _namespace(program.contexts, label="context")
     instructs = _namespace(program.instructs, label="instruct")
     runnables = _runnable_namespace(program)
@@ -48,14 +67,53 @@ def _validate(program: ast.Program) -> None:
             if runnable.name is not None
             else f"Unnamed {runnable.kind}"
         )
-        _validate_parameters(runnable.input, runnable.params, owner=owner)
-        _validate_directives(runnable.directives, owner=owner)
-        _validate_prompt_ref(runnable.context, contexts, target="context", owner=owner)
-        _validate_prompt_ref(
-            runnable.instruct, instructs, target="instruct", owner=owner
-        )
-        if isinstance(runnable, ast.FlowDecl):
-            _validate_stmts(runnable.stmts, runnables=runnables)
+        with source_location(runnable.span.line):
+            _validate_parameters(runnable.input, runnable.params, owner=owner)
+            _validate_directives(runnable.directives, owner=owner)
+            _validate_prompt_ref(
+                runnable.context, contexts, target="context", owner=owner
+            )
+            _validate_prompt_ref(
+                runnable.instruct, instructs, target="instruct", owner=owner
+            )
+            if isinstance(runnable, ast.FlowDecl):
+                _validate_stmts(runnable.stmts, runnables=runnables)
+            else:
+                parameters = {p.name: p for p in runnable.params}
+                if runnable.input is not None:
+                    parameters["_"] = runnable.input
+                for message in runnable.messages:
+                    with source_location(message.span.line):
+                        template_runtime_names(message.content)
+                        require_template_inputs(message.content, parameters)
+
+    from .flow_validation import validate_flows
+
+    validate_flows(program, runnables)
+
+
+def _validate_type_references(program: ast.Program) -> None:
+    names = {struct.name for struct in program.structs}
+
+    def check(type_name: str | None, node: ast.Node) -> None:
+        if type_name is None:
+            return
+        with source_location(node.span.line):
+            try:
+                validate_type(type_name)
+            except ValueError as exc:
+                raise ToolangValidationError(str(exc)) from exc
+            scalar = type_name.partition("[")[0]
+            if not is_builtin_type(scalar) and scalar not in names:
+                raise ToolangValidationError(f"unknown Toolang type: {scalar}")
+
+    for struct in program.structs:
+        for field in struct.fields:
+            check(field.type_name, field)
+    for runnable in (*program.agics, *program.flows):
+        check(runnable.output, runnable)
+        for param in (*runnable.params, *((runnable.input,) if runnable.input else ())):
+            check(param.type_name, param)
 
 
 def _validate_cap_source(
@@ -135,7 +193,9 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
     for cap in caps:
         key = (cap.kind, cap.name)
         if key in seen:
-            raise ToolangValidationError(f"Duplicate {cap.kind} name {cap.name!r}.")
+            raise ToolangValidationError(
+                f"Duplicate {cap.kind} name {cap.name!r}.", line=cap.span.line
+            )
         seen.add(key)
         _validate_cap_contract(
             cap.kind,
@@ -254,7 +314,9 @@ def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.Fl
         if item.name is None:
             continue
         if item.name in values:
-            raise ToolangValidationError(f"Duplicate runnable name {item.name!r}.")
+            raise ToolangValidationError(
+                f"Duplicate runnable name {item.name!r}.", line=item.span.line
+            )
         values[item.name] = item
     return values
 
@@ -265,7 +327,9 @@ def _namespace(
     values: dict[str, object] = {}
     for item in items:
         if item.name in values:
-            raise ToolangValidationError(f"Duplicate {label} name {item.name!r}.")
+            raise ToolangValidationError(
+                f"Duplicate {label} name {item.name!r}.", line=item.span.line
+            )
         values[item.name] = item
     return values
 
@@ -279,13 +343,19 @@ def _unique(values: Iterable[str], *, label: str) -> None:
 
 
 def _validate_structs(structs: tuple[ast.StructDecl, ...]) -> None:
-    _unique((item.name for item in structs), label="struct")
+    seen: set[str] = set()
     for item in structs:
+        if item.name in seen:
+            raise ToolangValidationError(
+                f"Duplicate struct name {item.name!r}.", line=item.span.line
+            )
+        seen.add(item.name)
         try:
             validate_struct_type(item.name)
         except ValueError as exc:
             raise ToolangValidationError(
-                f"Struct name {item.name!r} conflicts with a built-in type."
+                f"Struct name {item.name!r} conflicts with a built-in type.",
+                line=item.span.line,
             ) from exc
 
 
@@ -447,65 +517,78 @@ def _validate_stmts(
     runnables: dict[str, ast.AgicDecl | ast.FlowDecl],
 ) -> None:
     for stmt in stmts:
-        _validate_binding(stmt)
-        if isinstance(stmt, ast.SeekStmt):
-            if _adhoc_ref(stmt.runnable):
-                _require_runnable(stmt.runnable, runnables, stmt=stmt)
-            continue
-        if isinstance(stmt, ast.AskStmt | ast.LetStmt):
-            if isinstance(stmt, ast.LetStmt) and stmt.binding in {None, "_"}:
-                raise ToolangValidationError(
-                    f"Let statement at line {stmt.span.line} requires a named binding."
-                )
-            continue
-        if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
-            positional = stmt.position is not None or stmt.count is not None
-            filtered = stmt.runnable is not None
-            if positional == filtered:
-                raise ToolangValidationError(
-                    f"{stmt.kind.capitalize()} at line {stmt.span.line} requires position or predicate."
-                )
-            if positional:
-                if (
-                    stmt.position is None
-                    or stmt.count is None
-                    or stmt.lanes is not None
-                ):
-                    raise ToolangValidationError(
-                        f"Invalid positional {stmt.kind} at line {stmt.span.line}."
-                    )
-                _non_negative(stmt.count, field="count", line=stmt.span.line)
-            else:
-                _require_evaluator(stmt.runnable or "", runnables, stmt, "Boolean")
-                _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
-            continue
-        if isinstance(stmt, ast.SortStmt):
-            _require_evaluator(stmt.runnable, runnables, stmt, "Number")
-            if stmt.order not in {"ascending", "descending"}:
-                raise ToolangValidationError(
-                    f"Sort at line {stmt.span.line} requires ascending or descending order."
-                )
-            _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
-            continue
-        if isinstance(stmt, ast.RepeatStmt):
-            if stmt.count is None and stmt.runnable is None:
-                raise ToolangValidationError(
-                    f"Repeat at line {stmt.span.line} requires count or until."
-                )
-            _positive_optional(stmt.window, field="window", line=stmt.span.line)
-            if stmt.count is not None:
-                _non_negative(stmt.count, field="count", line=stmt.span.line)
-            if stmt.runnable is not None:
-                _require_runnable(stmt.runnable, runnables, stmt=stmt)
-            _validate_stmts(stmt.stmts, runnables=runnables)
-            continue
+        with source_location(stmt.span.line):
+            _validate_stmt(stmt, runnables=runnables)
 
-        runnable = _stmt_runnable(stmt)
-        _require_runnable(runnable, runnables, stmt=stmt)
-        if isinstance(stmt, ast.StormStmt):
+
+def _validate_stmt(
+    stmt: ast.FlowStmt, *, runnables: dict[str, ast.AgicDecl | ast.FlowDecl]
+) -> None:
+    _validate_binding(stmt)
+    for content in (
+        (stmt.value,)
+        if isinstance(stmt, ast.LetStmt)
+        else (stmt.request,)
+        if isinstance(stmt, ast.AskStmt)
+        else (stmt.initial,)
+        if isinstance(stmt, ast.SettleStmt) and stmt.initial is not None
+        else ()
+    ):
+        template_runtime_names(content)
+    if isinstance(stmt, ast.SeekStmt):
+        if _adhoc_ref(stmt.runnable):
+            _require_runnable(stmt.runnable, runnables, stmt=stmt)
+        return
+    if isinstance(stmt, ast.AskStmt | ast.LetStmt):
+        if isinstance(stmt, ast.LetStmt) and stmt.binding in {None, "_"}:
+            raise ToolangValidationError(
+                f"Let statement at line {stmt.span.line} requires a named binding."
+            )
+        return
+    if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
+        positional = stmt.position is not None or stmt.count is not None
+        filtered = stmt.runnable is not None
+        if positional == filtered:
+            raise ToolangValidationError(
+                f"{stmt.kind.capitalize()} at line {stmt.span.line} requires position or predicate."
+            )
+        if positional:
+            if stmt.position is None or stmt.count is None or stmt.lanes is not None:
+                raise ToolangValidationError(
+                    f"Invalid positional {stmt.kind} at line {stmt.span.line}."
+                )
             _non_negative(stmt.count, field="count", line=stmt.span.line)
-        if isinstance(stmt, ast.StormStmt | ast.MapStmt):
+        else:
+            _require_evaluator(stmt.runnable or "", runnables, stmt, "Boolean")
             _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
+        return
+    if isinstance(stmt, ast.SortStmt):
+        _require_evaluator(stmt.runnable, runnables, stmt, "Number")
+        if stmt.order not in {"ascending", "descending"}:
+            raise ToolangValidationError(
+                f"Sort at line {stmt.span.line} requires ascending or descending order."
+            )
+        _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
+        return
+    if isinstance(stmt, ast.RepeatStmt):
+        if stmt.count is None and stmt.runnable is None:
+            raise ToolangValidationError(
+                f"Repeat at line {stmt.span.line} requires count or until."
+            )
+        _positive_optional(stmt.window, field="window", line=stmt.span.line)
+        if stmt.count is not None:
+            _non_negative(stmt.count, field="count", line=stmt.span.line)
+        if stmt.runnable is not None:
+            _require_runnable(stmt.runnable, runnables, stmt=stmt)
+        _validate_stmts(stmt.stmts, runnables=runnables)
+        return
+
+    runnable = _stmt_runnable(stmt)
+    _require_runnable(runnable, runnables, stmt=stmt)
+    if isinstance(stmt, ast.StormStmt):
+        _non_negative(stmt.count, field="count", line=stmt.span.line)
+    if isinstance(stmt, ast.StormStmt | ast.MapStmt):
+        _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
 
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:
