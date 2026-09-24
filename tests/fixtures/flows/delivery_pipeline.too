@@ -1,0 +1,53 @@
+# Execution fixture for named inputs, a seeded reducer, and bounded refinement.
+
+agic decompose(_, constraints?) -> Text[]:
+  project={{_}}
+  constraints={{constraints}}
+
+agic plan_workstream(_, project: Part[], constraints?):
+  project={{project}}
+  constraints={{constraints}}
+  workstream={{_}}
+
+agic assemble_plan(_, project: Part[], constraints?):
+  project={{project}}
+  constraints={{constraints}}
+  plans={{_}}
+
+agic review_lenses(_, project: Part[], constraints?) -> Text[]:
+  project={{project}}
+  constraints={{constraints}}
+  draft={{_}}
+
+agic review_plan(_, draft: Part[], project: Part[], constraints?):
+  project={{project}}
+  constraints={{constraints}}
+  draft={{draft}}
+  lens={{_}}
+
+agic apply_review(_, draft: Part[], project: Part[], constraints?):
+  project={{project}}
+  constraints={{constraints}}
+  draft={{draft}}
+  current={{_}}
+  previous={{_1._}}
+
+agic improve_plan(_, project: Part[], constraints?):
+  project={{project}}
+  constraints={{constraints}}
+  plan={{_}}
+
+flow delivery(_: Text, constraints?):
+  recall = none
+  tools = none
+  let project = {{_}}
+  scatter using decompose
+  map using plan_workstream in 4 lanes
+  gather using assemble_plan
+  let draft = {{_}}
+  scatter using review_lenses
+  map using review_plan in 3 lanes
+  settle using apply_review:
+    from: {{draft}}
+  repeat 2 times:
+    run improve_plan

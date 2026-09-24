@@ -1,0 +1,46 @@
+# Execution fixture for collection reshaping, filtering, and stable sorting.
+
+agic expand_queries -> Text[]:
+  Research question:
+  {{_}}
+
+agic search_web:
+  Query:
+  {{_}}
+
+agic extract_findings:
+  Evidence bundle:
+  {{_}}
+
+agic synthesize_report(_, topic: Part[]):
+  Research question:
+  {{topic}}
+
+  Findings:
+  {{_}}
+
+agic is_relevant(_, topic: Part[]) -> Boolean:
+  Research question:
+  {{topic}}
+
+  Evidence bundle:
+  {{_}}
+
+agic relevance(_, topic: Part[]) -> Number:
+  Research question:
+  {{topic}}
+
+  Evidence bundle:
+  {{_}}
+
+flow(_: Text):
+  recall = none
+  tools = none
+  let topic = {{_}}
+  scatter using expand_queries
+  map using search_web in 4 lanes
+  keep if is_relevant
+  sort descending by relevance
+  keep first 8
+  map using extract_findings in 4 lanes
+  gather using synthesize_report

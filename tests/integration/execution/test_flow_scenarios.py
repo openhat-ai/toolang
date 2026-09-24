@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import FIXTURES_ROOT
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
@@ -1309,12 +1310,12 @@ flow mapped(_: Text) -> Text[]:
     asyncio.run(scenario())
 
 
-def test_deep_search_example_uses_explicit_flow_reshaping(
+def test_research_pipeline_reshapes_filters_and_sorts(
     tmp_path: Path,
 ) -> None:
-    source = (
-        Path(__file__).parents[3] / "examples" / "flows" / "deep_search.too"
-    ).read_text(encoding="utf-8")
+    source = (FIXTURES_ROOT / "flows" / "research_pipeline.too").read_text(
+        encoding="utf-8"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
