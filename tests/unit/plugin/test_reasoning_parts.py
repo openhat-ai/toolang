@@ -504,6 +504,53 @@ def test_messages_stream_keeps_blocks_separate_and_assembles_signature(monkeypat
     assert result.continuation is None
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("tools", [False, True])
+def test_messages_unsigned_thinking_round_trips_on_compatible_routes(
+    monkeypatch, stream, tools
+):
+    selected = model("messages", provider="vercel")
+    content: list[dict[str, Any]] = [
+        {"type": "thinking", "thinking": "analysis α\n"},
+        {"type": "text", "text": "answer"},
+    ]
+    native = {"content": content}
+    if tools:
+        content.append(
+            {"type": "tool_use", "id": "call", "name": "lookup", "input": {"x": 1}}
+        )
+    if stream:
+        events = [
+            event
+            for index, block in enumerate(native["content"])
+            for event in (
+                {"type": "content_block_start", "index": index, "content_block": block},
+                {"type": "content_block_stop", "index": index},
+            )
+        ]
+        mock_http(monkeypatch, messages, events)
+        updates = []
+        result = run_stream(messages.MessagesModelAdapter(), selected, updates)
+        assert_events(updates, result)
+    else:
+        result = messages.parse_message_response(native, model=selected)
+    assert result.message is not None
+    restored = Message.from_data(json.loads(json.dumps(result.message.to_data())))
+    assert isinstance(restored.parts[0], ReasoningPart)
+    assert restored.parts[0].signature is None
+    assert encode("messages", restored, selected) == native["content"]
+
+
+def test_messages_redacted_thinking_still_requires_opaque_data():
+    selected = model("messages", provider="vercel")
+    result = messages.parse_message_response(
+        {"content": [{"type": "redacted_thinking"}]}, model=selected
+    )
+    assert result.message is not None
+    with pytest.raises(ToolangError, match="signature"):
+        encode("messages", result.message, selected)
+
+
 @pytest.mark.parametrize(
     "failure", [RuntimeError("disconnected"), asyncio.CancelledError()]
 )

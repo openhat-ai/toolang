@@ -465,12 +465,17 @@ def _encode_message(
             if message.role != "assistant" or not compatible(part, model, "messages"):
                 continue
             kind = part.provider_metadata.get("type")
-            if kind not in {"thinking", "redacted_thinking"} or not part.signature:
-                raise ToolangError(
-                    "Messages reasoning requires a native block type and signature"
-                )
+            if kind not in {"thinking", "redacted_thinking"}:
+                raise ToolangError("Messages reasoning requires a native block type")
+            if kind == "redacted_thinking" and not part.signature:
+                raise ToolangError("Messages redacted thinking requires a signature")
+            # Compatible APIs can return completed thinking without a signature.
             content.append(
-                {"type": "thinking", "thinking": part.text, "signature": part.signature}
+                {
+                    "type": "thinking",
+                    "thinking": part.text,
+                    **({"signature": part.signature} if part.signature else {}),
+                }
                 if kind == "thinking"
                 else {"type": "redacted_thinking", "data": part.signature}
             )
