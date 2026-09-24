@@ -157,13 +157,21 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    case_id = f"{tmp_path.parent.name}-{tmp_path.name}"
-    selector = f"owner-{case_id}/researcher"
+    selector = "owner/researcher"
+    monkeypatch.setattr(
+        AgentLayout,
+        "visiting",
+        classmethod(
+            lambda cls, source, name: cls(
+                root=tmp_path, name=name, placement="visiting"
+            )
+        ),
+    )
     monkeypatch.setattr(
         agents,
         "_resolve_github_agent_shorthand",
         lambda *_args, **_kwargs: agents.HttpAgentRef(
-            url=f"https://agents.example/{case_id}/researcher.too"
+            url="https://agents.example/researcher.too"
         ),
     )
     monkeypatch.setattr(

@@ -38,10 +38,12 @@ from toolang.up import process as agents
 
 
 def _call_main(arguments: list[str]) -> int:
-    try:
-        return cli.main(arguments)
-    except SystemExit as exc:
-        return exc.code if isinstance(exc.code, int) else 1
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys, "argv", ["toolang", *arguments])
+        try:
+            return cli.main(arguments)
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 1
 
 
 def test_extract_root_args_supports_short_option_and_stops_at_separator() -> None:
@@ -219,7 +221,7 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: pytest [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
+    assert "Usage: toolang [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
     assert "Toolang — a language and runtime for agents and humans." in stdout
     assert output.err == ""
 
@@ -277,7 +279,8 @@ def test_compact_help_lists_the_public_runnable_signature(
     assert "Compact a thread" in output
     assert "previous" not in output
     assert (
-        "Usage: pytest <AGENT> compact [OPTIONS] [NAME=VALUE...]" in output.splitlines()
+        "Usage: toolang <AGENT> compact [OPTIONS] [NAME=VALUE...]"
+        in output.splitlines()
     )
     options = [
         output.index(name) for name in ("--limit", "--model", "--catalog", "--help")
@@ -379,49 +382,49 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] <SOURCE> [TARGET]",
+            "Usage: toolang clone [OPTIONS] <SOURCE> [TARGET]",
             "TARGET",
             "[TARGET]",
         ),
         (
             ["chat"],
-            "Usage: pytest <AGENT> chat [OPTIONS]",
+            "Usage: toolang <AGENT> chat [OPTIONS]",
             "AGENT",
             "{AGENT}",
         ),
         (
             ["parse"],
-            "Usage: pytest parse [OPTIONS] <SOURCE>",
+            "Usage: toolang parse [OPTIONS] <SOURCE>",
             "SOURCE",
             "{SOURCE}",
         ),
         (
             ["highlight"],
-            "Usage: pytest highlight [OPTIONS] <SOURCE>",
+            "Usage: toolang highlight [OPTIONS] <SOURCE>",
             "SOURCE",
             "{SOURCE}",
         ),
         (
             ["fmt"],
-            "Usage: pytest fmt [OPTIONS] [PATH...]",
+            "Usage: toolang fmt [OPTIONS] [PATH...]",
             "PATH",
             "[PATH]...",
         ),
         (
             ["inspect"],
-            "Usage: pytest <AGENT> inspect [OPTIONS] <SUBJECT>...",
+            "Usage: toolang <AGENT> inspect [OPTIONS] <SUBJECT>...",
             "SUBJECT",
             "SUBJECT...",
         ),
         (
             ["rewind"],
-            "Usage: pytest <AGENT> rewind [OPTIONS] <RUN>",
+            "Usage: toolang <AGENT> rewind [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
         (
             ["fork"],
-            "Usage: pytest <AGENT> fork [OPTIONS] <RUN>",
+            "Usage: toolang <AGENT> fork [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
@@ -644,7 +647,7 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: pytest agent:alice" in stdout
+    assert "Usage: toolang agent:alice" in stdout
     assert stdout.startswith("Run and manage agent alice.\n")
     assert "agent agent:alice" not in stdout
 
