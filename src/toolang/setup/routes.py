@@ -21,14 +21,22 @@ from toolang.base.types.model import (
 from toolang.base.types.model import ModelProvider
 
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
+_APP_ATTRIBUTION_URL = "https://toolang.ai"
+_APP_ATTRIBUTION_TITLE = "Toolang"
 
 # Toolang-owned provider conventions: agent-side data keyed by provider id.
 PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
     "openrouter": {
         "headers": {
-            "HTTP-Referer": "https://toolang.ai",
-            "X-OpenRouter-Title": "Toolang",
+            "HTTP-Referer": _APP_ATTRIBUTION_URL,
+            "X-OpenRouter-Title": _APP_ATTRIBUTION_TITLE,
             "X-OpenRouter-Categories": "cli-agent,personal-agent",
+        },
+    },
+    "vercel": {
+        "headers": {
+            "http-referer": _APP_ATTRIBUTION_URL,
+            "x-title": _APP_ATTRIBUTION_TITLE,
         },
     },
 }
@@ -115,6 +123,7 @@ def resolve_provider(
     satisfied = env if env_is_ready(env, environ=environ) else None
     adapter_name = provider_adapter(provider)
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
+    conventions = _convention_block(provider.id)
     default_route = ModelRoute(
         adapter=adapter_name if adapter is not None else None,
         api=_resolve_api(
@@ -125,8 +134,8 @@ def resolve_provider(
             ),
         ),
         env=satisfied,
-        headers=cast(Mapping[str, str], _convention_block(provider.id)["headers"]),
-        options=cast(Mapping[str, object], _convention_block(provider.id)["options"]),
+        headers=cast(Mapping[str, str], conventions["headers"]),
+        options=cast(Mapping[str, object], conventions["options"]),
     )
     return replace(provider, _toolang=replace(provider._toolang, route=default_route))
 

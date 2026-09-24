@@ -194,6 +194,90 @@ def test_resolver_requires_installed_adapter_and_concrete_api() -> None:
     assert _model_for(missing_adapter, "model")._toolang.ready is False
 
 
+def test_vercel_gateway_provider_receives_app_attribution_headers() -> None:
+    provider = _provider(
+        "vercel",
+        npm="@ai-sdk/gateway",
+        env=("AI_GATEWAY_API_KEY",),
+    )
+
+    resolved = resolve_catalog_providers(
+        provider,
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    route = _provider_for(resolved)._toolang.route
+    model = _model_for(resolved, "model")
+    assert route.api == "https://ai-gateway.vercel.sh/v1"
+    assert route.headers == {
+        "http-referer": "https://toolang.ai",
+        "x-title": "Toolang",
+    }
+    assert model._toolang.route.headers == route.headers
+
+
+def test_vercel_gateway_attribution_is_not_applied_to_other_providers() -> None:
+    regular_provider = _provider(
+        "custom",
+        npm="@ai-sdk/gateway",
+        env=("CUSTOM_API_KEY",),
+        api="https://custom.example/v1",
+    )
+    openrouter_provider = _provider(
+        "openrouter",
+        npm="@openrouter/ai-sdk-provider",
+        env=("OPENROUTER_API_KEY",),
+    )
+
+    regular = resolve_catalog_providers(
+        regular_provider,
+        adapters=_adapters(),
+        environ={"CUSTOM_API_KEY": "custom", "OPENROUTER_API_KEY": "router"},
+    )
+    openrouter = resolve_catalog_providers(
+        openrouter_provider,
+        adapters=_adapters(),
+        environ={"CUSTOM_API_KEY": "custom", "OPENROUTER_API_KEY": "router"},
+    )
+
+    assert _provider_for(regular)._toolang.route.api == "https://custom.example/v1"
+    assert _provider_for(regular)._toolang.route.headers == {}
+    assert _model_for(regular, "model")._toolang.route.headers == {}
+    assert _provider_for(openrouter)._toolang.route.headers == {
+        "HTTP-Referer": "https://toolang.ai",
+        "X-OpenRouter-Title": "Toolang",
+        "X-OpenRouter-Categories": "cli-agent,personal-agent",
+    }
+    assert "x-title" not in _provider_for(openrouter)._toolang.route.headers
+
+
+def test_explicit_model_header_overrides_gateway_convention_case_insensitively() -> (
+    None
+):
+    gateway = _provider(
+        "vercel",
+        npm="@ai-sdk/gateway",
+        env=("AI_GATEWAY_API_KEY",),
+    )
+    model = replace(
+        _model_for(gateway, "model"),
+        provider=ModelProvider(headers={"X-Title": "Custom App"}),
+    )
+    gateway = _replace_catalog(gateway, models={model.id: model})
+
+    resolved = resolve_catalog_providers(
+        gateway,
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    assert _model_for(resolved, "model")._toolang.route.headers == {
+        "http-referer": "https://toolang.ai",
+        "X-Title": "Custom App",
+    }
+
+
 def test_provider_json_remains_raw_after_resolution() -> None:
     provider = resolve_catalog_providers(
         _provider("openai", npm="@ai-sdk/openai", env=("OPENAI_API_KEY",)),
