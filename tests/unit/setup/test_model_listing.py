@@ -8,6 +8,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import cast
 
 import pytest
@@ -370,6 +371,59 @@ def test_catalog_switches_replace_the_same_cache_and_missing_source_errors(harne
     ]
     with pytest.raises(FileNotFoundError):
         harness.load(source=harness.root / "missing.json")
+
+
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("selector", ["default", "explicit", "environment"])
+def test_cache_survives_sandbox_remounts(tmp_path, monkeypatch, agent, selector):
+    host_root = tmp_path / "host"
+    host_root.mkdir()
+    harness = _Harness(host_root, monkeypatch)
+    harness.layout.root_config.write_text("# shared root config\n")
+    harness.layout.home.mkdir(parents=True)
+    harness.layout.config.write_text('[allow]\nmodels = ["test/two"]\n')
+    harness.write(env=("TEST_API_KEY",))
+    harness.env["TEST_API_KEY"] = "same-credential"
+    if selector != "default":
+        harness.source = harness.source.rename(tmp_path / "external.json")
+    if selector == "environment":
+        harness.env["TOOLANG_MODEL_CATALOG"] = str(harness.source)
+    source = harness.source if selector == "explicit" else None
+    first = harness.load(agent=agent, source=source)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("remounting unchanged inputs must hit the existing cache")
+
+    monkeypatch.setattr(
+        "toolang.plugin.catalogs.models_dev.catalog.ModelCatalogSource.snapshot",
+        unexpected,
+    )
+    for name in ("sandbox-a", "sandbox-b"):
+        guest_root = tmp_path / name
+        shutil.copytree(host_root, guest_root)
+        harness.layout = AgentLayout.resident(guest_root, "alice")
+        guest_source = guest_root / "catalog.json"
+        if selector != "default":
+            guest_source = guest_root / ".inputs" / "models" / "catalog-remounted.json"
+            guest_source.parent.mkdir(parents=True)
+            shutil.copyfile(harness.source, guest_source)
+        guest_source.touch()
+        harness.env.update(
+            HOME=f"/home/{name}",
+            TOOLANG_ROOT=str(guest_root),
+            TOOLANG_SANDBOX=f"docker:{name}",
+        )
+        if selector == "environment":
+            harness.env["TOOLANG_MODEL_CATALOG"] = str(guest_source)
+        listing = harness.load(
+            agent=agent, source=guest_source if selector == "explicit" else None
+        )
+        assert listing.records == first.records
+        assert listing.export(listing.default.items) == first.export(
+            first.default.items
+        )
+    assert harness.builds == 1
+    assert harness.probe.calls == 3
 
 
 def test_root_agent_scope_and_complete_config_bytes(harness):

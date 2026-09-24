@@ -234,7 +234,11 @@ class SetupWatcher:
             "catalog_config": digest(
                 {
                     name: {
-                        key: value for key, value in config.items() if key != "environ"
+                        key: value
+                        for key, value in config.items()
+                        if key != "environ"
+                        # The captured bytes identify the static source across mounts.
+                        and not (name == "models_dev" and key == "path")
                     }
                     for name, config in catalog_configs.items()
                 }

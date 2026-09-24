@@ -33,11 +33,19 @@ Consumers build and reuse query datasets or indexes only when needed. Export
 reconstructs nested public JSON only for selected records.
 
 Root and agent caches remain isolated. `--catalog` replaces only the static source;
-its normalized path and content participate in validation. Switching A → B → A
-rebuilds and replaces the same cache each time. Missing explicit files error.
+captured content identifies it, independently of its selected path. Switching
+between different contents A → B → A rebuilds and replaces the same cache each
+time. Identical content at another path can reuse it. Missing explicit files error.
 Source filenames cannot collide with the derived file. Source files are independent
 runtime caches, not a transactionally synchronized copy of the listing's inputs.
 Old flat source-cache locations and old derived schemas are ignored and rebuilt.
+
+Sandbox mounts already share root `.setup` and the agent home. The JSON format and
+dependency identity are portable across host/guest paths and supported Python
+versions: exclude the injected `models_dev.path`, file timestamps, and unrelated
+host/guest environment variables. Default, explicit, and environment-selected
+catalogs follow the same rule. Changed credentials, configurations, plugin versions,
+or local discovery facts still invalidate; a shared cache remains one replaceable slot.
 
 ## Dependency detection
 
@@ -84,6 +92,8 @@ selection; config and static-source capture; watcher and models CLI; focused tes
    escaped template syntax, dynamic endpoint/metadata changes, and plugin/schema drift.
 4. Cover root/agent isolation, explicit catalog switching, captured-byte consistency,
    source-name collisions, corrupt records/checksums, probe errors, and write failure.
+   Verify host-to-sandbox and sandbox-to-sandbox remounts hit without static parsing
+   for default, explicit, and environment-selected catalogs in root and agent contexts.
 5. Run default offline verification. Benchmark fresh processes on the same complete
    catalog/configuration against main, reporting cache size, confirmed warm hits,
    cache-to-query-ready time, and default/all/filtered command latency. Keep timing
