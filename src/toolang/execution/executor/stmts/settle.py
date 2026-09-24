@@ -95,6 +95,7 @@ async def execute(
                             index=index - start, count=len(items) - start, phase="body"
                         ),
                     ),
+                    expected_output=output_type,
                 )
             scope = IterationScope(
                 1,

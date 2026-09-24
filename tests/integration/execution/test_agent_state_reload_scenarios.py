@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
+import json
 from pathlib import Path
 import threading
 
@@ -387,6 +388,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             occurrence: Occurrence | None,
             *,
             output_binding: str | None = "_",
+            expected_output: str | None = None,
         ) -> Local:
             nonlocal started_children
             started_children += 1
@@ -401,6 +403,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
                 name,
                 occurrence,
                 output_binding=output_binding,
+                expected_output=expected_output,
             )
 
         monkeypatch.setattr(_Execution, "execute_child", gate_second_child)
@@ -655,5 +658,114 @@ flow parent:
             assert harness.store.run_output_text(run_id=root.id) == (
                 f"round {updated_depth + 1}"
             )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["map", "storm", "settle"])
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("output", ["Text", "Text[]"])
+@pytest.mark.parametrize("changes_type", [True, False])
+def test_collection_reload_preserves_the_operation_output_contract(
+    tmp_path: Path, operation: str, kind: str, output: str, changes_type: bool
+) -> None:
+    updated_output = output.replace("Text", "Number") if changes_type else output
+    source_values = (
+        [[value] for value in "abc"] if output.endswith("[]") else list("abc")
+    )
+    results = (
+        [[value] for value in ("first", "3", "4")]
+        if output.endswith("[]")
+        else ["first", "3", "4"]
+    )
+    responses = [
+        json.dumps(value) if isinstance(value, list) else value for value in results
+    ]
+    worker = "transform" if kind == "agic" else "worker"
+    declaration = (
+        "" if kind == "agic" else f"flow transform -> {output}:\n  run worker\n"
+    )
+    statement = {
+        "map": "map in 1 lane using transform",
+        "storm": "storm 3 in 1 lane using transform",
+        "settle": "settle using transform",
+    }[operation]
+    source = f"""
+agic seed() -> {output}[]:
+  Seed.
+agic {worker} -> {output}:
+  user: Old current {{{{_}}}}.
+{declaration}
+flow parent() -> {output if operation == "settle" else f"{output}[]"}:
+  scatter 3 using seed
+  {statement}
+"""
+    replacement = (
+        source.replace("Old current", "New current")
+        .replace(f"transform -> {output}:", f"transform -> {updated_output}:")
+        .replace(f"worker -> {output}:", f"worker -> {updated_output}:")
+    )
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=(
+            ModelCallResult(message=Message.assistant(json.dumps(source_values))),
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant(responses[0])),
+                gate=first_call,
+            ),
+            ModelCallResult(message=Message.assistant(responses[1])),
+            ModelCallResult(message=Message.assistant(responses[2])),
+        ),
+    )
+    reloaded = _durable_state(harness, replacement)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:parent")
+            )
+            await asyncio.wait_for(first_call.wait_until_entered(), timeout=1)
+            control = handle.reload(reloaded)
+            await _wait_until_applied(harness, handle.run_id, control.index)
+            first_call.release()
+            root = await handle
+
+            if changes_type:
+                assert root.status == "failed"
+                assert len(harness.adapter.invocations) == 2
+                assert root.error is not None
+                assert f"requires {output} output" in harness.store.resolve_error(
+                    root.error
+                )
+                step = harness.store.list_steps(run_id=root.id)[-1]
+                assert step.status == "failed" and step.output is None
+                children = [
+                    run
+                    for run in harness.store.list_runs(thread_id=thread, limit=None)
+                    if run.parent == step.ref
+                ]
+                assert len(children) == 1
+            else:
+                assert root.status == "succeeded", root.error
+                assert len(harness.adapter.invocations) == (
+                    3 if operation == "settle" else 4
+                )
+                assert "New current" in str(
+                    harness.adapter.invocations[2].call.messages
+                )
+                expected = results[1] if operation == "settle" else results
+                assert harness.store.run_output_text(run_id=root.id) == (
+                    json.dumps(expected, separators=(",", ":"))
+                    if isinstance(expected, list)
+                    else expected
+                )
+
+            # Failed operations must not leave an unreadable typed output behind.
+            for run in harness.store.list_runs(thread_id=thread, limit=None):
+                if run.output is not None:
+                    harness.store.run_output_text(run_id=run.id)
 
     asyncio.run(scenario())

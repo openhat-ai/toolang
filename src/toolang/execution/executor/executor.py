@@ -2301,6 +2301,7 @@ class _Execution:
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
+        expected_output: str | None = None,
     ) -> Local:
         """Accept and execute one authored child call."""
 
@@ -2314,13 +2315,21 @@ class _Execution:
             raw_input=raw_input,
             authorize=authorize,
             state_snapshot=state_snapshot,
+            expected_output=expected_output,
             begin=True,
         )
-        return await self._execute_child_binding(
+        result = await self._execute_child_binding(
             binding,
             runnable,
             output_binding=output_binding,
         )
+        if expected_output is not None:
+            actual_output = _runtime_local_type(result)
+            if actual_output != expected_output:
+                raise ToolangError(
+                    f"{name!r} requires {expected_output} output, got {actual_output}"
+                )
+        return result
 
     async def accept_child(
         self,
@@ -2335,6 +2344,7 @@ class _Execution:
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
+        expected_output: str | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Validate and commit a child Run before dispatching it."""
 
@@ -2399,7 +2409,9 @@ class _Execution:
                 runnable_name,
                 kind=runnable_kind,
             )
-            self._validate_child_contract(step, name, runnable)
+            self._validate_child_contract(
+                step, name, runnable, expected_output=expected_output
+            )
             binding = _child_binding(
                 self,
                 current_parent_binding,
@@ -2632,7 +2644,12 @@ class _Execution:
         )
 
     def _validate_child_contract(
-        self, step: StepRef, name: str, runnable: AgicDecl | FlowDecl
+        self,
+        step: StepRef,
+        name: str,
+        runnable: AgicDecl | FlowDecl,
+        *,
+        expected_output: str | None = None,
     ) -> None:
         record = self.store.get_step(ref=step)
         if record is not None and not isinstance(
@@ -2644,6 +2661,13 @@ class _Execution:
                 name=name,
                 line=record.given.span.line,
             )
+            output_type = runnable.output or "Part[]"
+            if expected_output is not None and output_type != expected_output:
+                raise ToolangError(
+                    f"{record.given.kind.capitalize()} at line {record.given.span.line} "
+                    f"requires {expected_output} output from {name!r}, "
+                    f"got {output_type}"
+                )
 
     async def parallel_children(
         self,
@@ -2669,6 +2693,8 @@ class _Execution:
         name, kind = parse_runnable_ref(runnable)
         _, declaration = resolve_module_runnable(state, binding.module, name, kind=kind)
         self._validate_child_contract(parent, runnable, declaration)
+        # Later children may adopt reloads, but one collection has one output type.
+        output_type = declaration.output or "Part[]"
         structs = {
             item.name: item for item in state_program(state, binding.module).structs
         }
@@ -2708,6 +2734,7 @@ class _Execution:
                         item=OccurrencePosition(index=index, count=len(inputs)),
                         lane=OccurrencePosition(index=lane, count=lanes),
                     ),
+                    expected_output=output_type,
                 )
             except _ExecutionFailed as exc:
                 raise RuntimeError(
@@ -2728,7 +2755,6 @@ class _Execution:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        output_type = _parallel_output_type(results) or declaration.output or "Part[]"
         result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
@@ -3022,17 +3048,6 @@ class _Execution:
             if self._active is None:
                 return self._current_state
             raise RuntimeError(f"step State boundary is missing: {step}") from exc
-
-
-def _parallel_output_type(
-    results: Sequence[Local],
-) -> str | None:
-    actual = {
-        kind for result in results if (kind := _runtime_local_type(result)) is not None
-    }
-    if len(actual) == 1:
-        return next(iter(actual))
-    return None
 
 
 def _child_binding(

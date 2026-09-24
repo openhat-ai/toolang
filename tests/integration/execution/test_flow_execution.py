@@ -798,7 +798,10 @@ def test_parallel_children_preserve_input_and_output_types(
         _step: str,
         _name: str,
         _placement: dict[str, object] | None,
+        *,
+        expected_output: str | None = None,
     ) -> Local:
+        assert expected_output == "Number"
         observed_types.append(child_locals["_"].type_name)
         return Local(1, "item", type_name="Number")
 
@@ -857,7 +860,10 @@ def test_parallel_children_reuse_the_lane_that_finished(
         _step: str,
         _name: str,
         occurrence: Occurrence | None,
+        *,
+        expected_output: str | None = None,
     ) -> Local:
+        assert expected_output == "Number"
         item = cast(int, child_locals["_"].value)
         assert occurrence is not None
         occurrences[item] = occurrence
