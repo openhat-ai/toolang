@@ -126,9 +126,10 @@ repeat 5 times windowing 3:
   output values. Existing template section scoping applies: render the current
   `_` outside a history-frame section; use qualified `_k.field` inside it.
 - For until agics, required depth is the highest history index in their own
-  resolved templates, including guards and authored instruct/context; no references
-  means 0. If fewer prior frames exist, until is false without rendering or
-  invoking its runnable. Save the completed body frame and honor the iteration limit.
+  resolved templates, including guards and effective instruct/context, whether
+  local or inherited; no references means 0. If fewer prior frames exist, until
+  is false without rendering or invoking its runnable. Save the completed body
+  frame and honor the iteration limit.
 - Only the referenced depth must be available, not the full window: the example
   first evaluates until in round 3; a history-free condition can run in round 1.
   Invalid contracts, references beyond the window, and missing fields in existing
@@ -173,17 +174,65 @@ repeat 5 times windowing 3:
 
 ## 7. Configure Execution
 
-- Agic configuration: tools, caps, models, hands, handoffs, recall, instruct, context.
-- Flow configuration: lanes. Resource choices belong to agics or agent setup.
-- `instruct:` and `context:` retain their existing setting forms.
-- Proposed `caps`: replace the runnable selectors `psyches`/`skills`/`services`/
-  `prompts` with one capability union, retaining the four kinds and query operators.
-  Agent resource ceilings still apply; migration details remain open.
+- Agic configuration: models, tools, psyches, skills, services, prompts, hands,
+  handoffs, recall, instruct, context.
+- Flow supports the same configuration plus lanes. Keep the four capability-kind
+  selectors and their independent operations.
 - Lane precedence: statement clause > enclosing flow directive > built-in 4.
 - `lanes = N`: one positive integer per flow; statement lane clauses are optional.
 - Apply lanes to storm/map/predicate keep/drop/sort, preserving result order.
   Repeat bodies use their enclosing flow's setting; named flows use their own.
   Settle runs sequentially.
+
+Proposed inheritance, pending confirmation:
+
+- Resource selectors (`models`, `tools`, and the four capability kinds): root
+  base is the agent's allowed resources; child base is its immediate parent's
+  effective resources, intersected with the child's module visibility. Compare
+  stable identities, not bare names; module changes grant no additional resources.
+- Omission inherits the base. Apply directives in source order: `=` intersects
+  the active set, `-=` removes matches, and `+=` restores matches from the fixed
+  base. A child cannot restore anything excluded by its parent. Kinds are independent.
+- Use this rule for agic/flow, named/adhoc, statement calls, public `run`, and
+  `execute` transfers. Transfers retain the outgoing runnable's resource boundary.
+  State refresh and resume reapply the same boundary without resetting to agent scope;
+  siblings do not share mutations. Existing model-binding validation still applies.
+- `hands`/`handoffs` authorize the current caller's model-driven routes, not the
+  whole descendant call tree. Omission inherits; explicit `=` replaces the route
+  selection from public runnables, and empty `hands =` / `handoffs =` disables it.
+  With no inherited value, routes are empty. Flow provides defaults to descendants;
+  authored flow statements do not require a matching route.
+- Route selections may differ from or exceed the parent's selections: a parent
+  with `hands = worker` can call a worker declaring `hands = helper`. Neither
+  delegation nor transfer expands resource sets; existing recursion checks remain.
+- `instruct:` / `context:` keep their forms. Omission inherits; an explicit value
+  replaces the inherited setting, `none` disables it, and `default` selects the
+  runnable's own module default. Only authored settings propagate; without one,
+  use the receiving agic's existing defaults. Bind template references in the
+  declaring module, then render in the child's frame; do not concatenate settings
+  or implicitly capture parent locals.
+- Flow forwards prompt settings to descendants without rendering model messages
+  itself. Inherited template dependencies are checked at use sites, not added to
+  declaration signatures.
+- `recall` keeps its existing values and default. Only root agics apply it to
+  automatic message inclusion; flow/child declarations are accepted but do not
+  assemble history or filter `_f/_n/_h`. They cannot change the root's policy.
+- Lanes and iteration windows are local controls, not resource ceilings. A nested
+  flow can use a larger lane count; omission uses built-in 4, not its caller's value.
+- Cost: parents must allow resources needed by their descendants. Calls relying
+  on agent-scope resets or additional module-local capabilities need migration.
+
+| Concern | Current implementation | Proposed target |
+| --- | --- | --- |
+| Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
+| Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Accept agic configuration plus lanes |
+| Statement child agic | Uses enclosing flow resources, otherwise agent resources | Uses immediate parent resources |
+| Nested flow | Resets to agent resources | Inherits parent boundary |
+| Public run / execute | Rebuilds target resources from agent scope | Preserves caller boundary, including transfers |
+| Resource operators | `=` intersects; `+=` adds within the chosen base | Keep operators; consistently use the parent base |
+| Hands/handoffs | Each agic selects independently; omission disables routes | Inherit defaults; explicit selection replaces them |
+| Instruct/context | Each agic resolves its own setting/default | Inherit defaults; explicit setting replaces them |
+| Recall | Each agic selects history for its model calls | Automatic inclusion only for root agics |
 
 ## 8. Validate and Migrate
 
@@ -199,6 +248,13 @@ repeat 5 times windowing 3:
   successful round, and distinguishes missing frames from invalid references/fields.
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
+- Verify resource narrowing across every call/transfer path, module visibility,
+  per-kind operators, empty sets, sibling isolation, and reload/resume boundaries.
+  Parent `{a,b}`, child `= a; += b` yields `{a,b}`; parent `{a}`, child `+= b`
+  remains `{a}`. Selecting an unavailable concrete model remains an error.
+- Verify route inheritance/replacement/empty selections, worker-to-helper routing,
+  prompt inheritance/override/none/default with declaring-module resolution, and
+  independent nested lanes. Inherited until templates contribute history depth.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
@@ -207,15 +263,16 @@ repeat 5 times windowing 3:
 - Documentation check: `git diff --check`. Implementation: repository default checks.
 - Touchpoints: `src/toolang/lang/{ast,lower,input,format,validate}.py`, template
   resolution, execution `executor/stmts/{repeat,settle}.py`, runnable frames,
+  `executor/{executor,resources,frame}.py`, `runnables.py`,
   `assembly/{history,prompting}.py`, and store projections.
-- Risks: contract migration, frame retention, and mixed history versions.
+- Risks: contract/resource-scope migration, inherited prompt dependencies,
+  frame retention, and mixed history versions.
 
 ## 9. Open Decisions
 
 - Define required iteration-history depth for until flows and indirect/dynamic
   dependencies. This concerns `_k`, not the shared thread variables `_f/_n/_h`;
   local agic inference does not determine callee requirements.
-- Define `caps` migration: old per-kind `=` replaces only that kind, whereas a
-  union selector replaces the whole capability selection; decide old-key handling.
-- Define migration of flow resource directives to agics or agent setup, preserving
-  intended resource limits when flow retains only `lanes`.
+- Confirm the proposed inheritance rules, including parent resource boundaries
+  across public calls/transfers, module-local capability restrictions, overridable
+  route/prompt defaults, and recall's root-agic-only effect.
