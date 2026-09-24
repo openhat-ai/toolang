@@ -23,9 +23,12 @@ from toolang.plugin.adapters.chat_completions import (
     ChatCompletionsModelAdapter,
 )
 from toolang.plugin.adapters.messages import MessagesModelAdapter
+from toolang.plugin.adapters.generate_content import GenerateContentModelAdapter
+from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
 from toolang.plugin.catalogs.models_dev.path import (
+    DEFAULT_MAX_CATALOG_BYTES,
     PACKAGED_MODEL_CATALOG,
     resolve_model_catalog_path,
 )
@@ -33,6 +36,7 @@ from toolang.setup.catalog import MergedModelCatalog
 from toolang.setup.routes import (
     model_adapter,
     provider_adapter,
+    resolve_catalog_providers,
     resolve_provider,
 )
 
@@ -48,20 +52,108 @@ class _SnapshotCatalog(ModelCatalog):
         return self.value
 
 
-def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> None:
+def test_packaged_catalog_covers_approved_providers_and_all_captured_models() -> None:
     snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
     assert PACKAGED_MODEL_CATALOG.name == "catalog.json"
     assert not PACKAGED_MODEL_CATALOG.with_name("models.json").exists()
     assert set(snapshot.providers) == {
+        "alibaba",
+        "alibaba-cn",
         "anthropic",
+        "cerebras",
+        "deepinfra",
         "deepseek",
+        "fireworks-ai",
         "google",
+        "groq",
+        "huggingface",
+        "llama",
+        "meta",
+        "minimax",
+        "minimax-cn",
+        "mistral",
+        "modelscope",
+        "moonshotai",
+        "moonshotai-cn",
+        "nebius",
+        "novita-ai",
+        "nvidia",
         "openai",
         "openrouter",
+        "perplexity",
+        "siliconflow",
+        "siliconflow-cn",
+        "stepfun",
+        "stepfun-ai",
+        "tencent-tokenhub",
+        "togetherai",
+        "vercel",
+        "volcengine",
+        "xai",
+        "xiaomi",
+        "zai",
+        "zhipuai",
     }
-    assert len(snapshot.models) >= 15
-    assert PACKAGED_MODEL_CATALOG.stat().st_size < 64 * 1024
+    # All models in the selected providers from the 2026-09-24 upstream capture.
+    assert len(snapshot.models) == 1772
+    assert {model._toolang.provider for model in snapshot.models} == set(
+        snapshot.providers
+    )
+    assert any(model.status == "deprecated" for model in snapshot.models)
+    assert any(not model.tool_call for model in snapshot.models)
+    assert any(
+        "text" not in model.modalities.get("output", ()) for model in snapshot.models
+    )
+    assert PACKAGED_MODEL_CATALOG.stat().st_size < DEFAULT_MAX_CATALOG_BYTES
+
+
+def test_packaged_routes_resolve_with_credentials_and_builtin_adapters() -> None:
+    snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
+    adapters = {
+        adapter.name: adapter
+        for adapter in (
+            ChatCompletionsModelAdapter(),
+            GenerateContentModelAdapter(),
+            MessagesModelAdapter(),
+            ResponsesModelAdapter(),
+        )
+    }
+    unready = resolve_catalog_providers(snapshot, adapters=adapters, environ={})
+    assert all(not model._toolang.ready for model in unready.models)
+
+    ready = resolve_catalog_providers(
+        snapshot,
+        adapters=adapters,
+        environ={
+            name: "synthetic-key"
+            for provider in snapshot.providers.values()
+            for name in provider.env
+        },
+    )
+    protocol_overrides = {
+        "anthropic": "messages",
+        "minimax": "messages",
+        "minimax-cn": "messages",
+        "google": "generate_content",
+        "openai": "responses",
+        "meta": "responses",
+    }
+    for provider in ready.providers.values():
+        assert provider._toolang.route.adapter == protocol_overrides.get(
+            provider.id, "chat_completions"
+        )
+        if provider.api:
+            assert provider._toolang.route.api == provider.api
+    for model in ready.models:
+        assert model._toolang.ready, model.identity
+        assert model._toolang.route.adapter in adapters
+        assert model._toolang.route.api is not None
+        assert model._toolang.route.api.startswith("https://")
+        assert "${" not in model._toolang.route.api
+        if model.provider and model.provider.api:
+            assert model._toolang.route.api == model.provider.api
+    assert ready.to_data() == snapshot.to_data()
 
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:

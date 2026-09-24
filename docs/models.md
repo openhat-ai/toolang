@@ -42,7 +42,7 @@ Toolang selects the catalog file in this order:
 2. `TOOLANG_MODEL_CATALOG`;
 3. the active agent home `catalog.json`;
 4. `${TOOLANG_ROOT}/catalog.json`;
-5. the lightweight catalog packaged with Toolang.
+5. the catalog packaged with Toolang.
 
 A higher-priority file fully replaces lower-priority files. Toolang does not
 merge multiple static files and does not download catalog data during startup.
@@ -75,6 +75,41 @@ Queries narrow the selected view; `--json` changes only the output format.
 The commands do not display `default.model`/`compact.model`. Availability reflects
 the invoking process's configuration and environment, not a running agent's
 session or sandbox.
+
+### Bundled Providers and Provider-Only Export
+
+The bundled catalog includes 36 providers: the IDs in the export command below.
+Each selected provider includes all its models from the captured models.dev
+snapshot, including deprecated, preview, and non-text models. Presence in the
+catalog does not guarantee that an adapter supports every model's modalities;
+credentials, endpoint resolution, model capabilities, and allow rules still
+determine runtime use. Regional entries have distinct IDs and endpoints; some
+share an API-key variable, so one key can make both entries eligible.
+
+Use `models -q 'provider/*' --json` to export by provider. Repeat `-q` (or
+`--query`) to include more providers. `--all` retains models regardless of
+credentials and allow rules. The following regenerates the bundled provider
+selection from the latest upstream catalog:
+
+```bash
+curl -fsSL https://models.dev/catalog.json -o catalog.full.json
+queries=()
+for provider in \
+  alibaba alibaba-cn anthropic cerebras deepinfra deepseek fireworks-ai \
+  google groq huggingface llama meta minimax minimax-cn mistral modelscope \
+  moonshotai moonshotai-cn nebius novita-ai nvidia openai openrouter \
+  perplexity siliconflow siliconflow-cn stepfun stepfun-ai tencent-tokenhub \
+  togetherai vercel volcengine xai xiaomi zai zhipuai
+do
+  queries+=(-q "$provider/*")
+done
+too models --catalog catalog.full.json --all "${queries[@]}" --json > catalog.json
+```
+
+The result is a provider-map catalog accepted by `--catalog` or implicit
+`catalog.json` discovery. Export uses the normalization described below and
+does not include runtime credentials or readiness fields. No model ranking,
+capability, status, or representative-model filter is applied.
 
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top

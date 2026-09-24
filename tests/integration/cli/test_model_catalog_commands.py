@@ -21,6 +21,7 @@ from toolang.base.types.model import (
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
 from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
+from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 from toolang.plugin.catalogs.ollama import OllamaModelCatalog
@@ -147,6 +148,81 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
         result = runner.invoke(cli.app, ["models", subcommand])
         assert result.exit_code != 0
         assert "unexpected extra argument" in strip_ansi(result.stderr).lower()
+
+
+@pytest.mark.parametrize("query_option", ["-q", "--query"])
+def test_provider_queries_export_every_model_and_reload_as_a_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, query_option: str
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    bundled = json.loads(PACKAGED_MODEL_CATALOG.read_text())
+    catalog = tmp_path / "full.json"
+    catalog.write_text(
+        json.dumps({"models": {}, "providers": {**bundled, **_catalog_data()}})
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    # Complete exports must work without credentials even when all models are blocked.
+    (root / "config.toml").write_text("[allow]\nmodels = []\n")
+    base = ["--root", str(root), "models", "--catalog", str(catalog), "--all"]
+    queries = [arg for provider in bundled for arg in (query_option, f"{provider}/*")]
+    result = runner.invoke(cli.app, [*base, *queries, "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == bundled
+    assert "_toolang" not in result.stdout
+    exported = tmp_path / "exported.json"
+    exported.write_text(result.stdout)
+    reloaded = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(root),
+            "providers",
+            "--catalog",
+            str(exported),
+            "--all",
+            "--json",
+        ],
+    )
+    assert reloaded.exit_code == 0, reloaded.stderr
+    assert json.loads(reloaded.stdout) == bundled
+
+    # A provider selector must not include its regional sibling; nested model IDs survive.
+    subset = runner.invoke(
+        cli.app,
+        [*base, query_option, "alibaba/*", query_option, "openrouter/*", "--json"],
+    )
+    assert subset.exit_code == 0, subset.stderr
+    assert json.loads(subset.stdout) == {
+        provider: bundled[provider] for provider in ("alibaba", "openrouter")
+    }
+
+
+@pytest.mark.parametrize("command", ["models", "providers"])
+def test_bundled_catalog_is_complete_offline_and_respects_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    bundled = json.loads(PACKAGED_MODEL_CATALOG.read_text())
+    for provider in bundled.values():
+        for name in provider["env"]:
+            monkeypatch.delenv(name, raising=False)
+    (tmp_path / "config.toml").write_text('[allow]\nmodels = ["*"]\n')
+    base = ["--root", str(tmp_path), command, "--json"]
+    complete = runner.invoke(cli.app, [*base, "--all"])
+    assert complete.exit_code == 0, complete.stderr
+    assert json.loads(complete.stdout) == bundled
+
+    unavailable = runner.invoke(cli.app, base)
+    assert unavailable.exit_code == 0, unavailable.stderr
+    assert json.loads(unavailable.stdout) == {}
+
+    monkeypatch.setenv("CEREBRAS_API_KEY", "synthetic-key")
+    available = runner.invoke(cli.app, base)
+    assert available.exit_code == 0, available.stderr
+    assert json.loads(available.stdout) == {"cerebras": bundled["cerebras"]}
 
 
 def test_models_query_exports_a_valid_complete_catalog(
