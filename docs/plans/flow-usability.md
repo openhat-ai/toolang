@@ -2,7 +2,7 @@
 
 Goal: local signatures, validated operation contracts, consistent runtime scheduling,
 and bounded iteration/thread context.
-tree-sitter-toolang is outside scope.
+Grammar integration is covered in section 11.
 
 ## 1. Determine the Signature
 
@@ -327,7 +327,7 @@ repeat 5 times windowing 3:
 - Cost: parents must allow resources needed by their descendants. Calls relying
   on agent-scope resets or additional module-local capabilities need migration.
 
-| Concern | Current implementation | Target |
+| Concern | Before this plan | Target |
 | --- | --- | --- |
 | Agic/flow resource selectors | Both support models/tools and four capability kinds | Keep these selectors |
 | Flow prompt/routing settings | Rejects hands/handoffs/recall; has no instruct/context fields | Same directive set as agic |
@@ -349,7 +349,7 @@ repeat 5 times windowing 3:
 | Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
 | Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
 | Repeat window | Optional `windowing N` before the header colon, as in `repeat 5 times windowing 3:`; also available on repeats without a count that use `until`. |
-| Empty route selection | Allow `hands =` and `handoffs =` to clear inherited routes. |
+| Empty route selection | `hands = none` and `handoffs = none` disable inherited routes; empty values are invalid. |
 
 - Preserve omitted signatures versus explicit `()` and authored type annotations;
   defaults and parameter inference belong to semantic normalization.
@@ -418,9 +418,8 @@ repeat 5 times windowing 3:
 ## 11. Grammar Integration
 
 The coordinated grammar contract is defined in
-[tree-sitter-toolang's plan](https://github.com/openhat-ai/tree-sitter-toolang/blob/1f32a766f89bdef3ace1f0f3c227c125c81b2656/docs/plans/flow-directives.md).
-Toolang temporarily pins the tested grammar commit so all installers receive
-the same parser. Replace that Git dependency with the published version in a
-separate release update. Prepared layer schema 10 invalidates stale authored
+[tree-sitter-toolang's plan](https://github.com/openhat-ai/tree-sitter-toolang/blob/v0.3.3/docs/plans/flow-directives.md).
+Toolang requires the published grammar version `>=0.3.3,<0.4`.
+Prepared layer schema 10 invalidates stale authored
 syntax caches; historical scatter Step records still decode their obsolete
 non-negative integer count without exposing it in the current AST.

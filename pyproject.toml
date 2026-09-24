@@ -46,7 +46,7 @@ dependencies = [
     "rich>=14,<15",
     "tomlkit>=0.13,<1",
     "tree-sitter>=0.25.2,<0.26",
-    "tree-sitter-toolang @ git+https://github.com/openhat-ai/tree-sitter-toolang@52bbc91df4135adcb5f62dfc755b51ceeed118b4",
+    "tree-sitter-toolang>=0.3.3,<0.4",
     "wcwidth>=0.8,<1",
     "typer==0.27.2",
     "uvicorn>=0.35,<1",
@@ -102,9 +102,6 @@ dev = [
   "ruff>=0.15.6,<0.16",
   "ty>=0.0.23,<0.0.24",
 ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolang"]
