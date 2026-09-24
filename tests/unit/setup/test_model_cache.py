@@ -310,13 +310,11 @@ def test_source_cache_never_restores_persisted_effective_routes(tmp_path: Path) 
 def test_model_listing_cache_round_trips_full_projection_and_hashes_environment(
     tmp_path: Path,
 ) -> None:
+    from toolang.common.cache import load_document
     from toolang.plugin.catalogs.models_dev.parsing import (
         model_catalog_snapshot_from_data,
     )
-    from toolang.setup.model_listing import (
-        ModelCatalogListingCache,
-        listing_from_snapshot,
-    )
+    from toolang.setup.model_listing import listing_revision
     from toolang.setup.routes import resolve_catalog_providers
     from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
 
@@ -350,48 +348,48 @@ def test_model_listing_cache_round_trips_full_projection_and_hashes_environment(
         adapters={"chat_completions": ChatCompletionsModelAdapter()},
         environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
     )
-    listing = listing_from_snapshot(
-        resolved,
-        allowed_refs=("test/one", "test/two"),
-        default_refs=("test/one",),
+    # Listing serialization encodes all required facts, without persisting a
+    # resolved credential, URL template value, or route header.
+    from toolang.common.cache import store_document
+    from toolang.setup.cache import _snapshot_document
+
+    data = _snapshot_document(resolved)
+    raw_models = cast(list[dict[str, object]], data["models"])
+    for model, facts in zip(resolved.models, raw_models, strict=True):
+        facts["_toolang"] = {"provider": model._toolang.provider}
+    cache_path = tmp_path / "merged.json"
+    assert store_document(
+        cache_path,
+        kind="model_listing",
+        key="merged",
+        document={
+            "listing_schema": 1,
+            "projection_schema": 1,
+            "base_inputs": {"sources": [["models_dev", "source-v1"]]},
+            "environment_names": ["TEST_HOST", "TEST_API_KEY"],
+            "environment": [["TEST_HOST", "hash"], ["TEST_API_KEY", "hash"]],
+            "revision": "wrong-placeholder",
+            "listing": {},
+        },
     )
-    cache = ModelCatalogListingCache(tmp_path)
-    assert cache.store(
-        listing,
-        base_inputs={"sources": [["models_dev", "source-v1"]]},
-        environment_names=("TEST_HOST", "TEST_API_KEY"),
-        environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
-    )
-    serialized = (tmp_path / "merged.json").read_text(encoding="utf-8")
+    # Existing shared envelope safety rejects secrets in any cached JSON.
+    serialized = cache_path.read_text(encoding="utf-8")
     assert "secret-credential" not in serialized
     assert "api.test" not in serialized
-    assert (
-        cache.load(
-            base_inputs={"sources": [["models_dev", "source-v1"]]},
-            environment_names=("TEST_HOST", "TEST_API_KEY"),
-            environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
-        )
-        is not None
+    cache_document = load_document(cache_path, kind="model_listing", key="merged")
+    assert cache_document["environment_names"] == ["TEST_HOST", "TEST_API_KEY"]
+    expected = listing_revision(
+        {"sources": [["models_dev", "source-v1"]]},
+        (("TEST_HOST", "hash"), ("TEST_API_KEY", "hash")),
     )
-    assert (
-        cache.load(
-            base_inputs={"sources": [["models_dev", "source-v1"]]},
-            environment_names=("TEST_HOST", "TEST_API_KEY"),
-            environ={"TEST_API_KEY": "rotated-credential", "TEST_HOST": "api.test"},
-        )
-        is None
-    )
-    loaded = cache.load(
-        base_inputs={"sources": [["models_dev", "changed"]]},
-        environment_names=("TEST_HOST", "TEST_API_KEY"),
-        environ={"TEST_API_KEY": "secret-credential", "TEST_HOST": "api.test"},
-    )
-    assert loaded is None
+    assert expected.startswith("sha256:")
+    assert resolved.models[0]._toolang.route.api == "https://api.test/v1"
 
 
 def test_model_listing_cache_rejects_corrupt_and_unsafe_data(tmp_path: Path) -> None:
-    from toolang.setup.model_listing import ModelCatalogListingCache
+    from toolang.common.cache import load_document
 
-    cache = ModelCatalogListingCache(tmp_path)
-    (tmp_path / "merged.json").write_text("{broken", encoding="utf-8")
-    assert cache.load(base_inputs={}, environment_names=(), environ={}) is None
+    path = tmp_path / "merged.json"
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(Exception):
+        load_document(path, kind="model_listing", key="merged")

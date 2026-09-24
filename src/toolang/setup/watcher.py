@@ -239,19 +239,6 @@ class SetupWatcher:
             for group in ("toolang.model_catalog", "toolang.model_adapter")
             for item in plugin_provenance(group=group)
         )
-        names = self.model_listing_cache.environment_names_for(
-            static_revision=source.revision,
-            dynamic_revisions=tuple(
-                (name, revision) for name, _snapshot, revision in dynamic
-            ),
-        )
-        if names is None:
-            static_for_names = await asyncio.to_thread(source.snapshot)
-            names_set = set(environment_names(static_for_names))
-            for _name, dynamic_snapshot, _revision in dynamic:
-                names_set.update(environment_names(dynamic_snapshot))
-            names_set.difference_update(_LOCAL_CATALOG_ENV)
-            names = tuple(sorted(names_set))
         base_inputs: dict[str, object] = {
             "projection_schema": 1,
             "sources": [list(item) for item in source_revisions],
@@ -268,15 +255,21 @@ class SetupWatcher:
             "allow_models": None if allow.models is None else list(allow.models),
             "plugins": list(plugin_values),
         }
-        cached = self.model_listing_cache.load(
+        cached, names = self.model_listing_cache.load_if_valid(
             base_inputs=base_inputs,
-            environment_names=names,
+            source_revisions=source_revisions,
             environ=inputs.envs,
         )
         if cached is not None:
             return cached
 
         static = await asyncio.to_thread(source.snapshot)
+        if names is None:
+            names_set = set(environment_names(static))
+            for _name, dynamic_snapshot, _revision in dynamic:
+                names_set.update(environment_names(dynamic_snapshot))
+            names_set.difference_update(_LOCAL_CATALOG_ENV)
+            names = tuple(sorted(names_set))
         try:
             await asyncio.to_thread(
                 self._model_cache.store_source,
@@ -294,11 +287,7 @@ class SetupWatcher:
         additional = tuple((name, snapshot) for name, snapshot, _revision in dynamic)
         merged = await _merge_catalogs(static, additional)
         resolved = _resolve_catalog(merged, adapters=adapters, envs=inputs.envs)
-        names = set(environment_names(static))
-        for _name, dynamic_snapshot, _revision in dynamic:
-            names.update(environment_names(dynamic_snapshot))
-        names.difference_update(_LOCAL_CATALOG_ENV)
-        environment = environment_fingerprint(tuple(names), inputs.envs)
+        environment = environment_fingerprint(names, inputs.envs)
         listing_key = listing_revision(base_inputs, environment)
         listing = _build_catalog_listing(
             resolved,
@@ -309,7 +298,7 @@ class SetupWatcher:
             self.model_listing_cache.store(
                 listing,
                 base_inputs=base_inputs,
-                environment_names=tuple(names),
+                environment_names=names,
                 environ=inputs.envs,
             )
         except Exception:

@@ -26,31 +26,6 @@ _SECRET_VALUE_RE = re.compile(
     r'[^&\s"]+)',
     re.IGNORECASE,
 )
-_SECRET_FIELD_MARKERS = (
-    '"api_key"',
-    '"api-key"',
-    '"apikey"',
-    '"authorization"',
-    '"cookie"',
-    '"credential"',
-    '"credentials"',
-    '"header"',
-    '"password"',
-    '"proxy_authorization"',
-    '"proxy-authorization"',
-    '"secret"',
-    '"token"',
-    '"x_api_key"',
-    '"x-api-key"',
-    '_password"',
-    '_key"',
-    '_secret"',
-    '_token"',
-    '-password"',
-    '-key"',
-    '-secret"',
-    '-token"',
-)
 _SECRET_FIELD_RE = re.compile(
     r'"(?:api[-_]?key|apikey|authorization|cookie|credential|credentials|'
     r'header|password|proxy[-_]?authorization|secret|token|x[-_]?api[-_]?key)"\s*:',
@@ -186,18 +161,6 @@ def _serialized_data_is_unsafe(
     return _contains_unsafe_headers(parsed) if parsed is not None else False
 
 
-def _json_field_occurs(content: str, marker: str) -> bool:
-    start = 0
-    while (index := content.find(marker, start)) >= 0:
-        cursor = index + len(marker)
-        while cursor < len(content) and content[cursor] in " \t\r\n":
-            cursor += 1
-        if cursor < len(content) and content[cursor] == ":":
-            return True
-        start = index + 1
-    return False
-
-
 def _contains_url_userinfo(content: str) -> bool:
     start = 0
     while (scheme := content.find("://", start)) >= 0:
@@ -214,27 +177,27 @@ def _contains_url_userinfo(content: str) -> bool:
 
 
 def _contains_unsafe_headers(value: object) -> bool:
-    if isinstance(value, Mapping):
-        for raw_name, item in value.items():
-            if isinstance(raw_name, str) and raw_name.casefold() == "headers":
-                if not isinstance(item, Mapping) or any(
-                    not isinstance(header_name, str)
-                    or not isinstance(header_value, str)
-                    or _SENSITIVE_HEADER_NAME_RE.search(header_name) is not None
-                    or _SECRET_VALUE_RE.search(header_value) is not None
-                    for header_name, header_value in item.items()
-                ):
-                    return True
-                continue
-            if isinstance(item, Mapping | list | tuple) and _contains_unsafe_headers(
-                item
-            ):
-                return True
-        return False
-    if isinstance(value, list | tuple):
-        return any(
-            _contains_unsafe_headers(item)
-            for item in value
-            if isinstance(item, Mapping | list | tuple)
-        )
+    """Reject sensitive request headers anywhere in one decoded cache value."""
+
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, Mapping):
+            for raw_name, item in current.items():
+                if isinstance(raw_name, str) and raw_name.casefold() == "headers":
+                    if not isinstance(item, Mapping) or any(
+                        not isinstance(header_name, str)
+                        or not isinstance(header_value, str)
+                        or _SENSITIVE_HEADER_NAME_RE.search(header_name) is not None
+                        or _SECRET_VALUE_RE.search(header_value) is not None
+                        for header_name, header_value in item.items()
+                    ):
+                        return True
+                    continue
+                if isinstance(item, Mapping | list | tuple):
+                    pending.append(item)
+        elif isinstance(current, list | tuple):
+            pending.extend(
+                item for item in current if isinstance(item, Mapping | list | tuple)
+            )
     return False

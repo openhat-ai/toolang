@@ -10,7 +10,12 @@ from typing import cast
 import msgspec
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelRoute
-from toolang.common.cache import digest, load_document, store_document
+from toolang.common.cache import (
+    _contains_unsafe_headers,
+    digest,
+    load_document,
+    store_document,
+)
 from toolang.plugin.models.collections import ModelQueryView, catalog_model_dataset
 from toolang.setup.cache import _snapshot_document, _snapshot_from_data
 from toolang.setup.cache_environment import environment_fingerprint
@@ -140,67 +145,51 @@ class ModelCatalogListingCache:
     def __init__(self, directory: Path) -> None:
         self._path = directory / "merged.json"
 
-    def environment_names_for(
-        self,
-        *,
-        static_revision: str,
-        dynamic_revisions: Sequence[tuple[str, str]],
-    ) -> tuple[str, ...] | None:
-        """Reuse audited variable names only for matching source revisions."""
-
-        try:
-            document = load_document(self._path, kind=_LISTING_KIND, key=_LISTING_KEY)
-            if document.get("listing_schema") != _LISTING_SCHEMA:
-                return None
-            base = document.get("base_inputs")
-            names = document.get("environment_names")
-            if not isinstance(base, dict) or not isinstance(names, list):
-                return None
-            base_values = cast(dict[str, object], base)
-            sources = base_values.get("sources")
-            expected = [("models_dev", static_revision), *dynamic_revisions]
-            if sources != [list(item) for item in expected]:
-                return None
-            if any(not isinstance(name, str) for name in names):
-                return None
-            name_values = cast(list[str], names)
-            return tuple(name_values)
-        except Exception:
-            return None
-
-    def load(
+    def load_if_valid(
         self,
         *,
         base_inputs: Mapping[str, object],
-        environment_names: Sequence[str],
+        source_revisions: Sequence[tuple[str, str]],
         environ: Mapping[str, str],
-    ) -> ModelCatalogListing | None:
-        """Load a validated listing only if current dependencies still match."""
+    ) -> tuple[ModelCatalogListing | None, tuple[str, ...] | None]:
+        """Read/validate one document and return a hit plus reusable env names."""
 
         try:
             document = load_document(self._path, kind=_LISTING_KIND, key=_LISTING_KEY)
             if (
                 document.get("listing_schema") != _LISTING_SCHEMA
                 or document.get("projection_schema") != _PROJECTION_SCHEMA
-                or document.get("base_inputs") != base_inputs
             ):
-                return None
-            stored_names = document.get("environment_names")
-            if not isinstance(stored_names, list) or any(
-                not isinstance(name, str) for name in stored_names
-            ):
-                return None
-            if tuple(stored_names) != tuple(sorted(set(environment_names))):
-                return None
+                return None, None
+            stored_base = document.get("base_inputs")
+            names = document.get("environment_names")
+            if not isinstance(stored_base, dict) or not isinstance(names, list):
+                return None, None
+            stored_values = cast(dict[str, object], stored_base)
+            expected_sources = [list(item) for item in source_revisions]
+            if stored_values.get("sources") != expected_sources:
+                return None, None
+            if any(not isinstance(name, str) for name in names):
+                return None, None
+            environment_names = tuple(cast(list[str], names))
+            if stored_values != base_inputs:
+                return None, environment_names
             environment = environment_fingerprint(environment_names, environ)
             if document.get("environment") != [list(item) for item in environment]:
-                return None
+                return None, environment_names
             if document.get("revision") != listing_revision(base_inputs, environment):
-                return None
-            return _listing_from_document(document)
+                return None, environment_names
+            # Validate envelope and freshness before decoding the multi-megabyte
+            # model projection into Python records.
+            payload = document.get("listing")
+            if not isinstance(payload, Mapping):
+                return None, environment_names
+            if not _listing_payload_is_valid(cast(Mapping[str, object], payload)):
+                return None, environment_names
+            return _listing_from_document(document), environment_names
         except Exception:
             # Cache data is untrusted; every validation or decode failure is a miss.
-            return None
+            return None, None
 
     def store(
         self,
@@ -248,9 +237,20 @@ def listing_revision(
 
 
 def _listing_to_data(listing: ModelCatalogListing) -> dict[str, object]:
+    snapshot_data = _snapshot_document(listing.snapshot)
+    raw_models = cast(list[dict[str, object]], snapshot_data["models"])
+    # User-supplied provider overrides can carry credential-bearing headers or
+    # bodies. The list projection needs the ordinary model facts only.
+    for raw_model in raw_models:
+        for field in ("headers", "body"):
+            raw_model.pop(field, None)
+        provider = raw_model.get("provider")
+        if isinstance(provider, dict):
+            provider_values = cast(dict[str, object], provider)
+            provider_values.pop("headers", None)
+            provider_values.pop("body", None)
     return {
-        # This codec omits resolved routes while preserving declared model data.
-        "snapshot": _snapshot_document(listing.snapshot),
+        "snapshot": snapshot_data,
         "runtime": {
             model.ref: {
                 "allowed": status.allowed,
@@ -267,6 +267,69 @@ def _listing_to_data(listing: ModelCatalogListing) -> dict[str, object]:
         "allowed_refs": list(listing.allowed_refs),
         "default_refs": list(listing.default_refs),
     }
+
+
+def _listing_payload_is_valid(payload: Mapping[str, object]) -> bool:
+    """Check the cache's route-free nested tree before expensive hydration."""
+
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        return False
+    snapshot_values = cast(Mapping[str, object], snapshot)
+    providers = snapshot_values.get("providers")
+    models = snapshot_values.get("models")
+    runtime = payload.get("runtime")
+    query_views = payload.get("query_views")
+    allowed_refs = payload.get("allowed_refs")
+    default_refs = payload.get("default_refs")
+    if not isinstance(providers, Mapping) or not isinstance(models, list):
+        return False
+    if not isinstance(runtime, Mapping) or not isinstance(query_views, list):
+        return False
+    if not isinstance(allowed_refs, list) or not isinstance(default_refs, list):
+        return False
+    if _contains_unsafe_headers(snapshot):
+        return False
+    runtime_values = cast(Mapping[str, object], runtime)
+    known_refs: set[str] = set()
+    for model in models:
+        if not isinstance(model, Mapping):
+            return False
+        model_values = cast(Mapping[str, object], model)
+        toolang = model_values.get("_toolang")
+        if not isinstance(toolang, Mapping):
+            return False
+        toolang_values = cast(Mapping[str, object], toolang)
+        provider = toolang_values.get("provider")
+        model_id = model_values.get("id")
+        if not isinstance(provider, str) or not isinstance(model_id, str):
+            return False
+        ref = f"{provider}/{model_id}"
+        if ref in known_refs:
+            return False
+        known_refs.add(ref)
+        facts = runtime_values.get(ref)
+        if not isinstance(facts, Mapping):
+            return False
+        fact_values = cast(Mapping[str, object], facts)
+        if any(
+            not isinstance(fact_values.get(field), bool)
+            for field in ("allowed", "ready", "api_present", "env_present")
+        ):
+            return False
+        adapter = fact_values.get("adapter")
+        if adapter is not None and not isinstance(adapter, str):
+            return False
+    if set(runtime_values) != known_refs:
+        return False
+    if any(
+        not isinstance(value, str) or value not in known_refs
+        for value in (*allowed_refs, *default_refs)
+    ):
+        return False
+    if any(not isinstance(view, Mapping) for view in query_views):
+        return False
+    return True
 
 
 def _listing_from_document(document: Mapping[str, object]) -> ModelCatalogListing:
@@ -292,6 +355,18 @@ def _listing_from_document(document: Mapping[str, object]) -> ModelCatalogListin
     revision = document.get("revision")
     if not isinstance(revision, str):
         raise TypeError("model-list cache revision must be text")
+    raw_snapshot_values = cast(dict[str, object], raw_snapshot)
+    for model in cast(list[object], raw_snapshot_values.get("models", [])):
+        if not isinstance(model, dict):
+            raise TypeError("model-list cache model must be an object")
+        model_values = cast(dict[str, object], model)
+        provider = model_values.get("provider")
+        if isinstance(provider, Mapping) and (
+            "headers" in provider or "body" in provider
+        ):
+            raise ValueError(
+                "model-list cache must not contain provider headers or bodies"
+            )
     snapshot = _snapshot_from_data(
         cast(Mapping[str, object], raw_snapshot), revision=revision
     )
