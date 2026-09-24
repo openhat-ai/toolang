@@ -329,15 +329,15 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
     try:
         session.wait_for("Toolang", "Ask or describe a task")
         session.send(b"start run\r")
-        session.wait_for("Thinking...")
+        session.wait_for("Thinking")
         session.send(b"queued steer\r")
         session.wait_for("1 queued")
         session.send(b"\t")
         session.wait_for("m-enter steer")
         session.send(b"\x1b\r")
-        session.wait_for("will apply after the current step")
+        session.wait_for("1 steer pending")
         session.send(b"second steer\x1b\rthird steer\x1b\r")
-        steers = _wait_redrawn(session, "• 3 steers will apply after the current step")
+        steers = _wait_redrawn(session, "• 3 steers pending")
         assert "second steerthird steer" not in steers
         assert "  third steer" in steers
         session.send(b"queued follow-up\r")

@@ -90,7 +90,7 @@ def _execute_step(
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow(f"› Executing {runnable}...", "progress", surface="tool_summary"),
+        ProgressRow(f"› Executing {runnable}...", "active", surface="tool_summary"),
     )
     assert len(starting.live) == 1
     result = ToolResultPart(
@@ -308,7 +308,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
         ),
         ProgressRow(""),
     )
-    assert header.live[0].rows == (ProgressRow("• Thinking...", "active"),)
+    assert header.live[0].rows == (ProgressRow("• Thinking", "active"),)
     assert re.search(
         r"---  execute agic:abc -+",
         _render_progress(header.committed[0], width=72),
@@ -353,7 +353,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
         )
     )
     assert starting.live[0].rows == (
-        ProgressRow("› Transferring to next...", "progress", surface="tool_summary"),
+        ProgressRow("› Transferring to next...", "active", surface="tool_summary"),
     )
 
 
@@ -503,7 +503,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
         row = started.live[0].rows[-1]
         assert row.text == f"  0 | #0 | {marker} Handoff to next · {summary}"
-        assert row.tone == "progress" and row.surface == "tool_summary"
+        assert row.tone == "active" and row.surface == "tool_summary"
         completed = projector.handle(
             StepEnd(
                 step=target,
@@ -559,7 +559,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
         StepBegin(step=recovery, kind="model", given=_model_given())
     )
     assert recovered.committed == ()
-    assert recovered.live[0].rows == (ProgressRow("• Thinking...", "active"),)
+    assert recovered.live[0].rows == (ProgressRow("• Thinking", "active"),)
 
 
 def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:

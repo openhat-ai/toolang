@@ -23,7 +23,7 @@ from toolang.plugin.toolsets.web import WebToolset
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Reading repo:/src/file.txt..."),
+        ("running", "Reading repo:/src/file.txt"),
         ("succeeded", "Read repo:/src/file.txt"),
         ("failed", "Failed to read repo:/src/file.txt"),
     ],
@@ -98,12 +98,13 @@ def test_fs_verbs(name, expected):
         ("failed", "Failed to run"),
     ],
 )
-def test_shell_describes_command_not_output_or_exit_status(status, prefix):
+@pytest.mark.parametrize("command", ["echo hello", "echo ..."])
+def test_shell_describes_command_not_output_or_exit_status(status, prefix, command):
     text = (
         ShellToolset({})
         .tools()["execute"]
         .summary(
-            {"command": "echo hello"},
+            {"command": command},
             None
             if status == "running"
             else ToolResult(
@@ -112,13 +113,13 @@ def test_shell_describes_command_not_output_or_exit_status(status, prefix):
             ),
         )
     )
-    assert text == f"{prefix} “echo hello”" + ("..." if status == "running" else "")
+    assert text == f"{prefix} “{command}”"
 
 
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Searching for “abc”..."),
+        ("running", "Searching for “abc”"),
         ("succeeded", "Searched for “abc”"),
         ("failed", "Failed to search for “abc”"),
     ],
@@ -171,13 +172,13 @@ def test_history_describes_the_target_without_displaying_cursors_or_records(
         )
     )
     summary = HistoryToolset().tools()[name].summary(arguments, result)
-    assert summary == f"{prefix} {target}" + ("..." if status == "running" else "")
+    assert summary == f"{prefix} {target}"
 
 
 def test_honor_only_describes_rule_files_when_result_supplies_them():
     tool = ToolangToolset().tools()["honor"]
     arguments = {"paths": [{"workspace": "repo", "path": "/src/file"}]}
-    assert tool.summary(arguments) == "Loading rules..."
+    assert tool.summary(arguments) == "Loading rules"
     assert tool.summary(arguments, ToolResult(error="failed")) == "Failed to load rules"
     output = {
         "controls": [
@@ -215,7 +216,7 @@ def test_pick_uses_a_display_label_without_changing_the_resource_ref(
         else ToolResult(error="unavailable" if status == "failed" else None)
     )
     wording = {
-        "running": f"Loading guidance: {kind}/testing...",
+        "running": f"Loading guidance: {kind}/testing",
         "succeeded": f"Loaded guidance: {kind}/testing",
         "failed": f"Failed to load guidance: {kind}/testing",
     }
@@ -229,4 +230,11 @@ def test_pick_keeps_remote_resource_identity_in_its_label():
     arguments = {"kind": "skill", "ref": "https://example.com/team/testing"}
     assert ToolangToolset().tools()["pick"].summary(arguments, ToolResult()) == (
         "Loaded guidance: skill/https://example.com/team/testing"
+    )
+
+
+def test_running_file_summary_preserves_authored_trailing_dots():
+    tool = FilesystemToolset({}).tools()["read"]
+    assert tool.summary({"workspace": "repo", "path": "/file..."}) == (
+        "Reading repo:/file..."
     )

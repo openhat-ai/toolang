@@ -52,7 +52,7 @@ def live_row(
 
     if begin.kind == "model":
         detail = one_line(preview)
-        text = f"• {detail}" if detail else "• Thinking..."
+        text = f"• {detail}" if detail else "• Thinking"
     elif dynamic_run and begin.kind != "tool":
         text = f"• Running {run_label(begin.given)}..."
     elif begin.kind == "tool":
@@ -67,7 +67,7 @@ def live_row(
         ):
             summary += f" · {elapsed}"
         text = f"{'✧' if name else '›'} {summary}"
-        return ProgressRow(text, "progress", surface="tool_summary")
+        return ProgressRow(text, "active", surface="tool_summary")
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")

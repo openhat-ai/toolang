@@ -14,14 +14,17 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 
 
 @pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("tone", ["active", "progress"])
 @pytest.mark.parametrize("prefix", ["", "  1 | #2 | "])
 @pytest.mark.parametrize("runtime", [False, True])
 @pytest.mark.parametrize("width", [16, 48, 120])
-def test_tool_summary_is_one_line_with_dim_marker(width, runtime, prefix, live):
+def test_tool_summary_intensity_follows_activity_not_live_region(
+    width, runtime, prefix, live, tone
+):
     marker = "✧" if runtime else "›"
     row = ProgressRow(
         f"{prefix}{marker} Reading repo:/很长的目录/" + "nested/" * 30,
-        "progress",
+        tone,
         surface="tool_summary",
     )
     stream = StringIO()
@@ -35,11 +38,12 @@ def test_tool_summary_is_one_line_with_dim_marker(width, runtime, prefix, live):
     assert display_width(text.rstrip()) <= width
     assert text.rstrip().endswith("…")
     mark = next(s for s in segments if marker in s.text)
-    assert mark.style is not None and mark.style.dim
-    assert mark.style.color is None
     body = next(s for s in segments if "…" in s.text)
-    assert body.style is not None and body.style.dim
-    assert body.style.color is None
+    for segment in (mark, body):
+        style = segment.style or Style.null()
+        assert bool(style.dim) is (tone == "progress")
+        assert not style.bold
+        assert style.color is None
 
 
 @pytest.mark.parametrize("tone", ["normal", "error", "warning", "active"])
@@ -73,6 +77,8 @@ def test_model_marker_remains_normal_without_changing_content_style(tone, markdo
     [
         ("›", "progress", "tool_summary"),
         ("✧", "progress", "tool_summary"),
+        ("›", "active", "tool_summary"),
+        ("✧", "active", "tool_summary"),
         ("•", "active", "none"),
         ("•", "error", "none"),
     ],

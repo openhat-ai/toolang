@@ -346,7 +346,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
             started_at="2026-01-01T00:00:00Z",
         )
     )
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
     assert live.live[0].gap_before is True
 
     reducer.handle(
@@ -807,7 +807,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
     finalized = reducer.handle(
         StepEnd(
             step=StepRef.parse("run_child.0"),
@@ -872,7 +872,7 @@ def test_tool_output_is_not_projected(
             given=_tool(),
         )
     )
-    assert live.live[0].rows[0].tone == "progress"
+    assert live.live[0].rows[0].tone == "active"
     assert live.live[0].rows[0].surface == "tool_summary"
     update = reducer.handle(
         StepEnd(
@@ -1132,7 +1132,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
     reducer.handle(
         StepEnd(
             step=StepRef.parse("run_review.0"),
@@ -1209,7 +1209,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     assert _rows(live.committed) == [
         ["<?> Run completion_check to check whether to break", ""]
     ]
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
     final = reducer.handle(
         StepEnd(
             step=StepRef.parse("run_until.0"),
@@ -1732,7 +1732,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         )
     )
 
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
 
 
 def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
@@ -2074,7 +2074,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
     )
 
     assert _rows(live.committed) == [["--- iteration 1 of 2 ---", ""]]
-    assert _rows(live.live) == [["• Thinking..."]]
+    assert _rows(live.live) == [["• Thinking"]]
     assert live.committed[0].gap_before is False
     assert live.live[0].gap_before is False
 

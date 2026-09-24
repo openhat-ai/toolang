@@ -357,16 +357,8 @@ class SteerFeedbackBlock(MutableBlock):
 
     @property
     def message(self) -> str:
-        if not self.accepted:
-            return f"Sending {self.sending} steer{'s' if self.sending != 1 else ''}"
-        count = f"{self.accepted} steer{'s' if self.accepted != 1 else ''}"
-        timing = (
-            "will apply after the current step"
-            if self.active_step
-            else "waiting for the next model call"
-        )
-        suffix = f" · sending {self.sending} more" if self.sending else ""
-        return f"{count} {timing}{suffix}"
+        count = self.accepted + self.sending
+        return f"{count} steer{'s' if count != 1 else ''} pending"
 
     def render(self) -> RenderableType:
         return self
@@ -379,7 +371,7 @@ class SteerFeedbackBlock(MutableBlock):
         body = "\n".join(
             ("• " if index == 0 else "  ") + line for index, line in enumerate(lines)
         )
-        yield Text(f"\n{body}\n\n" if self.vertical_padding else body)
+        yield Text(f"\n{body}\n\n" if self.vertical_padding else body, style="dim")
 
 
 @dataclass(slots=True)
