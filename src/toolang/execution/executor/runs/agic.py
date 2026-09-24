@@ -14,7 +14,7 @@ from toolang.base.types.run import ModelCallResult, ModelContinuation, ModelUsag
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.time import utc_now
-from toolang.lang.ast import AgicDecl, StructDecl
+from toolang.lang.ast import AgicDecl, FlowDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
@@ -22,9 +22,11 @@ from toolang.state.state import AgentState
 from ...errors import EmptyModelOutput
 from ...events import StepBegin, StepEnd
 from ...assembly import prompting
+from ...assembly.run_results import run_completion
 from ...records import ControlRecord
 from ...types import (
     ModelAccounting,
+    MessageTemplate,
     ControlRef,
     FieldRef,
     RunRef,
@@ -90,6 +92,7 @@ class _AgicState:
     limits: RunLimits = RunLimits()
     record_output: Callable[[FieldRef], None] = lambda _ref: None
     output: FieldRef | None = None
+    scheduled_run: tuple[BoundRun, AgicDecl | FlowDecl] | None = None
     continuation: ModelContinuation | None = None
     output_binding: _OutputBinding = field(default_factory=_OutputBinding)
     next_step: int = 0
@@ -354,22 +357,55 @@ async def _execute(state: _AgicState) -> Message | None:
             if state.steer_before_next_step():
                 await tool_step.skip(state, result.tool_calls)
                 continue
+            completions: list[MessageTemplate] = []
             for index, call in enumerate(result.tool_calls):
+                interrupted = False
                 try:
-                    await tool_step.execute(
-                        state,
-                        call,
-                        tool_call_count=len(result.tool_calls),
-                        routes=routes,
-                    )
+                    try:
+                        await tool_step.execute(
+                            state,
+                            call,
+                            tool_call_count=len(result.tool_calls),
+                            routes=routes,
+                        )
+                    except asyncio.CancelledError:
+                        if state.immediate_steer():
+                            interrupted = True
+                        elif not (
+                            state.scheduled_run is not None
+                            and state.execution is not None
+                            and state.execution.canceled_within(
+                                state.scheduled_run[0].run_id
+                            )
+                        ):
+                            raise
+                        # An accepted request survives delivery interruption. A
+                        # target-local cancel terminates only that scheduled Run.
+                    await _dispatch_run(state, completions)
                 except asyncio.CancelledError:
                     if not state.immediate_steer():
+                        if (
+                            state.scheduled_run is not None
+                            and state.execution is not None
+                        ):
+                            binding, _ = state.scheduled_run
+                            state.scheduled_run = None
+                            await state.execution.executor._ensure_terminal(
+                                binding.run_id, emit=state.emit, status="canceled"
+                            )
                         await tool_step.skip(
                             state, result.tool_calls[index + 1 :], canceled=True
                         )
                         raise
+                    interrupted = True
+                if interrupted:
                     await tool_step.skip(state, result.tool_calls[index + 1 :])
                     break
+            if state.execution is not None:
+                for completion in completions:
+                    state.messages.append_template(
+                        completion, state.execution.store.resolve_value
+                    )
             continue
         if inputs := state.pending_inputs():
             state.claimed_inputs = inputs
@@ -377,6 +413,50 @@ async def _execute(state: _AgicState) -> Message | None:
         if not _declares_repairable_output(state):
             _require_visible_output(result)
         return result.message
+
+
+async def _dispatch_run(state: _AgicState, completions: list[MessageTemplate]) -> None:
+    """Dispatch after the receipt Step ends; defer context until the batch ends."""
+
+    scheduled = state.scheduled_run
+    if scheduled is None:
+        return
+    execution = state.execution
+    if execution is None:
+        raise RuntimeError("Agic runtime execution is unavailable")
+    state.scheduled_run = None
+    binding, runnable = scheduled
+    try:
+        if execution.canceled_within(binding.run_id):
+            await execution.executor._ensure_terminal(
+                binding.run_id, emit=state.emit, status="canceled"
+            )
+        else:
+            await execution.execute(binding, runnable, output_binding=None)
+    except asyncio.CancelledError:
+        await execution.executor._ensure_terminal(
+            binding.run_id, emit=state.emit, status="canceled"
+        )
+        if not execution.canceled_within(binding.run_id):
+            completion = execution.store.run_completion(binding.run_id)
+            if completion is not None:
+                completions.append(completion)
+            raise
+    except Exception:
+        child = execution.store.get_run(run_id=binding.run_id)
+        if child is None or child.status in {"pending", "running"}:
+            raise
+    child = execution.store.get_run(run_id=binding.run_id)
+    if child is None:
+        raise RuntimeError(f"scheduled Run disappeared: {binding.run_id}")
+    if child.status == "succeeded" and child.output is not None:
+        state.output = FieldRef.from_path(RunRef(child.id), "output", "local", "value")
+        state.record_output(state.output)
+    completions.append(
+        run_completion(
+            child, execution.store.resolve_value, execution.store.resolve_error
+        )
+    )
 
 
 def _declares_repairable_output(state: _AgicState) -> bool:

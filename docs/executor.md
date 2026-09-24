@@ -421,6 +421,39 @@ StepEnd(run)
 This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
+A model `_toolang__run` call validates its target and atomically records a pending
+child Run, its entry control, and the scheduling receipt. The receipt contains
+`run_id` and `controls`; it does not contain the child's output. Dispatch follows
+the completed Tool Step:
+
+```text
+caller Model Step
+run Tool Step → pending child Run + receipt → StepEnd
+RunBegin(child) → child Steps → RunEnd(child)
+remaining tool calls in the batch
+caller Model Step ← paired tool replies + run-result context
+```
+
+The child retains its triggering Tool Step as `parent` for causal ownership;
+that reference does not imply overlapping lifetimes. Each scheduled child finishes
+before the next tool call starts. All paired tool replies precede the batch's
+`run-result` context messages, which identify the child, terminal status, and typed
+output or error. The caller keeps its conversation and provider continuation.
+Target failure or cancellation leaves the receipt unchanged and lets the caller
+continue the batch. Cancellation of an enclosing Run takes precedence over a
+target-only cancellation. Root cancellation also cancels an accepted child that
+has not started, without applying its entry control. A steer during receipt
+delivery preserves the accepted request; a steer during execution interrupts the
+child and resumes the caller with its outcome.
+
+Completion context is derived from the child's durable terminal record and included
+once in caller history, even without another Model Call. Returned tool-call and
+tool-result Parts become text data, not caller tool exchanges; media Parts remain
+native. Child internals are not flattened into the caller. Explicit retry retains
+its existing behavior: retrying an agic replaces its Step history and children.
+Automatic resumption of pending scheduled Runs after process loss is not
+implemented yet.
+
 A successful `_toolang__execute` records one applied execute control during its
 Tool Step, then finishes that Step before transferring to the target. It creates
 no child Run, extra transition Step, or additional `RunBegin`:

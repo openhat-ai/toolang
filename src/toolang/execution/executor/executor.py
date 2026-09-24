@@ -1178,6 +1178,16 @@ class RunExecutor:
             def interrupt() -> None:
                 if cancel.done():
                     return
+                previous = active.interruption
+                if (
+                    previous is not None
+                    and previous.kind == "cancel"
+                    and str(previous.target)
+                    in self.store.run_ancestry(run_id=str(control.target))
+                ):
+                    # A descendant control cannot supersede cancellation of
+                    # its enclosing Run or interrupt that Run's cleanup again.
+                    return
                 if control.kind == "cancel":
                     claimed = self.store.claim_run_controls(
                         run_id=str(control.target), indexes=(control.index,)
@@ -1476,6 +1486,16 @@ class RunExecutor:
             iter(self.store.pending_run_controls(run_id=run_id, kind="cancel")),
             None,
         )
+        with self._active_lock:
+            active = self._active.get(run_id)
+            interruption = active.interruption if active is not None else None
+        if (
+            interruption is not None
+            and interruption.kind == "cancel"
+            and interruption.target == RunRef(run_id)
+        ):
+            # Receipt delivery may already have applied the target's cancel.
+            cancellation = interruption
         await emit(
             RunEnd(
                 run=run_id,
@@ -2172,7 +2192,41 @@ class _Execution:
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> Local:
-        """Accept and execute one recursive child agic or flow run."""
+        """Accept and execute one authored child call."""
+
+        binding, runnable = await self.accept_child(
+            parent,
+            locals,
+            step,
+            name,
+            occurrence,
+            resolution=resolution,
+            raw_input=raw_input,
+            authorize=authorize,
+            state_snapshot=state_snapshot,
+            begin=True,
+        )
+        return await self._execute_child_binding(
+            binding,
+            runnable,
+            output_binding=output_binding,
+        )
+
+    async def accept_child(
+        self,
+        parent: BoundRun,
+        locals: Mapping[str, Local],
+        step: StepRef,
+        name: str,
+        occurrence: Occurrence | None,
+        *,
+        begin: bool = False,
+        resolution: Literal["module", "state"] = "module",
+        raw_input: Mapping[str, object] | None = None,
+        authorize: Callable[[ResolvedRunnable], None] | None = None,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
+    ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
+        """Validate and commit a child Run before dispatching it."""
 
         def prepare(
             state: AgentState,
@@ -2249,14 +2303,8 @@ class _Execution:
             )
             return _prepare_child_run(binding, runnable), runnable
 
-        binding, runnable = await self._begin_child(
-            prepare,
-            state_snapshot=state_snapshot,
-        )
-        return await self._execute_child_binding(
-            binding,
-            runnable,
-            output_binding=output_binding,
+        return await self._begin_child(
+            prepare, state_snapshot=state_snapshot, begin=begin
         )
 
     def _prepare_public_child(
@@ -2356,6 +2404,7 @@ class _Execution:
         ],
         *,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
+        begin: bool = True,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Resolve, accept, and begin one child at the latest State boundary."""
 
@@ -2395,11 +2444,14 @@ class _Execution:
                     created_at=binding.created_at,
                     state_ref=binding.state_ref,
                     horizon=binding.horizon,
+                    schedule_receipt=not begin,
                 )
                 self.executor._register_child_run(
                     run_id=binding.run_id,
                     root_run_id=binding.root_run_id,
                 )
+                if not begin:
+                    return binding, runnable
                 event = RunBegin(
                     run=binding.run_id,
                     control=ControlRef(RunRef(binding.run_id), binding.control_index),
@@ -2614,6 +2666,16 @@ class _Execution:
         return any(
             control.timing == "immediate"
             for control in self.pending_controls(run_id, "steer")
+        )
+
+    def canceled_within(self, run_id: str) -> bool:
+        """Whether the interruption cancels this target or one of its descendants."""
+
+        control = self._active.interruption if self._active is not None else None
+        return (
+            control is not None
+            and control.kind == "cancel"
+            and run_id in self.store.run_ancestry(run_id=str(control.target))
         )
 
     def raise_if_canceling(self, run_id: str, *, call: bool) -> None:

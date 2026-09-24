@@ -152,7 +152,9 @@ def event_labels(events: Sequence[RunEvent]) -> list[str]:
     return labels
 
 
-def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
+def assert_run_event_integrity(
+    events: Sequence[RunEvent], *, unstarted_runs: Sequence[str] = ()
+) -> None:
     """Assert lifecycle pairing, causal order, and terminal output agreement."""
 
     active_runs: set[str] = set()
@@ -238,7 +240,9 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
             continue
 
         assert isinstance(event, RunEnd)
-        assert event.run in active_runs, f"run end without begin at {where}"
+        assert event.run in active_runs or (
+            event.run in unstarted_runs and event.status == "canceled"
+        ), f"run end without begin at {where}"
         assert event.run not in ended_runs, f"duplicate run end at {where}"
         assert not any(step.run_id == event.run for step in active_steps), (
             f"run ended with active steps at {where}"
@@ -257,7 +261,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                 assert str(pointer.record) in ended_runs, (
                     f"run output references an incomplete child run at {where}"
                 )
-        active_runs.remove(event.run)
+        active_runs.discard(event.run)
         ended_runs.add(event.run)
 
     assert not active_runs, f"runs missing terminal events: {sorted(active_runs)}"

@@ -189,7 +189,7 @@ agic child() -> Text:
                             assert isinstance(event, StepBegin)
                             assert event.step != execute_step
                             handoffs.append(row)
-            assert not projector._broken
+            assert not projector._broken, [row.text for row in rows]
             assert projector._root_ended
             if outcome == "succeeded":
                 assert len(handoffs) == 1

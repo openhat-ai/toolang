@@ -20,7 +20,7 @@ from tests.support.execution_harness import (
     RecordingRunTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message, ToolResultPart
+from toolang.base.types.message import Message, ToolResultPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
@@ -35,7 +35,6 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    RunRef,
     ThreadPrefix,
     TypedRef,
     ToolStepGiven,
@@ -186,7 +185,7 @@ agic child(_: Text) -> Text:
             assert dynamic_output is not None
             (persisted_result,) = parts_from_local(dynamic_output.local)
             assert isinstance(persisted_result, ToolResultPart)
-            assert persisted_result.output["output"] == "child output"
+            assert set(persisted_result.output) == {"run_id", "controls"}
             children = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -207,6 +206,11 @@ agic child(_: Text) -> Text:
             assert result.tool_call_id == "call-run"
             assert result.output["run_id"] == children[0].id
             assert persisted_result == result
+            assert result.output["controls"] == [str(child_control.ref)]
+            assert child_control.status == "applied"
+            (completion,) = [m for m in followup.messages if m.tag == "run-result"]
+            assert "child output" in message_text(completion.parts)
+            assert 'status="succeeded"' in message_text(completion.parts)
             parent_routes = route_snapshots(harness.adapter.invocations[0].call)
             assert [item["ref"] for item in parent_routes["hands"]] == ["agic:child"]
             assert parent_routes["handoffs"] == []
@@ -857,7 +861,7 @@ agic parent(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_dynamic_child_failure_keeps_its_pointer_and_model_recovers(
+def test_dynamic_child_failure_reports_completion_and_model_recovers(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -910,20 +914,28 @@ agic child(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == ["model", "tool", "model"]
             dynamic = steps[1]
-            assert dynamic.status == "failed"
+            assert dynamic.status == "succeeded"
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
                 if run.parent == dynamic.ref
             )
             assert child.status == "failed"
-            assert dynamic.error == ErrorRef(
-                FieldRef.from_path(RunRef.parse(child.id), "error")
-            )
+            assert dynamic.error is None
+            assert child.error is not None
+            assert "child provider failed" in harness.store.resolve_error(child.error)
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-child"
-            assert "child provider failed" in (result.error or "")
+            assert result.error is None
+            (completion,) = [
+                m
+                for m in harness.adapter.invocations[2].call.messages
+                if m.tag == "run-result"
+            ]
+            assert child.id in message_text(completion.parts)
+            assert 'status="failed"' in message_text(completion.parts)
+            assert "child provider failed" in message_text(completion.parts)
 
     asyncio.run(scenario())
 
@@ -1605,8 +1617,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             assert result.error is None
             assert result.output == {
                 "run_id": child.id,
-                "output_type": "Text",
-                "output": "completed",
+                "controls": [f"{child.id}@0"],
             }
 
     asyncio.run(scenario())
