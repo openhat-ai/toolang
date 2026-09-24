@@ -88,11 +88,7 @@ settle using merge:
 repeat 5 times windowing 3:
   run: Improve {{_}}.
   until:
-    Current result: {{_}}
-    {{#_2}}
-    Return true only if the current result, {{_1._}}, and {{_2._}} are equivalent.
-    {{/_2}}
-    {{^_2}}Return false.{{/_2}}
+    Return true only if {{_}}, {{_1._}}, and {{_2._}} are equivalent.
 ```
 
 - Repeat: optional `windowing N`, default 3; N is a positive integer counting
@@ -125,14 +121,20 @@ repeat 5 times windowing 3:
   data, as in `_2._report.title`. Entry/exit access requires the same history depth.
 - Missing bindings remain absent: a local first created during a round has no
   entry value. Direct reads fail; do not substitute exit values or outer locals.
-- An absent `_k` within the window can be guarded with a template section;
-  reading it in a rendered branch is an error. References beyond the configured
-  window, or without an iteration scope, are errors even in guards.
+- In body/reducer templates, guard absent frames within the window; reading one
+  in a rendered branch is an error. Out-of-window or out-of-scope references are
+  errors even in guards.
 - History-frame section guards test presence, independent of empty/false/zero
   output values. Existing template section scoping applies: render the current
   `_` outside a history-frame section; use qualified `_k.field` inside it.
-- Until can terminate before the window fills; guard history-dependent comparisons
-  and return false during warm-up, as above.
+- For until agics, required depth is the highest history index in their own
+  resolved templates, including guards and authored instruct/context; no references
+  means 0. If fewer prior frames exist, until is false without rendering or
+  invoking its runnable. Save the completed body frame and honor the iteration limit.
+- Only the referenced depth must be available, not the full window: the example
+  first evaluates until in round 3; a history-free condition can run in round 1.
+  Invalid contracts, references beyond the window, and missing fields in existing
+  frames remain errors rather than being converted to false.
 - Save one pair per successful round, including unchanged values. Failed rounds
   add nothing; retries do not duplicate entries. Settle saves after each reducer call.
 - Capture only ordinary locals and the primary `_` on both entry and exit.
@@ -193,6 +195,8 @@ repeat 5 times windowing 3:
   empty/false/zero values; nested isolation, retry/resume, and concurrent compaction.
 - Verify reserved names, primary `_` and internal-underscore exceptions; filter
   injected bindings before entry projection while preserving ordinary data fields.
+- Verify until warm-up returns false with zero child calls, still saves each
+  successful round, and distinguishes missing frames from invalid references/fields.
 - Update affected examples and prepared caches for changed contracts.
 - Resolve entry selectors within history frames using existing template path
   characters. Validate snapshot availability and the reserved binding namespace.
@@ -207,7 +211,7 @@ repeat 5 times windowing 3:
 ## 9. Open Decisions
 
 - Confirm the root flow input-plus-final-output history policy.
-- Confirm inferred settle retention and guarded warm-up behavior.
-- Define settle retention for flow reducers and indirect/dynamic history
+- Confirm inferred settle retention.
+- Define history requirements for flow reducers/conditions and indirect/dynamic
   dependencies; local agic inference does not determine callee requirements.
 - Caps-key migration and removal of existing flow resource directives.
