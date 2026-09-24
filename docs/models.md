@@ -561,7 +561,8 @@ budgets remain unchanged.
   codes inside streamed responses use the same recovery policy. Explicit quota
   exhaustion and `x-should-retry: false` remain terminal. Network retries wait for
   the shared recovery attempt number in seconds (one or two), or longer if
-  `Retry-After` requires it. The run time limit
+  `Retry-After` requires it. A valid `retry-after-ms` takes precedence and is
+  converted from milliseconds. The run time limit
   and cancellation remain effective while waiting. Steering preserves the
   remaining backoff deadline.
 - Authentication, invalid requests, explicit refusal, provider rejection, and
@@ -569,8 +570,10 @@ budgets remain unchanged.
   bounded by the runtime.
 
 Each failed attempt is stored as a failed model step with available partial text
-and reported usage. Missing usage remains unknown. Recovery keeps the preceding
-valid message history and continuation; it does not replay successful tools or
+and reported usage, including text received in the final failing chunk. In Messages
+streams, a known rejection or truncation takes precedence over a later stream
+failure. Missing usage remains unknown. Recovery keeps the preceding valid message
+history and continuation; it does not replay successful tools or
 add incomplete tool calls to the next request. Retries can incur provider charges,
 including when a disconnected request's usage is unavailable.
 

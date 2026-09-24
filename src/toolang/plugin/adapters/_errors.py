@@ -17,6 +17,14 @@ from toolang.base.types.run import ModelUsage, ModelPartUpdate, ModelStreamHandl
 
 
 def _retry_after(response: httpx.Response) -> float | None:
+    # Match the SDK's preference for the more precise millisecond header.
+    try:
+        milliseconds = float(response.headers["retry-after-ms"])
+    except (KeyError, ValueError):
+        pass
+    else:
+        if math.isfinite(milliseconds):
+            return max(0, milliseconds / 1000)
     value = response.headers.get("retry-after")
     if value is None:
         return None

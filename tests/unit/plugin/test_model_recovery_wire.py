@@ -146,6 +146,100 @@ def test_native_early_eof_never_returns_success(wire_call, protocol):
     assert caught.value.partial_text == "partial"
 
 
+@pytest.mark.parametrize("ending", ["complete", "eof", "disconnect", "broken_json"])
+@pytest.mark.parametrize(
+    ("reason", "kind"),
+    [
+        ("refusal", "provider_rejection"),
+        ("model_context_window_exceeded", "provider_rejection"),
+        ("max_tokens", "output_limit"),
+    ],
+)
+def test_messages_stop_reason_wins_over_stream_tail(wire_call, ending, reason, kind):
+    events = [
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "received"},
+        },
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": reason},
+            "usage": {"input_tokens": 2, "output_tokens": 3},
+        },
+    ]
+    if ending == "complete":
+        events.append({"type": "message_stop"})
+    with pytest.raises(ModelResponseError) as caught:
+        wire_call(
+            "messages",
+            events,
+            disconnect=ending == "disconnect",
+            truncated=ending == "broken_json",
+        )
+    assert caught.value.kind == kind
+    assert caught.value.recoverable == (kind == "output_limit")
+    assert caught.value.partial_text == "received"
+    assert caught.value.usage is not None
+    assert caught.value.usage.input_tokens == 2
+    assert caught.value.usage.output_tokens == 3
+
+
+@pytest.mark.parametrize(
+    ("protocol", "stream"),
+    [("messages", False), ("generate_content", False), ("generate_content", True)],
+)
+@pytest.mark.parametrize("kind", ["output_limit", "provider_rejection", "invalid_json"])
+def test_native_failure_retains_all_received_text(wire_call, protocol, stream, kind):
+    if protocol == "messages":
+        data = {
+            "stop_reason": {
+                "output_limit": "max_tokens",
+                "provider_rejection": "refusal",
+                "invalid_json": "tool_use",
+            }[kind],
+            "content": [
+                {"type": "thinking", "thinking": "private reasoning"},
+                {"type": "text", "text": "received "},
+                {"type": "tool_use", "name": "lookup", "input": '{"x":'},
+                {"type": "text", "text": "tail"},
+            ],
+            "usage": {"input_tokens": 2, "output_tokens": 3},
+        }
+    else:
+        data = {
+            "candidates": [
+                {
+                    "finishReason": {
+                        "output_limit": "MAX_TOKENS",
+                        "provider_rejection": "SAFETY",
+                        "invalid_json": "STOP",
+                    }[kind],
+                    "content": {
+                        "parts": [
+                            {"text": "private reasoning", "thought": True},
+                            {"text": "received "},
+                            {"functionCall": {"name": "lookup", "args": '{"x":'}},
+                            {"text": "tail"},
+                        ]
+                    },
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3},
+        }
+        if stream:
+            data = [
+                {"candidates": [{"content": {"parts": [{"text": "prefix "}]}}]},
+                data,
+            ]
+    with pytest.raises(ModelResponseError) as caught:
+        wire_call(protocol, data, stream=stream)
+    assert caught.value.kind == kind
+    assert caught.value.partial_text == ("prefix " if stream else "") + "received tail"
+    assert caught.value.usage is not None
+    assert caught.value.usage.input_tokens == 2
+    assert caught.value.usage.output_tokens == 3
+
+
 @pytest.mark.parametrize("protocol", ["messages", "generate_content"])
 def test_streaming_http_quota_exhaustion_stays_terminal(wire_call, protocol):
     with pytest.raises(httpx.HTTPStatusError):

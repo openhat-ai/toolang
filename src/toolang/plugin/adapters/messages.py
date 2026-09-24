@@ -100,7 +100,6 @@ class MessagesModelAdapter(ModelAdapter):
         thinking_blocks: dict[int, dict[str, object]] = {}
         usage: dict[str, object] = {}
         ended = False
-        stop_reason = None
         with model_transport_errors(
             usage=lambda: messages_usage(usage), partial_text=lambda: "".join(text)
         ):
@@ -130,8 +129,9 @@ class MessagesModelAdapter(ModelAdapter):
                             usage.update(_json_object(message.get("usage")))
                         elif event_type == "message_delta":
                             usage.update(_json_object(event.get("usage")))
-                            stop_reason = _json_object(event.get("delta")).get(
-                                "stop_reason"
+                            # A known rejection or truncation outranks a lost tail.
+                            _check_stop_reason(
+                                _json_object(event.get("delta")).get("stop_reason")
                             )
                         elif event_type == "content_block_start":
                             index = _int(event.get("index"))
@@ -184,7 +184,6 @@ class MessagesModelAdapter(ModelAdapter):
                 raise ModelResponseError(
                     "model stream ended before message_stop", kind="incomplete_stream"
                 )
-            _check_stop_reason(stop_reason)
             calls = tuple(
                 _tool_call(block, fallback=f"tool-call-{index}")
                 for index, block in sorted(tool_blocks.items())
@@ -315,32 +314,33 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
     calls: list[ToolCall] = []
     thinking: list[dict[str, object]] = []
     call_thinking: dict[str, list[dict[str, object]]] = {}
+    content = payload.get("content")
+    blocks = (
+        tuple(_json_object(raw) for raw in content) if isinstance(content, list) else ()
+    )
     with model_transport_errors(
         usage=lambda: messages_usage(_json_object(payload.get("usage"))),
         partial_text=lambda: "".join(
-            part.text for part in parts if isinstance(part, TextPart)
+            _text(block.get("text")) for block in blocks if block.get("type") == "text"
         ),
     ):
         if "error" in payload:
             raise provider_error(payload["error"])
         _check_stop_reason(payload.get("stop_reason"))
-        content = payload.get("content")
-        if isinstance(content, list):
-            for raw in content:
-                block = _json_object(raw)
-                if block.get("type") == "text":
-                    value = _text(block.get("text"))
-                    if value:
-                        parts.append(TextPart(value))
-                elif block.get("type") in {"thinking", "redacted_thinking"}:
-                    thinking.append(dict(block))
-                elif block.get("type") == "tool_use":
-                    call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
-                    calls.append(call)
-                    parts.append(_tool_part(call))
-                    if thinking:
-                        call_thinking[call.call_id] = thinking
-                        thinking = []
+        for block in blocks:
+            if block.get("type") == "text":
+                value = _text(block.get("text"))
+                if value:
+                    parts.append(TextPart(value))
+            elif block.get("type") in {"thinking", "redacted_thinking"}:
+                thinking.append(dict(block))
+            elif block.get("type") == "tool_use":
+                call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
+                calls.append(call)
+                parts.append(_tool_part(call))
+                if thinking:
+                    call_thinking[call.call_id] = thinking
+                    thinking = []
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),

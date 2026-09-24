@@ -447,7 +447,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
         await _end_incomplete(state, stream)
         raise
     except ModelResponseError as exc:
-        if exc.partial_text and not stream.text_chunks:
+        # The adapter may have received more text than it emitted as deltas.
+        if exc.partial_text and exc.partial_text.startswith(
+            "".join(stream.text_chunks)
+        ):
             stream.completed_parts[_ensure_text_part_index(stream)] = TextPart(
                 text=exc.partial_text
             )

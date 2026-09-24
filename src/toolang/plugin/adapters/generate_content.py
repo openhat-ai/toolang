@@ -102,6 +102,7 @@ class GenerateContentModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         on_event = model_events(on_event)
         text: list[str] = []
+        text_started = False
         calls: list[ToolCall] = []
         signatures: dict[str, str] = {}
         usage: dict[str, object] = {}
@@ -127,6 +128,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                                 continue
                             chunk = _json_object(json.loads(raw))
                             usage.update(_json_object(chunk.get("usageMetadata")))
+                            text.append(_response_text(chunk))
                             _check_response(chunk)
                             finish_reason = (
                                 _candidate(chunk).get("finishReason") or finish_reason
@@ -134,9 +136,9 @@ class GenerateContentModelAdapter(ModelAdapter):
                             for part in _candidate_parts(chunk):
                                 value = _text(part.get("text"))
                                 if value and part.get("thought") is not True:
-                                    if not text:
+                                    if not text_started:
+                                        text_started = True
                                         await on_event(ModelPartStart(kind="text"))
-                                    text.append(value)
                                     await on_event(
                                         ModelPartDelta(delta=TextDelta(value))
                                     )
@@ -284,9 +286,7 @@ def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
         usage=lambda: generate_content_usage(
             _json_object(payload.get("usageMetadata"))
         ),
-        partial_text=lambda: "".join(
-            part.text for part in parts if isinstance(part, TextPart)
-        ),
+        partial_text=lambda: _response_text(payload),
     ):
         _check_response(payload)
         for part in _candidate_parts(payload):
@@ -514,6 +514,16 @@ def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], 
     if not isinstance(parts, list):
         return ()
     return tuple(_json_object(part) for part in parts)
+
+
+def _response_text(payload: Mapping[str, object]) -> str:
+    """Retain all received visible text even when response validation fails."""
+
+    return "".join(
+        _text(part.get("text"))
+        for part in _candidate_parts(payload)
+        if part.get("thought") is not True
+    )
 
 
 def _generate_url(

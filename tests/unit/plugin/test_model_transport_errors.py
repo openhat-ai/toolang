@@ -99,6 +99,43 @@ def test_retry_after_is_bounded_to_valid_delays(header: str) -> None:
         assert delay == (0 if header == "-3" else None)
 
 
+@pytest.mark.parametrize("sdk", [False, True])
+@pytest.mark.parametrize(
+    ("milliseconds", "seconds", "expected"),
+    [
+        ("10000", None, 10),
+        ("1250", "4", 1.25),
+        ("0", "4", 0),
+        ("-1000", None, 0),
+        ("invalid", "4", 4),
+        ("nan", "4", 4),
+        ("inf", None, None),
+    ],
+)
+def test_millisecond_retry_after_preserves_sdk_behavior(
+    sdk, milliseconds, seconds, expected
+) -> None:
+    headers = {"retry-after-ms": milliseconds}
+    if seconds is not None:
+        headers["retry-after"] = seconds
+    response = httpx.Response(
+        429,
+        headers=headers,
+        request=httpx.Request("POST", "https://example.invalid"),
+    )
+    error = (
+        APIStatusError("failed", response=response, body=None)
+        if sdk
+        else httpx.HTTPStatusError(
+            "failed", request=response.request, response=response
+        )
+    )
+    with pytest.raises(ModelResponseError) as caught:
+        with model_transport_errors():
+            raise error
+    assert caught.value.retry_after == expected
+
+
 def test_unread_streaming_http_error_remains_recoverable() -> None:
     response = httpx.Response(
         503,

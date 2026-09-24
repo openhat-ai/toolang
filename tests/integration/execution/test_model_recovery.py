@@ -18,7 +18,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.errors import ModelResponseError
-from toolang.base.types.message import Message, TextDelta, ToolCallPart
+from toolang.base.types.message import Message, TextDelta, TextPart, ToolCallPart
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import (
     ModelCallResult,
@@ -29,6 +29,7 @@ from toolang.base.types.run import (
 )
 from toolang.execution.executor.runs import agic
 from toolang.execution.types import ModelStepNoted, ThreadPrefix
+from toolang.lang.types import Array
 
 SOURCE = """
 agic chat() -> Text:
@@ -107,6 +108,59 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
             )
             assert Message.assistant("unfinished") not in retry.messages
             assert "invalid_json" in str(retry.messages)
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+@pytest.mark.parametrize(
+    ("streamed", "received", "expected"),
+    [
+        ("", "received tail", "received tail"),
+        ("received ", "received tail", "received tail"),
+        ("received tail", "received ", "received tail"),
+        ("received tail", "unrelated", "received tail"),
+    ],
+)
+def test_failed_step_retains_available_text(
+    tmp_path: Path, streamed, received, expected
+):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(),
+                updates=(ModelPartDelta(TextDelta(streamed)),) if streamed else (),
+                error=ModelResponseError(
+                    "truncated", kind="output_limit", partial_text=received
+                ),
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            failed, recovered = harness.store.list_steps(run_id=run.id)
+            assert failed.status == "failed"
+            assert failed.output is not None
+            assert isinstance(failed.output.local.value, Array)
+            assert tuple(failed.output.local.value) == (TextPart(expected),)
+            assert recovered.status == "succeeded"
+            assert Message.assistant(expected) not in (
+                harness.adapter.invocations[-1].call.messages
+            )
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
