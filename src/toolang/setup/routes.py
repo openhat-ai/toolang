@@ -33,6 +33,16 @@ PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
     },
 }
 
+# Provider packages that expose app attribution on their shared Gateway route.
+_PACKAGE_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
+    "@ai-sdk/gateway": {
+        "headers": {
+            "http-referer": "https://toolang.ai",
+            "x-title": "Toolang",
+        },
+    },
+}
+
 # npm package -> (adapter, protocol default api)
 _NPM_ROUTES: Mapping[str, tuple[str, str | None]] = {
     "@ai-sdk/anthropic": ("messages", "https://api.anthropic.com/v1"),
@@ -115,6 +125,12 @@ def resolve_provider(
     satisfied = env if env_is_ready(env, environ=environ) else None
     adapter_name = provider_adapter(provider)
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
+    conventions = _convention_block(provider.id)
+    default_headers = dict(cast(Mapping[str, str], conventions["headers"]))
+    _merge_headers(
+        default_headers,
+        _PACKAGE_CONVENTIONS.get(provider.npm or "", {}).get("headers"),
+    )
     default_route = ModelRoute(
         adapter=adapter_name if adapter is not None else None,
         api=_resolve_api(
@@ -125,8 +141,8 @@ def resolve_provider(
             ),
         ),
         env=satisfied,
-        headers=cast(Mapping[str, str], _convention_block(provider.id)["headers"]),
-        options=cast(Mapping[str, object], _convention_block(provider.id)["options"]),
+        headers=default_headers,
+        options=cast(Mapping[str, object], conventions["options"]),
     )
     return replace(provider, _toolang=replace(provider._toolang, route=default_route))
 
@@ -217,6 +233,8 @@ def model_headers(
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
+    provider_npm = provider.npm or ""
+    _merge_headers(headers, _PACKAGE_CONVENTIONS.get(provider_npm, {}).get("headers"))
     override = model.provider or ModelProvider()
     _merge_headers(headers, override.headers)
     for mode_block in mode_blocks:
