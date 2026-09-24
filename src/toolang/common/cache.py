@@ -51,6 +51,11 @@ _SECRET_FIELD_MARKERS = (
     '-secret"',
     '-token"',
 )
+_SECRET_FIELD_RE = re.compile(
+    r'"(?:api[-_]?key|apikey|authorization|cookie|credential|credentials|'
+    r'header|password|proxy[-_]?authorization|secret|token|x[-_]?api[-_]?key)"\s*:',
+    re.IGNORECASE,
+)
 
 
 def store_document(
@@ -92,12 +97,12 @@ def load_document(
     if path.stat().st_size > _MAX_CACHE_BYTES:
         raise ValueError("model cache entry exceeds its size limit")
     content = path.read_text(encoding="utf-8")
-    if _serialized_data_is_unsafe(content):
-        raise ValueError("model cache entry contains unsafe data")
     del fast_json  # All cache readers now use the same native decoder.
     raw = msgspec.json.decode(content)
     if not isinstance(raw, Mapping):
         raise TypeError("model cache entry must be an object")
+    if _serialized_data_is_unsafe(content, raw):
+        raise ValueError("model cache entry contains unsafe data")
     require_fields(raw, frozenset({"digest", "payload"}), label="cache envelope")
     checksum = raw.get("digest")
     payload = raw.get("payload")
@@ -174,17 +179,11 @@ def _serialized_data_is_unsafe(
     content: str,
     parsed: object | None = None,
 ) -> bool:
-    lowered = content.casefold()
-    if any(_json_field_occurs(lowered, marker) for marker in _SECRET_FIELD_MARKERS):
+    if _SECRET_FIELD_RE.search(content) is not None:
         return True
     if _SECRET_VALUE_RE.search(content) is not None or _contains_url_userinfo(content):
         return True
-    if not _json_field_occurs(lowered, '"headers"'):
-        return False
-    value = parsed
-    if value is None:
-        value = msgspec.json.decode(content)
-    return _contains_unsafe_headers(value)
+    return _contains_unsafe_headers(parsed) if parsed is not None else False
 
 
 def _json_field_occurs(content: str, marker: str) -> bool:

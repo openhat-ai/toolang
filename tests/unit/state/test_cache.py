@@ -322,3 +322,71 @@ def test_layer_rejects_nonportable_file_path(tmp_path: Path) -> None:
 def test_agent_state_revision_rejects_noncanonical_revision() -> None:
     with pytest.raises(ValueError, match="root revision"):
         agent_state_revision("short", "0" * 64, name="alice")
+
+
+@pytest.mark.parametrize(
+    "secret_field",
+    [
+        "api_key",
+        "api-key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "header",
+        "password",
+        "proxy_authorization",
+        "proxy-authorization",
+        "secret",
+        "token",
+        "x_api_key",
+        "x-api-key",
+    ],
+)
+def test_portable_cache_rejects_secret_fields_on_load(
+    tmp_path: Path, secret_field: str
+) -> None:
+    from toolang.common.cache import load_document, store_document
+
+    path = tmp_path / "cache.json"
+    assert store_document(
+        path,
+        kind="test",
+        key="cache",
+        document={"safe": True},
+    )
+    content = path.read_text(encoding="utf-8")
+    content = content.replace('"safe":true', f'"{secret_field}":"value","safe":true')
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsafe"):
+        load_document(path, kind="test", key="cache")
+
+
+def test_portable_cache_security_check_scans_headers_without_redecoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import toolang.common.cache as cache_module
+
+    path = tmp_path / "cache.json"
+    assert cache_module.store_document(
+        path,
+        kind="test",
+        key="cache",
+        document={"headers": {"X-Request-ID": "safe"}},
+    )
+    decoded = cache_module.msgspec.json.decode
+    calls = 0
+
+    def count_decode(content):
+        nonlocal calls
+        calls += 1
+        return decoded(content)
+
+    monkeypatch.setattr(cache_module.msgspec.json, "decode", count_decode)
+    loaded = cache_module.load_document(path, kind="test", key="cache")
+    assert loaded["headers"] == {"X-Request-ID": "safe"}
+    assert loaded["key"] == "cache"
+    assert calls == 1
