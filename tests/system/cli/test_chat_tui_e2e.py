@@ -235,6 +235,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         assert "agic:chat" in running
         assert "Traceback" not in running
 
+        (tmp_path / "release-model").touch()
         session.wait_for("succeeded", "flow:relay", "scripted")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
@@ -256,6 +257,7 @@ def test_chat_tui_status_shows_compact_elapsed_time(tmp_path: Path) -> None:
 
         assert "■" not in running
         assert "◧" not in running
+        (tmp_path / "release-model").touch()
         session.wait_for("succeeded", "agic:chat")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
@@ -287,6 +289,9 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         assert "e edit" not in visible
 
         session.send(b"\t")
+        # Request a complete row before waiting for text that incremental
+        # terminal redraws may split across cursor movements.
+        _wait_redrawn(session, "1 queued (space to collapse)")
         focused = session.wait_for(
             "↳ queued follow-up",
             "1 queued",
@@ -297,16 +302,20 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         )
         assert "Traceback" not in focused
         assert "m-enter steer · e edit · d delete" in focused
-        # Prompt Toolkit redraws only changed cells; force a full redraw to
-        # read the summary and its inline hint as one contiguous row.
-        redrawn = _wait_redrawn(session, "1 queued (space to collapse)")
-        assert "1 queued (space to collapse)" in redrawn
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
+        # Deleting the last item restores prompt focus. Wait for typed text to
+        # prove the key events were handled before allowing the run to finish.
+        session.send(b"back in prompt")
+        session.wait_for("back in prompt")
+        session.send(b"\x15")
+        (tmp_path / "release-model").touch()
         session.wait_for("succeeded", "agic:chat")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
+        assert "failed" not in session.output
+        assert "Traceback" not in session.output
     finally:
         session.close()
 

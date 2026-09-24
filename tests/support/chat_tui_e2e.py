@@ -22,9 +22,14 @@ class _DelayGate(AsyncGate):
         await asyncio.sleep(0.5)
 
 
-class _StatusDelayGate(AsyncGate):
+class _StatusGate(AsyncGate):
+    def __init__(self, release_path: Path) -> None:
+        super().__init__()
+        self.release_path = release_path
+
     async def wait(self) -> None:
-        await asyncio.sleep(1.5)
+        while not self.release_path.exists():
+            await asyncio.sleep(0.01)
 
 
 def main() -> None:
@@ -55,7 +60,7 @@ def main() -> None:
         responses = [
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant(response)),
-                gate=_StatusDelayGate(),
+                gate=_StatusGate(root / "release-model"),
             )
         ]
     else:
