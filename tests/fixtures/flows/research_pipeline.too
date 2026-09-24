@@ -35,12 +35,14 @@ agic relevance(_, topic: Part[]) -> Number:
 
 flow(_: Text):
   recall = none
+  instruct = none
+  context = none
   tools = none
   let topic = {{_}}
   scatter using expand_queries
   map using search_web in 4 lanes
   keep if is_relevant
   sort descending by relevance
-  keep first 8
+  keep first 2
   map using extract_findings in 4 lanes
   gather using synthesize_report
