@@ -171,6 +171,12 @@ identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
 provides the target label. Its header begins in column zero and uses the
 canonical resolved runnable ref:
 
+For a scheduled `_toolang/run`, retain the receipt's child Run identity after the
+Tool Step ends. Open the divider at the child's `RunBegin` and close it at
+`RunEnd`, using the child's status and metrics. This presentation scope does not
+extend the Tool Step's lifetime. Cancellation before dispatch closes the scheduled
+target without a `RunBegin`.
+
 ```text
 ---  run agic:summarize -----------------------------------------------
 

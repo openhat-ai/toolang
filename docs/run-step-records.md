@@ -135,8 +135,10 @@ started_at
 finished_at
 ```
 
-`parent` is the calling `StepRef` for a child Run. `thread`, `control`, and `state`
-are typed references. `output` is an Output whose `local` is a Local. That
+`parent` is the triggering `StepRef` for a child Run. For `_toolang/run`, the
+Tool Step ends before the child starts; `parent` records causality, not lifetime
+containment. `thread`, `control`, and `state` are typed references. `output` is an
+Output whose `local` is a Local. That
 Local may contain a `TypedRef` to an explicit `/output/local/value` field.
 
 ### StepRecord

@@ -30,6 +30,7 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
+from .assembly.run_results import run_completion, run_receipt, scheduled_run
 from .assembly.utils import control_message, literal_delta, render_delta
 from .inspection.views import RunView, ThreadView, _ThreadProjection
 from .assembly.history import (
@@ -338,6 +339,7 @@ class RunStore:
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
+        schedule_receipt: bool = False,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -458,6 +460,43 @@ class RunStore:
                     claimed=False,
                     triggered_by=parent,
                 )
+                if schedule_receipt:
+                    if parent is None:
+                        raise ValueError("scheduling receipt requires a Tool Step")
+                    receipt_row = self._conn.execute(
+                        "SELECT * FROM steps WHERE id = ?", (str(parent),)
+                    ).fetchone()
+                    receipt_step = _step_from_row(receipt_row)
+                    if not (
+                        receipt_step.status == "running"
+                        and isinstance(receipt_step.given, ToolStepGiven)
+                        and receipt_step.given.trigger == "model"
+                        and receipt_step.given.call.name == "_toolang__run"
+                        and receipt_step.output is None
+                    ):
+                        raise ValueError(
+                            "scheduling requires an unacknowledged run Tool Step"
+                        )
+                    call = receipt_step.given.call
+                    receipt = ToolResultPart(
+                        tool_call_id=call.tool_call_id,
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        tool_family=call.name,
+                        output=run_receipt(run_id),
+                    )
+                    # Commit acceptance and its receipt together, before delivery.
+                    self._conn.execute(
+                        "UPDATE steps SET output = ? WHERE id = ?",
+                        (
+                            _dump_json(
+                                output_to_data(
+                                    Output(Local.typed("ToolResultPart", receipt))
+                                )
+                            ),
+                            str(parent),
+                        ),
+                    )
                 run_row = self._conn.execute(
                     "SELECT * FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
@@ -2992,6 +3031,14 @@ class RunStore:
 
         return self.rebuild_model_calls((step,))[step.ref]
 
+    def run_completion(self, run_id: str) -> MessageTemplate | None:
+        """Return committed completion context without requiring a later model call."""
+
+        run = self.get_run(run_id=run_id)
+        if run is None or run.status in {"pending", "running"}:
+            return None
+        return run_completion(run, self.resolve_value, self.resolve_error)
+
     def message_history(self, run_id: str) -> MessageHistory:
         """Load the root's fixed logical prefix once, using recorded templates."""
 
@@ -3026,7 +3073,13 @@ class RunStore:
                         if head is not None and step_ref.indices >= head.indices
                         for message in messages.delta
                         if message.source is None
-                    ) + tail_delta(by_ref[ref], selected, related, self.resolve_value)
+                    ) + tail_delta(
+                        by_ref[ref],
+                        selected,
+                        related,
+                        self.resolve_value,
+                        self.run_completion,
+                    )
                 return deltas
 
         from .inspection.history import RunHistory
@@ -3255,6 +3308,12 @@ class RunStore:
                                 waiting.add(part.tool_call_id)
                             elif isinstance(part, ToolResultPart):
                                 waiting.discard(part.tool_call_id)
+                    child_id = scheduled_run(step)
+                    if (
+                        child_id is not None
+                        and (completion := self.run_completion(child_id)) is not None
+                    ):
+                        deferred.extend(render_delta((completion,), self.resolve_value))
                 for ref in boundary.controls:
                     if ref in emitted:
                         continue

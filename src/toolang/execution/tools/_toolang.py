@@ -253,7 +253,8 @@ _TOOLS = (
     ),
     ToolangTool(
         "run",
-        "Run an authorized hand as a child Run, wait for its result, then continue. "
+        "Schedule an authorized hand as a child Run. The tool reply acknowledges "
+        "scheduling; a separate runtime message supplies its outcome before you continue. "
         "Call it only when its result is required now. Read the target input "
         "signature and do not invent missing values.",
         _RUN_PARAMETERS,

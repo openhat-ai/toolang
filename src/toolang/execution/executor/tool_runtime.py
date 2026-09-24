@@ -13,6 +13,7 @@ from toolang.base.types.tool import ToolContext, ToolResult
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
+from ..assembly.run_results import run_receipt
 
 from ..runnables import (
     AgicRoutes,
@@ -25,15 +26,12 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     RunRef,
     SkillRecallTarget,
     ServiceRecallTarget,
     StepRef,
-    TypedRef,
-    local_to_protocol_data,
 )
-from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
+from .common import _ExecuteCommitted, _RunRejected
 from ..recall import required_declarations
 from .resources import resource_caps, workspace_declarations
 from .rules import load_rules
@@ -145,7 +143,7 @@ class _ToolRuntime(ToolRuntime):
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
         try:
-            result = await execution.execute_child(
+            binding, target = await execution.accept_child(
                 state.prepared.run,
                 {},
                 self.step,
@@ -156,40 +154,13 @@ class _ToolRuntime(ToolRuntime):
                 authorize=lambda target: self._authorize("run", target),
                 state_snapshot=execution.state_for_step(self.step),
             )
-        except (_RunRejected, _ExecutionFailed) as exc:
-            if isinstance(exc, _ExecutionFailed):
-                self.error = exc.error
-            return ToolResult(
-                error=str(exc),
-                output=exc.details if isinstance(exc, _RunRejected) else {},
-            )
+        except _RunRejected as exc:
+            return ToolResult(error=str(exc), output=exc.details)
         except Exception as exc:
             self.failure = exc
             raise
-        record = result.record
-        target = record.value if record is not None else None
-        if (
-            record is None
-            or not isinstance(target, TypedRef)
-            or not isinstance(target.ref.record, RunRef)
-            or target.ref.tokens != ("output", "local", "value")
-        ):
-            raise RuntimeError("runtime run result is missing its child run reference")
-        state.output = target.ref
-        state.record_output(target.ref)
-        return ToolResult(
-            {
-                "run_id": str(target.ref.record),
-                "output_type": record.type,
-                "output": local_to_protocol_data(
-                    Local.typed(
-                        record.type,
-                        result.value,
-                        dim=1 if result.shape == "list" else 0,
-                    )
-                )["value"],
-            }
-        )
+        state.scheduled_run = (binding, target)
+        return ToolResult(run_receipt(binding.run_id))
 
     async def execute(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         if self.source is None:

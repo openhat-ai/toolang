@@ -307,8 +307,9 @@ def test_model_call_assembly_does_not_depend_on_runtime_owners() -> None:
     [
         ("prompting", {"history", "message_buffer", "utils", "prompts"}),
         ("message_buffer", {"utils"}),
-        ("history", {"tool_replies", "utils"}),
+        ("history", {"tool_replies", "run_results", "utils"}),
         ("tool_replies", set()),
+        ("run_results", set()),
         ("utils", set()),
     ],
 )

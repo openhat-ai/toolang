@@ -443,7 +443,8 @@ agic coordinate(_: Text) -> Report:
   Coordinate the work.
 ```
 
-A hand is a synchronous child Run: the Agic receives its result and continues.
+A hand is a child Run: the runtime acknowledges scheduling, executes the child,
+then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed public refs
 remain authored routes and may become available after an explicit State reload.
