@@ -203,24 +203,24 @@ def test_statement_description_covers_every_statement(
             "Storm into 3 items with agic:<adhoc:2> independently, up to 2 at once",
         ),
         (
-            "gather using: Combine the findings.",
+            "gather using: Combine {{_}}.",
             "Gather all items into one with agic:<adhoc:2>",
         ),
         (
-            "settle using: Merge the next finding.",
+            "settle using: Merge {{_}}.",
             "Settle all items into one with agic:<adhoc:2> sequentially",
         ),
         (
-            "let results = map in 2 lanes using:\n    Search for evidence.",
+            "let results = map in 2 lanes using:\n    Search for {{_}}.",
             "Map each item with agic:<adhoc:2>, up to 2 at once, save result to results",
         ),
-        ("keep if: Check relevance.", "Keep items where agic:<adhoc:2> is true"),
+        ("keep if: Check {{_}}.", "Keep items where agic:<adhoc:2> is true"),
         (
-            "let drop if: Check relevance.",
+            "let drop if: Check {{_}}.",
             "Drop items where agic:<adhoc:2> is true, discard result",
         ),
         (
-            "sort descending by: Score relevance.",
+            "sort descending by: Score {{_}}.",
             "Sort items by agic:<adhoc:2> in descending order",
         ),
     ],

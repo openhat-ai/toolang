@@ -35,5 +35,5 @@ async def execute(
         controls=controls,
         occurrence=occurrence,
         runnable=statement.runnable,
-        validate=lambda: require_list(locals, operation="gather"),
+        validate=lambda: require_list(locals, operation="gather", nonempty=True),
     )

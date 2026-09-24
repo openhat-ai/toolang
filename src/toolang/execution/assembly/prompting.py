@@ -16,7 +16,7 @@ from toolang.base.types.model import Model
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
-from toolang.common.template import render_text_template
+from toolang.common.template import render_text_template, require_template_inputs
 from toolang.common.version import toolang_version
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Program
 from toolang.lang.input import (
@@ -38,6 +38,7 @@ from . import prompts
 from .history import HistorySelection
 from .message_buffer import MessageBuffer
 from .utils import join_parts, resource_text, strip_parts, text_block
+from ..types import PromptSetting
 from ..records import ControlRecord, RecallControlPayload
 from ..types import (
     ModelMessages,
@@ -64,14 +65,23 @@ def instructions(
     inputs: PromptInputs,
 ) -> tuple[str, tuple[RecallControlPayload, ...]]:
     """Render protocol, instruct, and the adopted resident declarations."""
-    program, agic = inputs.program, inputs.agic
+    program = (
+        inputs.program
+        if inputs.instruct is None
+        else state_program(inputs.state, inputs.instruct.module)
+    )
+    name = (
+        inputs.instruct.name
+        if inputs.instruct is not None
+        else inputs.agic.instruct or "default"
+    )
     parts = [_PROTOCOL]
-    if agic.instruct != "none":
-        name = "default" if agic.instruct is None else agic.instruct
+    if name != "none":
         declaration = program.find_instruct(name)
         if declaration is None and name != "default":
             raise ToolangError(f"Instruct not found: {name}")
         template = declaration.body if declaration else _DEFAULT_INSTRUCT_TEMPLATE
+        require_template_inputs(template, inputs.template_values)
         content = (
             render_text_template(template, inputs.template_values).strip()
             if template.strip()
@@ -185,6 +195,8 @@ class PromptInputs:
     facts: Mapping[str, object]
     values: Mapping[str, object]
     runnables: Sequence[Mapping[str, object]] = ()
+    instruct: PromptSetting | None = None
+    context: PromptSetting | None = None
 
     @cached_property
     def program(self) -> Program:
@@ -200,7 +212,13 @@ class PromptInputs:
 
     @cached_property
     def template_values(self) -> dict[str, object]:
-        context = dict(self.facts)
+        context = {
+            name: _text_template_value(value) for name, value in self.values.items()
+        }
+        for parameter in self.agic.params:
+            if parameter.optional:
+                context.setdefault(parameter.name, None)
+        context.update(self.facts)
         context.update(
             {
                 "toolang": {"version": toolang_version()},
@@ -277,13 +295,18 @@ class PromptInputs:
                 else {}
             ),
             **{param.name: param.type_name or "Part[]" for param in agic.params},
-            "far": "Text",
-            "near": "Json",
+            "_far": "Text",
+            "_near": "Json[]",
+            "_past": "Json[]",
         }
-        bound = {
-            name: values.get(name) for name in types if name not in {"far", "near"}
-        }
-        bound.update({name: context.get(name) for name in ("far", "near")})
+        bound = {name: values.get(name) for name in types}
+        bound.update(
+            {
+                name: value
+                for name, value in context.items()
+                if name.startswith("_") and name != "_"
+            }
+        )
         cap_refs = {cap.name: cap.ref for cap in caps if cap.kind == "prompt"}
         definitions = {
             prompt.name: prompt_definition_identity(prompt, ref=cap_refs[prompt.name])
@@ -293,6 +316,7 @@ class PromptInputs:
         rendered: list[tuple[AstMessage, tuple[Part, ...]]] = []
         invocations: list[PromptInvocation] = []
         for block in agic.messages:
+            require_template_inputs(block.content, bound)
             resolution = resolve_input_parts_with_provenance(
                 block.content,
                 program=program,
@@ -328,7 +352,13 @@ class PromptInputs:
             part
             for part in (
                 _render_routes(self.runnables),
-                _render_context(program, agic, context),
+                _render_context(
+                    state_program(self.state, self.context.module)
+                    if self.context
+                    else program,
+                    replace(agic, context=self.context.name) if self.context else agic,
+                    context,
+                ),
             )
             if part
         )
@@ -342,6 +372,18 @@ class PromptInputs:
             ),
             tuple(invocations),
         )
+
+
+def _text_template_value(value: object) -> object:
+    if isinstance(value, Part):
+        return value.text if isinstance(value, TextPart) else value.to_data()
+    if isinstance(value, Array | tuple | list):
+        if value and all(isinstance(item, TextPart) for item in value):
+            return "".join(item.text for item in cast(Sequence[TextPart], value))
+        return [_text_template_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {name: _text_template_value(item) for name, item in value.items()}
+    return value
 
 
 def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
@@ -411,6 +453,7 @@ def _render_context(
     template = (
         declaration.body if declaration is not None else _DEFAULT_CONTEXT_TEMPLATE
     )
+    require_template_inputs(template, values)
     content = render_text_template(template, values).strip() if template.strip() else ""
     return text_block("toolang:context", content)
 

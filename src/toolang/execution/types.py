@@ -2054,3 +2054,19 @@ def validate_compaction_coverage(
         raise ValueError("compact bounds must be visible historical roots")
     if roots.index(begin) >= roots.index(end):
         raise ValueError("compact must cover a nonempty range and retain a root")
+
+
+@dataclass(frozen=True, slots=True)
+class PromptSetting:
+    module: str
+    name: str = "default"
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableSettings:
+    lanes: int = 4
+    recall: tuple[str, ...] = ("auto",)
+    hands: tuple[str, ...] = ()
+    handoffs: tuple[str, ...] = ()
+    instruct: PromptSetting | None = None
+    context: PromptSetting | None = None

@@ -274,8 +274,8 @@ Rules:
 - `name?` is optional.
 - An omitted type defaults to `Text`.
 - Parameters are initialized as named runtime locals.
-- Parameter names must be unique and cannot reuse `_`, `far`, `near`, or
-  `line`.
+- Parameter names must be unique. Except primary `_`, names cannot start or
+  end with `_`; internal underscores remain valid.
 
 Script CLI arguments and options are derived from the selected runnable's
 signature. The primary input maps to positional/stdin content rather than a
@@ -329,10 +329,10 @@ flow research(_: Text) -> Report:
   ...
 ```
 
-An omitted output type defaults to `Part[]`. For an agic:
+An omitted output type defaults to `Text`. For an agic:
 
 - omitted `-> T` keeps normal unstructured assistant content and validates it
-  as `Part[]`
+  as `Text`
 - `Text`, `Part`, and `Part[]` use content output with type validation
 - `Number`, `Boolean`, `Json`, declared structs `S`, and ordinary `T[]` values
   use structured model output
@@ -410,6 +410,7 @@ models
 psyches
 skills
 services
+prompts
 tools
 recall
 hands
@@ -425,15 +426,23 @@ snapshot:
 -=  remove matching selected items
 ```
 
-`models` and `recall` are scalar selections and support `=` only. `recall`
-accepts `auto`, `none`, `far`, `near`, or `far, near`, and is Agic-only.
-Omission, `auto`, and `near` include the current conversation history. `none`
-and `far` do not; `far, near` includes it because `near` is selected. Durable
-`far` recall is reserved for a later runtime change.
+Resource selectors (`models`, `tools`, `psyches`, `skills`, `services`, and
+`prompts`) operate within the immediate parent's effective resources, intersected
+with the current module's visibility. `+=` can restore only resources in that
+fixed base. Roots start from agent resources; calls and execute transfers cannot
+expand the caller's boundary.
 
-`hands` and `handoffs` are Agic-only runnable routes. They accept ordered,
-exact public refs in `name`, `agic:name`, or `flow:name` form and support only
-`=`:
+Both agics and flows accept `recall`, `hands`, and `handoffs`. Omission inherits
+the immediate parent's value. `recall = auto` selects both history sources;
+`none`, `far`, `near`, and `far, near` select a view of the full root snapshot.
+The runtime exposes `_far` (summary text), `_near` (recent message data), and
+`_past` (summary followed by recent messages). Excluded sources are empty.
+Only root agics prepend historical messages automatically; child agics reference
+these variables explicitly. Compaction updates subsequent frames throughout
+the run tree.
+
+`hands` and `handoffs` select public runnable routes with `=`. An explicit
+selection replaces inherited routes independently of resource restrictions:
 
 ```too
 agic coordinate(_: Text) -> Report:
@@ -448,12 +457,13 @@ then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed public refs
 remain authored routes and may become available after an explicit State reload.
-Flows cannot declare either route. `_toolang` inner runtime tools cannot be selected
+Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. The three
 inner runtime tool definitions remain available independently of these lists.
 
-An agic directive narrows or extends only that agic's runtime setup. It does
-not mutate the prepared program or affect sibling runnables.
+Configuration changes affect the runnable and its descendants without mutating
+parents or siblings. Lane defaults are 4 per parallel operation; a statement
+`in N lanes` overrides only that operation.
 
 
 ### Context And Instruct
@@ -514,8 +524,11 @@ NAME     named declaration
 
 An inline `context:` or `instruct:` body is lowered into a generated top-level
 declaration named `<context:LINE>` or `<instruct:LINE>`. Omitting the statement
-leaves the AST reference as `None`; runtime policy normally resolves that like
-`default`. The string `"none"` explicitly disables the layer.
+leaves the AST reference as `None`; runtime inherits the parent's resolved
+selection and declaring module. Roots select their module/built-in default.
+`default` explicitly selects the current module; `none` disables the layer.
+Inherited templates render using the child's bound parameters and runtime
+variables; missing dependencies fail rather than capturing parent locals.
 
 `system:` is not an agic message block. Use `instruct:` for instructions and
 `context:` for data.
@@ -558,16 +571,16 @@ flow research(_: Text) -> Report:
   gather using synthesize
 ```
 
-Flows use the same parameters, output declaration, resource directives, and
-runnable namespace as agics. Agic-only `hands` and `handoffs` are excluded.
-Statement syntax, bindings, inline agics, and result shapes
-are defined in [flow-syntax.md](./flow-syntax.md).
+Flows use the same declaration defaults, resource selectors, recall, and routing
+configuration as agics. Every call inherits the immediate parent's resource
+boundary, including nested flows and public run/execute calls. Configuration
+can be overridden; resources can only be narrowed.
 
-Each flow invocation starts from the `AgentResources` resolved at root-run
-start. Its directives establish the resources used by agics
-executed in that flow. Nested flow calls reset again, even when the nested flow
-has no directives, so a flow's correction does not implicitly constrain
-another independently authored flow.
+The current tree-sitter dependency still needs syntax support for `lanes`, flow
+`instruct/context`, and empty route selectors. Their AST/runtime behavior is
+implemented; see the [syntax requirements](./plans/flow-usability.md#9-syntax-requirements).
+Statement syntax, bindings, inline agics, and result shapes are defined in
+[flow-syntax.md](./flow-syntax.md).
 
 Inline runnable bodies lower to unnamed `AgicDecl` values that keep the
 statement's source line. They are addressed only through the adhoc sentinel

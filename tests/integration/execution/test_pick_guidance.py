@@ -563,7 +563,9 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
 
 
 @pytest.mark.parametrize("operation", ["run", "execute"])
-def test_pick_uses_the_target_modules_effective_resources(tmp_path: Path, operation):
+def test_pick_intersects_caller_resources_with_target_module_visibility(
+    tmp_path: Path, operation
+):
     home_ref, module_ref = "service/github", "service/github"
     module_guidance = "Use the target module's guidance."
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -625,6 +627,7 @@ flow research() -> Text:
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="chat",
+                    ceilings=(AgentCeiling(services=(home_ref,)),),
                 ),
                 tracer=tracer,
             )
@@ -641,16 +644,16 @@ flow research() -> Text:
                     and "not available" in results[identity].error
                 )
             assert results["caller"].error is None
-            assert results["target"].error is None
+            assert "not available" in (results["target"].error or "")
             contents = [
                 c.payload.content for run in runs for c in _recalls(harness, run)
             ]
-            assert contents == [GUIDANCE, module_guidance]
+            assert contents == [GUIDANCE]
             caller = harness.adapter.invocations[0].call.instructions
             target = harness.adapter.invocations[2].call.instructions
-            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' in target
+            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' not in target
             assert "Module guidance." not in caller
-            assert "Module guidance." in target
+            assert "Module guidance." not in target
             assert caller != target
             if operation == "run":
                 assert results["resumed"].output == {"controls": []}

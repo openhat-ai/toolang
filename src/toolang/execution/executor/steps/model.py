@@ -92,7 +92,7 @@ def _candidate(
     messages = state.messages.copy()
     history = (
         state.execution.message_history().select(prepared.run.horizon)
-        if state.execution is not None
+        if state.execution is not None and prepared.run.parent is None
         else None
     )
     if state.execution is not None:

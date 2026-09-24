@@ -117,6 +117,8 @@ def test_control_headers_use_cst_body_shape() -> None:
 def test_text_consumers_share_the_formatting_contract(
     tab_size: int, header: str, depth: int, body: str
 ) -> None:
+    if "map using:" in header:
+        body += "\n{{_}}"
     source = (
         header
         + "\n"

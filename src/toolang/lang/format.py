@@ -178,6 +178,7 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
             _count_phrase(statement.count, "time")
             if statement.count is not None
             else "",
+            f"windowing {statement.window}" if statement.window != 3 else "",
         )
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")

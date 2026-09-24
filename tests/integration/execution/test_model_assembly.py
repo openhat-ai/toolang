@@ -435,7 +435,10 @@ def test_compact_preparation_survives_failed_begin(
                 patch.setattr(harness.store, "begin_step", fail_write)
                 with pytest.raises(RuntimeError, match="injected rollback"):
                     await begin(execution, build)
-            assert execution.horizon_for(target) is None
+            assert execution.horizon_for(target) == execution.horizon_for(
+                target, pending=True
+            )
+            assert execution.horizon_for(target) is not None
             assert harness.store.list_steps(run_id=target) == []
             assert len(harness.adapter.invocations) == 2
         return await begin(execution, build)
@@ -644,7 +647,7 @@ def test_invalid_compact_coverage_never_dispatches(
     asyncio.run(scenario())
 
 
-def test_far_and_near_are_available_to_templates_with_recall_none(
+def test_recall_none_provides_empty_thread_variables(
     tmp_path: Path,
 ) -> None:
     source = (
@@ -653,7 +656,7 @@ def test_far_and_near_are_available_to_templates_with_recall_none(
 agic describe() -> Text:
   recall = none
   context: none
-  user: Summary: {{far}}; detail: {{near}}
+  user: Summary: {{_far}}; detail: {{_near}}
 """
     )
     harness = ExecutionHarness.create(
@@ -684,7 +687,7 @@ agic describe() -> Text:
                 harness.adapter.invocations[-1].call.messages
             )
             text = message_text(message.parts)
-            assert "Earlier facts." in text and "second" in text and "role" in text
+            assert text == "Summary: ; detail: []"
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -803,7 +806,9 @@ def test_reload_captures_recall_without_reading_state_during_replay(
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_parent_compact_does_not_change_active_child(tmp_path: Path) -> None:
+def test_parent_compact_changes_shared_history_without_automatic_child_recall(
+    tmp_path: Path,
+) -> None:
     source = (
         SOURCE
         + """
@@ -813,7 +818,7 @@ agic parent(_: Part[]) -> Part[]:
   user: {{_}}
 
 agic child() -> Text:
-  context: none
+  context: Snapshot: {{_far}}
   user: Child.
 """
     )
@@ -889,17 +894,16 @@ agic child() -> Text:
                 )
             assert horizons == [old, new]
             calls = [item.call for item in harness.adapter.invocations[2:]]
-            assert [without_route_snapshots(call.messages)[0] for call in calls] == [
-                Message.user(text)
-                for text in (
-                    "Old far.",
-                    "Old far.",
-                    "Old far.",
-                    "New far.",
-                    "New far.",
-                    "New far.",
-                )
-            ]
+            messages = [without_route_snapshots(call.messages) for call in calls]
+            assert messages[0][0] == Message.user("Old far.")
+            assert "Snapshot: Old far." in message_text(messages[1][0].parts)
+            assert "Snapshot: New far." in message_text(messages[2][-1].parts)
+            assert messages[3][0] == Message.user("New far.")
+            assert "Snapshot: New far." in message_text(messages[4][0].parts)
+            assert messages[5][0] == Message.user("New far.")
+            for index in (1, 2, 4):
+                assert Message.user("Old far.") not in messages[index]
+                assert Message.user("New far.") not in messages[index]
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

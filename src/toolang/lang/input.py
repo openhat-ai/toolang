@@ -807,6 +807,7 @@ def _render_body(
 ) -> tuple[str, tuple[Part, ...]]:
     if "\ue000" in body or "\ue001" in body:
         raise ToolangError("ContentBody contains a reserved marker.")
+
     if not values:
         return body, ()
     template = body
@@ -826,7 +827,10 @@ def _render_body(
             template = _replace_direct_value(template, name, "".join(markers))
             context[name] = markers
             continue
-        context[name] = _template_value(value, type_name=type_name)
+        if name.startswith("_") and name != "_":
+            context[name] = value
+        else:
+            context[name] = _template_value(value, type_name=type_name)
     return render_text_template(template, context), tuple(slots)
 
 

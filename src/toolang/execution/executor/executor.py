@@ -26,7 +26,9 @@ from toolang.lang.ast import (
     Parameter,
     Program,
     RepeatStmt,
+    StructDecl,
 )
+from toolang.lang.contracts import validate_operation_contract
 from toolang.lang.input import (
     PromptInvocation,
     RunnableInput,
@@ -67,6 +69,7 @@ from ..records import (
     ControlRecord,
     RunRecord,
     StepRecord,
+    StoredModelStepGiven,
 )
 from ..store import RunStore
 from ..assembly.tool_replies import control_summary
@@ -119,7 +122,11 @@ from .common import (
     value_text,
 )
 from ..compaction import available_horizon
+from ..settings import resolve_settings
+from ..recall import history_variables
+from .iteration import iteration_values
 from .resources import (
+    intersect_resources,
     apply_agent_ceiling,
     resource_caps,
     resolve_agent_resources,
@@ -1550,6 +1557,10 @@ class _Execution:
             root.run_id: (_qualified_identity(root),)
         }
         self._history: MessageHistory | None = None
+        self._history_horizon = root.horizon
+        self._history_versions = {root.horizon}
+        self._history_root = root.root_run_id
+        self._step_horizons: dict[StepRef, RunRef | None] = {}
         self._runtime_controls: dict[str, dict[int, ControlRecord]] = {}
         self._runtime_cursors: dict[str, int] = {}
 
@@ -1582,6 +1593,9 @@ class _Execution:
                 created_at=utc_now(),
             )
         self._runtime_controls[step.run_id][control.index] = control
+        self._adopt_history(horizon)
+        if step.run_id != self._history_root:
+            self.horizon_for(self._history_root, pending=True)
         return (control.ref,)
 
     def runtime_controls(
@@ -1597,12 +1611,56 @@ class _Execution:
         return tuple(available.values())
 
     def horizon_for(self, run_id: str, *, pending: bool = False) -> RunRef | None:
-        binding = self._active_bindings[run_id]
-        return adopted_horizon(
-            binding.horizon,
-            self.runtime_controls(run_id) if pending else (),
-            RunRef(run_id),
+        if pending:
+            controls = self.runtime_controls(run_id)
+            root_controls = (
+                self.runtime_controls(self._history_root)
+                if run_id != self._history_root
+                else ()
+            )
+            for control in (*root_controls, *controls):
+                if isinstance(control.payload, CompactControlPayload):
+                    self._adopt_history(control.payload.horizon)
+            horizon = self._history_horizon
+            binding = self._active_bindings[run_id]
+            if (
+                horizon is not None
+                and binding.horizon != horizon
+                and not any(
+                    isinstance(control.payload, CompactControlPayload)
+                    and control.payload.horizon == horizon
+                    for control in controls
+                )
+            ):
+                control = self.store.accept_compact_control(
+                    run_id=run_id,
+                    horizon=horizon,
+                    triggered_by=None,
+                    created_at=utc_now(),
+                )
+                self._runtime_controls[run_id][control.index] = control
+        return self._history_horizon
+
+    def _adopt_history(self, horizon: RunRef) -> None:
+        if horizon not in self._history_versions:
+            self.message_history().select(horizon)
+            self._history_versions.add(horizon)
+            self._history_horizon = horizon
+
+    def runtime_values(
+        self, binding: BoundRun, *, step: StepRef | None = None
+    ) -> dict[str, object]:
+        """Select thread and iteration variables from one runtime-owned snapshot."""
+        horizon = (
+            self._step_horizons[step]
+            if step is not None
+            else self.horizon_for(binding.run_id, pending=True)
         )
+        history = self.message_history().select(horizon)
+        return {
+            **history_variables(history.far, history.near, binding.settings.recall),
+            **iteration_values(),
+        }
 
     def recall(
         self,
@@ -1699,6 +1757,65 @@ class _Execution:
 
         return self.executor.has_state_refresh
 
+    def current_binding(
+        self, binding: BoundRun, state: AgentState, state_ref: ControlRef
+    ) -> BoundRun:
+        if state.revision == binding.state.revision and state_ref == binding.state_ref:
+            return binding
+        runnable = resolve_bound_runnable(
+            state, binding.module, _bound_runnable(binding)
+        )
+        return self.refresh_run_binding(
+            binding, state, state_ref, runnable, module=binding.module
+        )
+
+    def validate_child_inputs(
+        self,
+        binding: BoundRun,
+        step: StepRef,
+        name: str,
+        locals: Mapping[str, Local],
+    ) -> AgicDecl | FlowDecl:
+        state, _ = self.state_for_step(step)
+        ref, kind = parse_runnable_ref(name)
+        _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)
+        self._validate_child_contract(step, name, runnable)
+        _bind_child_input(
+            runnable,
+            locals,
+            structs={
+                item.name: item for item in state_program(state, binding.module).structs
+            },
+        )
+        return runnable
+
+    def condition_templates(
+        self, binding: BoundRun, step: StepRef, name: str
+    ) -> tuple[str, ...]:
+        state, state_ref = self.state_for_step(step)
+        parent = self.current_binding(binding, state, state_ref)
+        ref, kind = parse_runnable_ref(name)
+        _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)
+        self._validate_child_contract(step, name, runnable)
+        if not isinstance(runnable, AgicDecl):
+            raise ToolangError("until requires an inline agic")
+        settings = resolve_settings(runnable, binding.module, parent.settings)
+        templates = [message.content for message in runnable.messages]
+        for setting, kind in (
+            (settings.instruct, "instruct"),
+            (settings.context, "context"),
+        ):
+            if setting is not None and setting.name != "none":
+                program = state_program(state, setting.module)
+                declaration = (
+                    program.find_instruct(setting.name)
+                    if kind == "instruct"
+                    else program.find_context(setting.name)
+                )
+                if declaration is not None:
+                    templates.append(declaration.body)
+        return tuple(templates)
+
     def refresh_run_binding(
         self,
         binding: BoundRun,
@@ -1716,7 +1833,7 @@ class _Execution:
             AgentCeiling(),
             module=module,
         )
-        for ceiling in binding.ceilings:
+        for ceiling in binding.ceilings if binding.parent_resources is None else ():
             agent_resources = apply_agent_ceiling(
                 binding.setup,
                 state,
@@ -1724,46 +1841,30 @@ class _Execution:
                 ceiling,
                 module=module,
             )
-        flow_resources: AgentResources | None = None
-        if (
-            not isinstance(runnable, FlowDecl)
-            and binding.parent is not None
-            and binding.flow_resources is not None
-        ):
+        parent_resources = binding.parent_resources
+        settings_base = binding.settings_base
+        if binding.parent is not None:
             parent = self._active_bindings.get(binding.parent.run_id)
             if parent is not None:
-                parent_binding = parent
-                parent_ref = parent_binding.bindings.runnable
-                if parent_ref is None:  # pragma: no cover - bound run invariant
-                    raise RuntimeError(
-                        f"run runnable binding is missing: {parent_binding.run_id}"
-                    )
                 current_parent = resolve_bound_runnable(
-                    state,
-                    parent_binding.module,
-                    parent_ref,
+                    state, parent.module, _bound_runnable(parent)
                 )
                 refreshed_parent = self.refresh_run_binding(
-                    parent_binding,
-                    state,
-                    state_ref,
-                    current_parent,
-                    module=parent_binding.module,
+                    parent, state, state_ref, current_parent, module=parent.module
                 )
-                flow_resources = (
-                    refreshed_parent.resources
-                    if isinstance(current_parent, FlowDecl)
-                    else refreshed_parent.flow_resources
-                )
+                if parent_resources is None:
+                    parent_resources = refreshed_parent.resources
+                elif refreshed_parent.resources is not None:
+                    parent_resources = intersect_resources(
+                        parent_resources, refreshed_parent.resources
+                    )
         selection = snapshot_model_selection(binding.setup)
         resources = resolve_runnable_resources(
             selection,
             runnable=runnable,
-            base=(
-                agent_resources
-                if isinstance(runnable, FlowDecl)
-                else flow_resources or agent_resources
-            ),
+            base=intersect_resources(parent_resources, agent_resources)
+            if parent_resources is not None
+            else agent_resources,
             setup=binding.setup,
             state=state,
             module=module,
@@ -1781,9 +1882,9 @@ class _Execution:
             module=module,
             agent_resources=agent_resources,
             resources=resources,
-            flow_resources=(
-                resources if isinstance(runnable, FlowDecl) else flow_resources
-            ),
+            parent_resources=parent_resources,
+            settings_base=settings_base,
+            settings=resolve_settings(runnable, module, settings_base),
         )
 
     def resolve_public_input(
@@ -1882,8 +1983,10 @@ class _Execution:
             module=target.module,
             agent_resources=agent_resources,
             resources=resources,
-            flow_resources=(
-                resources if isinstance(target.executable, FlowDecl) else None
+            parent_resources=parent.resources,
+            settings_base=parent.settings,
+            settings=resolve_settings(
+                target.executable, target.module, parent.settings
             ),
         )
         return binding, _execute_locals(input, target.executable, control_input)
@@ -2289,6 +2392,7 @@ class _Execution:
                 runnable_name,
                 kind=runnable_kind,
             )
+            self._validate_child_contract(step, name, runnable)
             binding = _child_binding(
                 self,
                 current_parent_binding,
@@ -2351,7 +2455,9 @@ class _Execution:
             ceilings=parent.ceilings,
             agent_resources=agent_resources,
             resources=resources,
-            flow_resources=resources if isinstance(runnable, FlowDecl) else None,
+            parent_resources=parent.resources,
+            settings_base=parent.settings,
+            settings=resolve_settings(runnable, module, parent.settings),
             created_at=utc_now(),
             call="run",
             parent=parent_step,
@@ -2371,19 +2477,13 @@ class _Execution:
             AgentCeiling(),
             module=module,
         )
-        for ceiling in parent.ceilings:
-            agent_resources = apply_agent_ceiling(
-                parent.setup,
-                state,
-                agent_resources,
-                ceiling,
-                module=module,
-            )
         selection = snapshot_model_selection(parent.setup)
         resources = resolve_runnable_resources(
             selection,
             runnable=runnable,
-            base=agent_resources,
+            base=intersect_resources(
+                parent.resources or agent_resources, agent_resources
+            ),
             setup=parent.setup,
             state=state,
             module=module,
@@ -2524,6 +2624,20 @@ class _Execution:
             ),
         )
 
+    def _validate_child_contract(
+        self, step: StepRef, name: str, runnable: AgicDecl | FlowDecl
+    ) -> None:
+        record = self.store.get_step(ref=step)
+        if record is not None and not isinstance(
+            record.given, StoredModelStepGiven | ToolStepGiven
+        ):
+            validate_operation_contract(
+                record.given.kind,
+                runnable,
+                name=name,
+                line=record.given.span.line,
+            )
+
     async def parallel_children(
         self,
         binding: BoundRun,
@@ -2537,34 +2651,50 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
-        lanes = limit or max(len(inputs), 1)
+        state, state_ref = self.state_for_step(parent)
+        binding = self.current_binding(binding, state, state_ref)
+        lanes = limit or binding.settings.lanes
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
             available_lanes.put_nowait(lane)
         source_local = locals.get("_", Local())
         input_type = source_local.type_name
+        name, kind = parse_runnable_ref(runnable)
+        _, declaration = resolve_module_runnable(state, binding.module, name, kind=kind)
+        self._validate_child_contract(parent, runnable, declaration)
+        structs = {
+            item.name: item for item in state_program(state, binding.module).structs
+        }
+
+        def child_locals(index: int, value: Any) -> dict[str, Local]:
+            current = dict(locals)
+            if select_source:
+                current["_"] = Local(
+                    value,
+                    "item",
+                    ref=source_local.ref.select(index)
+                    if source_local.ref is not None
+                    else None,
+                    type_name=input_type,
+                )
+            return current
+
+        # Reject known argument failures before any lane can make a model call.
+        if not inputs:
+            _bind_child_input(
+                replace(declaration, input=None) if select_source else declaration,
+                locals,
+                structs=structs,
+            )
+        for index, value in enumerate(inputs):
+            _bind_child_input(declaration, child_locals(index, value), structs=structs)
 
         async def execute(index: int, value: Any) -> Local:
             lane = await available_lanes.get()
             try:
-                child_locals = dict(locals)
-                child_locals["_"] = Local(
-                    value,
-                    "item",
-                    ref=(
-                        (
-                            source_local.ref.select(index)
-                            if select_source
-                            else source_local.ref
-                        )
-                        if source_local.ref is not None
-                        else None
-                    ),
-                    type_name=input_type,
-                )
                 return await self.execute_child(
                     binding,
-                    child_locals,
+                    child_locals(index, value),
                     parent,
                     runnable,
                     Occurrence(
@@ -2591,7 +2721,7 @@ class _Execution:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        output_type = _parallel_output_type(results) or "Json"
+        output_type = _parallel_output_type(results) or declaration.output or "Part[]"
         result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
@@ -2820,6 +2950,8 @@ class _Execution:
     def _step_relations(self, event: StepBegin) -> StepBegin:
         """Prepare associations without consuming their live state."""
 
+        if event.kind != "model":
+            self.horizon_for(event.step.run_id, pending=True)
         targets = {RunRef(event.step.run_id)}
         if self._active is not None:
             targets.add(RunRef(self._active.root_run_id))
@@ -2850,6 +2982,7 @@ class _Execution:
     def _adopt_step_relations(self, event: StepBegin) -> None:
         """Advance control associations after begin commits, before delivery."""
 
+        self._step_horizons[event.step] = self._history_horizon
         refs = set(event.preceded_by)
         available = self._runtime_controls.get(event.step.run_id, {})
         adopted = tuple(
@@ -2887,7 +3020,9 @@ class _Execution:
 def _parallel_output_type(
     results: Sequence[Local],
 ) -> str | None:
-    actual = {result.type_name for result in results if result.type_name is not None}
+    actual = {
+        kind for result in results if (kind := _runtime_local_type(result)) is not None
+    }
     if len(actual) == 1:
         return next(iter(actual))
     return None
@@ -2907,6 +3042,44 @@ def _child_binding(
     state_ref: ControlRef,
 ) -> BoundRun:
     structs = {item.name: item for item in state_program(state, module).structs}
+    input, control_input = _bind_child_input(runnable, locals, structs=structs)
+    return BoundRun(
+        run_id=context.executor.ids.issue_run(),
+        root_run_id=parent.root_run_id,
+        thread=parent.thread,
+        bindings=RunBindings(
+            model=parent.bindings.model,
+            runnable=f"{runnable.kind}:{effective_name}",
+        ),
+        model_request=parent.model_request,
+        input=input,
+        control_input=control_input,
+        state=state,
+        state_ref=state_ref,
+        setup=parent.setup,
+        module=module,
+        limits=parent.limits,
+        ceilings=parent.ceilings,
+        agent_resources=parent.agent_resources,
+        resources=None,
+        parent_resources=parent.resources,
+        settings_base=parent.settings,
+        settings=resolve_settings(runnable, module, parent.settings),
+        created_at=utc_now(),
+        call="run",
+        parent=parent_step,
+        occurrence=occurrence,
+    )
+
+
+def _bind_child_input(
+    runnable: AgicDecl | FlowDecl,
+    locals: Mapping[str, Local],
+    *,
+    structs: Mapping[str, StructDecl],
+) -> tuple[RunnableInput, CallInput[Value | TypedRef]]:
+    """Validate child arguments and retain compatible input references."""
+
     parameters = {"_": runnable.input} if runnable.input is not None else {}
     parameters.update((parameter.name, parameter) for parameter in runnable.params)
     source_locals = {
@@ -2930,31 +3103,7 @@ def _child_binding(
             for name, value in input.items()
         }
     )
-    return BoundRun(
-        run_id=context.executor.ids.issue_run(),
-        root_run_id=parent.root_run_id,
-        thread=parent.thread,
-        bindings=RunBindings(
-            model=parent.bindings.model,
-            runnable=f"{runnable.kind}:{effective_name}",
-        ),
-        model_request=parent.model_request,
-        input=input,
-        control_input=control_input,
-        state=state,
-        state_ref=state_ref,
-        setup=parent.setup,
-        module=module,
-        limits=parent.limits,
-        ceilings=parent.ceilings,
-        agent_resources=parent.agent_resources,
-        resources=None,
-        flow_resources=parent.flow_resources,
-        created_at=utc_now(),
-        call="run",
-        parent=parent_step,
-        occurrence=occurrence,
-    )
+    return input, control_input
 
 
 def _argument_value(local: Local, parameter: Parameter) -> Value:
@@ -3007,7 +3156,7 @@ def _bind_run(
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
         resources=resources,
-        flow_resources=resources if isinstance(runnable, FlowDecl) else None,
+        settings=resolve_settings(runnable, module),
         created_at=utc_now(),
         horizon=spec.horizon,
     )
@@ -3126,11 +3275,7 @@ def _prepare_child_run(
     agent_resources = binding.agent_resources
     if agent_resources is None:
         raise RuntimeError(f"agent resources missing: {binding.run_id}")
-    base = (
-        agent_resources
-        if isinstance(runnable, FlowDecl)
-        else binding.flow_resources or agent_resources
-    )
+    base = binding.parent_resources or agent_resources
     selection = snapshot_model_selection(binding.setup)
     resources = resolve_runnable_resources(
         selection,
@@ -3143,9 +3288,6 @@ def _prepare_child_run(
     return replace(
         binding,
         resources=resources,
-        flow_resources=(
-            resources if isinstance(runnable, FlowDecl) else binding.flow_resources
-        ),
     )
 
 

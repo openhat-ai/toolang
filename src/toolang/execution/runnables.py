@@ -101,11 +101,17 @@ def resolve_public_runnable(
     return ResolvedRunnable(name=name, module=module, executable=executable)
 
 
-def resolve_agic_routes(state: AgentState, agic: AgicDecl) -> AgicRoutes:
+def resolve_agic_routes(
+    state: AgentState,
+    agic: AgicDecl,
+    *,
+    hands: tuple[str, ...] | None = None,
+    handoffs: tuple[str, ...] | None = None,
+) -> AgicRoutes:
     """Resolve one Agic's authored routes against a captured State."""
 
-    hands = _directive_values(agic, "hands")
-    handoffs = _directive_values(agic, "handoffs")
+    hands = _directive_values(agic, "hands") if hands is None else hands
+    handoffs = _directive_values(agic, "handoffs") if handoffs is None else handoffs
     actions_by_ref: dict[str, set[RouteAction]] = {}
     groups: tuple[tuple[RouteAction, tuple[str, ...]], ...] = (
         ("run", hands),

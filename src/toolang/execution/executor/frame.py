@@ -34,7 +34,7 @@ from toolang.state.state import (
 )
 
 from ..assembly import prompting
-from ..recall import recall_sources
+from ..recall import recall_sources, history_variables
 from .budget import text_tokens
 from .common import BoundRun
 from .resources import (
@@ -137,7 +137,9 @@ def build_agic_frame(
         if max_output is None:
             max_output = default_request.max_output
     tools = dict(resource_tools(run.setup, resources))
-    routes = resolve_agic_routes(run.state, agic)
+    routes = resolve_agic_routes(
+        run.state, agic, hands=run.settings.hands, handoffs=run.settings.handoffs
+    )
     runtime_tools = (
         {}
         if is_generated_ref(name)
@@ -198,11 +200,12 @@ def build_agic_frame(
             "date": context.date,
             "timezone": context.timezone,
             "run": {"id": run.run_id, "thread_id": run.thread},
-            "far": far,
-            "near": [message.to_data() for message in near],
+            **history_variables(far, near, run.settings.recall),
         },
         values=variables,
         runnables=runnables,
+        instruct=run.settings.instruct,
+        context=run.settings.context,
     )
     instructions, declarations = prompting.instructions(inputs)
     _, _, prompt_invocations = inputs.rendered_input
@@ -221,9 +224,7 @@ def build_agic_frame(
         routes=routes,
         services=_tool_services(services, context.setup.envs),
         workspaces=workspace_declarations(run.state.workspaces),
-        recall=recall_sources(
-            next((item.values for item in agic.directives if item.name == "recall"), ())
-        ),
+        recall=recall_sources(run.settings.recall),
         reasoning=reasoning,
         output_budget=output,
         input_budget=input_budget(resolved_model.limit, output),

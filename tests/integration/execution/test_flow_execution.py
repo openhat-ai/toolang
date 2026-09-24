@@ -496,7 +496,7 @@ def test_event_delivery_does_not_read_run_state_per_event(
     record = asyncio.run(_start(executor, _setup(), _state(flow), _name(flow)))
 
     assert record.status == "succeeded"
-    assert reads == 1
+    assert reads == 2  # Root acceptance and the shared thread-history snapshot.
     asyncio.run(executor.stop())
 
 
@@ -671,7 +671,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     asyncio.run(executor.stop())
 
 
-def test_nested_flow_resets_resources_and_restores_parent_scope(
+def test_nested_flow_inherits_resources_and_restores_parent_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -752,7 +752,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
     assert record.status == "succeeded"
     assert observed == [
         ("direct", ("alpha__one",)),
-        ("nested", ("alpha__one", "beta__two")),
+        ("nested", ("alpha__one",)),
         ("sibling", ("alpha__one",)),
     ]
     asyncio.run(executor.stop())

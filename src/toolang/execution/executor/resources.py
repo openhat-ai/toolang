@@ -180,6 +180,17 @@ def _apply_cap_ceiling(
     )
 
 
+def intersect_resources(
+    parent: AgentResources, visible: AgentResources
+) -> AgentResources:
+    """Keep stable identities shared by the parent and the target module."""
+    return AgentResources(
+        models=tuple(item for item in parent.models if item in visible.models),
+        tools=tuple(item for item in parent.tools if item in visible.tools),
+        caps=tuple(item for item in parent.caps if item in visible.caps),
+    )
+
+
 def resolve_runnable_resources(
     selection: ModelCollection,
     *,

@@ -320,6 +320,7 @@ class ExecutionHarness:
         *,
         source: str,
         responses: Sequence[ScriptedResponse],
+        program: Program | None = None,
         tools: Mapping[str, Tool] | None = None,
         streaming: bool = False,
         state: AgentState | None = None,
@@ -334,7 +335,7 @@ class ExecutionHarness:
             home.mkdir(parents=True, exist_ok=True)
             (home / "agent.too").write_text(source, encoding="utf-8")
             state = prepare_agent_state(AgentLayout.resident(root, "alice"))
-        program = Program.from_source(source)
+        program = program or Program.from_source(source)
         root_revision = sha256(b"execution-test-root").hexdigest()
         home_revision = sha256(source.encode("utf-8")).hexdigest()
         state = state or AgentState(

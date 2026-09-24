@@ -11,6 +11,13 @@ from ...records import ControlRecord, StepRef
 from ...types import IterationOccurrence, Occurrence
 from ..common import BoundRun
 from ..common import Local, boolean
+from ..iteration import (
+    IterationScope,
+    IterationFrame,
+    snapshot,
+    iteration_scope,
+    history_available,
+)
 from ..steps import loop as loop_step
 
 if TYPE_CHECKING:
@@ -31,41 +38,60 @@ async def execute(
     async def evaluate() -> Local:
         child_index = 0
         iteration = 0
+        scope = IterationScope(statement.window)
+        if statement.runnable is not None:
+            with iteration_scope(scope):
+                history_available(
+                    execution.condition_templates(binding, path, statement.runnable)
+                )
         while statement.count is None or iteration < statement.count:
-            child_index = await execution.execute_statements(
-                binding,
-                statement.stmts,
-                locals,
-                parent=path,
-                start=child_index,
-                occurrence=Occurrence(
-                    iteration=IterationOccurrence(
-                        index=iteration,
-                        count=statement.count,
-                        phase="body",
+            entry = snapshot(locals)
+            satisfied = False
+            with iteration_scope(scope):
+                child_index = await execution.execute_statements(
+                    binding,
+                    statement.stmts,
+                    locals,
+                    parent=path,
+                    start=child_index,
+                    occurrence=Occurrence(
+                        iteration=IterationOccurrence(
+                            index=iteration, count=statement.count, phase="body"
+                        )
+                    ),
+                )
+                if statement.runnable is not None:
+                    templates = execution.condition_templates(
+                        binding, path, statement.runnable
                     )
-                ),
+                    execution.validate_child_inputs(
+                        binding, path, statement.runnable, locals
+                    )
+                    if history_available(templates):
+                        condition = await execution.execute_child(
+                            binding,
+                            locals,
+                            path,
+                            statement.runnable,
+                            Occurrence(
+                                iteration=IterationOccurrence(
+                                    index=iteration,
+                                    count=statement.count,
+                                    phase="until",
+                                )
+                            ),
+                            output_binding=None,
+                        )
+                        satisfied = boolean(condition.value, operation="until")
+            frame = IterationFrame(entry, snapshot(locals))
+            scope = IterationScope(
+                statement.window, (frame, *scope.frames)[: statement.window]
             )
             iteration += 1
             progress.iterations = iteration
-            if statement.runnable is not None:
-                condition = await execution.execute_child(
-                    binding,
-                    locals,
-                    path,
-                    statement.runnable,
-                    Occurrence(
-                        iteration=IterationOccurrence(
-                            index=iteration - 1,
-                            count=statement.count,
-                            phase="until",
-                        )
-                    ),
-                    output_binding=None,
-                )
-                if boolean(condition.value, operation="until"):
-                    progress.termination = "satisfied"
-                    break
+            if satisfied:
+                progress.termination = "satisfied"
+                break
         return Local()
 
     return await loop_step.execute(

@@ -215,6 +215,7 @@ class SettleStmt(Node):
 
     binding: str | None = "_"
     runnable: str
+    initial: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -266,6 +267,7 @@ class RepeatStmt(Node):
     count: int | None = None
     stmts: tuple[FlowStmt, ...] = ()
     runnable: str | None = None
+    window: int = 3
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -313,6 +315,8 @@ class FlowDecl(Node):
     params: tuple[Parameter, ...] = ()
     output: str | None = None
     directives: tuple[Directive, ...] = ()
+    context: str | None = None
+    instruct: str | None = None
     stmts: tuple[FlowStmt, ...] = ()
 
 
@@ -449,6 +453,9 @@ def _parse_tree(source: bytes) -> Tree:
 def _mask_query_hashes(source: bytes) -> bytes:
     """Mask query-data hashes while preserving byte offsets for the CST."""
 
+    source = re.sub(
+        rb"\{\{[ \t]*#(?=[A-Za-z_])", lambda match: match[0].replace(b"#", b"x"), source
+    )
     lines: list[bytes] = []
     for line in source.splitlines(keepends=True):
         match = _QUERY_DIRECTIVE_RE.match(line)
@@ -518,7 +525,21 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     """Load one previously validated lowered Flow statement."""
 
     statement = _flow_stmt_adapter().validate_python(value)
-    if not isinstance(value, Mapping) or dict(value) != to_data(statement):
+    canonical = cast(dict[str, object], to_data(statement))
+
+    def legacy_defaults(raw: object, encoded: dict[str, Any]) -> None:
+        if not isinstance(raw, Mapping):
+            return
+        for name, default in (("window", 3), ("initial", None)):
+            if name not in raw and encoded.get(name) == default:
+                encoded.pop(name, None)
+        for child, raw_child in zip(
+            encoded.get("stmts", ()), cast(Mapping[str, Any], raw).get("stmts", ())
+        ):
+            legacy_defaults(raw_child, child)
+
+    legacy_defaults(value, canonical)
+    if not isinstance(value, Mapping) or dict(value) != canonical:
         raise ValueError("flow statement requires canonical typed fields")
     return statement
 

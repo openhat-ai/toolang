@@ -34,6 +34,7 @@ from ...types import (
     StepNoted,
     StepRef,
 )
+from ..iteration import iteration_values
 from ..common import (
     BoundRun,
     EventEmitter,
@@ -234,7 +235,7 @@ async def execute(
             execution,
             replace(current_binding, horizon=horizon),
             candidate,
-            variables=variables,
+            variables={**variables, **iteration_values()},
             far=selected.far,
             near=selected.near,
         )

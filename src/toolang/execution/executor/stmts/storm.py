@@ -10,7 +10,7 @@ from toolang.lang.ast import StormStmt
 from ...records import ControlRecord, StepRef
 from ...types import Occurrence
 from ..common import BoundRun
-from ..common import Local, require_item
+from ..common import Local
 from ..steps import par as par_step
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ async def execute(
     occurrence: Occurrence | None,
 ) -> Local:
     async def evaluate() -> Local:
-        basis = require_item(locals, operation="storm")
+        basis = locals.get("_", Local()).value
         return await execution.parallel_children(
             binding,
             locals,

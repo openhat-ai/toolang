@@ -8,7 +8,7 @@ from typing import TypeVar, cast
 
 from tree_sitter import Node as CstNode
 
-from toolang.common.template import template_root_names
+from toolang.common.template import template_root_names, template_dependencies
 
 from . import ast
 from .errors import ToolangValidationError
@@ -173,7 +173,6 @@ class _Lowerer:
         self.instructs: list[ast.InstructDecl] = []
         self.agics: list[ast.AgicDecl] = []
         self.flows: list[ast.FlowDecl] = []
-        self._flow_local_types: dict[str, str] | None = None
 
     def lower(self) -> ast.Program:
         for child in self.cst.tree.root_node.named_children:
@@ -378,9 +377,7 @@ class _Lowerer:
             name=self._optional_text(node.child_by_field_name("name")),
             input=input_param,
             params=params,
-            output=(
-                self._optional_text(node.child_by_field_name("return")) or "Part[]"
-            ),
+            output=(self._optional_text(node.child_by_field_name("return")) or "Text"),
             directives=tuple(directives),
             context=context,
             instruct=instruct,
@@ -450,45 +447,48 @@ class _Lowerer:
         input_param, params = self._parameters(
             node.child_by_field_name("params"), owner=node
         )
-        previous_local_types = self._flow_local_types
-        self._flow_local_types = {
-            **(
-                {"_": input_param.type_name or "Part[]"}
-                if input_param is not None
-                else {}
-            ),
-            **{param.name: param.type_name or "Text" for param in params},
-        }
         directives: list[ast.Directive] = []
         stmts: list[ast.FlowStmt] = []
         body = self._required(node, "body")
-        try:
-            for child in body.named_children:
-                if child.type in _TRIVIA:
-                    continue
-                if child.type == "directive":
-                    directives.append(self._lower_directive(child))
-                    continue
-                if child.type == "statements":
-                    stmts.extend(self._lower_statements(child))
-                    continue
-                if child.type in {"pass_keyword", "pass_statement"}:
-                    continue
-                raise RuntimeError(
-                    f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
-                )
-        finally:
-            self._flow_local_types = previous_local_types
+        context: str | None = None
+        instruct: str | None = None
+        for child in body.named_children:
+            if child.type in _TRIVIA:
+                continue
+            if child.type == "directive":
+                directives.append(self._lower_directive(child))
+                continue
+            if child.type == "settings":
+                for setting in child.named_children:
+                    if setting.type == "context_setting":
+                        context = self._lower_setting(setting, target="context")
+                    elif setting.type == "instruct_setting":
+                        instruct = self._lower_setting(setting, target="instruct")
+                continue
+            if child.type in {"context_setting", "instruct_setting"}:
+                if child.type == "context_setting":
+                    context = self._lower_setting(child, target="context")
+                else:
+                    instruct = self._lower_setting(child, target="instruct")
+                continue
+            if child.type == "statements":
+                stmts.extend(self._lower_statements(child))
+                continue
+            if child.type in {"pass_keyword", "pass_statement"}:
+                continue
+            raise RuntimeError(
+                f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
+            )
         return ast.FlowDecl(
             name=self._optional_text(name),
             name_explicit=name is not None,
             input=input_param,
             params=params,
-            output=(
-                self._optional_text(node.child_by_field_name("return")) or "Part[]"
-            ),
+            output=(self._optional_text(node.child_by_field_name("return")) or "Text"),
             directives=tuple(directives),
             stmts=tuple(stmts),
+            context=context,
+            instruct=instruct,
             span=self._span(node),
             doc=doc,
         )
@@ -505,8 +505,6 @@ class _Lowerer:
         if node.type == "let_statement":
             if value := node.child_by_field_name("value"):
                 binding = self._required_text(node, "name").strip()
-                if self._flow_local_types is not None:
-                    self._flow_local_types[binding] = "Part[]"
                 return ast.LetStmt(
                     binding=binding,
                     value=self._block_text(value),
@@ -520,8 +518,6 @@ class _Lowerer:
                 )
             stmt = self._lower_stmt(nested, doc=doc)
             binding = self._optional_text(node.child_by_field_name("name"))
-            if binding is not None and self._flow_local_types is not None:
-                self._flow_local_types[binding] = "Part[]"
             return replace(stmt, binding=binding)
 
         span = self._span(node)
@@ -548,38 +544,33 @@ class _Lowerer:
         if node.type == "scatter_statement":
             return ast.ScatterStmt(
                 count=self._required_int(node, "count"),
-                runnable=self._runnable(node, array_output=True),
+                runnable=self._runnable(node, default_output="Text[]"),
                 span=span,
                 doc=doc,
             )
         if node.type == "storm_statement":
             return ast.StormStmt(
                 count=self._required_int(node, "count"),
-                runnable=self._runnable(node),
+                runnable=self._runnable(node, default_output="Text"),
                 lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
         if node.type == "gather_statement":
-            return ast.GatherStmt(runnable=self._runnable(node), span=span, doc=doc)
+            return ast.GatherStmt(
+                runnable=self._runnable(node, default_output="Text"), span=span, doc=doc
+            )
         if node.type == "settle_statement":
+            initial = node.child_by_field_name("from")
             return ast.SettleStmt(
-                runnable=self._runnable(
-                    node,
-                    generated_params=(
-                        ast.Parameter(
-                            name="item",
-                            type_name="Part[]",
-                            span=span,
-                        ),
-                    ),
-                ),
+                runnable=self._runnable(node),
+                initial=self._block_text(initial) if initial is not None else None,
                 span=span,
                 doc=doc,
             )
         if node.type == "map_statement":
             return ast.MapStmt(
-                runnable=self._runnable(node),
+                runnable=self._runnable(node, default_output="Text"),
                 lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
@@ -614,6 +605,7 @@ class _Lowerer:
         if node.type == "repeat_statement":
             statements = self._required(node, "body")
             body = tuple(self._lower_statements(statements))
+            window = self._optional_int(node.child_by_field_name("window"))
             until_node = node.child_by_field_name("until")
             runnable = None
             if until_node is not None:
@@ -627,6 +619,7 @@ class _Lowerer:
                 count=self._optional_int(node.child_by_field_name("count")),
                 stmts=body,
                 runnable=runnable,
+                window=3 if window is None else window,
                 span=span,
                 doc=doc,
             )
@@ -641,7 +634,7 @@ class _Lowerer:
         output: str | None = None,
         generated_params: tuple[ast.Parameter, ...] = (),
         evaluator: bool = False,
-        array_output: bool = False,
+        default_output: str = "Text",
     ) -> str:
         runnable = node.child_by_field_name("runnable")
         if runnable is not None and runnable.type == "runnable":
@@ -655,9 +648,7 @@ class _Lowerer:
                 f"{node.type.removesuffix('_statement').capitalize()} at line "
                 f"{self._line(node)} requires {output} output, got {declared_output}."
             )
-        declared_output = declared_output or output or "Part[]"
-        if array_output:
-            declared_output = f"{declared_output}[]"
+        declared_output = declared_output or output or default_output
         return self._generated_agic(
             agic,
             body=self._block_text(self._required(agic, "body")),
@@ -675,15 +666,10 @@ class _Lowerer:
         params: tuple[ast.Parameter, ...] = (),
         evaluator: bool = False,
     ) -> str:
-        params = self._captured_params(body, params=params, span=self._span(node))
+        dependencies = template_dependencies(body)
+        params = self._inferred_params(body, params=params, span=self._span(node))
         directives = (
             (
-                ast.Directive(
-                    name="recall",
-                    operator="=",
-                    values=("none",),
-                    span=self._span(node),
-                ),
                 ast.Directive(
                     name="tools",
                     operator="-=",
@@ -697,9 +683,9 @@ class _Lowerer:
         self.agics.append(
             ast.AgicDecl(
                 name=None,
-                input=self._default_input(node),
+                input=self._default_input(node) if "_" in dependencies else None,
                 params=params,
-                output=output or "Part[]",
+                output=output or "Text",
                 directives=directives,
                 messages=(
                     ast.Message(role="user", content=body, span=self._span(node)),
@@ -709,7 +695,7 @@ class _Lowerer:
         )
         return f"agic:<adhoc:{self._line(node)}>"
 
-    def _captured_params(
+    def _inferred_params(
         self,
         body: str,
         *,
@@ -718,14 +704,13 @@ class _Lowerer:
     ) -> tuple[ast.Parameter, ...]:
         captured = list(params)
         names = {param.name for param in params}
-        local_types = self._flow_local_types or {}
-        for name in template_root_names(body):
-            if name == "_" or name in names or name not in local_types:
+        for name in template_dependencies(body):
+            if name.startswith("_") or name in names:
                 continue
             captured.append(
                 ast.Parameter(
                     name=name,
-                    type_name=local_types[name],
+                    type_name="Text",
                     span=span,
                 )
             )
@@ -789,7 +774,7 @@ class _Lowerer:
 
     def _lower_directive(self, node: CstNode) -> ast.Directive:
         name = self._required_text(node, "key").strip()
-        raw = self._required_text(node, "value")
+        raw = self._optional_text(node.child_by_field_name("value")) or ""
         return ast.Directive(
             name=name,
             operator=self._required_text(node, "operator").strip(),
