@@ -2,9 +2,9 @@
 
 ## Goal and success criteria
 
-Send Toolang app attribution on requests routed through Vercel AI Gateway so the app can be identified in Gateway analytics and, where applicable, app listings.
+Send Toolang app attribution on requests belonging to the Vercel provider so the app can be identified in AI Gateway analytics and, where applicable, app listings.
 
-Success means Gateway requests carry `http-referer: https://toolang.ai` and `x-title: Toolang`; non-Gateway routes do not gain these headers.
+Success means models owned by provider ID `vercel` carry `http-referer: https://toolang.ai` and `x-title: Toolang`; other provider IDs do not gain these headers.
 
 ## Scope and decisions
 
@@ -15,7 +15,7 @@ Success means Gateway requests carry `http-referer: https://toolang.ai` and `x-t
 
 ## Design touchpoints
 
-- `src/toolang/setup/routes.py`: resolve Gateway attribution headers alongside provider conventions.
+- `src/toolang/setup/routes.py`: declare Vercel attribution as a provider-ID convention, alongside OpenRouter attribution.
 - `tests/unit/setup/test_routes.py`: verify Gateway headers, isolation from other providers, and existing override precedence.
 
 ## Acceptance tests
