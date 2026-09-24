@@ -2822,6 +2822,9 @@ class _Execution:
     def immediate_steer(self, run_id: str) -> bool:
         """Return whether an immediate steer interrupted the active step."""
 
+        # A pending steer must not consume cancellation from an expired limit.
+        if self._limits.error is not None:
+            return False
         if (
             self._active is not None
             and self._active.interruption is not None

@@ -542,3 +542,43 @@ micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
 Accounting uses numeric fields; rates and intermediate lines are not rounded
 before final settlement. The records change intentionally does not support old
 formats. See [the record contract](plans/model-records.md).
+
+## Model Response Recovery
+
+Each Agic run allows at most two automatic attempts to recover response errors,
+shared across all its model turns, including turns used for typed-output repair.
+The separate output-contract repair does not replenish this allowance. Every
+attempt also counts toward the run's model-call limit. Output and reasoning
+budgets remain unchanged.
+
+- Built-in adapters reject truncated responses, streams that end before a
+  terminal event, malformed or non-object tool arguments, and missing
+  function names. Empty argument strings mean `{}`. The runtime discards the
+  failed turn's tool calls and requests a complete, concise replacement. It does
+  not repair JSON or execute the valid siblings of a malformed call.
+- Built-in adapters retry connection failures, timeouts, interrupted transport,
+  and HTTP 408, 409, 429, 500, 502, 503, 504, or 529. Known transient error
+  codes inside streamed responses use the same recovery policy. Explicit quota
+  exhaustion and `x-should-retry: false` remain terminal. Network retries wait for
+  the shared recovery attempt number in seconds (one or two), or longer if
+  `Retry-After` requires it. A valid `retry-after-ms` takes precedence and is
+  converted from milliseconds. The run time limit
+  and cancellation remain effective while waiting. Steering preserves the
+  remaining backoff deadline.
+- Authentication, invalid requests, explicit refusal, provider rejection, and
+  unclassified errors remain terminal. SDK-internal retries are disabled so attempts are visible and
+  bounded by the runtime.
+
+Each failed attempt is stored as a failed model step with available partial text
+and reported usage, including text received in the final failing chunk. In Messages
+streams, a known rejection or truncation takes precedence over a later stream
+failure. Missing usage remains unknown. Recovery keeps the preceding valid message
+history and continuation; it does not replay successful tools or
+add incomplete tool calls to the next request. Retries can incur provider charges,
+including when a disconnected request's usage is unavailable.
+
+A complete terminal response remains usable if its optional stream tail is lost.
+Observer failures are propagated separately and never classified as provider
+transport errors. Native stream completion follows the
+[Messages event lifecycle](https://platform.claude.com/docs/en/build-with-claude/streaming)
+and [Generate Content finish reasons](https://ai.google.dev/api/generate-content#FinishReason).

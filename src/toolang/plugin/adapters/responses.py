@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
 
-from toolang.base.errors import ToolangError
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioFormat,
@@ -38,6 +38,13 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 from ._credentials import credential_value
+from ._errors import (
+    model_events,
+    model_transport,
+    model_transport_errors,
+    provider_error,
+)
+from ._tool_calls import parse_tool_arguments
 
 from ._structured_output import (
     append_structured_output_directive,
@@ -68,6 +75,7 @@ class ResponsesModelAdapter(ModelAdapter):
 
         return output_allowance(options, "max_output_tokens", sdk_extensions=True)
 
+    @model_transport
     async def invoke(
         self,
         model: Model,
@@ -85,6 +93,7 @@ class ResponsesModelAdapter(ModelAdapter):
             environ=environ,
         )
 
+    @model_transport
     async def stream(
         self,
         model: Model,
@@ -101,7 +110,7 @@ class ResponsesModelAdapter(ModelAdapter):
             request,
             stateful=_stateful_route(model),
             environ=environ,
-            on_event=on_event,
+            on_event=model_events(on_event),
         )
 
 
@@ -167,6 +176,7 @@ def create_client(model: Model, *, environ: Mapping[str, str]) -> Any:
         ) from exc
     kwargs: dict[str, Any] = {
         "base_url": model._toolang.route.api,
+        "max_retries": 0,
         "api_key": credential_value(model._toolang.route.env, environ=environ)
         or "toolang",
     }
@@ -232,48 +242,76 @@ async def stream_response(
         stateful=stateful,
         stream=True,
     )
-    async with client.responses.stream(**payload) as stream:
-        seen_tool_inputs: set[str] = set()
-        text_started = False
-        text_deltas: list[str] = []
-        defer_text = _supports_openai_audio_input(model)
-        async for event in stream:
-            event_type = getattr(event, "type", None)
-            if event_type == "response.output_text.delta":
-                delta = str(getattr(event, "delta", ""))
-                if delta:
-                    text_deltas.append(delta)
-                    if not defer_text:
-                        if not text_started:
-                            text_started = True
-                            await on_event(ModelPartStart(kind="text"))
-                        await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
-                continue
-            if event_type != "response.function_call_arguments.delta":
-                continue
-            current_tool_call_id = tool_call_id(
-                getattr(event, "item_id", ""),
-                getattr(event, "call_id", ""),
-                fallback=f"tool-call-{getattr(event, 'output_index', None) or 'unknown'}",
-            )
-            if current_tool_call_id not in seen_tool_inputs:
-                seen_tool_inputs.add(current_tool_call_id)
-                await on_event(
-                    ModelPartStart(
-                        kind="tool_call",
+    text_deltas: list[str] = []
+    latest_response = None
+    try:
+        with model_transport_errors():
+            async with client.responses.stream(**payload) as stream:
+                seen_tool_inputs: set[str] = set()
+                text_started = False
+                terminal_response = None
+                defer_text = _supports_openai_audio_input(model)
+                async for event in stream:
+                    latest_response = (
+                        getattr(event, "response", None) or latest_response
                     )
-                )
-            delta = str(getattr(event, "delta", ""))
-            if delta:
-                await on_event(
-                    ModelPartDelta(
-                        delta=ToolCallDelta(
-                            text=delta,
-                            tool_call_id=current_tool_call_id,
-                        ),
+                    event_type = getattr(event, "type", None)
+                    if event_type in {
+                        "response.completed",
+                        "response.incomplete",
+                        "response.failed",
+                    }:
+                        terminal_response = getattr(event, "response", None)
+                        break
+                    if event_type == "error":
+                        raise provider_error({"code": getattr(event, "code", None)})
+                    if event_type == "response.output_text.delta":
+                        delta = str(getattr(event, "delta", ""))
+                        if delta:
+                            text_deltas.append(delta)
+                            if not defer_text:
+                                if not text_started:
+                                    text_started = True
+                                    await on_event(ModelPartStart(kind="text"))
+                                await on_event(
+                                    ModelPartDelta(delta=TextDelta(text=delta))
+                                )
+                        continue
+                    if event_type != "response.function_call_arguments.delta":
+                        continue
+                    current_tool_call_id = tool_call_id(
+                        getattr(event, "item_id", ""),
+                        getattr(event, "call_id", ""),
+                        fallback=f"tool-call-{getattr(event, 'output_index', None) or 'unknown'}",
                     )
-                )
-        response = await stream.get_final_response()
+                    if current_tool_call_id not in seen_tool_inputs:
+                        seen_tool_inputs.add(current_tool_call_id)
+                        await on_event(
+                            ModelPartStart(
+                                kind="tool_call",
+                            )
+                        )
+                    delta = str(getattr(event, "delta", ""))
+                    if delta:
+                        await on_event(
+                            ModelPartDelta(
+                                delta=ToolCallDelta(
+                                    text=delta,
+                                    tool_call_id=current_tool_call_id,
+                                ),
+                            )
+                        )
+                if terminal_response is None:
+                    raise ModelResponseError(
+                        "model stream ended before a terminal Responses event",
+                        kind="incomplete_stream",
+                        partial_text="".join(text_deltas),
+                    )
+                response = terminal_response
+    except ModelResponseError as exc:
+        exc.usage = response_usage(latest_response)
+        exc.partial_text = "".join(text_deltas)
+        raise
     _log_api_response(
         model,
         response,
@@ -429,7 +467,48 @@ def parse_response(
 ) -> ModelCallResult:
     """Normalize one Responses API response object."""
 
-    tool_calls = tuple(parse_tool_calls(response))
+    try:
+        status = getattr(response, "status", None)
+        if status == "incomplete":
+            reason = getattr(
+                getattr(response, "incomplete_details", None), "reason", None
+            )
+            if reason == "max_output_tokens":
+                raise ModelResponseError(
+                    "model response truncated by output limit; shorten the response or tool arguments",
+                    kind="output_limit",
+                )
+            raise ModelResponseError(
+                f"provider returned an incomplete response ({reason or 'unknown reason'})",
+                kind="provider_rejection"
+                if reason == "content_filter"
+                else "incomplete_stream",
+            )
+        if status == "failed":
+            raise provider_error(
+                {"code": getattr(getattr(response, "error", None), "code", None)}
+            )
+        if status == "cancelled":
+            raise ModelResponseError(
+                "provider response cancelled", kind="provider_rejection"
+            )
+        if status not in {None, "completed"}:
+            raise ModelResponseError(
+                f"provider response is not complete: {status}", kind="incomplete_stream"
+            )
+        if any(
+            getattr(part, "type", None) == "refusal"
+            for item in getattr(response, "output", [])
+            for part in getattr(item, "content", [])
+        ):
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
+            )
+        tool_calls = tuple(parse_tool_calls(response))
+    except ModelResponseError as exc:
+        exc.usage = response_usage(response)
+        exc.partial_text = response_text(response)
+        raise
     message = assistant_message(response, tool_calls=tool_calls)
     return ModelCallResult(
         message=message,
@@ -546,6 +625,11 @@ def parse_tool_calls(response: Any) -> list[ToolCall]:
     for item in getattr(response, "output", []):
         if getattr(item, "type", None) != "function_call":
             continue
+        name = getattr(item, "name", None)
+        if not isinstance(name, str) or not name.strip():
+            raise ModelResponseError(
+                "model emitted a tool call without a function name", kind="missing_name"
+            )
         results.append(
             ToolCall(
                 tool_call_id=tool_call_id(
@@ -554,7 +638,7 @@ def parse_tool_calls(response: Any) -> list[ToolCall]:
                     fallback=str(getattr(item, "call_id", "")),
                 ),
                 call_id=str(getattr(item, "call_id", "")),
-                name=str(getattr(item, "name", "")).strip(),
+                name=name.strip(),
                 input=parse_tool_arguments(getattr(item, "arguments", "{}")),
             )
         )
@@ -754,22 +838,6 @@ def response_usage(response: Any) -> ModelUsage | None:
         reported_currency=currency,
         billing={"service_tier": service_tier} if service_tier is not None else {},
     )
-
-
-def parse_tool_arguments(raw: object) -> dict[str, Any]:
-    """Parse one function-call argument payload into a JSON object."""
-
-    if isinstance(raw, dict):
-        return {str(key): value for key, value in raw.items()}
-    if raw is None:
-        return {}
-    try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError as exc:
-        raise ToolangError(f"tool call arguments were not valid JSON: {raw}") from exc
-    if not isinstance(parsed, dict):
-        raise ToolangError("tool call arguments must decode to a JSON object")
-    return dict(parsed)
 
 
 def tool_call_id(*values: object, fallback: str) -> str:

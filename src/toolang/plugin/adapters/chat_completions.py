@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from toolang.base.errors import ToolangError
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioFormat,
@@ -37,6 +37,8 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 from ._credentials import credential_value
+from ._errors import model_events, model_transport, model_transport_errors
+from ._tool_calls import parse_tool_arguments
 
 from ._structured_output import (
     append_structured_output_directive,
@@ -68,6 +70,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
             sdk_extensions=True,
         )
 
+    @model_transport
     async def invoke(
         self,
         model: Model,
@@ -79,6 +82,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
 
         return await invoke_chat_completion(model, request, environ=environ)
 
+    @model_transport
     async def stream(
         self,
         model: Model,
@@ -90,7 +94,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
         """Execute one streaming Chat Completions API call."""
 
         return await stream_chat_completion(
-            model, request, environ=environ, on_event=on_event
+            model, request, environ=environ, on_event=model_events(on_event)
         )
 
 
@@ -114,6 +118,7 @@ def create_client(model: Model, *, environ: Mapping[str, str]) -> Any:
         ) from exc
     kwargs: dict[str, Any] = {
         "base_url": model._toolang.route.api,
+        "max_retries": 0,
         "api_key": credential_value(model._toolang.route.env, environ=environ)
         or "toolang",
     }
@@ -162,65 +167,95 @@ async def stream_chat_completion(
     tool_buffers: dict[int, _ToolCallBuffer] = {}
     final_usage: ModelUsage | None = None
     text_started = False
+    finish_reason: str | None = None
+    refused = False
     defer_text = _audio_output_requested(model)
     stream = await client.chat.completions.create(**_openai_sdk_payload(model, payload))
     try:
-        async for chunk in stream:
-            chunk_usage = chat_usage(chunk)
-            if chunk_usage is not None:
-                final_usage = chunk_usage
-            choice = _first_choice(chunk)
-            if choice is None:
-                continue
-            delta = getattr(choice, "delta", None)
-            if delta is None:
-                continue
-            reasoning_content = getattr(delta, "reasoning_content", None)
-            if isinstance(reasoning_content, str) and reasoning_content:
-                reasoning_parts.append(reasoning_content)
-            audio = getattr(delta, "audio", None)
-            audio_data = _value_text(audio, "data")
-            audio_transcript = _value_text(audio, "transcript")
-            if audio_data:
-                audio_data_parts.append(audio_data)
-            if audio_transcript:
-                audio_transcript_parts.append(audio_transcript)
-            content = getattr(delta, "content", None)
-            if isinstance(content, str) and content:
-                text_parts.append(content)
-                if not defer_text:
-                    if not text_started:
-                        text_started = True
-                        await on_event(ModelPartStart(kind="text"))
-                    await on_event(ModelPartDelta(delta=TextDelta(text=content)))
-            for call_delta in getattr(delta, "tool_calls", None) or ():
-                index = getattr(call_delta, "index", None)
-                if not isinstance(index, int):
-                    index = len(tool_buffers)
-                buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
-                if not buffer.started:
-                    buffer.started = True
-                    await on_event(ModelPartStart(kind="tool_call"))
-                buffer.append(call_delta)
-                arguments_delta = _tool_call_delta_arguments(call_delta)
-                if arguments_delta:
-                    await on_event(
-                        ModelPartDelta(
-                            delta=ToolCallDelta(
-                                text=arguments_delta,
-                                tool_call_id=buffer.tool_call_id
-                                or f"tool-call-{index}",
+        with model_transport_errors():
+            async for chunk in stream:
+                chunk_usage = chat_usage(chunk)
+                if chunk_usage is not None:
+                    final_usage = chunk_usage
+                choice = _first_choice(chunk)
+                if choice is None:
+                    continue
+                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                refused = refused or bool(getattr(delta, "refusal", None))
+                reasoning_content = getattr(delta, "reasoning_content", None)
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    reasoning_parts.append(reasoning_content)
+                audio = getattr(delta, "audio", None)
+                audio_data = _value_text(audio, "data")
+                audio_transcript = _value_text(audio, "transcript")
+                if audio_data:
+                    audio_data_parts.append(audio_data)
+                if audio_transcript:
+                    audio_transcript_parts.append(audio_transcript)
+                content = getattr(delta, "content", None)
+                if isinstance(content, str) and content:
+                    text_parts.append(content)
+                    if not defer_text:
+                        if not text_started:
+                            text_started = True
+                            await on_event(ModelPartStart(kind="text"))
+                        await on_event(ModelPartDelta(delta=TextDelta(text=content)))
+                for call_delta in getattr(delta, "tool_calls", None) or ():
+                    index = getattr(call_delta, "index", None)
+                    if not isinstance(index, int):
+                        index = len(tool_buffers)
+                    buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
+                    if not buffer.started:
+                        buffer.started = True
+                        await on_event(ModelPartStart(kind="tool_call"))
+                    buffer.append(call_delta)
+                    arguments_delta = _tool_call_delta_arguments(call_delta)
+                    if arguments_delta:
+                        await on_event(
+                            ModelPartDelta(
+                                delta=ToolCallDelta(
+                                    text=arguments_delta,
+                                    tool_call_id=buffer.tool_call_id
+                                    or f"tool-call-{index}",
+                                )
                             )
                         )
-                    )
+    except ModelResponseError as exc:
+        # A finish reason completes the response; a lost optional usage tail
+        # must not discard it. Validate the finish reason and calls below.
+        if finish_reason is None or exc.kind not in {
+            "transport_error",
+            "incomplete_stream",
+        }:
+            exc.usage = final_usage
+            exc.partial_text = "".join(text_parts)
+            raise
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
             await close()
     text = "".join(text_parts)
-    tool_calls = tuple(
-        buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items())
-    )
+    try:
+        if finish_reason is None:
+            raise ModelResponseError(
+                "model stream ended before a terminal finish reason",
+                kind="incomplete_stream",
+            )
+        _check_finish_reason(finish_reason)
+        if refused:
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
+            )
+        tool_calls = tuple(
+            buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items())
+        )
+    except ModelResponseError as exc:
+        exc.usage = final_usage
+        exc.partial_text = text
+        raise
     audio = _audio_part(
         data="".join(audio_data_parts),
         transcript="".join(audio_transcript_parts),
@@ -541,11 +576,19 @@ def parse_chat_completion(
     if choice is None:
         return ModelCallResult(usage=chat_usage(response))
     raw_message = getattr(choice, "message", None)
-    if raw_message is None:
-        return ModelCallResult(usage=chat_usage(response))
     text = getattr(raw_message, "content", None)
     reasoning_content = getattr(raw_message, "reasoning_content", None)
-    tool_calls = tuple(parse_tool_calls(getattr(raw_message, "tool_calls", None)))
+    try:
+        _check_finish_reason(getattr(choice, "finish_reason", None))
+        if getattr(raw_message, "refusal", None):
+            raise ModelResponseError(
+                "provider refused the response", kind="provider_rejection"
+            )
+        tool_calls = tuple(parse_tool_calls(getattr(raw_message, "tool_calls", None)))
+    except ModelResponseError as exc:
+        exc.usage = chat_usage(response)
+        exc.partial_text = text if isinstance(text, str) else ""
+        raise
     audio = _audio_part_from_value(
         getattr(raw_message, "audio", None),
         format=audio_format,
@@ -564,6 +607,19 @@ def parse_chat_completion(
     )
 
 
+def _check_finish_reason(reason: str | None) -> None:
+    if reason == "length":
+        raise ModelResponseError(
+            "model response truncated by output limit; shorten the response or tool arguments",
+            kind="output_limit",
+        )
+    if reason == "content_filter":
+        raise ModelResponseError(
+            "model response rejected by provider content filter",
+            kind="provider_rejection",
+        )
+
+
 def parse_tool_calls(raw_tool_calls: object) -> list[ToolCall]:
     """Extract normalized tool calls from one Chat Completions message."""
 
@@ -576,13 +632,10 @@ def parse_tool_calls(raw_tool_calls: object) -> list[ToolCall]:
         function = getattr(item, "function", None)
         tool_call_id = _optional_attr_text(item, "id")
         name = _optional_attr_text(function, "name")
-        if not tool_call_id and not name:
-            arguments = _optional_attr_text(function, "arguments")
-            if arguments:
-                raise ToolangError("model emitted a tool call without a function name")
-            continue
         if not name:
-            raise ToolangError("model emitted a tool call without a function name")
+            raise ModelResponseError(
+                "model emitted a tool call without a function name", kind="missing_name"
+            )
         results.append(
             ToolCall(
                 tool_call_id=tool_call_id or name,
@@ -635,22 +688,6 @@ def chat_usage(response: Any) -> ModelUsage | None:
         reported_currency=currency,
         billing={"service_tier": service_tier} if service_tier is not None else {},
     )
-
-
-def parse_tool_arguments(raw: object) -> dict[str, Any]:
-    """Parse one function-call argument payload into a JSON object."""
-
-    if isinstance(raw, dict):
-        return {str(key): value for key, value in raw.items()}
-    if raw is None:
-        return {}
-    try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError as exc:
-        raise ToolangError(f"tool call arguments were not valid JSON: {raw}") from exc
-    if not isinstance(parsed, dict):
-        raise ToolangError("tool call arguments must decode to a JSON object")
-    return dict(parsed)
 
 
 def _text_content(message: Message) -> str:
@@ -912,7 +949,9 @@ class _ToolCallBuffer:
 
     def to_tool_call(self, index: int) -> ToolCall:
         if not self.name:
-            raise ToolangError("model emitted a tool call without a function name")
+            raise ModelResponseError(
+                "model emitted a tool call without a function name", kind="missing_name"
+            )
         tool_call_id = self.tool_call_id or f"tool-call-{index}"
         return ToolCall(
             tool_call_id=tool_call_id,

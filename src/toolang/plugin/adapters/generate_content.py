@@ -10,7 +10,15 @@ from urllib.parse import quote
 
 import httpx
 
-from toolang.base.errors import ToolangError
+from ._errors import (
+    model_events,
+    model_transport,
+    model_transport_errors,
+    provider_error,
+    raise_for_model_status,
+)
+from ._tool_calls import parse_tool_arguments
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,
@@ -59,6 +67,7 @@ class GenerateContentModelAdapter(ModelAdapter):
             else None
         )
 
+    @model_transport
     async def invoke(
         self,
         model: Model,
@@ -72,7 +81,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                 headers=_generate_headers(model, environ=environ),
                 json=generate_content_payload(model, request),
             )
-            response.raise_for_status()
+            await raise_for_model_status(response)
             result = parse_generate_content(_json_object(response.json()))
             return replace(
                 result,
@@ -82,6 +91,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                 ),
             )
 
+    @model_transport
     async def stream(
         self,
         model: Model,
@@ -90,42 +100,69 @@ class GenerateContentModelAdapter(ModelAdapter):
         environ: Mapping[str, str],
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
+        on_event = model_events(on_event)
         text: list[str] = []
+        text_started = False
         calls: list[ToolCall] = []
         signatures: dict[str, str] = {}
         usage: dict[str, object] = {}
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                _generate_url(model, stream=True),
-                headers=_generate_headers(model, environ=environ),
-                json=generate_content_payload(model, request),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line.removeprefix("data:").strip()
-                    if not raw or raw == "[DONE]":
-                        continue
-                    chunk = _json_object(json.loads(raw))
-                    usage.update(_json_object(chunk.get("usageMetadata")))
-                    for part in _candidate_parts(chunk):
-                        value = _text(part.get("text"))
-                        if value and part.get("thought") is not True:
-                            if not text:
-                                await on_event(ModelPartStart(kind="text"))
-                            text.append(value)
-                            await on_event(ModelPartDelta(delta=TextDelta(value)))
-                        function = _json_object(part.get("functionCall"))
-                        if function:
-                            call = _function_call(function, fallback=len(calls))
-                            calls.append(call)
-                            signature = _text(part.get("thoughtSignature"))
-                            if signature:
-                                signatures[call.call_id] = signature
-                            await on_event(ModelPartStart(kind="tool_call"))
-                            await on_event(ModelPartEnd(data=_tool_part(call)))
+        finish_reason = None
+        try:
+            with model_transport_errors(
+                usage=lambda: generate_content_usage(usage),
+                partial_text=lambda: "".join(text),
+            ):
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST",
+                        _generate_url(model, stream=True),
+                        headers=_generate_headers(model, environ=environ),
+                        json=generate_content_payload(model, request),
+                    ) as response:
+                        await raise_for_model_status(response)
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            raw = line.removeprefix("data:").strip()
+                            if not raw or raw == "[DONE]":
+                                continue
+                            chunk = _json_object(json.loads(raw))
+                            usage.update(_json_object(chunk.get("usageMetadata")))
+                            text.append(_response_text(chunk))
+                            _check_response(chunk)
+                            finish_reason = (
+                                _candidate(chunk).get("finishReason") or finish_reason
+                            )
+                            for part in _candidate_parts(chunk):
+                                value = _text(part.get("text"))
+                                if value and part.get("thought") is not True:
+                                    if not text_started:
+                                        text_started = True
+                                        await on_event(ModelPartStart(kind="text"))
+                                    await on_event(
+                                        ModelPartDelta(delta=TextDelta(value))
+                                    )
+                                function = _json_object(part.get("functionCall"))
+                                if function:
+                                    call = _function_call(function, fallback=len(calls))
+                                    calls.append(call)
+                                    signature = _text(part.get("thoughtSignature"))
+                                    if signature:
+                                        signatures[call.call_id] = signature
+                                    await on_event(ModelPartStart(kind="tool_call"))
+                                    await on_event(ModelPartEnd(data=_tool_part(call)))
+                if finish_reason is None:
+                    raise ModelResponseError(
+                        "model stream ended before a terminal finish reason",
+                        kind="incomplete_stream",
+                    )
+        except ModelResponseError as exc:
+            # Keep a complete response if only the connection's tail was lost.
+            if finish_reason is None or exc.kind not in {
+                "transport_error",
+                "incomplete_stream",
+            }:
+                raise
         parts: list[TextPart | ToolCallPart] = []
         output = "".join(text)
         if output:
@@ -217,24 +254,53 @@ def generate_content_payload(
     return payload
 
 
+def _check_response(payload: Mapping[str, object]) -> None:
+    if "error" in payload:
+        raise provider_error(payload["error"])
+    if _json_object(payload.get("promptFeedback")).get("blockReason"):
+        raise ModelResponseError(
+            "provider blocked the prompt", kind="provider_rejection"
+        )
+    reason = _candidate(payload).get("finishReason")
+    if reason == "MAX_TOKENS":
+        raise ModelResponseError(
+            "model response truncated by output limit", kind="output_limit"
+        )
+    if reason == "MALFORMED_FUNCTION_CALL":
+        raise ModelResponseError(
+            "provider reported malformed function call", kind="invalid_json"
+        )
+    if reason and reason != "STOP":
+        raise ModelResponseError(
+            f"provider stopped response: {reason}", kind="provider_rejection"
+        )
+
+
 def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
     """Parse one Gemini Generate Content response."""
 
     parts: list[TextPart | ToolCallPart] = []
     calls: list[ToolCall] = []
     signatures: dict[str, str] = {}
-    for part in _candidate_parts(payload):
-        value = _text(part.get("text"))
-        if value and part.get("thought") is not True:
-            parts.append(TextPart(value))
-        function = _json_object(part.get("functionCall"))
-        if function:
-            call = _function_call(function, fallback=len(calls))
-            calls.append(call)
-            parts.append(_tool_part(call))
-            signature = _text(part.get("thoughtSignature"))
-            if signature:
-                signatures[call.call_id] = signature
+    with model_transport_errors(
+        usage=lambda: generate_content_usage(
+            _json_object(payload.get("usageMetadata"))
+        ),
+        partial_text=lambda: _response_text(payload),
+    ):
+        _check_response(payload)
+        for part in _candidate_parts(payload):
+            value = _text(part.get("text"))
+            if value and part.get("thought") is not True:
+                parts.append(TextPart(value))
+            function = _json_object(part.get("functionCall"))
+            if function:
+                call = _function_call(function, fallback=len(calls))
+                calls.append(call)
+                parts.append(_tool_part(call))
+                signature = _text(part.get("thoughtSignature"))
+                if signature:
+                    signatures[call.call_id] = signature
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
@@ -433,16 +499,31 @@ def _encode_message(
     return {"role": role, "parts": parts}
 
 
-def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+def _candidate(payload: Mapping[str, object]) -> dict[str, object]:
     candidates = payload.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        return ()
-    candidate = _json_object(candidates[0])
-    content = _json_object(candidate.get("content"))
+    return (
+        _json_object(candidates[0])
+        if isinstance(candidates, list) and candidates
+        else {}
+    )
+
+
+def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+    content = _json_object(_candidate(payload).get("content"))
     parts = content.get("parts")
     if not isinstance(parts, list):
         return ()
     return tuple(_json_object(part) for part in parts)
+
+
+def _response_text(payload: Mapping[str, object]) -> str:
+    """Retain all received visible text even when response validation fails."""
+
+    return "".join(
+        _text(part.get("text"))
+        for part in _candidate_parts(payload)
+        if part.get("thought") is not True
+    )
 
 
 def _generate_url(
@@ -473,10 +554,13 @@ def _generate_headers(
 
 
 def _function_call(value: Mapping[str, object], *, fallback: int) -> ToolCall:
-    name = _text(value.get("name"))
+    name = _text(value.get("name")).strip()
+    if not name:
+        raise ModelResponseError(
+            "model emitted a tool call without a function name", kind="missing_name"
+        )
     call_id = _text(value.get("id")) or f"tool-call-{fallback}"
-    args = _json_object(value.get("args"))
-    return ToolCall(call_id, call_id, name, dict(cast(Mapping[str, Any], args)))
+    return ToolCall(call_id, call_id, name, parse_tool_arguments(value.get("args")))
 
 
 def _tool_part(call: ToolCall) -> ToolCallPart:
