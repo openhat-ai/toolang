@@ -182,11 +182,24 @@ def build_agic_frame(
         if isinstance(adapter, ModelOutputOptions)
         else None
     )
-    output = output_budget(
-        resolved_model.limit,
-        demand=max_output if max_output is not None else authored_output,
-        reasoning=reasoning,
+    output_source = (
+        "max_output"
+        if max_output is not None
+        else "adapter option"
+        if authored_output is not None
+        else "automatic"
     )
+    try:
+        output = output_budget(
+            resolved_model.limit,
+            demand=max_output if max_output is not None else authored_output,
+            reasoning=reasoning,
+        )
+        admitted_input = input_budget(resolved_model.limit, output)
+    except ValueError as exc:
+        raise ToolangError(
+            f"model {resolved_model.ref} (output source: {output_source}): {exc}"
+        ) from exc
 
     inputs = prompting.PromptInputs(
         run.state,
@@ -227,7 +240,7 @@ def build_agic_frame(
         recall=recall_sources(run.settings.recall),
         reasoning=reasoning,
         output_budget=output,
-        input_budget=input_budget(resolved_model.limit, output),
+        input_budget=admitted_input,
         context_capacity=context_capacity(resolved_model.limit),
         input_overhead=text_tokens(dumps(route.options, indent=None))
         if route.options

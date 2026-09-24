@@ -321,13 +321,23 @@ when `reasoning_options` is missing. Enforce known constraints and exhaustive
 enumerations; adapters reject controls they cannot encode. Never silently
 downgrade a request after provider rejection.
 
-Explicit `max_output` takes precedence over an authored provider output option,
-clamped to the catalog route's `limit.output` when known. Otherwise start at 4096,
-cap at one quarter of known context, raise to explicit reasoning tokens + 1024,
-then clamp to the known output limit. Output must be positive and exceed explicit
-reasoning tokens. These are host policy values, never inferred service defaults
-or catalog fields. **Behavior change:** automatic cloud calls also use this policy
-instead of the advertised maximum; set `max_output` explicitly for longer output.
+Explicit `max_output` takes precedence over an authored provider output option
+and is clamped to the catalog route's `limit.output` when known. Otherwise the
+automatic allowance starts from that route output limit, or 32768 when it is
+unknown, regardless of reasoning capability metadata or effort. A known joint
+context caps this candidate at one quarter; explicit reasoning tokens `R` can
+raise it again to `R+1024`. The known route output limit clamps the final allowance.
+Output must be positive and exceed explicit reasoning tokens. Explicit output
+controls bypass the automatic context fraction and reasoning headroom. Known
+context/input limits still require room for input and the estimation margin;
+explicit output or reasoning controls can leave no room and fail before dispatch.
+
+These are host policy values, never inferred service defaults or catalog fields.
+An independent input limit does not imply an output limit. With neither context
+nor input capacity known, local input admission is unavailable. Unknown limits
+can still lead to provider rejection; a larger allowance reduces truncation risk
+but cannot guarantee a complete response. See the
+[output budget policy](plans/model-output-budget.md) for the full missing-data matrix.
 
 Adapters can implement `ModelOutputOptions.output_allowance(options)` to normalize
 authored output aliases before admission. They send the resolved allowance unchanged. Known context/input limits reserve output and an estimation
