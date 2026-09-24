@@ -211,6 +211,48 @@ flow main() -> {output}:
     assert len(harness.adapter.invocations) == len(responses)
 
 
+@pytest.mark.parametrize("initial", [None, "initial"])
+@pytest.mark.parametrize("items", ['["seed"]', '["seed","2","3"]'])
+def test_settle_only_validates_consumed_elements_as_reducer_inputs(
+    tmp_path: Path, initial: str | None, items: str
+) -> None:
+    source = """
+agic seed() -> Text[]:
+  Seed.
+agic reduce(_: Number) -> Text:
+  user: Add {{_}} to {{_1._}}.
+flow main():
+  scatter 3 using seed
+  settle using reduce
+"""
+    program = Program.from_source(source)
+    flow = program.flows[0]
+    settle = flow.stmts[-1]
+    assert isinstance(settle, SettleStmt)
+    program = replace(
+        program,
+        flows=(
+            replace(flow, stmts=(*flow.stmts[:-1], replace(settle, initial=initial))),
+        ),
+    )
+    harness = _create(
+        tmp_path,
+        source=source,
+        program=program,
+        responses=[items, "seed+2", "seed+2+3"],
+    )
+    run, output, error = _run(harness)
+    if initial is not None:
+        assert run.status == "failed"
+        assert "Number" in str(error)
+        assert len(harness.adapter.invocations) == 1
+    else:
+        assert run.status == "succeeded", error
+        singleton = items == '["seed"]'
+        assert output == ("seed" if singleton else "seed+2+3")
+        assert len(harness.adapter.invocations) == (1 if singleton else 3)
+
+
 def test_until_waits_for_its_own_history_depth_and_reads_entry_exit(
     tmp_path: Path,
 ) -> None:

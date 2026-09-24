@@ -18,6 +18,7 @@ from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.lang.contracts import OutputContract
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -799,9 +800,9 @@ def test_parallel_children_preserve_input_and_output_types(
         _name: str,
         _placement: dict[str, object] | None,
         *,
-        expected_output: str | None = None,
+        expected_output: OutputContract | None = None,
     ) -> Local:
-        assert expected_output == "Number"
+        assert expected_output is not None and expected_output.type_name == "Number"
         observed_types.append(child_locals["_"].type_name)
         return Local(1, "item", type_name="Number")
 
@@ -861,9 +862,9 @@ def test_parallel_children_reuse_the_lane_that_finished(
         _name: str,
         occurrence: Occurrence | None,
         *,
-        expected_output: str | None = None,
+        expected_output: OutputContract | None = None,
     ) -> Local:
-        assert expected_output == "Number"
+        assert expected_output is not None and expected_output.type_name == "Number"
         item = cast(int, child_locals["_"].value)
         assert occurrence is not None
         occurrences[item] = occurrence

@@ -28,7 +28,7 @@ from toolang.lang.ast import (
     RepeatStmt,
     StructDecl,
 )
-from toolang.lang.contracts import validate_operation_contract
+from toolang.lang.contracts import OutputContract, validate_operation_contract
 from toolang.lang.input import (
     PromptInvocation,
     RunnableInput,
@@ -1777,13 +1777,14 @@ class _Execution:
         locals: Mapping[str, Local],
         *,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
+        include_primary: bool = True,
     ) -> AgicDecl | FlowDecl:
         state, _ = state_snapshot or self.state_for_step(step)
         ref, kind = parse_runnable_ref(name)
         _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)
         self._validate_child_contract(step, name, runnable)
         _bind_child_input(
-            runnable,
+            runnable if include_primary else replace(runnable, input=None),
             locals,
             structs={
                 item.name: item for item in state_program(state, binding.module).structs
@@ -2301,7 +2302,7 @@ class _Execution:
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
-        expected_output: str | None = None,
+        expected_output: OutputContract | None = None,
     ) -> Local:
         """Accept and execute one authored child call."""
 
@@ -2325,9 +2326,10 @@ class _Execution:
         )
         if expected_output is not None:
             actual_output = _runtime_local_type(result)
-            if actual_output != expected_output:
+            if actual_output != expected_output.type_name:
                 raise ToolangError(
-                    f"{name!r} requires {expected_output} output, got {actual_output}"
+                    f"{name!r} requires {expected_output.type_name} output, "
+                    f"got {actual_output}"
                 )
         return result
 
@@ -2344,7 +2346,7 @@ class _Execution:
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
-        expected_output: str | None = None,
+        expected_output: OutputContract | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Validate and commit a child Run before dispatching it."""
 
@@ -2409,9 +2411,16 @@ class _Execution:
                 runnable_name,
                 kind=runnable_kind,
             )
-            self._validate_child_contract(
-                step, name, runnable, expected_output=expected_output
-            )
+            self._validate_child_contract(step, name, runnable)
+            if expected_output is not None:
+                expected_output.validate(
+                    runnable.output or "Part[]",
+                    structs={
+                        item.name: item
+                        for item in state_program(state, parent.module).structs
+                    },
+                    name=name,
+                )
             binding = _child_binding(
                 self,
                 current_parent_binding,
@@ -2644,12 +2653,7 @@ class _Execution:
         )
 
     def _validate_child_contract(
-        self,
-        step: StepRef,
-        name: str,
-        runnable: AgicDecl | FlowDecl,
-        *,
-        expected_output: str | None = None,
+        self, step: StepRef, name: str, runnable: AgicDecl | FlowDecl
     ) -> None:
         record = self.store.get_step(ref=step)
         if record is not None and not isinstance(
@@ -2661,13 +2665,6 @@ class _Execution:
                 name=name,
                 line=record.given.span.line,
             )
-            output_type = runnable.output or "Part[]"
-            if expected_output is not None and output_type != expected_output:
-                raise ToolangError(
-                    f"{record.given.kind.capitalize()} at line {record.given.span.line} "
-                    f"requires {expected_output} output from {name!r}, "
-                    f"got {output_type}"
-                )
 
     async def parallel_children(
         self,
@@ -2698,6 +2695,7 @@ class _Execution:
         structs = {
             item.name: item for item in state_program(state, binding.module).structs
         }
+        output_contract = OutputContract.resolve(output_type, structs=structs)
 
         def child_locals(index: int, value: Any) -> dict[str, Local]:
             current = dict(locals)
@@ -2734,7 +2732,7 @@ class _Execution:
                         item=OccurrencePosition(index=index, count=len(inputs)),
                         lane=OccurrencePosition(index=lane, count=lanes),
                     ),
-                    expected_output=output_type,
+                    expected_output=output_contract,
                 )
             except _ExecutionFailed as exc:
                 raise RuntimeError(

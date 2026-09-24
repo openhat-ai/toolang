@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import SettleStmt
+from toolang.lang.contracts import OutputContract
 from toolang.common.errors import ToolangError
 from toolang.lang.input import coerce_output
 
@@ -45,15 +46,23 @@ async def execute(
                 type_name=item_type,
             )
 
-        # Validate the complete batch before the first reducer can make a call.
+        # The implicit seed is output, not an input consumed by the reducer.
         reducer = execution.validate_child_inputs(
-            binding, path, statement.runnable, {**locals, "_": element(0)}
+            binding,
+            path,
+            statement.runnable,
+            {**locals, "_": element(0)},
+            include_primary=statement.initial is not None,
         )
         for index in range(1, len(items)):
             execution.validate_child_inputs(
                 binding, path, statement.runnable, {**locals, "_": element(index)}
             )
         output_type = reducer.output or "Text"
+        structs = program_structs(
+            execution.current_binding(binding, *execution.state_for_step(path))
+        )
+        output_contract = OutputContract.resolve(output_type, structs=structs)
         if statement.initial is None:
             if output_type != item_type:
                 raise ToolangError(
@@ -68,9 +77,7 @@ async def execute(
             coerce_output(
                 seed.value,
                 output_type,
-                structs=program_structs(
-                    execution.current_binding(binding, *execution.state_for_step(path))
-                ),
+                structs=structs,
             ),
             "item",
             ref=seed.ref if seed.type_name == output_type else None,
@@ -95,7 +102,7 @@ async def execute(
                             index=index - start, count=len(items) - start, phase="body"
                         ),
                     ),
-                    expected_output=output_type,
+                    expected_output=output_contract,
                 )
             scope = IterationScope(
                 1,

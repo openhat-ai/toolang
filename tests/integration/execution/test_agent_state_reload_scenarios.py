@@ -22,6 +22,7 @@ from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
+from toolang.lang.contracts import OutputContract
 from toolang.execution.records import RunControlPayload, ControlRecord
 from toolang.execution.types import (
     ControlRef,
@@ -388,7 +389,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             occurrence: Occurrence | None,
             *,
             output_binding: str | None = "_",
-            expected_output: str | None = None,
+            expected_output: OutputContract | None = None,
         ) -> Local:
             nonlocal started_children
             started_children += 1
@@ -664,22 +665,22 @@ flow parent:
 
 @pytest.mark.parametrize("operation", ["map", "storm", "settle"])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
-@pytest.mark.parametrize("output", ["Text", "Text[]"])
-@pytest.mark.parametrize("changes_type", [True, False])
+@pytest.mark.parametrize("output", ["Text", "Text[]", "Item", "Item[]"])
+@pytest.mark.parametrize("changes_contract", [True, False])
 def test_collection_reload_preserves_the_operation_output_contract(
-    tmp_path: Path, operation: str, kind: str, output: str, changes_type: bool
+    tmp_path: Path, operation: str, kind: str, output: str, changes_contract: bool
 ) -> None:
-    updated_output = output.replace("Text", "Number") if changes_type else output
-    source_values = (
-        [[value] for value in "abc"] if output.endswith("[]") else list("abc")
-    )
-    results = (
-        [[value] for value in ("first", "3", "4")]
-        if output.endswith("[]")
-        else ["first", "3", "4"]
-    )
+    updated_output = output.replace("Text", "Number") if changes_contract else output
+
+    def value(text: str):
+        item = {"value": text} if output.startswith("Item") else text
+        return [item] if output.endswith("[]") else item
+
+    source_values = [value(text) for text in "abc"]
+    results = [value(text) for text in ("first", "3", "4")]
     responses = [
-        json.dumps(value) if isinstance(value, list) else value for value in results
+        json.dumps(value) if isinstance(value, list | dict) else value
+        for value in results
     ]
     worker = "transform" if kind == "agic" else "worker"
     declaration = (
@@ -691,6 +692,10 @@ def test_collection_reload_preserves_the_operation_output_contract(
         "settle": "settle using transform",
     }[operation]
     source = f"""
+struct Item:
+  value: Text
+struct Unrelated:
+  unused: Text
 agic seed() -> {output}[]:
   Seed.
 agic {worker} -> {output}:
@@ -704,7 +709,16 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
         source.replace("Old current", "New current")
         .replace(f"transform -> {output}:", f"transform -> {updated_output}:")
         .replace(f"worker -> {output}:", f"worker -> {updated_output}:")
+        .replace("unused: Text", "unused: Number")
     )
+    if changes_contract and output.startswith("Item"):
+        replacement = replacement.replace("value: Text", "value: Number")
+        responses[1:] = [
+            json.dumps(
+                [{"value": number}] if output.endswith("[]") else {"value": number}
+            )
+            for number in (3, 4)
+        ]
     first_call = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
@@ -733,7 +747,7 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
             first_call.release()
             root = await handle
 
-            if changes_type:
+            if changes_contract:
                 assert root.status == "failed"
                 assert len(harness.adapter.invocations) == 2
                 assert root.error is not None
@@ -759,7 +773,7 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
                 expected = results[1] if operation == "settle" else results
                 assert harness.store.run_output_text(run_id=root.id) == (
                     json.dumps(expected, separators=(",", ":"))
-                    if isinstance(expected, list)
+                    if isinstance(expected, list | dict)
                     else expected
                 )
 
