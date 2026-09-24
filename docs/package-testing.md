@@ -7,15 +7,15 @@ boundaries, not a high line-coverage number by itself.
 
 ## Running Tests
 
-Run the complete offline suite with up to four worker processes:
+Run the complete offline suite with one worker per available physical CPU core:
 
 ```sh
-uv run pytest -n auto --maxprocesses=4 --dist=worksteal
+uv run pytest -n auto
 ```
 
-CI uses the same worker limit and scheduling mode. Work stealing redistributes
-pending tests when workers finish early. Use `--durations=20` to locate slow
-tests. Worker count is explicit so focused tests and debugging stay serial:
+CI uses the same automatic worker count and pytest-xdist's default scheduling. Use
+`--durations=20` to locate slow tests. Worker count is explicit so focused tests
+and debugging stay serial:
 
 ```sh
 uv run pytest tests/unit/lang/test_program.py

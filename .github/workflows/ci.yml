@@ -88,7 +88,7 @@ jobs:
           echo "$RUNNER_TEMP/tmux" >> "$GITHUB_PATH"
 
       - name: Run tests
-        run: uv run --frozen pytest -q -n auto --maxprocesses=4 --dist=worksteal
+        run: uv run --frozen pytest -q -n auto
 
   package:
     name: Package

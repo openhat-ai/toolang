@@ -151,33 +151,46 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("interruption", ["cancel", "timeout"])
 def test_shell_interruption_stops_the_command(
-    tmp_path: Path, interruption: str
+    tmp_path: Path, interruption: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tool = create_shell_tool({}).tools()["execute"]
-    pid_file = tmp_path / "pid"
+    create_process = asyncio.create_subprocess_exec
 
     async def scenario() -> None:
+        launched: asyncio.Future[asyncio.subprocess.Process] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+        async def launch(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+            process = await create_process(*args, **kwargs)
+            launched.set_result(process)
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
         task = asyncio.create_task(
             tool.invoke(
-                {"command": "echo $$ > pid; sleep 10 & wait", "timeout_sec": 1},
+                {
+                    "command": "sleep 30 & wait",
+                    "timeout_sec": 30 if interruption == "cancel" else 1,
+                },
                 _tool_context(tmp_path, "shell"),
             )
         )
         pid = None
         try:
-            async with asyncio.timeout(2):
-                while not pid_file.exists() or not pid_file.read_text().strip():
-                    await asyncio.sleep(0.01)
-            pid = int(pid_file.read_text())
+            # Observe the real process launch without waiting for shell startup
+            # files or racing the cancellation case against a one-second timeout.
+            process = await asyncio.wait_for(asyncio.shield(launched), timeout=10)
+            pid = process.pid
             if interruption == "cancel":
                 task.cancel()
                 await asyncio.sleep(0)
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=1)
+                    await asyncio.wait_for(task, timeout=5)
             else:
                 with pytest.raises(ToolangError, match="timed out after 1s"):
-                    await asyncio.wait_for(task, timeout=2)
+                    await asyncio.wait_for(task, timeout=5)
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
         finally:
@@ -188,7 +201,7 @@ def test_shell_interruption_stops_the_command(
                     pass
             if not task.done():
                 task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 

@@ -134,10 +134,10 @@ For code or test changes, run the default verification before every commit:
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
-uv run pytest -n auto --maxprocesses=4 --dist=worksteal
+uv run pytest -n auto
 ```
 
-The full suite uses at most four worker processes. Run focused tests or debug
+The full suite uses one worker per available physical CPU core. Run focused tests or debug
 failures serially with `uv run pytest <test-path>`. Live-provider tests
 (`@pytest.mark.live_provider`) are opt-in only.
 
