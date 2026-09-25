@@ -29,6 +29,7 @@ from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.collections import ModelCollection
 from toolang.setup.routes import (
+    RouteAdapter,
     resolve_catalog_providers,
     catalog_environment_names,
 )
@@ -187,7 +188,7 @@ class SetupWatcher:
         loaded: _LoadedInputs,
         load: _CatalogLoad,
         *,
-        adapters: Mapping[str, ModelAdapter],
+        adapters: Mapping[str, RouteAdapter],
         adapter_configs: Mapping[str, object],
         catalog_configs: Mapping[str, Mapping[str, object]],
         allow_models: tuple[str, ...] | None,
@@ -311,6 +312,12 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
+        # Probes and source parsing can yield before cache validation/publication.
+        # Keep their identity and every route tied to one capture of the defaults.
+        route_adapters = {
+            name: _AdapterDefaults(adapter.default_api)
+            for name, adapter in adapters.items()
+        }
         load = await self._load_sources(
             models_dev,
             catalogs,
@@ -326,7 +333,7 @@ class SetupWatcher:
             toolset_configs=toolset_configs,
             catalog_configs=catalog_configs,
             adapters=adapters,
-            adapter_identity=_adapter_identity(adapters),
+            adapter_identity=_adapter_identity(route_adapters),
             tools=tools,
             catalogs=catalogs,
             observation=load.observation,
@@ -363,7 +370,7 @@ class SetupWatcher:
         listing = await self._load_catalog_records(
             inputs,
             load,
-            adapters=adapters,
+            adapters=route_adapters,
             adapter_configs=adapter_configs,
             catalog_configs=catalog_configs,
             allow_models=allow.models,
@@ -385,6 +392,7 @@ class SetupWatcher:
             listing=listing,
             catalog_sources=catalog_sources,
             adapters=adapters,
+            route_adapters=route_adapters,
             tools=tools,
             envs=inputs.envs,
             allow=allow,
@@ -561,7 +569,7 @@ async def _merge_catalogs(
 def _resolve_catalog(
     merged: ModelCatalogSnapshot,
     *,
-    adapters: Mapping[str, ModelAdapter],
+    adapters: Mapping[str, RouteAdapter],
     envs: Mapping[str, str],
 ) -> ModelCatalogSnapshot:
     return resolve_catalog_providers(merged, adapters=adapters, environ=envs)
@@ -575,6 +583,7 @@ def _build_setup(
     listing: ModelListing,
     catalog_sources: Mapping[str, tuple[str, str]],
     adapters: dict[str, ModelAdapter],
+    route_adapters: Mapping[str, RouteAdapter],
     tools: dict[str, Tool],
     envs: dict[str, str],
     allow: AgentCeiling,
@@ -586,10 +595,6 @@ def _build_setup(
     # Retain this version's declarations and environment for lazy full inspection.
     # Only ready, allowed models need runtime routes and query views at startup.
     adapters = dict(adapters)
-    route_adapters = {
-        name: _AdapterDefaults(adapter.default_api)
-        for name, adapter in adapters.items()
-    }
     envs = dict(envs)
 
     def load_catalog(*, all: bool = False) -> ModelCatalogSnapshot:
@@ -650,7 +655,7 @@ def _build_setup(
     )
 
 
-def _adapter_identity(adapters: Mapping[str, ModelAdapter]) -> str:
+def _adapter_identity(adapters: Mapping[str, RouteAdapter]) -> str:
     """Include loadable implementations and defaults, not only installed metadata."""
 
     return digest({name: adapter.default_api for name, adapter in adapters.items()})

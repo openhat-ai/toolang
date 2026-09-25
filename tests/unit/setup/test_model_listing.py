@@ -682,6 +682,29 @@ def test_lazy_catalog_pins_adapter_defaults(harness, monkeypatch):
     assert first.model_catalog(all=True) == full
 
 
+def test_refresh_uses_one_capture_of_adapter_defaults(harness, monkeypatch):
+    harness.write(api=None)
+    adapter = SimpleNamespace(default_api="https://original.test/v1")
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda config: {"chat_completions": adapter},
+    )
+    original = watcher_module.ModelCatalogSource.snapshot
+
+    def snapshot(source):
+        adapter.default_api = None
+        return original(source)
+
+    monkeypatch.setattr(watcher_module.ModelCatalogSource, "snapshot", snapshot)
+    watcher = SetupWatcher(harness.layout, agent_context=False)
+    first = asyncio.run(watcher.refresh())
+    assert first.models.refs() == ("test/one", "test/two")
+    assert first.models.entries[0]._toolang.route.api == "https://original.test/v1"
+    assert not asyncio.run(watcher.refresh()).models
+    assert first.model_catalog(all=True).models == first.models.entries
+
+
 def test_runtime_hydrates_only_ready_allowed_models(harness, monkeypatch):
     harness.layout.root_config.write_text('[allow]\nmodels = ["test/two"]\n')
     harness.load()
