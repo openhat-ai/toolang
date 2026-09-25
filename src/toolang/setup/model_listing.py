@@ -9,7 +9,6 @@ from typing import cast
 
 import msgspec
 
-from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
     Model,
     ModelFacts,
@@ -32,7 +31,7 @@ from toolang.plugin.models.collections import (
 from .cache import _snapshot_document
 from .models import order_models
 from .records import CatalogRecords, ModelRecord, ProviderRecord
-from .routes import resolve_catalog_providers
+from .routes import RouteAdapter, resolve_catalog_providers
 
 _FACT_NAMES = tuple(
     field.name for field in fields(ModelFacts) if field.name != "provider"
@@ -118,7 +117,7 @@ class ModelListing:
         self,
         models: Sequence[ModelRecord],
         *,
-        adapters: Mapping[str, ModelAdapter],
+        adapters: Mapping[str, RouteAdapter],
         environ: Mapping[str, str],
         revision: str,
         include_empty_providers: bool = False,

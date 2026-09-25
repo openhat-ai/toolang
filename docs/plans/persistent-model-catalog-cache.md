@@ -36,8 +36,8 @@ Each model carries adapter/API/environment availability facts and nullable
 Query views, resolved runtime routes, and lookup indexes are not persisted.
 Setup owns the flat records and builds query datasets or runtime indexes only as
 needed. `AgentSetup.model_listing()` exposes the published inspection projection.
-`model_catalog(all=True)` lazily hydrates the complete catalog from the same records
-and the environment captured by that setup version, without rereading files.
+`model_catalog(all=True)` lazily hydrates the complete catalog from the same records,
+environment, and adapter defaults captured by that setup version, without rereading files.
 Nested record values are immutable so inspection cannot mutate a later lazy view.
 Hydration copies fields directly from typed records instead of converting records
 back into mutable JSON-shaped dictionaries and decoding them again.
@@ -98,7 +98,8 @@ Catalog declarations are trusted data: neither source nor merged catalog reads o
 writes run heuristic secret/header/URL scans or discard authored fields. Raw
 process/dotenv values and resolved runtime routes never enter the listing. Enforce
 that boundary when projecting environment inputs. Keep size, checksum, schema,
-type, identity, and reference checks. Retain locking and atomic replacement;
+type (including nested connection declarations), identity, and reference checks.
+Retain locking and atomic replacement;
 corruption is a miss and a failed write does not reject a valid in-memory result.
 
 ## Implementation and acceptance
@@ -117,7 +118,7 @@ so it reuses configured instances even when user-facing tool policy excludes the
 2. Warm runtime and inspection consumers share the merged cache. Bypass static
    parsing, merging, full-catalog routing/query views, ordering, and scanning.
    Hydrate only selected runtime records; full views retain the published environment
-   after source/cache removal or a subsequent refresh. Model/tool defaults still
+   and adapter defaults after source/cache removal, plugin mutation, or a subsequent refresh. Model/tool defaults still
    undergo the caller's existing validation policy.
 3. Test changed bytes with restored size/mtime, unchanged touches, complete config
    changes, environment missing/set/empty/rotation, effective overrides/defaults,

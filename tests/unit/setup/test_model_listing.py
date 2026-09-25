@@ -9,10 +9,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 
 from dotenv import dotenv_values
 import pytest
+import msgspec
 
 from toolang.base.types.model import (
     CatalogModel,
@@ -530,9 +532,22 @@ def test_static_parse_uses_captured_bytes(harness):
 
 @pytest.mark.parametrize(
     "damage",
-    ["json", "checksum", "schema", "duplicate", "dangling", "rank", "type", "plugin"],
+    [
+        "json",
+        "checksum",
+        "schema",
+        "duplicate",
+        "dangling",
+        "rank",
+        "type",
+        "connection",
+        "hidden-connection",
+        "plugin",
+    ],
 )
 def test_invalid_or_changed_cache_rebuilds(harness, damage):
+    if damage == "hidden-connection":
+        harness.layout.root_config.write_text('[allow]\nmodels = ["test/two"]\n')
     expected = harness.load().records
     path = harness.layout.root_model_cache / "merged.json"
     if damage == "json":
@@ -551,6 +566,8 @@ def test_invalid_or_changed_cache_rebuilds(harness, damage):
             document["models"][0]["allowed_order"] = 999
         elif damage == "type":
             document["models"][0]["limit"]["context"] = -1
+        elif damage in {"connection", "hidden-connection"}:
+            document["models"][0]["connection"]["headers"] = {"X-Key": 1}
         elif damage == "plugin":
             document["metadata"]["inputs"]["plugins"] = []
         assert store_document(
@@ -631,6 +648,38 @@ def test_published_records_cannot_mutate_lazy_runtime_catalog(harness):
     connection = full.models[0].provider
     assert connection is not None and connection.body is not None
     assert connection.body["token"] == "public-metadata"
+
+
+def test_record_detaches_read_only_views_of_mutable_declarations(harness):
+    record = harness.load().records.models[0]
+    values = ["low", "high"]
+    option = {"type": "effort", "values": values}
+    copied = msgspec.structs.replace(
+        record, reasoning_options=(MappingProxyType(option),)
+    )
+    values.append("changed")
+    option["type"] = "changed"
+    assert copied.reasoning_options == ({"type": "effort", "values": ("low", "high")},)
+
+
+def test_lazy_catalog_pins_adapter_defaults(harness, monkeypatch):
+    harness.write(api=None)
+    adapter = SimpleNamespace(default_api="https://original.test/v1")
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda config: {"chat_completions": adapter},
+    )
+    watcher = SetupWatcher(harness.layout, agent_context=False)
+    first = asyncio.run(watcher.refresh())
+    adapter.default_api = "https://changed.test/v1"
+    full = first.model_catalog(all=True)
+    assert full.models == first.models.entries
+    assert full.providers["test"] == first.providers["test"]
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert second.models.entries[0]._toolang.route.api == adapter.default_api
+    assert first.model_catalog(all=True) == full
 
 
 def test_runtime_hydrates_only_ready_allowed_models(harness, monkeypatch):

@@ -88,6 +88,11 @@ class _LoadedInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class _AdapterDefaults:
+    default_api: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _Candidate:
     inputs: _LoadedInputs
     config_value: tuple[dict[str, object], dict[str, object]]
@@ -95,6 +100,7 @@ class _Candidate:
     toolset_configs: dict[str, dict[str, object]]
     catalog_configs: dict[str, dict[str, object]]
     adapters: dict[str, ModelAdapter]
+    adapter_identity: str
     tools: dict[str, Tool]
     catalogs: dict[str, ModelCatalog]
     observation: FileObservation
@@ -140,6 +146,7 @@ class SetupWatcher:
         self._toolset_configs: dict[str, dict[str, object]] | None = None
         self._catalog_configs: dict[str, dict[str, object]] | None = None
         self._adapters: dict[str, ModelAdapter] = {}
+        self._loaded_adapter_identity: str | None = None
         self._tools: dict[str, Tool] = {}
         self._catalogs: dict[str, ModelCatalog] = {}
         self._catalog_identity: FileObservation | None = None
@@ -319,6 +326,7 @@ class SetupWatcher:
             toolset_configs=toolset_configs,
             catalog_configs=catalog_configs,
             adapters=adapters,
+            adapter_identity=_adapter_identity(adapters),
             tools=tools,
             catalogs=catalogs,
             observation=load.observation,
@@ -337,7 +345,7 @@ class SetupWatcher:
                     project_model_setup_config(config) for config in configs
                 ),
                 "adapters": adapter_configs,
-                "loaded_adapters": _adapter_identity(adapters),
+                "loaded_adapters": candidate.adapter_identity,
                 "tools": toolset_configs,
                 "allow": allow,
                 "defaults": defaults,
@@ -479,6 +487,7 @@ class SetupWatcher:
             and candidate.inputs.envs == self._setup.envs
             and candidate.observation == self._catalog_identity
             and candidate.adapter_configs == self._adapter_configs
+            and candidate.adapter_identity == self._loaded_adapter_identity
             and candidate.toolset_configs == self._toolset_configs
             and candidate.catalog_configs == self._catalog_configs
             and candidate.source_revisions == self._source_revisions
@@ -490,6 +499,7 @@ class SetupWatcher:
         self._toolset_configs = candidate.toolset_configs
         self._catalog_configs = candidate.catalog_configs
         self._adapters = candidate.adapters
+        self._loaded_adapter_identity = candidate.adapter_identity
         self._tools = candidate.tools
         self._catalogs = candidate.catalogs
         self._catalog_identity = candidate.observation
@@ -576,12 +586,16 @@ def _build_setup(
     # Retain this version's declarations and environment for lazy full inspection.
     # Only ready, allowed models need runtime routes and query views at startup.
     adapters = dict(adapters)
+    route_adapters = {
+        name: _AdapterDefaults(adapter.default_api)
+        for name, adapter in adapters.items()
+    }
     envs = dict(envs)
 
     def load_catalog(*, all: bool = False) -> ModelCatalogSnapshot:
         return listing.resolve(
             listing.records.models if all else listing.effective_models,
-            adapters=adapters,
+            adapters=route_adapters,
             environ=envs,
             revision=revision,
             include_empty_providers=all,

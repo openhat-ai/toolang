@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Annotated, cast
+from typing import Annotated, TypedDict, cast
 
 import msgspec
 
@@ -18,6 +18,23 @@ Text = Annotated[str, msgspec.Meta(min_length=1)]
 Positive = Annotated[int, msgspec.Meta(gt=0)]
 Rank = Annotated[int, msgspec.Meta(ge=0)]
 _LISTING_SCHEMA = 2
+
+
+class _ConnectionMetadata(TypedDict, total=False):
+    adapter: str | None
+    env: tuple[str | tuple[str, ...], ...]
+
+
+class _Connection(TypedDict, total=False):
+    """Validate nested declarations before accepting a cached model record."""
+
+    npm: str | None
+    api: str | None
+    shape: str | None
+    mode: str | None
+    headers: Mapping[str, str] | None
+    body: Mapping[str, object] | None
+    _toolang: _ConnectionMetadata | None
 
 
 class ProviderRecord(
@@ -64,7 +81,7 @@ class ModelRecord(
     limit: Mapping[str, Positive] = msgspec.field(default_factory=dict)
     status: str | None = None
     experimental: Mapping[str, object] | None = None
-    connection: Mapping[str, object] | None = None
+    connection: _Connection | None = None
     cost: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
@@ -103,7 +120,7 @@ class ModelRecord(
 def _freeze(value: object) -> object:
     """Detach nested declarations before publishing them in an immutable setup."""
 
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze(item) for key, item in value.items()})
     if isinstance(value, list | tuple):
         return tuple(_freeze(item) for item in value)
