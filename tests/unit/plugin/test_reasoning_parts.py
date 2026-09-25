@@ -929,6 +929,284 @@ def test_chat_same_index_distinct_native_ids_preserve_multiple_reasoning_details
     ]
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_chat_reasoning_details_without_ids_use_type_scoped_fallback(
+    monkeypatch, streaming
+):
+    selected = model("chat_completions")
+    if streaming:
+        chunks = [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "reasoning_details": [
+                                {
+                                    "type": "reasoning.summary",
+                                    "index": 0,
+                                    "summary": "first ",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "reasoning_details": [
+                                {
+                                    "type": "reasoning.summary",
+                                    "index": 1,
+                                    "summary": "second",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        ]
+        mock_sdk(monkeypatch, chat, Stream(chunks))
+        events = []
+        result = run_stream(chat.ChatCompletionsModelAdapter(), selected, events)
+        assert_events(events, result)
+    else:
+        result = parse(
+            "chat_completions",
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "reasoning_details": [
+                                {"type": "reasoning.summary", "summary": "first second"}
+                            ]
+                        }
+                    }
+                ]
+            },
+            selected,
+        )
+
+    assert result.message is not None
+    (part,) = [part for part in result.message.parts if isinstance(part, ReasoningPart)]
+    assert part.text == "first second"
+    assert "id" not in part.provider_metadata
+    if not streaming:
+        assert "index" not in part.provider_metadata
+    else:
+        assert part.provider_metadata["index"] == 1
+
+
+def test_chat_missing_id_does_not_guess_between_multiple_native_ids():
+    reasoning = chat._ChatReasoning(model("chat_completions"))
+    for native_id, text in (("rs-a", "alpha"), ("rs-b", "beta")):
+        reasoning.add(
+            {
+                "reasoning_details": [
+                    {
+                        "type": "reasoning.summary",
+                        "id": native_id,
+                        "summary": text,
+                    }
+                ]
+            }
+        )
+
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {"type": "reasoning.summary", "summary": "idless-fragment"}
+            ]
+        }
+    )
+
+    parts = [part for _, part in reasoning.values()]
+    assert [part.text for part in parts] == ["alpha", "beta", "idless-fragment"]
+    assert [part.provider_metadata.get("id") for part in parts] == [
+        "rs-a",
+        "rs-b",
+        None,
+    ]
+
+
+def test_chat_reasoning_detail_does_not_guess_owner_when_later_delta_omits_id(
+    monkeypatch,
+):
+    selected = model("chat_completions")
+    chunks = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_details": [
+                            {
+                                "type": "reasoning.summary",
+                                "id": "rs-first",
+                                "index": 0,
+                                "summary": "first ",
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_details": [
+                            {
+                                "type": "reasoning.summary",
+                                "index": 1,
+                                "summary": "second",
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    ]
+    mock_sdk(monkeypatch, chat, Stream(chunks))
+    events = []
+
+    result = run_stream(chat.ChatCompletionsModelAdapter(), selected, events)
+    assert_events(events, result)
+
+    assert result.message is not None
+    parts = [part for part in result.message.parts if isinstance(part, ReasoningPart)]
+    assert [part.text for part in parts] == ["first ", "second"]
+    assert [part.provider_metadata.get("id") for part in parts] == ["rs-first", None]
+
+
+def test_chat_reasoning_detail_id_wins_over_changed_sequence_index():
+    reasoning = chat._ChatReasoning(model("chat_completions"))
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {
+                    "type": "reasoning.summary",
+                    "id": "rs-stable",
+                    "index": 0,
+                    "summary": "first ",
+                }
+            ]
+        }
+    )
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {
+                    "type": "reasoning.summary",
+                    "id": "rs-stable",
+                    "index": 1,
+                    "summary": "second",
+                }
+            ]
+        }
+    )
+
+    key, part = reasoning.values()[0]
+    assert key == ("reasoning", ("id", "rs-stable", "reasoning.summary"))
+    assert part.text == "first second"
+    assert part.provider_metadata["id"] == "rs-stable"
+    assert part.provider_metadata["index"] == 1
+
+
+def test_chat_reasoning_details_can_share_idless_fallbacks_with_id_blocks():
+    reasoning = chat._ChatReasoning(model("chat_completions"))
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {"type": "reasoning.summary", "id": "rs-main", "summary": "identified"}
+            ]
+        }
+    )
+    reasoning.add(
+        {"reasoning_details": [{"type": "reasoning.summary", "summary": "fallback"}]}
+    )
+
+    parts = [part for _, part in reasoning.values()]
+    assert [part.text for part in parts] == ["identified", "fallback"]
+
+
+def test_chat_reasoning_detail_id_with_different_types_keeps_native_parts_distinct():
+    reasoning = chat._ChatReasoning(model("chat_completions"))
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {
+                    "type": "reasoning.summary",
+                    "id": "rs-unique",
+                    "summary": "summary",
+                }
+            ]
+        }
+    )
+
+    reasoning.add(
+        {
+            "reasoning_details": [
+                {
+                    "type": "reasoning.encrypted",
+                    "id": "rs-unique",
+                    "data": "ciphertext",
+                }
+            ]
+        }
+    )
+
+    parts = [part for _, part in reasoning.values()]
+    assert [(part.text, part.signature) for part in parts] == [
+        ("summary", None),
+        ("", "ciphertext"),
+    ]
+
+
+def test_chat_reasoning_detail_adopts_id_when_it_appears_after_idless_delta(
+    monkeypatch,
+):
+    selected = model("chat_completions")
+    chunks = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_details": [
+                            {"type": "reasoning.summary", "summary": "first "}
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_details": [
+                            {
+                                "type": "reasoning.summary",
+                                "id": "rs-late",
+                                "summary": "second",
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    ]
+    mock_sdk(monkeypatch, chat, Stream(chunks))
+    events = []
+
+    result = run_stream(chat.ChatCompletionsModelAdapter(), selected, events)
+    assert_events(events, result)
+
+    assert result.message is not None
+    (part,) = [part for part in result.message.parts if isinstance(part, ReasoningPart)]
+    assert part.text == "first second"
+    assert part.provider_metadata["id"] == "rs-late"
+
+
 def test_chat_late_opaque_detail_keeps_its_native_sequence(monkeypatch):
     selected = model("chat_completions")
     readable = {"type": "reasoning.summary", "summary": "thought", "index": 1}

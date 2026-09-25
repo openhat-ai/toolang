@@ -825,6 +825,9 @@ class _ChatReasoning:
     model: Model
     aliases: dict[str, str] = field(default_factory=dict)
     details: dict[tuple[object, ...], dict[str, Any]] = field(default_factory=dict)
+    detail_ids: dict[tuple[str, str], tuple[object, ...]] = field(default_factory=dict)
+    detail_anonymous: dict[str, tuple[object, ...]] = field(default_factory=dict)
+    anonymous_serial: int = 0
 
     @property
     def primary(self) -> str | None:
@@ -852,7 +855,7 @@ class _ChatReasoning:
             if isinstance(value, Mapping)
             else getattr(value, "reasoning_details", None)
         )
-        for position, raw in enumerate(raw_details or ()):
+        for raw in raw_details or ():
             detail = (
                 dict(raw)
                 if isinstance(raw, Mapping)
@@ -887,18 +890,16 @@ class _ChatReasoning:
                 raise ToolangError(
                     "reasoning detail index must be a non-negative integer"
                 )
-            # Some providers assign one index to several detail types within a
-            # shared reasoning item; use its distinct native id when available.
-            key = (
-                ("id", detail["id"], kind)
-                if detail.get("id") is not None
-                else ("index", detail["index"], kind)
-                if detail.get("index") is not None
-                else ("anonymous", kind, position)
-            )
+            key = self._detail_key(detail, kind)
             current = self.details.setdefault(key, {})
-            for name in ("type", "id", "index", "format"):
+            current.setdefault("type", kind)
+            for name in ("id", "index", "format"):
                 if detail.get(name) is not None:
+                    if name == "index":
+                        # Retain the latest sequence position for replay order;
+                        # never use this optional field to associate details.
+                        current[name] = detail[name]
+                        continue
                     if name in current and current[name] != detail[name]:
                         raise ToolangError(
                             "reasoning detail changed its native identity"
@@ -923,6 +924,40 @@ class _ChatReasoning:
                 ):
                     deltas.append((("reasoning", key), text))
         return deltas
+
+    def _detail_key(self, detail: Mapping[str, Any], kind: str) -> tuple[object, ...]:
+        """Use native IDs; associate ID-less fragments only when unambiguous."""
+
+        raw_id = detail.get("id")
+        identity = (raw_id, kind) if isinstance(raw_id, str) and raw_id else None
+        anonymous = self.detail_anonymous.get(kind)
+        if identity is not None:
+            known = self.detail_ids.get(identity)
+            if known is not None:
+                return known
+
+            # Adopt the ID only when a previously observed ID-less block exists.
+            if anonymous is not None:
+                current = self.details.get(anonymous)
+            else:
+                current = None
+            if anonymous is not None and current is not None and "id" not in current:
+                self.detail_ids[identity] = anonymous
+                return anonymous
+
+            key = ("id", raw_id, kind)
+            self.detail_ids[identity] = key
+            return key
+
+        # Without an ID, do not guess that a fragment belongs to an identified
+        # block, even when it is the only such block. It may be another part.
+        if anonymous is None or (
+            anonymous in self.details and "id" in self.details[anonymous]
+        ):
+            self.anonymous_serial += 1
+            anonymous = ("anonymous", kind, self.anonymous_serial)
+            self.detail_anonymous[kind] = anonymous
+        return anonymous
 
     def values(self, *, complete: bool = True) -> list[tuple[object, ReasoningPart]]:
         readable = any(
