@@ -33,8 +33,7 @@ from toolang.plugin.models.collections import (
     catalog_provider_views,
 )
 from toolang.setup import AgentSetup
-from toolang.setup.watcher import SetupWatcher, load_setup
-from toolang.setup.model_listing import ModelListing
+from toolang.setup.watcher import load_setup
 from toolang.setup.records import ModelRecord
 
 
@@ -62,7 +61,7 @@ def models_command(
     """List or export model catalog entries."""
 
     try:
-        listing = _listing(ctx, model_catalog=model_catalog)
+        listing = _setup(ctx, model_catalog=model_catalog).model_listing()
     except TypeError as error:
         raise ClickException(str(error)) from error
     dataset = listing.all if all_ else listing.default
@@ -187,20 +186,6 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     return (
         AgentLayout.resident(context_root(ctx), agent or "default"),
         agent is not None,
-    )
-
-
-def _listing(ctx: typer.Context, *, model_catalog: Path | None = None) -> ModelListing:
-    """Load the complete cached catalog in the selected inspection scope."""
-
-    layout, agent_context = _layout(ctx)
-    return asyncio.run(
-        SetupWatcher(
-            layout,
-            model_catalog=resolve_model_catalog_option(model_catalog),
-            agent_context=agent_context,
-            validate_defaults=False,
-        ).load_catalog_listing()
     )
 
 

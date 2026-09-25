@@ -15,6 +15,8 @@ from toolang.common.layout import AgentLayout
 from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
 
+from .model_listing import ModelListing, build_model_listing
+
 
 @dataclass(frozen=True, slots=True)
 class AgentEnvironment:
@@ -71,6 +73,7 @@ class AgentSetup:
     _catalog_loader: Callable[[], ModelCatalogSnapshot] | None = field(
         default=None, repr=False, compare=False
     )
+    _model_listing: ModelListing | None = field(default=None, repr=False, compare=False)
     _all_tools: ToolCollection | None = field(default=None, repr=False, compare=False)
     _allowed_model_refs: frozenset[str] | None = field(
         default=None, repr=False, compare=False
@@ -89,6 +92,13 @@ class AgentSetup:
         if all and self._all_tools is not None:
             return self._all_tools
         return self.tools
+
+    def model_listing(self) -> ModelListing:
+        """Read this setup version's flat catalog and policy for inspection."""
+
+        if self._model_listing is not None:
+            return self._model_listing
+        return build_model_listing(self.model_catalog(all=True), allow_models=None)
 
     def model_catalog(self, *, all: bool = False) -> ModelCatalogSnapshot:
         """Read the default view, or materialize this version's complete catalog."""

@@ -1,10 +1,11 @@
-"""Flat provider/model records for the persistent inspection catalog."""
+"""Flat provider/model records for the persistent runtime setup catalog."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Annotated
+from types import MappingProxyType
+from typing import Annotated, cast
 
 import msgspec
 
@@ -50,25 +51,43 @@ class ModelRecord(
     family: str | None = None
     attachment: bool | None = None
     reasoning: bool | None = None
-    reasoning_options: tuple[dict[str, object], ...] | None = None
+    reasoning_options: tuple[Mapping[str, object], ...] | None = None
     tool_call: bool | None = None
-    interleaved: bool | dict[str, object] | None = None
+    interleaved: bool | Mapping[str, object] | None = None
     structured_output: bool | None = None
     temperature: bool | None = None
     knowledge: str | None = None
     release_date: str | None = None
     last_updated: str | None = None
-    modalities: dict[str, tuple[str, ...]] = msgspec.field(default_factory=dict)
+    modalities: Mapping[str, tuple[str, ...]] = msgspec.field(default_factory=dict)
     open_weights: bool | None = None
-    limit: dict[str, Positive] = msgspec.field(default_factory=dict)
+    limit: Mapping[str, Positive] = msgspec.field(default_factory=dict)
     status: str | None = None
-    experimental: dict[str, object] | None = None
-    connection: dict[str, object] | None = None
-    cost: dict[str, object] | None = None
+    experimental: Mapping[str, object] | None = None
+    connection: Mapping[str, object] | None = None
+    cost: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         parse_model_query_date(self.release_date)
         parse_model_query_date(self.last_updated)
+        msgspec.structs.force_setattr(
+            self,
+            "modalities",
+            MappingProxyType(
+                {name: tuple(values) for name, values in self.modalities.items()}
+            ),
+        )
+        msgspec.structs.force_setattr(self, "limit", MappingProxyType(dict(self.limit)))
+        for name in (
+            "reasoning_options",
+            "interleaved",
+            "experimental",
+            "connection",
+            "cost",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                msgspec.structs.force_setattr(self, name, _freeze(value))
 
     @property
     def model(self) -> str:
@@ -79,6 +98,16 @@ class ModelRecord(
     @property
     def ready(self) -> bool:
         return self.adapter is not None and self.api_present and self.env_present
+
+
+def _freeze(value: object) -> object:
+    """Detach nested declarations before publishing them in an immutable setup."""
+
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 class CatalogRecords(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -115,6 +144,26 @@ class _Metadata(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     environment: tuple[tuple[str, str], ...]
 
 
+class _Document(msgspec.Struct, forbid_unknown_fields=True):
+    schema: int
+    kind: str
+    key: str
+    metadata: _Metadata
+    providers: msgspec.Raw
+    models: msgspec.Raw
+
+
+_DOCUMENT_DECODER = msgspec.json.Decoder(_Document)
+_PROVIDER_DECODER = msgspec.json.Decoder(tuple[ProviderRecord, ...])
+_MODEL_DECODER = msgspec.json.Decoder(tuple[ModelRecord, ...])
+
+
+def _decode_document(payload: str) -> dict[str, object]:
+    # Check dependencies before allocating model records. Native decoding avoids
+    # an intermediate catalog-sized tree of dictionaries and a conversion pass.
+    return msgspec.structs.asdict(_DOCUMENT_DECODER.decode(payload))
+
+
 class ModelListingCache:
     """One atomically replaced listing per root or agent, including --catalog."""
 
@@ -128,7 +177,11 @@ class ModelListingCache:
 
         try:
             document = load_document(
-                self.path, kind="model_listing", key="merged", scan_content=False
+                self.path,
+                kind="model_listing",
+                key="merged",
+                scan_content=False,
+                decode=_decode_document,
             )
             require_fields(
                 document,
@@ -143,9 +196,11 @@ class ModelListingCache:
                 != environment_fingerprint(metadata.environment_names, environ)
             ):
                 return None
-            return msgspec.convert(
-                {"providers": document["providers"], "models": document["models"]},
-                type=CatalogRecords,
+            return CatalogRecords(
+                providers=_PROVIDER_DECODER.decode(
+                    cast(msgspec.Raw, document["providers"])
+                ),
+                models=_MODEL_DECODER.decode(cast(msgspec.Raw, document["models"])),
             )
         except Exception:
             # Cache damage must never make an otherwise valid source unreadable.

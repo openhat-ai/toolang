@@ -370,10 +370,12 @@ def test_compact_reads_history_pages_with_supplied_summary(tmp_path):
     from toolang.execution.executor.executor import RunSpec
     from toolang.execution.executor.tool_history import _ToolHistory
     from toolang.lang.input import RunnableInput
+    from toolang.plugin.toolsets.loading import load_tools
 
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
+        tools=load_tools(toolsets=("history",)),
         responses=[reply("old output"), reply("new output"), reply("retained")],
     )
 
@@ -395,7 +397,9 @@ def test_compact_reads_history_pages_with_supplied_summary(tmp_path):
             async def run_compact(**input):
                 return await harness.executor.run(
                     RunSpec(
-                        setup=replace(harness.setup, tools=compact_tools()),
+                        setup=replace(
+                            harness.setup, tools=compact_tools(harness.setup)
+                        ),
                         state=compact_state(),
                         thread=compact_thread,
                         limits=harness.setup.limits,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -81,6 +81,11 @@ def store_document(
     return True
 
 
+class _Envelope(msgspec.Struct, forbid_unknown_fields=True):
+    digest: str
+    payload: msgspec.Raw
+
+
 def load_document(
     path: Path,
     *,
@@ -88,6 +93,7 @@ def load_document(
     key: str,
     fast_json: bool = False,
     scan_content: bool = True,
+    decode: Callable[[str], dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Validate integrity and identity; content scanning is optional for catalogs."""
 
@@ -97,21 +103,22 @@ def load_document(
     if scan_content and _serialized_data_is_unsafe(content):
         raise ValueError("model cache entry contains unsafe data")
     del fast_json  # All cache readers now use the same native decoder.
-    raw = msgspec.json.decode(content)
-    if not isinstance(raw, Mapping):
-        raise TypeError("model cache entry must be an object")
-    require_fields(raw, frozenset({"digest", "payload"}), label="cache envelope")
-    checksum = raw.get("digest")
-    payload = raw.get("payload")
-    if not isinstance(checksum, str) or not isinstance(payload, Mapping):
-        raise TypeError("model cache entry envelope is invalid")
+    envelope = msgspec.json.decode(content, type=_Envelope)
+    checksum = envelope.digest
     prefix = f'{{"digest":"{checksum}","payload":'
     if not content.startswith(prefix) or not content.endswith("}"):
         raise ValueError("model cache entry envelope is not canonical")
     payload_content = content[len(prefix) : -1]
     if checksum != text_digest(payload_content):
         raise ValueError("model cache entry digest does not match its payload")
-    document = {str(name): value for name, value in payload.items()}
+    payload = (
+        msgspec.json.decode(payload_content)
+        if decode is None
+        else decode(payload_content)
+    )
+    if not isinstance(payload, Mapping):
+        raise TypeError("model cache entry payload must be an object")
+    document = dict(payload)
     if (
         document.get("schema") != CACHE_SCHEMA
         or document.get("kind") != kind

@@ -1,15 +1,25 @@
-"""Query and export the complete flat inspection catalog without runtime routes."""
+"""Query, export, and hydrate the flat catalog owned by runtime setup."""
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass, fields, replace
 from functools import cached_property
 from typing import cast
 
 import msgspec
 
-from toolang.base.types.model import ModelCatalogSnapshot
+from toolang.base.protocols.model import ModelAdapter
+from toolang.base.types.model import (
+    Model,
+    ModelFacts,
+    ModelCatalogSnapshot,
+    ModelProvider,
+    ModelToolang,
+    Provider,
+    ProviderToolang,
+)
+from toolang.common.cache import canonical_value
 from toolang.common.query import CollectionSchema, QueryDataset, QueryField, ScalarValue
 from toolang.plugin.models.collections import (
     MODEL_SCHEMA,
@@ -22,6 +32,11 @@ from toolang.plugin.models.collections import (
 from .cache import _snapshot_document
 from .models import order_models
 from .records import CatalogRecords, ModelRecord, ProviderRecord
+from .routes import resolve_catalog_providers
+
+_FACT_NAMES = tuple(
+    field.name for field in fields(ModelFacts) if field.name != "provider"
+)
 
 _RECORD_SCHEMA = cast(
     CollectionSchema[ModelRecord],
@@ -83,23 +98,72 @@ class ModelListing:
         return _RecordDataset(_RECORD_SCHEMA, self.records.models, _prevalidated=True)
 
     @cached_property
-    def default(self) -> QueryDataset[ModelRecord]:
-        models = sorted(
-            (
-                model
-                for model in self.records.models
-                if model.allowed_order is not None and model.ready
-            ),
-            key=lambda model: cast(int, model.allowed_order),
+    def effective_models(self) -> tuple[ModelRecord, ...]:
+        return tuple(
+            sorted(
+                (
+                    model
+                    for model in self.records.models
+                    if model.allowed_order is not None and model.ready
+                ),
+                key=lambda model: cast(int, model.allowed_order),
+            )
         )
-        return _RecordDataset(_RECORD_SCHEMA, models, _prevalidated=True)
+
+    @cached_property
+    def default(self) -> QueryDataset[ModelRecord]:
+        return _RecordDataset(_RECORD_SCHEMA, self.effective_models, _prevalidated=True)
+
+    def resolve(
+        self,
+        models: Sequence[ModelRecord],
+        *,
+        adapters: Mapping[str, ModelAdapter],
+        environ: Mapping[str, str],
+        revision: str,
+        include_empty_providers: bool = False,
+    ) -> ModelCatalogSnapshot:
+        """Hydrate selected declarations and resolve routes in the current setup."""
+
+        provider_ids = {model.provider for model in models}
+        providers = {
+            provider.id: Provider(
+                id=provider.id,
+                name=provider.name,
+                env=provider.env,
+                npm=provider.npm,
+                api=provider.api,
+                doc=provider.doc,
+                _toolang=ProviderToolang(
+                    adapter=provider.adapter, env=provider.env_rule
+                ),
+            )
+            for provider in self.records.providers
+            if include_empty_providers or provider.id in provider_ids
+        }
+        values = tuple(
+            Model(
+                **{name: getattr(model, name) for name in _FACT_NAMES},
+                provider=(
+                    msgspec.convert(model.connection, type=ModelProvider)
+                    if model.connection is not None
+                    else None
+                ),
+                _toolang=ModelToolang(provider=model.provider),
+            )
+            for model in models
+        )
+        snapshot = ModelCatalogSnapshot(
+            providers=providers, models=values, revision=revision
+        )
+        return resolve_catalog_providers(snapshot, adapters=adapters, environ=environ)
 
     def export(self, models: Sequence[ModelRecord]) -> dict[str, object]:
         """Reconstruct the public nested JSON only for selected export records."""
 
         grouped: dict[str, dict[str, object]] = {}
         for model in models:
-            data = msgspec.to_builtins(model)
+            data = msgspec.to_builtins(model, enc_hook=_encode_mapping)
             for name in (
                 "provider",
                 "adapter",
@@ -133,6 +197,12 @@ class ModelListing:
                 "models": dict(sorted(grouped[provider_id].items())),
             }
         return result
+
+
+def _encode_mapping(value: object) -> object:
+    if isinstance(value, Mapping):
+        return canonical_value(value)
+    raise TypeError(f"unsupported catalog value: {type(value).__name__}")
 
 
 def build_model_listing(
