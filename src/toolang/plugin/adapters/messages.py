@@ -538,12 +538,21 @@ def _headers(
     api_key = credential_value(model._toolang.route.env, environ=environ)
     if not api_key and model._toolang.route.env != ():
         raise ToolangError("Messages adapter requires a resolved API key")
-    return {
+    gateway_route = model._toolang.provider.lower() in {"openrouter", "vercel"}
+    headers = {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
-        **({"x-api-key": api_key} if api_key else {}),
-        **model._toolang.route.headers,
     }
+    if api_key:
+        headers["authorization" if gateway_route else "x-api-key"] = (
+            f"Bearer {api_key}" if gateway_route else api_key
+        )
+    for name, value in model._toolang.route.headers.items():
+        existing = next((key for key in headers if key.lower() == name.lower()), None)
+        if existing is not None:
+            del headers[existing]
+        headers[name] = value
+    return headers
 
 
 def _tool_call(block: Mapping[str, object], *, fallback: str) -> ToolCall:

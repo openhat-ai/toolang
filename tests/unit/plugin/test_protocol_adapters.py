@@ -349,6 +349,58 @@ def test_messages_adapter_appends_resource_to_resolved_api(api: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("provider", "env", "expected"),
+    [
+        ("anthropic", ("ANTHROPIC_API_KEY",), {"x-api-key": "secret"}),
+        (
+            "openrouter",
+            ("OPENROUTER_API_KEY",),
+            {"authorization": "Bearer secret"},
+        ),
+        (
+            "vercel",
+            ("AI_GATEWAY_API_KEY",),
+            {"authorization": "Bearer secret"},
+        ),
+    ],
+)
+def test_messages_auth_matches_protocol_and_gateway_route(provider, env, expected):
+    model = _model(provider=provider).with_route(
+        _route(
+            provider=provider, adapter="messages", api="https://api.example/v1", env=env
+        )
+    )
+
+    headers = messages_adapter._headers(model, environ={env[0]: "secret"})
+
+    assert {key: headers[key] for key in expected} == expected
+    assert (
+        "x-api-key" not in headers
+        if provider in {"openrouter", "vercel"}
+        else "authorization" not in headers
+    )
+
+
+def test_messages_route_headers_override_default_auth_case_insensitively():
+    model = _model(provider="vercel").with_route(
+        replace(
+            _route(
+                provider="vercel",
+                adapter="messages",
+                api="https://ai-gateway.vercel.sh/v1",
+                env=("AI_GATEWAY_API_KEY",),
+            ),
+            headers={"Authorization": "Bearer explicitly-configured"},
+        )
+    )
+
+    headers = messages_adapter._headers(model, environ={"AI_GATEWAY_API_KEY": "secret"})
+
+    assert headers["Authorization"] == "Bearer explicitly-configured"
+    assert "authorization" not in headers
+
+
 def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> None:
     route = _route(
         provider="anthropic",

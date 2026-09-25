@@ -232,6 +232,14 @@ routes or readiness. The version-pinned full view includes resolved facts in
 its private in-memory serialization. Changing credentials rebuilds setup facts
 without rewriting an otherwise unchanged catalog cache.
 
+For the built-in `openrouter` and `vercel` gateway providers, model IDs with
+`anthropic/<model>` or `openai/<model>` select the Messages or Responses adapter,
+respectively, unless the model or trusted provider explicitly declares another
+adapter. Other namespaces keep the provider default (currently Chat Completions);
+model ID prefixes do not imply a Google Generate Content route. Gateway model
+routes retain the gateway API base. The Messages adapter uses Bearer auth for
+these gateway providers, while direct Anthropic Messages routes use `x-api-key`.
+
 The resolver applies:
 
 - model-level `provider.api` before provider-level catalog `api` before the
