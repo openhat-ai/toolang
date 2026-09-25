@@ -1161,6 +1161,10 @@ def test_chat_reasoning_detail_id_with_different_types_keeps_native_parts_distin
         ("summary", None),
         ("", "ciphertext"),
     ]
+    assert [part.provider_metadata["type"] for part in parts] == [
+        "reasoning.summary",
+        "reasoning.encrypted",
+    ]
 
 
 def test_chat_reasoning_detail_adopts_id_when_it_appears_after_idless_delta(

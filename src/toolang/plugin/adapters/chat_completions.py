@@ -930,18 +930,15 @@ class _ChatReasoning:
 
         raw_id = detail.get("id")
         identity = (raw_id, kind) if isinstance(raw_id, str) and raw_id else None
-        anonymous = self.detail_anonymous.get(kind)
         if identity is not None:
             known = self.detail_ids.get(identity)
             if known is not None:
                 return known
 
-            # Adopt the ID only when a previously observed ID-less block exists.
-            if anonymous is not None:
-                current = self.details.get(anonymous)
-            else:
-                current = None
+            anonymous = self.detail_anonymous.get(kind)
+            current = self.details.get(anonymous) if anonymous is not None else None
             if anonymous is not None and current is not None and "id" not in current:
+                # Adopt an ID that appears after this ID-less stream fragment.
                 self.detail_ids[identity] = anonymous
                 return anonymous
 
@@ -949,11 +946,11 @@ class _ChatReasoning:
             self.detail_ids[identity] = key
             return key
 
-        # Without an ID, do not guess that a fragment belongs to an identified
-        # block, even when it is the only such block. It may be another part.
-        if anonymous is None or (
-            anonymous in self.details and "id" in self.details[anonymous]
-        ):
+        # With no ID there is no safe way to infer ownership from an identified
+        # block. Coalesce ID-less fragments together, independently of index.
+        anonymous = self.detail_anonymous.get(kind)
+        current = self.details.get(anonymous) if anonymous is not None else None
+        if anonymous is None or (current is not None and "id" in current):
             self.anonymous_serial += 1
             anonymous = ("anonymous", kind, self.anonymous_serial)
             self.detail_anonymous[kind] = anonymous
