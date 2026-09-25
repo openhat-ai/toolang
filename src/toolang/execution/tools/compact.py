@@ -86,7 +86,9 @@ async def execute(
                 )
             # This isolated program has only read-only history tools. In particular
             # it cannot reload into the human's State or transfer out of compact.
-            setup = replace(frame.run.setup, models=models, tools=compact_tools())
+            setup = replace(
+                frame.run.setup, models=models, tools=compact_tools(frame.run.setup)
+            )
             spec = RunSpec(
                 setup=setup,
                 state=compact_state(),

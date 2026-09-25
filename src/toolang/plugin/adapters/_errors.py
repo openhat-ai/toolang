@@ -10,7 +10,6 @@ from functools import wraps
 from typing import Any, ParamSpec, TypeVar, cast
 
 import httpx
-from openai import APIConnectionError, APIError, APIStatusError
 
 from toolang.base.errors import ModelResponseError
 from toolang.base.types.run import ModelUsage, ModelPartUpdate, ModelStreamHandler
@@ -87,6 +86,8 @@ async def raise_for_model_status(response: httpx.Response) -> None:
 
 
 def _classify(error: Exception) -> ModelResponseError | None:
+    from openai import APIConnectionError, APIError, APIStatusError
+
     if isinstance(error, ModelResponseError):
         return error
     if isinstance(error, json.JSONDecodeError):
@@ -141,6 +142,8 @@ def model_transport_errors(
     partial_text: Callable[[], str] = lambda: "",
 ) -> Iterator[None]:
     """Normalize known failures and retain response facts; never catch cancellation."""
+
+    from openai import APIError
 
     try:
         yield

@@ -140,16 +140,20 @@ class ModelCollection:
 
     models: tuple[Model, ...]
     _by_ref: Mapping[str, Model]
-    _matcher: QueryDataset[ModelQueryView]
+    _matcher_cache: QueryDataset[ModelQueryView] | None
 
     def __init__(
         self,
         models: Sequence[Model] = (),
         *,
         query_views: Sequence[ModelQueryView] | None = None,
+        _lazy_queries: bool = False,
     ) -> None:
         values = tuple(models)
         _validate_models(values)
+        if query_views is None and _lazy_queries:
+            self._initialize(values, matcher=None)
+            return
         if query_views is None:
             views = tuple(
                 _catalog_model_view(
@@ -179,13 +183,30 @@ class ModelCollection:
         self,
         values: tuple[Model, ...],
         *,
-        matcher: QueryDataset[ModelQueryView],
+        matcher: QueryDataset[ModelQueryView] | None,
     ) -> None:
         _validate_models(values)
         by_ref = {model.ref: model for model in values}
         object.__setattr__(self, "models", values)
         object.__setattr__(self, "_by_ref", MappingProxyType(by_ref))
-        object.__setattr__(self, "_matcher", matcher)
+        object.__setattr__(self, "_matcher_cache", matcher)
+
+    @property
+    def _matcher(self) -> QueryDataset[ModelQueryView]:
+        matcher = self._matcher_cache
+        if matcher is None:
+            matcher = MODEL_DEFINITION.dataset(
+                tuple(
+                    _catalog_model_view(
+                        model,
+                        available=model._toolang.ready,
+                        adapter=model._toolang.route.adapter,
+                    )
+                    for model in self.models
+                )
+            )
+            object.__setattr__(self, "_matcher_cache", matcher)
+        return matcher
 
     @property
     def entries(self) -> tuple[Model, ...]:
@@ -264,6 +285,8 @@ class ModelCollection:
     def compact(self) -> ModelCollection:
         """Fix this subset as a standalone publication matcher."""
 
+        if self._matcher_cache is None:
+            return ModelCollection(self.models, _lazy_queries=True)
         return ModelCollection(self.models, query_views=self.query_views())
 
     def contains(self, ref: str) -> bool:
@@ -307,7 +330,7 @@ class ModelCollection:
         if models == self.models:
             return self
         derived = object.__new__(ModelCollection)
-        derived._initialize(models, matcher=self._matcher)
+        derived._initialize(models, matcher=self._matcher_cache)
         return derived
 
 

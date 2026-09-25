@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from string import Template
-from typing import cast
+from typing import Protocol, cast
 
-from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
     Model,
     ModelCatalogSnapshot,
@@ -79,10 +78,17 @@ _ENV_OVERRIDES: Mapping[str, ResolvedEnv] = {
 }
 
 
+class RouteAdapter(Protocol):
+    """The adapter declaration needed to resolve a route."""
+
+    @property
+    def default_api(self) -> str | None: ...
+
+
 def resolve_catalog_providers(
     snapshot: ModelCatalogSnapshot,
     *,
-    adapters: Mapping[str, ModelAdapter],
+    adapters: Mapping[str, RouteAdapter],
     environ: Mapping[str, str],
 ) -> ModelCatalogSnapshot:
     """Resolve every provider once and return one frozen snapshot."""
@@ -115,7 +121,7 @@ def resolve_catalog_providers(
 def resolve_provider(
     provider: Provider,
     *,
-    adapters: Mapping[str, ModelAdapter],
+    adapters: Mapping[str, RouteAdapter],
     environ: Mapping[str, str],
 ) -> Provider:
     """Publish a provider default route without changing its declarations."""
@@ -143,7 +149,7 @@ def resolve_model(
     model: Model,
     provider: Provider,
     *,
-    adapters: Mapping[str, ModelAdapter],
+    adapters: Mapping[str, RouteAdapter],
     environ: Mapping[str, str],
 ) -> Model:
     """Resolve a model against its published provider defaults."""
@@ -172,7 +178,7 @@ def resolve_model(
 
 
 def catalog_environment_names(
-    snapshot: ModelCatalogSnapshot, *, adapters: Mapping[str, ModelAdapter]
+    snapshot: ModelCatalogSnapshot, *, adapters: Mapping[str, RouteAdapter]
 ) -> tuple[str, ...]:
     """Enumerate effective route dependencies, including currently missing names."""
 
@@ -199,7 +205,7 @@ def _api_template(value: str | None, default: str | None) -> str | None:
 
 
 def _provider_api_template(
-    provider: Provider, adapter: ModelAdapter | None
+    provider: Provider, adapter: RouteAdapter | None
 ) -> str | None:
     return _api_template(
         provider.api,
@@ -210,7 +216,7 @@ def _provider_api_template(
 
 
 def _model_api_template(
-    provider: Provider, model: Model, adapter: ModelAdapter | None
+    provider: Provider, model: Model, adapter: RouteAdapter | None
 ) -> str | None:
     override = model.provider or ModelProvider()
     return _api_template(
@@ -219,7 +225,7 @@ def _model_api_template(
     )
 
 
-def _default_api(adapter: ModelAdapter | None, *, npm: str | None) -> str | None:
+def _default_api(adapter: RouteAdapter | None, *, npm: str | None) -> str | None:
     mapped = _NPM_ROUTES.get(npm or "")
     if mapped is not None and mapped[1] is not None:
         return mapped[1]

@@ -1250,14 +1250,14 @@ def test_models_json_uses_the_published_version_without_rereading_source(
     monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
     path = tmp_path / "catalog.json"
     path.write_text(json.dumps(_catalog_data()))
-    original_setup = model_catalog_commands._listing
+    original_setup = model_catalog_commands._setup
 
     def setup_then_remove_source(*args, **kwargs):
         setup = original_setup(*args, **kwargs)
         path.unlink()
         return setup
 
-    monkeypatch.setattr(model_catalog_commands, "_listing", setup_then_remove_source)
+    monkeypatch.setattr(model_catalog_commands, "_setup", setup_then_remove_source)
     result = runner.invoke(
         cli.app,
         ["--root", str(tmp_path), "models", *(["--all"] if all_ else []), "--json"],
@@ -1283,7 +1283,7 @@ def test_full_catalog_can_inspect_unready_configured_models(
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
-def test_catalog_cli_reports_published_route_failures_without_resolving_again(
+def test_catalog_cli_uses_published_environment_for_route_failures(
     tmp_path,
     monkeypatch,
     command,
@@ -1291,7 +1291,6 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
     import asyncio
 
     from toolang.common.layout import AgentLayout
-    from toolang.setup import routes
     from toolang.setup.watcher import load_setup
 
     _disable_local_discovery(monkeypatch)
@@ -1306,20 +1305,9 @@ def test_catalog_cli_reports_published_route_failures_without_resolving_again(
         )
     )
     monkeypatch.setattr(model_catalog_commands, "_setup", lambda *args, **kwargs: setup)
-    if command == "models":
-        from toolang.setup.model_listing import build_model_listing
-
-        listing = build_model_listing(setup.model_catalog(all=True), allow_models=None)
-        monkeypatch.setattr(
-            model_catalog_commands, "_listing", lambda *args, **kwargs: listing
-        )
     monkeypatch.setenv("TEST_API_KEY", "added-after-publication")
     source.unlink()
 
-    def unexpected_resolution(*args, **kwargs):
-        raise AssertionError("CLI must consume published routes")
-
-    monkeypatch.setattr(routes, "resolve_provider", unexpected_resolution)
     rows = []
     monkeypatch.setattr(
         model_catalog_commands,

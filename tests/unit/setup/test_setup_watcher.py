@@ -36,6 +36,19 @@ from toolang.setup.watcher import DEFAULT_INTERVAL_MS, load_setup
 from toolang.base.protocols.tool import Tool
 
 
+def _mock_config(monkeypatch, scope, load):
+    previous = watcher_module.capture_setup_config
+
+    def capture(path):
+        is_agent = path.parent.parent.name == "agents"
+        if is_agent == (scope == "agent"):
+            config = load(path)
+            return config, watcher_module.digest(config)
+        return previous(path)
+
+    monkeypatch.setattr(watcher_module, "capture_setup_config", capture)
+
+
 class _Tool(Tool):
     name = "one"
     plugin_name = "test"
@@ -78,7 +91,7 @@ def test_setup_watcher_persists_secret_free_model_projection(
     cache_files = _context_cache_files(tmp_path, "alice")
     assert _model_cache_names(tmp_path, "alice") == (
         "llama_cpp",
-        "models_dev",
+        "merged",
         "ollama",
     )
     assert all("secret" not in path.read_text(encoding="utf-8") for path in cache_files)
@@ -172,7 +185,7 @@ def test_model_context_ignores_defaults_limits_and_tool_allow(
         "default": {"model": "test/one"},
         "limit": {"tokens": 123},
     }
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
 
     setup = asyncio.run(SetupWatcher(layout).refresh())
 
@@ -180,7 +193,7 @@ def test_model_context_ignores_defaults_limits_and_tool_allow(
     assert setup.limits.tokens == 123
     assert _model_cache_names(tmp_path, "alice") == (
         "llama_cpp",
-        "models_dev",
+        "merged",
         "ollama",
     )
 
@@ -200,10 +213,10 @@ def test_model_cache_separates_root_and_agent_contexts(
     assert bob.models.refs() == ("test/one",)
     assert _model_cache_names(tmp_path, "alice") == (
         "llama_cpp",
-        "models_dev",
+        "merged",
         "ollama",
     )
-    assert _model_cache_names(tmp_path, "bob") == ("llama_cpp", "models_dev", "ollama")
+    assert _model_cache_names(tmp_path, "bob") == ("llama_cpp", "merged", "ollama")
     assert _context_cache_files(tmp_path, "alice") != _context_cache_files(
         tmp_path, "bob"
     )
@@ -373,7 +386,7 @@ def test_model_cache_does_not_bypass_catalog_size_limit(
         "[plugin.model_catalog.models_dev]\nmax_bytes = 1\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
 
     assert asyncio.run(watcher.refresh()) is expected
     assert watcher.diagnostics()[0].code == "value-error"
@@ -384,8 +397,8 @@ def test_model_cache_does_not_bypass_catalog_size_limit(
     with pytest.raises(ValueError, match="model catalog exceeds 1 bytes"):
         asyncio.run(fresh.refresh())
 
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
-    monkeypatch.setattr(watcher_module, "load_agent_config", lambda _layout: {})
+    _mock_config(monkeypatch, "root", lambda _layout: config)
+    _mock_config(monkeypatch, "agent", lambda _layout: {})
     monkeypatch.setattr(
         watcher_module,
         "load_setup_envs",
@@ -740,14 +753,14 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     catalog_calls: list[dict[str, dict[str, object]]] = []
     original_catalog_loader = watcher_module.load_model_catalogs
 
-    monkeypatch.setattr(
-        watcher_module,
-        "load_setup_config",
+    _mock_config(
+        monkeypatch,
+        "root",
         lambda _layout: root_config,
     )
-    monkeypatch.setattr(
-        watcher_module,
-        "load_agent_config",
+    _mock_config(
+        monkeypatch,
+        "agent",
         lambda _layout: agent_config,
     )
     monkeypatch.setattr(
@@ -811,12 +824,8 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
         "limit": {"tokens": 200},
     }
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(
-        watcher_module, "load_setup_config", lambda _layout: root_config
-    )
-    monkeypatch.setattr(
-        watcher_module, "load_agent_config", lambda _layout: agent_config
-    )
+    _mock_config(monkeypatch, "root", lambda _layout: root_config)
+    _mock_config(monkeypatch, "agent", lambda _layout: agent_config)
     monkeypatch.setattr(
         watcher_module,
         "load_tools",
@@ -877,7 +886,7 @@ def test_setup_model_order_survives_cached_publication(tmp_path, monkeypatch, qu
     )
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     config = {} if query is None else {"allow": {"models": query}}
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
     first = asyncio.run(watcher.refresh())
     providers = (
         ("google", "openai", "aardvark")
@@ -898,7 +907,7 @@ def test_setup_watcher_rejects_compact_excluded_from_effective_models(
     _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     config = {"allow": {"models": "test/one"}, "compact": {"model": "test/two"}}
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
     with pytest.raises(ToolangError, match="available, allowed"):
         asyncio.run(watcher.refresh())
 
@@ -913,7 +922,7 @@ def test_setup_watcher_rejects_default_excluded_from_effective_models(
         "default": {"model": "test/two"},
     }
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
 
     with pytest.raises(ToolangError, match="model ref is unavailable: test/two"):
         asyncio.run(watcher.refresh())
@@ -931,7 +940,7 @@ def test_setup_watcher_validates_default_model_parameters_before_publication(
     )
     config: dict[str, object] = {"default": {"model": "test/one effort=high"}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
 
     setup = asyncio.run(watcher.refresh())
 
@@ -957,7 +966,7 @@ def test_setup_watcher_retains_last_setup_when_default_becomes_unavailable(
     _write_catalog(path, ("one", "two"))
     config = {"default": {"model": "test/two"}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
     initial = asyncio.run(watcher.refresh())
     _write_catalog(path, ("one",))
 
@@ -975,7 +984,7 @@ def test_setup_watcher_reuses_publication_for_state_only_config_changes(
     _write_catalog(tmp_path / "catalog.json", ("one",))
     config: dict[str, object] = {"allow": {"prompts": ["prompt/one"]}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    _mock_config(monkeypatch, "root", lambda _layout: config)
     initial = asyncio.run(watcher.refresh())
     config = {"allow": {"prompts": ["prompt/two"]}}
 
@@ -1008,9 +1017,7 @@ def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
     _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={})
     monkeypatch.setattr(watcher_module, "load_tools", lambda **kwargs: registered)
-    monkeypatch.setattr(
-        watcher_module, "load_agent_config", lambda layout: {"allow": {"tools": []}}
-    )
+    _mock_config(monkeypatch, "agent", lambda layout: {"allow": {"tools": []}})
     setup = asyncio.run(watcher.refresh())
     assert not setup.tools.user
     assert setup.tool_collection() is setup.tools
@@ -1021,6 +1028,17 @@ def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
     assert setup.tool_collection(all=True) is complete
     assert complete.user
     assert not setup.tools.user
+
+    from toolang.execution.compaction import compact_tools
+
+    def unexpected_load(*args, **kwargs):
+        raise AssertionError("compaction must use setup-owned tools")
+
+    monkeypatch.setattr("toolang.plugin.toolsets.loading.load_tools", unexpected_load)
+    selected = compact_tools(setup)
+    assert selected
+    assert all(name.startswith("history__") for name in selected)
+    assert all(selected[name] is complete[name] for name in selected)
     assert set(setup.tools) == {
         "_toolang__run",
         "_toolang__execute",
@@ -1038,8 +1056,8 @@ def _watcher(
     envs: dict[str, str],
     patch_local: bool = True,
 ) -> SetupWatcher:
-    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: {})
-    monkeypatch.setattr(watcher_module, "load_agent_config", lambda _layout: {})
+    _mock_config(monkeypatch, "root", lambda _layout: {})
+    _mock_config(monkeypatch, "agent", lambda _layout: {})
     monkeypatch.setattr(watcher_module, "load_setup_envs", lambda _layout: dict(envs))
     monkeypatch.setattr(
         watcher_module,
@@ -1132,18 +1150,16 @@ def _write_catalog(
 
 def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
     return tuple(
-        sorted(
-            (root / "agents" / agent / ".setup" / "models" / "sources").glob("*.json")
-        )
+        sorted((root / "agents" / agent / ".setup" / "models").rglob("*.json"))
     )
 
 
 def _model_cache_names(root: Path, agent: str) -> tuple[str, ...]:
-    return tuple(path.stem for path in _context_cache_files(root, agent))
+    return tuple(sorted(path.stem for path in _context_cache_files(root, agent)))
 
 
 def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
-    return tuple(sorted((root / ".setup" / "models" / "sources").glob("*.json")))
+    return tuple(sorted((root / ".setup" / "models").rglob("*.json")))
 
 
 def test_local_probe_keeps_its_stamp_across_identical_probes(
@@ -1195,7 +1211,7 @@ def test_each_catalog_persists_one_file_without_unmodelled_fields(
 
     assert _model_cache_names(tmp_path, "alice") == (
         "llama_cpp",
-        "models_dev",
+        "merged",
         "ollama",
     )
     for path in _context_cache_files(tmp_path, "alice"):
@@ -1211,9 +1227,9 @@ def test_setup_filters_readiness_and_allow_but_retains_complete_catalog(
     data["offline"] = {**data["test"], "id": "offline", "env": ["MISSING_KEY"]}
     path.write_text(json.dumps(data))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    monkeypatch.setattr(
-        watcher_module,
-        "load_setup_config",
+    _mock_config(
+        monkeypatch,
+        "root",
         lambda _layout: {"allow": {"models": "*/one"}},
     )
 
@@ -1244,7 +1260,7 @@ def test_setup_filters_readiness_and_allow_but_retains_complete_catalog(
         next(
             path
             for path in _context_cache_files(tmp_path, "alice")
-            if path.stem == "models_dev"
+            if path.stem == "merged"
         ).read_text()
     )
     assert len(persisted["payload"]["models"]) == 4
@@ -1304,7 +1320,11 @@ def test_route_environment_refresh_leaves_source_cache_and_old_views_unchanged(
     envs = {}
     watcher = _watcher(monkeypatch, tmp_path, envs=envs)
     first = asyncio.run(watcher.refresh())
-    source_files = _context_cache_files(tmp_path, "alice")
+    source_files = tuple(
+        path
+        for path in _context_cache_files(tmp_path, "alice")
+        if path.parent.name == "sources"
+    )
     original_files = {
         path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_files
     }
@@ -1338,9 +1358,9 @@ def test_setup_publishes_around_invalid_modes_and_recovers(
     _write_catalog(path, ("one", "two"))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     if excluded:
-        monkeypatch.setattr(
-            watcher_module,
-            "load_setup_config",
+        _mock_config(
+            monkeypatch,
+            "root",
             lambda _layout: {"allow": {"models": "test/one, test/three"}},
         )
     previous = asyncio.run(watcher.refresh()) if refresh_existing else None

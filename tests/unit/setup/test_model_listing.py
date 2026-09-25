@@ -9,10 +9,12 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import cast
+from types import MappingProxyType, SimpleNamespace
+from typing import Any, cast
 
 from dotenv import dotenv_values
 import pytest
+import msgspec
 
 from toolang.base.types.model import (
     CatalogModel,
@@ -142,8 +144,8 @@ class _Harness:
                 agent_context=agent,
                 model_catalog=source,
                 validate_defaults=False,
-            ).load_catalog_listing()
-        )
+            ).refresh()
+        ).model_listing()
 
     def write(self, **kwargs):
         self.source.write_text(json.dumps(_catalog(**kwargs)))
@@ -241,7 +243,6 @@ def test_warm_hit_skips_parsing_routes_build_and_scanning(harness, monkeypatch):
     )
     monkeypatch.setattr(watcher_module, "_merge_catalogs", unexpected)
     monkeypatch.setattr(watcher_module, "_resolve_catalog", unexpected)
-    monkeypatch.setattr(watcher_module, "load_model_adapters", unexpected)
     monkeypatch.setattr("toolang.common.cache._serialized_data_is_unsafe", unexpected)
     second = harness.load()
     assert second.records == first.records
@@ -531,9 +532,22 @@ def test_static_parse_uses_captured_bytes(harness):
 
 @pytest.mark.parametrize(
     "damage",
-    ["json", "checksum", "schema", "duplicate", "dangling", "rank", "type", "plugin"],
+    [
+        "json",
+        "checksum",
+        "schema",
+        "duplicate",
+        "dangling",
+        "rank",
+        "type",
+        "connection",
+        "hidden-connection",
+        "plugin",
+    ],
 )
 def test_invalid_or_changed_cache_rebuilds(harness, damage):
+    if damage == "hidden-connection":
+        harness.layout.root_config.write_text('[allow]\nmodels = ["test/two"]\n')
     expected = harness.load().records
     path = harness.layout.root_model_cache / "merged.json"
     if damage == "json":
@@ -552,6 +566,8 @@ def test_invalid_or_changed_cache_rebuilds(harness, damage):
             document["models"][0]["allowed_order"] = 999
         elif damage == "type":
             document["models"][0]["limit"]["context"] = -1
+        elif damage in {"connection", "hidden-connection"}:
+            document["models"][0]["connection"]["headers"] = {"X-Key": 1}
         elif damage == "plugin":
             document["metadata"]["inputs"]["plugins"] = []
         assert store_document(
@@ -601,3 +617,196 @@ def test_runtime_source_named_merged_has_separate_namespace(harness, monkeypatch
     assert (harness.layout.root_model_cache / "sources" / "merged.json").is_file()
     assert harness.load().records == expected
     assert harness.builds == 1
+
+
+def test_runtime_reuses_inspection_records_without_rebuilding(harness, monkeypatch):
+    listing = harness.load()
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("runtime must reuse setup's merged catalog cache")
+
+    monkeypatch.setattr(watcher_module, "build_model_listing", unexpected)
+    monkeypatch.setattr(watcher_module.ModelCatalogSource, "snapshot", unexpected)
+    setup = asyncio.run(SetupWatcher(harness.layout, agent_context=False).refresh())
+    assert setup.models.refs() == tuple(
+        f"{model.provider}/{model.id}" for model in listing.default.items
+    )
+    assert setup.model_catalog(all=True).to_data() == listing.export(listing.all.items)
+
+
+def test_published_records_cannot_mutate_lazy_runtime_catalog(harness):
+    setup = asyncio.run(SetupWatcher(harness.layout, agent_context=False).refresh())
+    model = cast(Any, setup.model_listing().records.models[0])
+    with pytest.raises(TypeError):
+        model.limit["context"] = 1
+    with pytest.raises(TypeError):
+        model.connection["body"]["token"] = "changed"
+    with pytest.raises(TypeError):
+        model.reasoning_options[0]["values"] = ("changed",)
+    full = setup.model_catalog(all=True)
+    assert full.models[0].limit["context"] == 1000
+    connection = full.models[0].provider
+    assert connection is not None and connection.body is not None
+    assert connection.body["token"] == "public-metadata"
+
+
+def test_record_detaches_read_only_views_of_mutable_declarations(harness):
+    record = harness.load().records.models[0]
+    values = ["low", "high"]
+    option = {"type": "effort", "values": values}
+    copied = msgspec.structs.replace(
+        record, reasoning_options=(MappingProxyType(option),)
+    )
+    values.append("changed")
+    option["type"] = "changed"
+    assert copied.reasoning_options == ({"type": "effort", "values": ("low", "high")},)
+
+
+def test_lazy_catalog_pins_adapter_defaults(harness, monkeypatch):
+    harness.write(api=None)
+    adapter = SimpleNamespace(default_api="https://original.test/v1")
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda config: {"chat_completions": adapter},
+    )
+    watcher = SetupWatcher(harness.layout, agent_context=False)
+    first = asyncio.run(watcher.refresh())
+    adapter.default_api = "https://changed.test/v1"
+    full = first.model_catalog(all=True)
+    assert full.models == first.models.entries
+    assert full.providers["test"] == first.providers["test"]
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert second.models.entries[0]._toolang.route.api == adapter.default_api
+    assert first.model_catalog(all=True) == full
+
+
+def test_refresh_uses_one_capture_of_adapter_defaults(harness, monkeypatch):
+    harness.write(api=None)
+    adapter = SimpleNamespace(default_api="https://original.test/v1")
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda config: {"chat_completions": adapter},
+    )
+    original = watcher_module.ModelCatalogSource.snapshot
+
+    def snapshot(source):
+        adapter.default_api = None
+        return original(source)
+
+    monkeypatch.setattr(watcher_module.ModelCatalogSource, "snapshot", snapshot)
+    watcher = SetupWatcher(harness.layout, agent_context=False)
+    first = asyncio.run(watcher.refresh())
+    assert first.models.refs() == ("test/one", "test/two")
+    assert first.models.entries[0]._toolang.route.api == "https://original.test/v1"
+    assert not asyncio.run(watcher.refresh()).models
+    assert first.model_catalog(all=True).models == first.models.entries
+
+
+def test_runtime_hydrates_only_ready_allowed_models(harness, monkeypatch):
+    harness.layout.root_config.write_text('[allow]\nmodels = ["test/two"]\n')
+    harness.load()
+    from toolang.setup import model_listing
+
+    original = model_listing.resolve_catalog_providers
+    hydrated = []
+
+    def resolve(snapshot, **kwargs):
+        hydrated.append(tuple(model.ref for model in snapshot.models))
+        return original(snapshot, **kwargs)
+
+    monkeypatch.setattr(model_listing, "resolve_catalog_providers", resolve)
+    setup = asyncio.run(SetupWatcher(harness.layout, agent_context=False).refresh())
+    assert setup.models.refs() == ("test/two",)
+    assert hydrated == [("test/two",)]
+    assert not setup.model_allowed("test/one")
+    setup.model_catalog(all=True)
+    assert hydrated == [("test/two",), ("test/one", "test/two")]
+
+
+def test_hosted_runtime_reuses_setup_catalog_cache(harness, monkeypatch):
+    from toolang.up.core import AgentCore
+    from toolang.up.server import _refresh_core
+
+    harness.layout.home.mkdir(parents=True, exist_ok=True)
+    harness.layout.program.write_text("# Agent alice\n")
+    expected = harness.load(agent=True)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("hosted setup must reuse the shared catalog cache")
+
+    monkeypatch.setattr(watcher_module.ModelCatalogSource, "snapshot", unexpected)
+    monkeypatch.setattr(watcher_module, "build_model_listing", unexpected)
+
+    async def initialize():
+        core = AgentCore(harness.layout, sandbox="docker:test")
+        try:
+            await _refresh_core(core)
+            setup = core.setup.current()
+            assert setup.model_listing().records == expected.records
+            assert setup.models.refs() == ("test/one", "test/two")
+            assert setup.environment is not None
+            assert setup.environment.sandbox == "docker:test"
+        finally:
+            await core.close()
+
+    asyncio.run(initialize())
+
+
+def test_running_watcher_detects_environment_and_same_stat_source_changes(harness):
+    harness.write(env=("TEST_API_KEY",))
+    watcher = SetupWatcher(harness.layout, agent_context=False)
+    first = asyncio.run(watcher.refresh())
+    assert not first.models
+    harness.env["TEST_API_KEY"] = "new-value"
+    second = asyncio.run(watcher.refresh())
+    assert second.models.refs() == ("test/one", "test/two")
+    stat = harness.source.stat()
+    harness.source.write_text(harness.source.read_text().replace('"One"', '"Uno"'))
+    os.utime(harness.source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    third = asyncio.run(watcher.refresh())
+    assert third.models.entries[0].name == "Uno"
+    assert second.models.entries[0].name == "One"
+    assert not first.model_catalog(all=True).models[0]._toolang.ready
+
+
+@pytest.mark.parametrize("change", ["unloadable", "default-api"])
+def test_runtime_cache_tracks_loaded_adapters_and_defaults(
+    harness, monkeypatch, change
+):
+    harness.write(api=None)
+    harness.default_api = "https://adapter.test/v1"
+    assert len(harness.load().default.items) == 2
+    if change == "unloadable":
+        monkeypatch.setattr(watcher_module, "load_model_adapters", lambda config: {})
+    else:
+        harness.default_api = None
+    setup = asyncio.run(SetupWatcher(harness.layout, agent_context=False).refresh())
+    assert not setup.models
+    assert not setup.model_listing().default.items
+    assert harness.builds == 2
+
+
+def test_warm_setup_defers_query_views_until_a_query_needs_them(harness, monkeypatch):
+    from toolang.plugin.models import collections
+
+    harness.load()
+    built = []
+    original = collections._catalog_model_view
+
+    def build(model, **kwargs):
+        built.append(model.ref)
+        return original(model, **kwargs)
+
+    monkeypatch.setattr(collections, "_catalog_model_view", build)
+    setup = asyncio.run(SetupWatcher(harness.layout, agent_context=False).refresh())
+    assert setup.models.resolve("test/one").id == "one"
+    subset = setup.models.subset(("test/two",)).compact()
+    assert subset.refs() == ("test/two",)
+    assert built == []
+    assert subset.match("*[reasoning=false]").refs() == ("test/two",)
+    assert built == ["test/two"]
+    assert subset.match("*[tool_call]").refs() == ("test/two",)
+    assert built == ["test/two"]

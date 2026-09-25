@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING
 from toolang.base.errors import ToolangError
 from toolang.base.types.compaction import CompactionResult
 from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.plugin.toolsets.loading import load_tools
 from toolang.state.builtin import prepare_builtin_state
 from toolang.state.state import AgentState
 from .assembly import prompts
 from .types import RunRef, ThreadRef, validate_compaction_coverage
 
 if TYPE_CHECKING:
+    from toolang.setup import AgentSetup
     from .store import RunStore
     from .executor.executor import RunExecutor, RunSpec
     from .schemas import CompactionOutput
@@ -62,10 +62,9 @@ def compact_state() -> AgentState:
     return prepare_builtin_state(prompts.load("defaults/compact.too"))
 
 
-@lru_cache(maxsize=1)
-def compact_tools() -> ToolCollection:
+def compact_tools(setup: AgentSetup) -> ToolCollection:
     """The internal program's read-only tools, independent of user selectors."""
-    return ToolCollection.from_tools(load_tools(toolsets=("history",)))
+    return setup.tool_collection(all=True).match("history/*").compact()
 
 
 def assemble_compaction(

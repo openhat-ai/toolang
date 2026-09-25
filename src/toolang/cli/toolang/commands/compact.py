@@ -246,7 +246,7 @@ def _prepare(
         None if forget else select_compact_model(setup.models, setup.compact_model)
     )
     return RunSpec(
-        setup=replace(setup, tools=compact_tools()),
+        setup=replace(setup, tools=compact_tools(setup)),
         state=program,
         thread=f"compact_{thread}",
         bindings=RunBindings(

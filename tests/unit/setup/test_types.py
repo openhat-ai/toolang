@@ -47,6 +47,7 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
         "compact_model",
         "catalog_sources",
         "_catalog_loader",
+        "_model_listing",
         "_all_tools",
         "_allowed_model_refs",
     )
