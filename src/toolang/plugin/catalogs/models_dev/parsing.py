@@ -62,6 +62,10 @@ def _provider_map_from_catalog_data(data: object) -> Mapping[object, object]:
     if not isinstance(data, Mapping):
         raise TypeError("model catalog must be a provider or combined catalog object")
     mapping = cast(Mapping[object, object], data)
+    if "_meta" in mapping:
+        if not isinstance(mapping["_meta"], Mapping):
+            raise ValueError("model catalog _meta must be an object")
+        mapping = {key: value for key, value in mapping.items() if key != "_meta"}
     if set(mapping) == {"models", "providers"}:
         raw_models = mapping["models"]
         raw_providers = mapping["providers"]

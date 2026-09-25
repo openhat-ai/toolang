@@ -156,9 +156,16 @@ def test_provider_queries_export_every_model_and_reload_as_a_catalog(
 ) -> None:
     _disable_local_discovery(monkeypatch)
     bundled = json.loads(PACKAGED_MODEL_CATALOG.read_text())
+    metadata = bundled.pop("_meta")
     catalog = tmp_path / "full.json"
     catalog.write_text(
-        json.dumps({"models": {}, "providers": {**bundled, **_catalog_data()}})
+        json.dumps(
+            {
+                "_meta": metadata,
+                "models": {},
+                "providers": {**bundled, **_catalog_data()},
+            }
+        )
     )
     root = tmp_path / "root"
     root.mkdir()
@@ -216,6 +223,7 @@ def test_bundled_catalog_is_complete_offline_and_respects_credentials(
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
     bundled = json.loads(PACKAGED_MODEL_CATALOG.read_text())
+    bundled.pop("_meta")
     for provider in bundled.values():
         for name in provider["env"]:
             monkeypatch.delenv(name, raising=False)

@@ -208,6 +208,30 @@ def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     assert "future_model_field" not in exported["test"]["models"]["one"]
 
 
+@pytest.mark.parametrize("combined", [False, True])
+def test_catalog_metadata_is_not_a_provider_or_exported(tmp_path: Path, combined: bool):
+    providers = _catalog_data()
+    payload = {"models": {}, "providers": providers} if combined else providers.copy()
+    payload["_meta"] = {"snapshot_date": "2026-09-24", "future_field": "allowed"}
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(payload))
+    first = read_model_catalog_snapshot(path)
+    assert first.to_data() == providers
+    payload["_meta"]["snapshot_date"] = "2026-09-25"
+    path.write_text(json.dumps(payload))
+    second = read_model_catalog_snapshot(path)
+    assert second.to_data() == providers
+    assert first.revision != second.revision
+
+
+@pytest.mark.parametrize("metadata", [None, [], "2026-09-24"])
+def test_catalog_metadata_must_be_an_object(tmp_path: Path, metadata):
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps({"_meta": metadata, **_catalog_data()}))
+    with pytest.raises(ValueError, match="_meta must be an object"):
+        read_model_catalog_snapshot(path)
+
+
 def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
     path = tmp_path / "catalog.json"
     providers = _catalog_data()

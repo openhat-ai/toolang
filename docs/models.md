@@ -111,13 +111,19 @@ No model is removed because of its capabilities or status.
 Use a saved upstream snapshot for a reproducible update or a read-only check:
 
 ```bash
-uv run python scripts/update_model_catalog.py --source catalog.full.json
+uv run python scripts/update_model_catalog.py --source catalog.full.json --snapshot-date 2026-09-24
 uv run python scripts/update_model_catalog.py --source catalog.full.json --check
 ```
 
-The updater prints the source SHA-256. `--check` exits nonzero if the generated
-file differs. Update preferences in the small JSON file; do not hand-edit the
-bundled snapshot. Startup never runs this updater or downloads a catalog.
+The updater writes `_meta` at the top of `catalog.json`, containing
+`snapshot_date` (YYYY-MM-DD), `source_url`, and `source_sha256`, and prints the
+date and hash. The date identifies the source snapshot, not a model release or
+a preference edit. An unchanged source hash retains its recorded date. New
+downloads use the current UTC date; a local source with no matching recorded
+hash requires `--snapshot-date`. An explicit date overrides the recorded date.
+`--check` never writes and exits nonzero if the generated file differs.
+Update preferences in the small JSON file; do not hand-edit the bundled
+snapshot. Startup never runs this updater or downloads a catalog.
 
 For an ad hoc provider subset, repeat `-q` (or `--query`); `--all` retains
 models regardless of credentials and allow rules:
@@ -132,8 +138,11 @@ The result is a provider-map catalog accepted by `--catalog` and implicit
 normalization below, without runtime credentials or readiness fields.
 
 The importer validates both members of a combined catalog before selecting its
-provider map. It keeps models.dev provider and provider-model fields at the top
-level, drops unmodelled additive fields, parses prices as finite floats, and
+provider map. Both direct and combined catalogs may include a reserved `_meta`
+object; it is excluded from provider selection and runtime/CLI exports. Catalogs
+without metadata remain supported. It keeps models.dev provider and
+provider-model fields at the top level, drops unmodelled additive fields, parses
+prices as finite floats, and
 rejects an invalid complete snapshot. A zero `limit` value is the external
 format's unknown marker: the importer omits it, because Toolang represents an
 unknown limit by the absence of the key. Canonical model metadata from the

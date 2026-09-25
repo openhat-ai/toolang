@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, date, datetime
 from hashlib import sha256
 import json
 import os
@@ -98,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--preferences", type=Path, default=PREFERENCES)
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument(
+        "--snapshot-date",
+        type=date.fromisoformat,
+        help="Source snapshot date (YYYY-MM-DD); required for an unrecorded local source",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Fail if the output would change; do not write",
@@ -125,7 +131,13 @@ def main(argv: list[str] | None = None) -> int:
                 source.write_bytes(payload)
             exported = export_catalog(source, list(preferences), directory / "root")
             data = reorder_catalog(exported, preferences)
-            content = dumps(data, sort_keys=False)
+            metadata = snapshot_metadata(
+                source_sha256=sha256(source.read_bytes()).hexdigest(),
+                snapshot_date=args.snapshot_date,
+                output=args.output,
+                downloaded=args.source is None,
+            )
+            content = dumps({"_meta": metadata, **data}, sort_keys=False)
             if len(content.encode("utf-8")) > DEFAULT_MAX_CATALOG_BYTES:
                 raise ValueError("generated catalog exceeds the loader size limit")
             if args.check:
@@ -144,11 +156,40 @@ def main(argv: list[str] | None = None) -> int:
                     finally:
                         temporary_output.unlink(missing_ok=True)
             print(
-                f"{len(data)} providers, {sum(len(p['models']) for p in data.values())} models; source SHA-256: {sha256(source.read_bytes()).hexdigest()}"
+                f"{len(data)} providers, {sum(len(p['models']) for p in data.values())} models; snapshot: {metadata['snapshot_date']}; source SHA-256: {metadata['source_sha256']}"
             )
     except (OSError, ValueError, msgspec.DecodeError) as error:
         parser.error(str(error))
     return 0
+
+
+def snapshot_metadata(
+    *,
+    source_sha256: str,
+    snapshot_date: date | None,
+    output: Path,
+    downloaded: bool,
+) -> dict[str, str]:
+    """Retain a known snapshot date; never guess the age of a local source."""
+    if snapshot_date is None and output.is_file():
+        existing = json.loads(output.read_text())
+        metadata = existing.get("_meta") if isinstance(existing, dict) else None
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("source_sha256") == source_sha256
+        ):
+            snapshot_date = date.fromisoformat(str(metadata.get("snapshot_date", "")))
+    if snapshot_date is None:
+        if not downloaded:
+            raise ValueError(
+                "--snapshot-date is required for an unrecorded local source"
+            )
+        snapshot_date = datetime.now(UTC).date()
+    return {
+        "snapshot_date": snapshot_date.isoformat(),
+        "source_url": SOURCE_URL,
+        "source_sha256": source_sha256,
+    }
 
 
 if __name__ == "__main__":

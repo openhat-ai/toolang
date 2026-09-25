@@ -105,6 +105,19 @@ claim of execution support.
 - `tests/unit/test_update_model_catalog.py` and cache tests: safe regeneration,
   stale preference failures, cache order, and old-schema invalidation.
 
+## Snapshot Provenance
+
+Keep the filename `catalog.json` and add a reserved top-level `_meta` object
+containing `snapshot_date` (YYYY-MM-DD), `source_url`, and `source_sha256`.
+The user approved embedding provenance directly in the catalog. The updater
+records the upstream snapshot date, retaining it when the source hash matches
+the existing output. New downloads default to the UTC date; unrecorded local
+sources require `--snapshot-date`, which also permits an explicit correction.
+Preference-only regeneration and `--check` retain provenance without date churn.
+The importer accepts `_meta` on direct and combined catalogs, requires an object,
+and excludes it from runtime providers and CLI exports. Existing metadata-free
+catalogs continue to load. No model/provider data or order changes in this step.
+
 ## Acceptance Tests
 
 1. The packaged file parses offline and contains exactly the 36 approved IDs;
@@ -132,6 +145,10 @@ claim of execution support.
    survives parsing, merge, cache, repeated CLI queries, and JSON reload.
 8. Repeated regeneration from the same source is byte-identical. New unpreferred
    models are retained; invalid preferences leave the existing output untouched.
+9. Embedded metadata loads offline, never becomes a provider, and does not alter
+   `-q --json` exports. Matching hashes retain dates; new downloads receive a UTC
+   date; unrecorded local sources need a valid explicit date. Failed validation
+   and read-only checks leave the output untouched.
 
 ## Risks and Tradeoffs
 

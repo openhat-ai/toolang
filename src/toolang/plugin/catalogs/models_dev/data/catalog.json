@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "snapshot_date": "2026-09-24",
+    "source_url": "https://models.dev/catalog.json",
+    "source_sha256": "c969a9948deef5e4e4579248e4cf5710bb797b96d69c867a35fb88c36f662086"
+  },
   "alibaba": {
     "api": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "doc": "https://www.alibabacloud.com/help/en/model-studio/models",

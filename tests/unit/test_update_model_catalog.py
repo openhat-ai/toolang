@@ -1,6 +1,8 @@
 """Offline checks for repeatable catalog updates and stale preferences."""
 
 import copy
+from datetime import UTC, date, datetime
+from hashlib import sha256
 import json
 
 import pytest
@@ -92,8 +94,13 @@ def test_update_is_repeatable_and_failed_validation_never_replaces_output(
         "--output",
         str(output),
     ]
-    assert update.main(args) == 0
+    assert update.main([*args, "--snapshot-date", "2026-09-24"]) == 0
     content = output.read_bytes()
+    assert json.loads(content)["_meta"] == {
+        "snapshot_date": "2026-09-24",
+        "source_url": update.SOURCE_URL,
+        "source_sha256": sha256(source.read_bytes()).hexdigest(),
+    }
     assert update.main([*args, "--check"]) == 0
     assert update.main(args) == 0
     assert output.read_bytes() == content
@@ -111,9 +118,13 @@ def test_update_is_repeatable_and_failed_validation_never_replaces_output(
 
 def test_bundled_preferences_are_valid_and_reproducible():
     bundled = json.loads(update.OUTPUT.read_text())
+    metadata = bundled.pop("_meta")
     preferences = json.loads(update.PREFERENCES.read_text())
     assert (
-        dumps(update.reorder_catalog(bundled, preferences), sort_keys=False)
+        dumps(
+            {"_meta": metadata, **update.reorder_catalog(bundled, preferences)},
+            sort_keys=False,
+        )
         == update.OUTPUT.read_text()
     )
 
@@ -136,7 +147,77 @@ def test_oversized_export_leaves_existing_catalog_intact(tmp_path, monkeypatch):
                 str(preferences),
                 "--output",
                 str(output),
+                "--snapshot-date",
+                "2026-09-24",
             ]
         )
     assert error.value.code == 2
     assert output.read_text() == "previous catalog"
+
+
+def test_metadata_preserves_known_dates_and_dates_new_downloads(tmp_path):
+    output = tmp_path / "catalog.json"
+    output.write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "snapshot_date": "2026-09-24",
+                    "source_sha256": "known",
+                }
+            }
+        )
+    )
+    for downloaded in (True, False):
+        metadata = update.snapshot_metadata(
+            source_sha256="known",
+            snapshot_date=None,
+            output=output,
+            downloaded=downloaded,
+        )
+        assert metadata["snapshot_date"] == "2026-09-24"
+    before = datetime.now(UTC).date().isoformat()
+    metadata = update.snapshot_metadata(
+        source_sha256="new",
+        snapshot_date=None,
+        output=output,
+        downloaded=True,
+    )
+    assert metadata["snapshot_date"] in (before, datetime.now(UTC).date().isoformat())
+    assert metadata["source_sha256"] == "new"
+    assert (
+        update.snapshot_metadata(
+            source_sha256="known",
+            snapshot_date=date(2026, 9, 25),
+            output=output,
+            downloaded=False,
+        )["snapshot_date"]
+        == "2026-09-25"
+    )
+
+
+@pytest.mark.parametrize("snapshot_date", [None, "2026-02-30"])
+def test_local_source_requires_valid_date_without_replacing_output(
+    tmp_path, monkeypatch, snapshot_date
+):
+    source = tmp_path / "source.json"
+    source.write_text("{}")
+    output = tmp_path / "catalog.json"
+    output.write_text('{"_meta": {"source_sha256": "other-source"}}')
+    original = output.read_bytes()
+    preferences = tmp_path / "preferences.json"
+    preferences.write_text(json.dumps({"test": ["z-default"]}))
+    monkeypatch.setattr(update, "export_catalog", lambda *_: catalog())
+    args = [
+        "--source",
+        str(source),
+        "--output",
+        str(output),
+        "--preferences",
+        str(preferences),
+    ]
+    if snapshot_date is not None:
+        args.extend(("--snapshot-date", snapshot_date))
+    with pytest.raises(SystemExit) as error:
+        update.main(args)
+    assert error.value.code == 2
+    assert output.read_bytes() == original
