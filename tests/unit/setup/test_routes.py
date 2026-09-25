@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any
+
+import pytest
 from toolang.base.types.model import ModelCatalogSnapshot
 
 from toolang.base.protocols.model import ModelAdapter
@@ -75,6 +77,114 @@ def test_resolver_maps_mainstream_npm_packages_to_adapter_defaults() -> None:
         assert _provider_for(resolved)._toolang.route.env == (env_name,)
         assert model._toolang.route.api == api
         assert model._toolang.ready is True
+
+
+@pytest.mark.parametrize("provider_id", ["openrouter", "vercel"])
+@pytest.mark.parametrize(
+    ("model_id", "expected_adapter"),
+    [
+        ("anthropic/claude-sonnet", "messages"),
+        ("openai/gpt-6-luna", "responses"),
+        ("google/gemini-pro", "chat_completions"),
+        ("unrecognized/model", "chat_completions"),
+        ("anthropic", "chat_completions"),
+        ("anthropic/", "chat_completions"),
+    ],
+)
+def test_gateway_model_namespace_selects_native_adapter(
+    provider_id, model_id, expected_adapter
+):
+    provider = _provider(
+        provider_id,
+        npm=(
+            "@openrouter/ai-sdk-provider"
+            if provider_id == "openrouter"
+            else "@ai-sdk/gateway"
+        ),
+        env=(
+            ("OPENROUTER_API_KEY",)
+            if provider_id == "openrouter"
+            else ("AI_GATEWAY_API_KEY",)
+        ),
+    )
+    model = replace(_model_for(provider, "model"), id=model_id)
+    snapshot = _replace_catalog(provider, models={model_id: model})
+    resolved = resolve_catalog_providers(
+        snapshot,
+        adapters=_adapters(),
+        environ={"OPENROUTER_API_KEY": "secret", "AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    resolved_model = _model_for(resolved, model_id)
+    assert resolved_model._toolang.route.adapter == expected_adapter
+    if expected_adapter in {"messages", "responses"}:
+        expected_api = (
+            "https://openrouter.ai/api/v1"
+            if provider_id == "openrouter"
+            else "https://ai-gateway.vercel.sh/v1"
+        )
+        assert resolved_model._toolang.route.api == expected_api
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        ModelProvider(npm="@ai-sdk/openai-compatible"),
+        ModelProvider(shape="chat_completions"),
+        ModelProvider(_toolang=ProviderToolang(adapter="chat_completions")),
+    ],
+)
+def test_gateway_explicit_model_adapter_overrides_namespace_inference(declaration):
+    provider = _provider("vercel", npm="@ai-sdk/gateway", env=("AI_GATEWAY_API_KEY",))
+    model = replace(
+        _model_for(provider, "model"),
+        id="anthropic/claude-sonnet",
+        provider=declaration,
+    )
+    resolved = resolve_catalog_providers(
+        _replace_catalog(provider, models={model.id: model}),
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    resolved_model = _model_for(resolved, model.id)
+    assert resolved_model._toolang.route.adapter == "chat_completions"
+    if declaration.shape is not None or declaration.npm is not None:
+        assert resolved_model._toolang.route.api is None
+
+
+def test_gateway_model_explicit_npm_keeps_its_own_adapter_api():
+    provider = _provider("vercel", npm="@ai-sdk/gateway", env=("AI_GATEWAY_API_KEY",))
+    model = replace(
+        _model_for(provider, "model"),
+        id="anthropic/claude-sonnet",
+        provider=ModelProvider(npm="@ai-sdk/anthropic"),
+    )
+    resolved = resolve_catalog_providers(
+        _replace_catalog(provider, models={model.id: model}),
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    route = _model_for(resolved, model.id)._toolang.route
+    assert route.adapter == "messages"
+    assert route.api == "https://api.anthropic.com/v1"
+
+
+def test_trusted_gateway_provider_adapter_overrides_namespace_inference():
+    provider = _provider("vercel", npm="@ai-sdk/gateway", env=("AI_GATEWAY_API_KEY",))
+    provider = _replace_catalog(
+        provider,
+        _toolang=ProviderToolang(adapter="chat_completions"),
+    )
+    model = replace(_model_for(provider, "model"), id="anthropic/claude-sonnet")
+    resolved = resolve_catalog_providers(
+        _replace_catalog(provider, models={model.id: model}),
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    assert _model_for(resolved, model.id)._toolang.route.adapter == "chat_completions"
 
 
 def test_resolver_prefers_the_catalog_api_over_the_adapter_default() -> None:

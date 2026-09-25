@@ -61,7 +61,10 @@ _NPM_ROUTES: Mapping[str, tuple[str, str | None]] = {
     "@ai-sdk/perplexity": ("chat_completions", "https://api.perplexity.ai"),
     "@ai-sdk/togetherai": ("chat_completions", "https://api.together.xyz/v1"),
     "@ai-sdk/xai": ("chat_completions", "https://api.x.ai/v1"),
-    "@openrouter/ai-sdk-provider": ("chat_completions", None),
+    "@openrouter/ai-sdk-provider": (
+        "chat_completions",
+        "https://openrouter.ai/api/v1",
+    ),
 }
 _SHAPE_ADAPTERS: Mapping[str, str] = {
     "chat_completions": "chat_completions",
@@ -219,10 +222,29 @@ def _model_api_template(
     provider: Provider, model: Model, adapter: RouteAdapter | None
 ) -> str | None:
     override = model.provider or ModelProvider()
-    return _api_template(
-        _optional_text(override.api) or provider.api,
-        _default_api(adapter, npm=_model_npm(provider, model)),
+    if _optional_text(override.api) is not None:
+        return _api_template(override.api, None)
+
+    gateway_route = (
+        provider.id in {"openrouter", "vercel"}
+        and not (
+            isinstance(override._toolang, ProviderToolang) and override._toolang.adapter
+        )
+        and _normalized_shape(override.shape) is None
+        and _optional_text(override.npm) is None
     )
+    if gateway_route:
+        if provider.api is not None:
+            return _api_template(provider.api, None)
+        gateway = _NPM_ROUTES.get(provider.npm or "")
+        if gateway is not None and gateway[1] is not None:
+            return gateway[1]
+        return adapter.default_api if adapter is not None else None
+
+    if provider.api is not None:
+        return _api_template(provider.api, None)
+    npm = _model_npm(provider, model)
+    return _default_api(adapter, npm=npm)
 
 
 def _default_api(adapter: RouteAdapter | None, *, npm: str | None) -> str | None:
@@ -256,7 +278,7 @@ def provider_adapter(provider: Provider) -> str | None:
 
 
 def model_adapter(provider: Provider, model: Model) -> str | None:
-    """Resolve catalog declarations; only setup calls this function."""
+    """Resolve explicit model routes, gateway conventions, then provider defaults."""
     override = model.provider or ModelProvider()
     declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
@@ -268,6 +290,15 @@ def model_adapter(provider: Provider, model: Model) -> str | None:
     if npm is not None:
         mapped = _NPM_ROUTES.get(npm)
         return mapped[0] if mapped is not None else None
+    if provider._toolang.adapter:
+        return provider._toolang.adapter
+    if provider.id in {"openrouter", "vercel"}:
+        upstream, separator, model_id = model.id.partition("/")
+        if separator and model_id:
+            if upstream == "anthropic":
+                return "messages"
+            if upstream == "openai":
+                return "responses"
     return provider_adapter(provider)
 
 
