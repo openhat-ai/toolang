@@ -904,6 +904,31 @@ def test_responses_does_not_group_native_ids_across_messages():
     assert len(reasoning) == 2 and reasoning[0] == reasoning[1]
 
 
+def test_chat_same_index_distinct_native_ids_preserve_multiple_reasoning_details():
+    reasoning = chat._ChatReasoning(model("chat_completions"))
+    first = {
+        "type": "reasoning.summary",
+        "id": "rs-first",
+        "index": 0,
+        "summary": "first thought",
+    }
+    second = {
+        "type": "reasoning.summary",
+        "id": "rs-second",
+        "index": 0,
+        "summary": "second thought",
+    }
+
+    reasoning.add({"reasoning_details": [first]})
+    reasoning.add({"reasoning_details": [second]})
+
+    result = reasoning.values()
+    assert [(part.text, part.provider_metadata["id"]) for _, part in result] == [
+        ("first thought", "rs-first"),
+        ("second thought", "rs-second"),
+    ]
+
+
 def test_chat_late_opaque_detail_keeps_its_native_sequence(monkeypatch):
     selected = model("chat_completions")
     readable = {"type": "reasoning.summary", "summary": "thought", "index": 1}

@@ -887,11 +887,13 @@ class _ChatReasoning:
                 raise ToolangError(
                     "reasoning detail index must be a non-negative integer"
                 )
+            # Some providers assign one index to several detail types within a
+            # shared reasoning item; use its distinct native id when available.
             key = (
-                ("index", detail["index"], kind)
-                if detail.get("index") is not None
-                else ("id", detail["id"], kind)
+                ("id", detail["id"], kind)
                 if detail.get("id") is not None
+                else ("index", detail["index"], kind)
+                if detail.get("index") is not None
                 else ("anonymous", kind, position)
             )
             current = self.details.setdefault(key, {})
