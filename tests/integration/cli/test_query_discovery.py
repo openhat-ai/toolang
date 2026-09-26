@@ -54,7 +54,11 @@ def test_query_command_publishes_human_and_json_schema(
 
     assert human.exit_code == 0, human.stderr
     assert f"Collection: {collection}" in strip_ansi(human.stdout)
-    assert f"Identity: {identity}" in strip_ansi(human.stdout)
+    if collection == "models":
+        assert "Identity: bare glob matches model id" in strip_ansi(human.stdout)
+        assert "provider/model matches a full ref" in strip_ansi(human.stdout)
+    else:
+        assert f"Identity: {identity}" in strip_ansi(human.stdout)
     assert "Fields:" in strip_ansi(human.stdout)
     assert "Columns:" not in strip_ansi(human.stdout)
     assert machine.exit_code == 0, machine.stderr
@@ -62,6 +66,8 @@ def test_query_command_publishes_human_and_json_schema(
     assert payload["collection"] == collection
     assert payload["fields"]
     assert "columns" not in payload
+    if collection == "models":
+        assert payload["query_language"] == "tq-json"
 
 
 @pytest.mark.parametrize("collection", ["caps", "model", "unknown"])

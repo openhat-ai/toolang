@@ -47,6 +47,7 @@ dependencies = [
     "tomlkit>=0.13,<1",
     "tree-sitter>=0.25.2,<0.26",
     "tree-sitter-toolang>=0.3.3,<0.4",
+    "tq-json>=0.1.0,<0.2",
     "wcwidth>=0.8,<1",
     "typer==0.27.2",
     "uvicorn>=0.35,<1",

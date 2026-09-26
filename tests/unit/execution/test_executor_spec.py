@@ -1,3 +1,4 @@
+from tests.support.setup import materialized_setup
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
 def _setup() -> AgentSetup:
-    return AgentSetup(
+    return materialized_setup(
         layout=AgentLayout.resident(Path("/"), "alice"),
         providers={},
         adapters={},
@@ -39,6 +40,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "authored_session_commands",
         "prompt_invocations",
         "horizon",
+        "all_tools",
     )
 
 

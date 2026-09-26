@@ -4,6 +4,8 @@ uv run pytest -s tests/integration/cli/test_compact_live.py \
     --live-model 'deepseek/deepseek-v4-flash effort=low'
 """
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from contextlib import closing
 import json
@@ -23,6 +25,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import CallInput, RunnableInput
+from toolang.plugin.models.query import resolve_model
 from toolang.setup import SetupWatcher
 from toolang.state.builtin import prepare_builtin_state
 
@@ -226,7 +229,7 @@ def test_live_compaction_owns_terminal_replies_by_root(tmp_path, request, mode):
         setup = await watcher.refresh()
         selected = setup.defaults.model
         assert selected is not None
-        catalog_model = setup.models.resolve(selected.ref)
+        catalog_model = resolve_model(setup.models_effective(), selected.ref)
         maximum = catalog_model.limit.get("output", 0)
         if maximum < 32000:
             pytest.skip("live boundary probe needs a large inclusive output allowance")
@@ -301,14 +304,14 @@ agic check(_: Text) -> Json:
                     # The compactor reserves only 4096 and can read the full range.
                     context = (maximum + 16000) * 100 // 95
                     assert context < catalog_model.limit["context"]
-                    setup = replace(
+                    setup = replace_materialized_setup(
                         setup,
                         models=ModelCollection(
                             tuple(
                                 replace(m, limit={**m.limit, "context": context})
                                 if m.ref == selected.ref
                                 else m
-                                for m in setup.models.entries
+                                for m in setup.models_effective()
                             )
                         ),
                     )

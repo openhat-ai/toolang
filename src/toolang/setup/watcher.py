@@ -5,15 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 import logging
 from pathlib import Path
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
-from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
-from toolang.common.cache import digest
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import (
     load_model_adapters,
@@ -21,28 +20,25 @@ from toolang.plugin.loading import (
     plugin_provenance,
 )
 from toolang.plugin.catalogs.models_dev.catalog import (
-    FileObservation,
     ModelCatalogSource,
     ModelsDevModelCatalog,
 )
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
-from toolang.plugin.models.collections import ModelCollection
-from toolang.setup.routes import (
-    RouteAdapter,
-    resolve_catalog_providers,
-    catalog_environment_names,
-)
 from toolang.plugin.models.resolution import resolve_model_reasoning
 from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.plugin.toolsets.loading import load_tools
+from toolang.plugin.toolsets.loading import (
+    load_toolsets_with_sources,
+    tools_from_toolsets,
+)
+from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
 
-from .cache import (
-    ModelCatalogCache,
+from .revisions import (
     environment_identity,
     model_projection_key,
+    source_content_revision,
 )
-from .catalog import MergedModelCatalog, assemble_catalog
+from .catalog import assemble_catalog, merge_catalog_snapshots
 from .config import (
     capture_setup_config,
     load_root_setup_envs,
@@ -55,10 +51,9 @@ from .config import (
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import select_compact_model
-from .model_listing import ModelListing, build_model_listing
-from .records import ModelListingCache
-from .types import AgentEnvironment, AgentSetup
+from .models import order_models, select_compact_model
+from toolang.plugin.models.query import resolve_model
+from .types import AgentEnvironment, AgentSetup, _ModelData
 
 DEFAULT_INTERVAL_MS = 5_000.0
 logger = logging.getLogger(__name__)
@@ -72,25 +67,10 @@ _LOCAL_CATALOG_ENV = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class _SnapshotModelCatalog(ModelCatalog):
-    value: ModelCatalogSnapshot
-    name: str = "models_dev"
-
-    async def snapshot(self) -> ModelCatalogSnapshot:
-        return self.value
-
-
-@dataclass(frozen=True, slots=True)
 class _LoadedInputs:
-    fingerprints: tuple[object, ...]
     root_config: dict[str, object]
     agent_config: dict[str, object]
     envs: dict[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class _AdapterDefaults:
-    default_api: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,20 +80,16 @@ class _Candidate:
     adapter_configs: dict[str, dict[str, object]]
     toolset_configs: dict[str, dict[str, object]]
     catalog_configs: dict[str, dict[str, object]]
-    adapters: dict[str, ModelAdapter]
-    adapter_identity: str
-    tools: dict[str, Tool]
     catalogs: dict[str, ModelCatalog]
-    observation: FileObservation
     source_revisions: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _CatalogLoad:
-    """Every catalog source of one refresh, with each source's own revision."""
+    """Validated, immutable source snapshots for one candidate revision."""
 
-    observation: FileObservation
     source: ModelCatalogSource
+    static: ModelCatalogSnapshot
     additional: tuple[tuple[str, str, ModelCatalogSnapshot], ...]
 
 
@@ -146,20 +122,15 @@ class SetupWatcher:
         self._adapter_configs: dict[str, dict[str, object]] | None = None
         self._toolset_configs: dict[str, dict[str, object]] | None = None
         self._catalog_configs: dict[str, dict[str, object]] | None = None
-        self._adapters: dict[str, ModelAdapter] = {}
-        self._loaded_adapter_identity: str | None = None
-        self._tools: dict[str, Tool] = {}
         self._catalogs: dict[str, ModelCatalog] = {}
-        self._catalog_identity: FileObservation | None = None
         self._source_revisions: tuple[tuple[str, str], ...] | None = None
-        cache_directory = (
-            layout.home_model_cache if agent_context else layout.root_model_cache
-        )
-        self._model_cache = ModelCatalogCache(cache_directory / "sources")
-        self.model_listing_cache = ModelListingCache(cache_directory)
-        self._model_plugin_provenance = tuple(
+        self._setup_plugin_provenance = tuple(
             item.to_data()
-            for group in ("toolang.model_catalog", "toolang.model_adapter")
+            for group in (
+                "toolang.model_catalog",
+                "toolang.model_adapter",
+                "toolang.toolset",
+            )
             for item in plugin_provenance(group=group)
         )
         self._setup: AgentSetup | None = None
@@ -182,68 +153,6 @@ class SetupWatcher:
         """
 
         self._setup = setup
-
-    async def _load_catalog_records(
-        self,
-        loaded: _LoadedInputs,
-        load: _CatalogLoad,
-        *,
-        adapters: Mapping[str, RouteAdapter],
-        adapter_configs: Mapping[str, object],
-        catalog_configs: Mapping[str, Mapping[str, object]],
-        allow_models: tuple[str, ...] | None,
-    ) -> ModelListing:
-        """Reuse the catalog projection owned by this runtime setup candidate."""
-
-        inputs: dict[str, object] = {
-            "sources": [
-                ["models_dev", load.source.content_revision],
-                *[
-                    [name, self._model_cache.content_revision(snapshot)]
-                    for name, _revision, snapshot in load.additional
-                ],
-            ],
-            "config_files": list(loaded.fingerprints),
-            "adapter_config": digest(adapter_configs),
-            "loaded_adapters": _adapter_identity(adapters),
-            "catalog_config": digest(
-                {
-                    name: {
-                        key: value
-                        for key, value in config.items()
-                        if key != "environ"
-                        # The captured bytes identify the static source across mounts.
-                        and not (name == "models_dev" and key == "path")
-                    }
-                    for name, config in catalog_configs.items()
-                }
-            ),
-            "allow_models": None if allow_models is None else list(allow_models),
-            "plugins": list(self._model_plugin_provenance),
-        }
-        records = self.model_listing_cache.load(inputs=inputs, environ=loaded.envs)
-        if records is not None:
-            return ModelListing(records)
-
-        static = await asyncio.to_thread(load.source.snapshot)
-        merged = await _merge_catalogs(
-            static, tuple((name, snapshot) for name, _, snapshot in load.additional)
-        )
-        names = catalog_environment_names(merged, adapters=adapters)
-        resolved = _resolve_catalog(merged, adapters=adapters, envs=loaded.envs)
-        listing = build_model_listing(resolved, allow_models=allow_models)
-        try:
-            self.model_listing_cache.store(
-                listing.records,
-                inputs=inputs,
-                environment_names=names,
-                environ=loaded.envs,
-            )
-        except Exception:
-            logger.warning(
-                "setup.model_listing_cache_write_failed agent=%s", self.layout.name
-            )
-        return listing
 
     def diagnostics(self) -> tuple[SetupDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
@@ -290,19 +199,7 @@ class SetupWatcher:
             include_agent=self._agent_context,
         )
         catalog_configs = self._runtime_catalog_configs(
-            configs,
-            inputs.envs,
-            catalog_path=catalog_path,
-        )
-        adapters = (
-            self._adapters
-            if self._adapter_configs == adapter_configs
-            else load_model_adapters(adapter_configs)
-        )
-        tools = (
-            self._tools
-            if self._toolset_configs == toolset_configs
-            else load_tools(toolset_config=toolset_configs)
+            configs, inputs.envs, catalog_path=catalog_path
         )
         catalogs = (
             self._catalogs
@@ -312,19 +209,10 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
-        # Probes and source parsing can yield before cache validation/publication.
-        # Keep their identity and every route tied to one capture of the defaults.
-        route_adapters = {
-            name: _AdapterDefaults(adapter.default_api)
-            for name, adapter in adapters.items()
-        }
-        load = await self._load_sources(
-            models_dev,
-            catalogs,
-        )
+        load = await self._load_sources(models_dev, catalogs)
         source_revisions = (
-            ("models_dev", load.source.revision),
-            *((name, revision) for name, revision, _ in load.additional),
+            ("models_dev", load.source.content_revision),
+            *((name, revision) for name, revision, _snapshot in load.additional),
         )
         candidate = _Candidate(
             inputs=inputs,
@@ -332,18 +220,15 @@ class SetupWatcher:
             adapter_configs=adapter_configs,
             toolset_configs=toolset_configs,
             catalog_configs=catalog_configs,
-            adapters=adapters,
-            adapter_identity=_adapter_identity(route_adapters),
-            tools=tools,
             catalogs=catalogs,
-            observation=load.observation,
             source_revisions=source_revisions,
         )
         if self._candidate_is_unchanged(candidate):
             self._commit_candidate(candidate)
             self._diagnostics = ()
             return self.current()
-        projection_key = _projection_key(
+
+        revision = _projection_key(
             source_revisions=source_revisions,
             environment=environment_identity(inputs.envs),
             setup_inputs={
@@ -352,53 +237,45 @@ class SetupWatcher:
                     project_model_setup_config(config) for config in configs
                 ),
                 "adapters": adapter_configs,
-                "loaded_adapters": candidate.adapter_identity,
-                "tools": toolset_configs,
+                "toolsets": toolset_configs,
                 "allow": allow,
                 "defaults": defaults,
                 "limits": limits,
                 "compact_model": compact_model,
             },
             allow_models=allow.models,
-            plugin_provenance=self._model_plugin_provenance,
+            plugin_provenance=self._setup_plugin_provenance,
             scope=f"agent:{self.layout.name}" if self._agent_context else "root",
         )
-        if self._setup is not None and self._setup.revision == projection_key:
+        if self._setup is not None and self._setup.revision == revision:
             self._commit_candidate(candidate)
             self._diagnostics = ()
             return self._setup
-        listing = await self._load_catalog_records(
-            inputs,
-            load,
-            adapters=route_adapters,
-            adapter_configs=adapter_configs,
-            catalog_configs=catalog_configs,
-            allow_models=allow.models,
-        )
+
         catalog_sources = {
-            provider.id: ("models_dev", load.source.revision)
-            for provider in listing.records.providers
+            provider_id: ("models_dev", load.source.content_revision)
+            for provider_id in load.static.providers
         }
         catalog_sources.update(
-            (provider_id, (name, revision))
-            for name, revision, snapshot in load.additional
+            (provider_id, (name, source_revision))
+            for name, source_revision, snapshot in load.additional
             for provider_id in snapshot.providers
         )
         setup = _build_setup(
             layout=self.layout,
             sandbox=self._sandbox,
-            revision=projection_key,
-            validate_defaults=self._validate_defaults,
-            listing=listing,
+            revision=revision,
+            load=load,
             catalog_sources=catalog_sources,
-            adapters=adapters,
-            route_adapters=route_adapters,
-            tools=tools,
+            adapter_configs=adapter_configs,
+            toolset_configs=toolset_configs,
+            catalog_configs=catalog_configs,
             envs=inputs.envs,
             allow=allow,
             defaults=defaults,
             compact_model=compact_model,
             limits=limits,
+            validate_defaults=self._validate_defaults,
         )
         self._publish(setup)
         self._commit_candidate(candidate)
@@ -412,7 +289,6 @@ class SetupWatcher:
         )
         captured = tuple(capture_setup_config(path) for path in paths)
         return _LoadedInputs(
-            fingerprints=tuple(revision for _config, revision in captured),
             root_config=captured[0][0],
             agent_config=captured[1][0] if self._agent_context else {},
             envs=dict(
@@ -449,9 +325,10 @@ class SetupWatcher:
         models_dev: ModelsDevModelCatalog,
         catalogs: Mapping[str, ModelCatalog],
     ) -> _CatalogLoad:
-        """Capture static bytes and fresh probes before checking the merged cache."""
+        """Capture validated source snapshots for watcher revision detection."""
 
-        observation, source = await asyncio.to_thread(models_dev.capture)
+        _observation, source = await asyncio.to_thread(models_dev.capture)
+        static = await asyncio.to_thread(source.snapshot)
         ordered = _ordered_additional_catalogs(catalogs)
         probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
         additional = tuple(
@@ -463,8 +340,8 @@ class SetupWatcher:
             )
         )
         return _CatalogLoad(
-            observation=observation,
             source=source,
+            static=static,
             additional=additional,
         )
 
@@ -473,19 +350,9 @@ class SetupWatcher:
         name: str,
         probe: ModelCatalogSnapshot,
     ) -> tuple[str, str, ModelCatalogSnapshot]:
-        """Persist one probe result and return it with that source's revision."""
+        """Fingerprint one fresh probe in memory; do not persist model data."""
 
-        try:
-            revision = await asyncio.to_thread(
-                self._model_cache.store_probe,
-                name,
-                snapshot=probe,
-            )
-        except Exception:
-            logger.warning("setup.model_cache_write_failed agent=%s", self.layout.name)
-            # A failed write must not reuse a stale stamp: a changed probe would
-            # then collide with the previous revision and be dropped.
-            revision = self._model_cache.content_revision(probe)
+        revision = await asyncio.to_thread(source_content_revision, probe)
         return (name, revision, probe)
 
     def _candidate_is_unchanged(self, candidate: _Candidate) -> bool:
@@ -493,9 +360,7 @@ class SetupWatcher:
             self._setup is not None
             and candidate.config_value == self._config
             and candidate.inputs.envs == self._setup.envs
-            and candidate.observation == self._catalog_identity
             and candidate.adapter_configs == self._adapter_configs
-            and candidate.adapter_identity == self._loaded_adapter_identity
             and candidate.toolset_configs == self._toolset_configs
             and candidate.catalog_configs == self._catalog_configs
             and candidate.source_revisions == self._source_revisions
@@ -506,11 +371,7 @@ class SetupWatcher:
         self._adapter_configs = candidate.adapter_configs
         self._toolset_configs = candidate.toolset_configs
         self._catalog_configs = candidate.catalog_configs
-        self._adapters = candidate.adapters
-        self._loaded_adapter_identity = candidate.adapter_identity
-        self._tools = candidate.tools
         self._catalogs = candidate.catalogs
-        self._catalog_identity = candidate.observation
         self._source_revisions = candidate.source_revisions
 
     async def updates(
@@ -551,21 +412,6 @@ class SetupWatcher:
             pass
 
 
-async def _merge_catalogs(
-    static: ModelCatalogSnapshot,
-    additional: tuple[tuple[str, ModelCatalogSnapshot], ...],
-) -> ModelCatalogSnapshot:
-    return await MergedModelCatalog(
-        (
-            _SnapshotModelCatalog(static),
-            *(
-                _SnapshotModelCatalog(snapshot, name=name)
-                for name, snapshot in additional
-            ),
-        )
-    ).snapshot()
-
-
 def _resolve_catalog(
     merged: ModelCatalogSnapshot,
     *,
@@ -580,85 +426,92 @@ def _build_setup(
     layout: AgentLayout,
     sandbox: str,
     revision: str,
-    listing: ModelListing,
+    load: _CatalogLoad,
     catalog_sources: Mapping[str, tuple[str, str]],
-    adapters: dict[str, ModelAdapter],
-    route_adapters: Mapping[str, RouteAdapter],
-    tools: dict[str, Tool],
-    envs: dict[str, str],
+    adapter_configs: Mapping[str, Mapping[str, object]],
+    toolset_configs: Mapping[str, Mapping[str, object]],
+    catalog_configs: Mapping[str, Mapping[str, object]],
+    envs: Mapping[str, str],
     allow: AgentCeiling,
     defaults: RunDefaults,
     limits: RunLimits,
-    compact_model: ModelOverride | None = None,
-    validate_defaults: bool = True,
+    compact_model: ModelOverride | None,
+    validate_defaults: bool,
 ) -> AgentSetup:
-    # Retain this version's declarations and environment for lazy full inspection.
-    # Only ready, allowed models need runtime routes and query views at startup.
-    adapters = dict(adapters)
-    envs = dict(envs)
+    """Publish captured revisions with per-setup synchronous lazy loaders."""
 
-    def load_catalog(*, all: bool = False) -> ModelCatalogSnapshot:
-        return listing.resolve(
-            listing.records.models if all else listing.effective_models,
-            adapters=route_adapters,
-            environ=envs,
-            revision=revision,
-            include_empty_providers=all,
-        )
+    captured_envs = dict(envs)
+    adapter_config = {name: dict(value) for name, value in adapter_configs.items()}
+    toolset_config = {name: dict(value) for name, value in toolset_configs.items()}
+    catalog_config = {name: dict(value) for name, value in catalog_configs.items()}
+    # Hold one generation's input snapshots until its first successful model
+    # materialization, then release them so only the resolved records and view
+    # reference lists remain attached to the setup.
+    source_snapshots = [load.static, *(snapshot for _, _, snapshot in load.additional)]
 
-    snapshot = load_catalog()
-    models = ModelCollection(snapshot.models, _lazy_queries=True)
-    if (
-        validate_defaults
-        and compact_model is not None
-        and compact_model.identity != "unset"
-    ):
-        select_compact_model(models, compact_model)
-    all_tools = ToolCollection.from_tools(tools)
-    tool_collection = all_tools
-    if allow.tools is not None:
-        selected = (
-            tool_collection.user.match(allow.tools) if allow.tools else ToolCollection()
+    def load_adapters() -> Mapping[str, ModelAdapter]:
+        return MappingProxyType(load_model_adapters(adapter_config))
+
+    def load_catalog_plugins() -> Mapping[str, ModelCatalog]:
+        return MappingProxyType(load_model_catalogs(catalog_config))
+
+    def load_toolset_plugins():
+        return MappingProxyType(load_toolsets_with_sources(config=toolset_config))
+
+    def load_model_data(setup: AgentSetup) -> _ModelData:
+        merged = merge_catalog_snapshots(tuple(source_snapshots))
+        resolved = _resolve_catalog(
+            merged,
+            adapters=setup.adapters(),
+            envs=captured_envs,
         )
-        tool_collection = tool_collection.subset(
-            (*tool_collection.runtime, *selected)
-        ).compact()
-    if validate_defaults and defaults.model is not None:
-        model = models.resolve(defaults.model.ref)
-        resolve_model_reasoning(model, defaults.model.reasoning)
-    provider_ids = {model._toolang.provider for model in models.entries}
-    providers = {
-        provider_id: snapshot.providers[provider_id]
-        for provider_id in sorted(provider_ids)
-    }
+        ordered_models, allowed_refs = order_models(resolved.models, allow.models)
+        models = [
+            model.with_allowed(model.ref in allowed_refs) for model in ordered_models
+        ]
+        models_effective = [model for model in models if model._toolang.effective_ready]
+        providers = list(resolved.providers.values())
+        effective_provider_ids = {model._toolang.provider for model in models_effective}
+        providers_effective = [
+            provider for provider in providers if provider.id in effective_provider_ids
+        ]
+        if (
+            validate_defaults
+            and compact_model is not None
+            and compact_model.identity != "unset"
+        ):
+            select_compact_model(models_effective, compact_model)
+        if validate_defaults and defaults.model is not None:
+            model = resolve_model(models_effective, defaults.model.ref)
+            resolve_model_reasoning(model, defaults.model.reasoning)
+        data = _ModelData(
+            models=tuple(models),
+            providers=tuple(providers),
+            models_effective=tuple(models_effective),
+            providers_effective=tuple(providers_effective),
+        )
+        source_snapshots.clear()
+        return data
+
+    def load_tool_collection(plugins) -> ToolCollection:
+        return ToolCollection.from_tools(tools_from_toolsets(plugins))
+
     return AgentSetup(
         layout=layout,
+        envs=captured_envs,
         revision=revision,
-        providers=providers,
-        adapters=adapters,
-        models=models,
-        tools=tool_collection,
-        envs=envs,
         environment=AgentEnvironment.capture(layout, sandbox=sandbox),
         defaults=defaults,
         limits=limits,
         compact_model=compact_model,
         catalog_sources=catalog_sources,
-        _catalog_loader=lambda: load_catalog(all=True),
-        _model_listing=listing,
-        _all_tools=all_tools,
-        _allowed_model_refs=frozenset(
-            f"{model.provider}/{model.id}"
-            for model in listing.records.models
-            if model.allowed_order is not None
-        ),
+        _load_models=load_model_data,
+        _load_tools=load_tool_collection,
+        _allowed_tools=allow.tools,
+        _load_toolset_plugins=load_toolset_plugins,
+        _load_adapters=load_adapters,
+        _load_catalogs=load_catalog_plugins,
     )
-
-
-def _adapter_identity(adapters: Mapping[str, RouteAdapter]) -> str:
-    """Include loadable implementations and defaults, not only installed metadata."""
-
-    return digest({name: adapter.default_api for name, adapter in adapters.items()})
 
 
 def _projection_key(

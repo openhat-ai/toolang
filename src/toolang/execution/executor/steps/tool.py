@@ -248,7 +248,9 @@ async def _execute(
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
         nonlocal operation, context, runtime
-        runtime_tools = prepared.run.setup.tools.runtime if trigger == "runtime" else {}
+        runtime_tools = (
+            prepared.run.setup.tools().runtime if trigger == "runtime" else {}
+        )
         # Bind the operation to the Step's State even if reload removed its Agic.
         if (
             _plugin_name(runtime_tools.get(call.name) or prepared.tools.get(call.name))

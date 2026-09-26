@@ -19,6 +19,7 @@ from toolang.execution.runnables import (
 from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
+from toolang.plugin.models.query import filter_models, first_model_ref
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
@@ -57,12 +58,12 @@ def models(
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        selected = setup.models.match(query) if query is not None else setup.models
+        selected = filter_models(setup.models_effective(), query)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     preferred = setup.defaults.model.ref if setup.defaults.model is not None else None
     return {
-        "default": selected.effective_default(preferred),
+        "default": first_model_ref(selected, preferred),
         "items": [
             _model_item(
                 ref=model.ref,
@@ -72,7 +73,7 @@ def models(
                 input_price=_model_token_price(model, "input"),
                 output_price=_model_token_price(model, "output"),
             )
-            for model in selected.entries
+            for model in selected
         ],
     }
 
@@ -83,7 +84,7 @@ def tools(
     query: list[str] | None = Query(default=None),
 ) -> dict[str, object]:
     try:
-        dataset = tool_dataset(core.setup.current().tools)
+        dataset = tool_dataset(core.setup.current().tools())
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:

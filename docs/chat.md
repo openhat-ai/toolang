@@ -313,7 +313,7 @@ chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
 `GET /api/v1/models` returns concrete refs from the server's current effective
-`AgentSetup.models` collection, base per-million input/output prices, and
+`AgentSetup.models_effective()` collection, base per-million input/output prices, and
 structured reasoning-effort metadata. A run
 resolves the submitted ref with singular-selection semantics, validates its
 typed model parameters, then applies its selected runnable's `models`

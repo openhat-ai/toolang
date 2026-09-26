@@ -1,4 +1,4 @@
-"""Models.dev-compatible file-backed model catalog plugin."""
+"""Flat-catalog file-backed model catalog plugin."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .path import DEFAULT_MAX_CATALOG_BYTES
 
 @dataclass(frozen=True, slots=True)
 class ModelsDevModelCatalog(ModelCatalog):
-    """One complete models.dev-compatible file-backed catalog."""
+    """One complete flat cata file-backed catalog."""
 
     path: Path
     max_bytes: int = DEFAULT_MAX_CATALOG_BYTES
@@ -96,7 +96,7 @@ def read_model_catalog_snapshot(
     *,
     max_bytes: int = DEFAULT_MAX_CATALOG_BYTES,
 ) -> ModelCatalogSnapshot:
-    """Load one complete validated models.dev provider or combined catalog."""
+    """Load one complete validated flat cata catalog."""
 
     _, source = capture_model_catalog_source(path, max_bytes=max_bytes)
     return source.snapshot()
@@ -135,7 +135,7 @@ def _model_catalog_snapshot_from_bytes(
     source: Path | None,
     revision: str,
 ) -> ModelCatalogSnapshot:
-    """Validate one complete models.dev payload and rebuild its snapshot."""
+    """Validate one complete flat cata payload and rebuild its snapshot."""
 
     try:
         payload = msgspec.json.decode(payload_bytes)

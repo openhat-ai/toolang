@@ -31,6 +31,7 @@ from toolang.api.schemas import (
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
+from toolang.plugin.models.query import first_model_ref
 from toolang.execution.calls import require_exact_model_request
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import (
@@ -330,7 +331,7 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
     state = core.state.current()
     model = setup.defaults.model
     if model is None:
-        fallback = setup.models.effective_default(None)
+        fallback = first_model_ref(setup.models_effective())
         model = ModelRequest(fallback) if fallback is not None else None
     runnable = setup.defaults.runnable
     if runnable is None:

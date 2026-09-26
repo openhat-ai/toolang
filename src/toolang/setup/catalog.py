@@ -33,26 +33,36 @@ class MergedModelCatalog(ModelCatalog):
                 *(source.snapshot() for source in self.sources)
             )
         ]
-        if not snapshots:
-            return ModelCatalogSnapshot(providers={}, models=(), revision="sha256:0")
-        providers: dict[str, Provider] = {}
-        models: dict[tuple[str, str], Model] = {}
-        for snapshot in snapshots:
-            for provider_id, provider in snapshot.providers.items():
-                if provider_id in providers:
-                    raise ValueError(f"duplicate catalog provider: {provider_id}")
-                providers[provider_id] = provider
-            for model in snapshot.models:
-                identity = (model._toolang.provider, model.id)
-                if identity in models:
-                    raise ValueError(f"duplicate catalog model: {model.identity}")
-                models[identity] = model
-        return ModelCatalogSnapshot(
-            providers=providers,
-            models=tuple(models[key] for key in sorted(models)),
-            revision=snapshots[0].revision,
-            source=snapshots[0].source,
-        )
+        return merge_catalog_snapshots(tuple(snapshots))
+
+
+def merge_catalog_snapshots(
+    snapshots: tuple[ModelCatalogSnapshot, ...],
+) -> ModelCatalogSnapshot:
+    """Merge captured source snapshots synchronously for lazy setup accessors."""
+
+    if not snapshots:
+        return ModelCatalogSnapshot(providers={}, models=(), revision="sha256:0")
+    providers: dict[str, Provider] = {}
+    models: list[Model] = []
+    model_identities: set[tuple[str, str]] = set()
+    for snapshot in snapshots:
+        for provider_id, provider in snapshot.providers.items():
+            if provider_id in providers:
+                raise ValueError(f"duplicate catalog provider: {provider_id}")
+            providers[provider_id] = provider
+        for model in snapshot.models:
+            identity = (model._toolang.provider, model.id)
+            if identity in model_identities:
+                raise ValueError(f"duplicate catalog model: {model.identity}")
+            model_identities.add(identity)
+            models.append(model)
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=tuple(models),
+        revision=snapshots[0].revision,
+        source=snapshots[0].source,
+    )
 
 
 def assemble_catalog(

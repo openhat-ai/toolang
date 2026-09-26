@@ -35,7 +35,7 @@ def prepare_root_mounts(
                 read_only=True,
             )
         )
-    for directory_name in (".setup", ".state", *_ROOT_MOUNT_DIR_NAMES):
+    for directory_name in (".state", *_ROOT_MOUNT_DIR_NAMES):
         local_path = local_root / directory_name
         local_path.mkdir(parents=True, exist_ok=True)
         mounts.append(

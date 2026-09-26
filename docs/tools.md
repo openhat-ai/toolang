@@ -19,8 +19,10 @@ individual run resource declarations may narrow it further.
 
 The default list hides internal tools such as `_toolang/*`. `--all` reveals
 those tools and all allow-excluded tools from the same setup version, matching
-the diagnostic meaning of model/provider `--all`. `setup.tools` remains the
-allow-filtered runtime collection; inspection does not expand runtime grants.
+the diagnostic meaning of model/provider `--all`. `setup.tools()` remains the
+allow-filtered runtime collection; `setup.tools(all=True)` exposes the complete
+pre-allow set for inspection without changing run grants. Tool and toolset data
+are loaded on first accessor use and memoized within that setup revision.
 `me/*` follows normal allow policy in the default view and appears with `--all`.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
@@ -198,7 +200,7 @@ executor without State refresh still exposes reload and returns a correlated
 error if it is called. Statement-generated Flow evaluators, output-repair
 calls, and tool-disabled models receive no runtime tools.
 
-`AgentSetup.tools` retains registered runtime tools independently of user tool
+`AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.

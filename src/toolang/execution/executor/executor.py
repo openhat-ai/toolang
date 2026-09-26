@@ -40,10 +40,10 @@ from toolang.lang.input import (
 )
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.types import Array, Value, is_unnamed_ref
+from toolang.plugin.models.query import first_model_ref, resolve_model
 from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
-from toolang.plugin.models.collections import ModelCollection
 from toolang.state.state import AgentState, state_program
 from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
@@ -210,6 +210,7 @@ class RunSpec:
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: RunRef | None = None
+    all_tools: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,7 +635,7 @@ class RunExecutor:
         )
         default_model_request = setup.defaults.model
         if default_model_request is None:
-            fallback = setup.models.effective_default(None)
+            fallback = first_model_ref(setup.models_effective())
             default_model_request = (
                 ModelRequest(fallback) if fallback is not None else None
             )
@@ -1748,8 +1749,8 @@ class _Execution:
         )
 
     @property
-    def models(self) -> ModelCollection:
-        return self.setup.models
+    def models(self) -> Sequence[Model]:
+        return self.setup.models_effective()
 
     @property
     def has_state_refresh(self) -> bool:
@@ -2961,7 +2962,7 @@ class _Execution:
                         summary=_tool_summary(
                             _tool_summary_context(
                                 event.given.call,
-                                self.setup.tools.get(event.given.call.name),
+                                self.setup.tools().get(event.given.call.name),
                             ),
                             "canceled",
                         )
@@ -3226,6 +3227,7 @@ def _prepare_run_spec(
         spec.state,
         AgentCeiling(),
         module=module,
+        all_tools=spec.all_tools,
     )
     for ceiling in spec.ceilings:
         agent_resources = apply_agent_ceiling(
@@ -3255,7 +3257,7 @@ def _prepare_run_spec(
     else:
         if spec.bindings.model != spec.model_request.ref:
             raise ValueError("run model request does not match its model binding")
-        entry = selection.resolve(spec.model_request.ref)
+        entry = resolve_model(selection, spec.model_request.ref)
         if entry.ref not in resources.models:
             raise ToolangError(
                 f"model ref is outside run resources: {spec.model_request.ref}"

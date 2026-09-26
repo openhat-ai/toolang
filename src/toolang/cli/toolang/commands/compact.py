@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -21,7 +20,6 @@ from toolang.common.time import utc_now
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.compaction import (
     compact_state,
-    compact_tools,
     permit,
     execute_algorithm,
     forget_state,
@@ -243,10 +241,12 @@ def _prepare(
     if forget:
         resolved["_"] = "Earlier history was intentionally forgotten."
     request = (
-        None if forget else select_compact_model(setup.models, setup.compact_model)
+        None
+        if forget
+        else select_compact_model(setup.models_effective(), setup.compact_model)
     )
     return RunSpec(
-        setup=replace(setup, tools=compact_tools(setup)),
+        setup=setup,
         state=program,
         thread=f"compact_{thread}",
         bindings=RunBindings(
@@ -257,6 +257,7 @@ def _prepare(
         limits=setup.limits,
         input=RunnableInput(resolved),
         authored_input=authored,
+        all_tools=True,
     ), ids[: stop + 1]
 
 

@@ -296,10 +296,7 @@ def _models_summary(
             for item in raw_models
             if isinstance(item, str) and (value := item.strip())
         )
-    rows = plugin.model_rows(
-        setup,
-        model_queries=queries or None,
-    )
+    rows = plugin.model_rows(setup, model_queries=queries or None)
     provider_count = len({provider for _model, provider, _detail in rows})
     return (
         f"{len(rows)} {'model' if len(rows) == 1 else 'models'}, "

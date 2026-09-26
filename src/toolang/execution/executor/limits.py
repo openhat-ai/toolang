@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from toolang.base.money import add_cost, cost_units
@@ -10,7 +11,6 @@ from toolang.base.types.policy import RunLimits
 from toolang.common.errors import ToolangError
 from toolang.execution.accounting import selected_usd_cost
 from toolang.execution.types import ModelAccounting
-from toolang.plugin.models.collections import ModelCollection
 
 
 class _RunLimitExceeded(ToolangError):
@@ -66,7 +66,7 @@ class _RunLimitState:
     def require_pricing(
         self,
         model: Model,
-        models: ModelCollection,
+        models: Sequence[Model],
     ) -> None:
         """Reject a priced run before invoking a model with unknown prices."""
 

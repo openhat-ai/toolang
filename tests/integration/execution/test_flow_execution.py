@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 import asyncio
 import threading
 from multiprocessing import get_context
@@ -132,7 +134,7 @@ def _state(*flows: FlowDecl) -> Any:
 
 def _setup() -> AgentSetup:
     layout = AgentLayout.resident(Path("/"), "alice")
-    return AgentSetup(
+    return materialized_setup(
         revision="test-setup",
         layout=layout,
         providers={},
@@ -148,7 +150,7 @@ def _model_setup() -> AgentSetup:
     provider = FakeModels(streaming=False)
     layout = AgentLayout.resident(Path("/"), "alice")
     providers = {provider.name: provider.catalog_provider()}
-    return AgentSetup(
+    return materialized_setup(
         revision="test-setup",
         layout=layout,
         providers=providers,
@@ -721,12 +723,12 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         "beta__two": RecordingTool("beta__two", output={}),
     }
     base_setup = _setup()
-    setup = AgentSetup(
+    setup = materialized_setup(
         revision="test-setup",
         layout=base_setup.layout,
-        providers=base_setup.providers,
-        adapters=base_setup.adapters,
-        models=base_setup.models,
+        providers=base_setup.providers_effective(),
+        adapters=base_setup.adapters(),
+        models=base_setup.models_effective(),
         tools=ToolCollection.from_tools(tools),
         envs=base_setup.envs,
         environment=base_setup.environment,

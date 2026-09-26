@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 import json
 from typing import cast
@@ -20,7 +20,12 @@ from toolang.execution.types import (
 )
 from toolang.execution.records import RecallControlPayload
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl
-from toolang.plugin.models.collections import ModelCollection
+from toolang.plugin.models.query import (
+    apply_model_operations,
+    filter_models,
+    resolve_model,
+    subset_models,
+)
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.registry import (
     tool_ref_for_model_tool,
@@ -65,12 +70,12 @@ def agent_model_targets(
 ) -> tuple[str | None, tuple[tuple[str, Model], ...]]:
     """Return the default and selectable models within one agent ceiling."""
 
-    models = setup.models
+    models = setup.models_effective()
     if ceiling.models is not None:
-        models = models.match(ceiling.models) if ceiling.models else ModelCollection()
-    targets = tuple((model.ref, model) for model in models.entries)
+        models = filter_models(models, ceiling.models)
+    targets = tuple((model.ref, model) for model in models)
     default = setup.defaults.model.ref if setup.defaults.model is not None else None
-    if default is not None and not models.contains(default):
+    if default is not None and default not in {model.ref for model in models}:
         raise ToolangError("default model is outside the selectable model collection")
     return default, targets
 
@@ -91,14 +96,15 @@ def resolve_agent_resources(
     ceiling: AgentCeiling,
     *,
     module: str | None = None,
+    all_tools: bool = False,
 ) -> AgentResources:
     """Build initial stable resources from complete immutable snapshots."""
 
-    models = setup.models
+    models = setup.models_effective()
     if ceiling.models is not None:
-        models = models.match(ceiling.models) if ceiling.models else ModelCollection()
+        models = filter_models(models, ceiling.models)
 
-    tools = setup.tools.user
+    tools = setup.tools(all=all_tools).user
     if ceiling.tools is not None:
         tools = tools.match(ceiling.tools) if ceiling.tools else type(tools)()
 
@@ -123,13 +129,16 @@ def apply_agent_ceiling(
     """Apply one agent ceiling without expanding the base resource set."""
 
     if ceiling.models is None:
-        models = setup.models.subset(resources.models)
+        models = subset_models(setup.models_effective(), resources.models)
     elif not ceiling.models:
-        models = ModelCollection()
+        models = ()
     elif not resources.models:
         raise ToolangError("model ceiling matched no available models")
     else:
-        models = setup.models.subset(resources.models).match(ceiling.models)
+        models = filter_models(
+            subset_models(setup.models_effective(), resources.models),
+            ceiling.models,
+        )
 
     available_tools = _resource_tool_collection(setup, resources)
     if ceiling.tools is None:
@@ -192,7 +201,7 @@ def intersect_resources(
 
 
 def resolve_runnable_resources(
-    selection: ModelCollection,
+    selection: Sequence[Model],
     *,
     runnable: _Runnable,
     base: AgentResources,
@@ -202,8 +211,9 @@ def resolve_runnable_resources(
 ) -> AgentResources:
     """Apply one runnable's authored queries within a chosen resource base."""
 
-    models = selection.subset(base.models).apply(
-        _query_operations(_directives(runnable, "models"))
+    models = apply_model_operations(
+        subset_models(selection, base.models),
+        _query_operations(_directives(runnable, "models")),
     )
 
     available_tools = _resource_tool_collection(setup, base)
@@ -243,7 +253,7 @@ def resolve_runnable_resources(
 
 
 def validate_model_binding(
-    selection: ModelCollection,
+    selection: Sequence[Model],
     *,
     runnable: _Runnable,
     resources: AgentResources,
@@ -252,7 +262,7 @@ def validate_model_binding(
     """Validate one bound model within final runnable resources."""
 
     if model is not None:
-        entry = selection.resolve(model)
+        entry = resolve_model(selection, model)
         if entry.ref not in resources.models:
             raise ToolangError(f"model ref is outside run resources: {model}")
     elif isinstance(runnable, AgicDecl):
@@ -272,9 +282,10 @@ def _resource_tool_collection(
     setup: AgentSetup,
     resources: AgentResources,
 ) -> ToolCollection:
+    tools = setup.tools(all=True)
     keys: list[str] = []
     for item in resources.tools:
-        entry = setup.tools.entry(item.model_name)
+        entry = tools.entry(item.model_name)
         ref = tool_ref_for_model_tool(item.model_name, entry.tool)
         if (ref.plugin, ref.toolset, ref.name) != (
             item.plugin,
@@ -283,7 +294,7 @@ def _resource_tool_collection(
         ):
             raise ToolangError(f"run tool resource changed: {item.model_name}")
         keys.append(entry.key)
-    return setup.tools.subset(keys)
+    return tools.subset(keys)
 
 
 def resource_caps(
@@ -311,20 +322,20 @@ def resource_caps(
 
 def snapshot_model_selection(
     setup: AgentSetup,
-) -> ModelCollection:
-    """Return the immutable model collection captured in Setup."""
+) -> tuple[Model, ...]:
+    """Return the setup generation's cached ready model records."""
 
-    return setup.models
+    return setup.models_effective()
 
 
 def _agent_resources(
     *,
-    models: ModelCollection,
+    models: Sequence[Model],
     tools: Mapping[str, Tool],
     caps: tuple[StateCap, ...],
 ) -> AgentResources:
     return AgentResources(
-        models=models.keys(),
+        models=tuple(model.ref for model in models),
         tools=tuple(
             AgentToolResource(
                 model_name=model_name,

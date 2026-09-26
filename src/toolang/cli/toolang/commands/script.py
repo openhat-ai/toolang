@@ -40,6 +40,7 @@ from toolang.lang.ast import (
 from toolang.lang.description import statement_description
 from toolang.lang.input import CallInput, parse_input
 from toolang.lang.types import display_runnable_ref
+from toolang.plugin.models.query import first_model_ref
 
 from ...common.context import load_runtime_environ
 from ...common.output import echo_error
@@ -1194,7 +1195,9 @@ async def _execute(
     setup = await setup_watcher.refresh()
     state = await state_watcher.refresh()
     fallback_model = (
-        setup.models.effective_default(None) if setup.defaults.model is None else None
+        first_model_ref(setup.models_effective())
+        if setup.defaults.model is None
+        else None
     )
     executor = RunExecutor(
         store,

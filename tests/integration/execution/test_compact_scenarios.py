@@ -1,5 +1,7 @@
 """Automatic compaction stays outside the normal conversation and is replayable."""
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from dataclasses import replace
 import json
@@ -54,7 +56,7 @@ def reply(value: object) -> ModelCallResult:
 
 
 def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
-    harness.setup = replace(
+    harness.setup = replace_materialized_setup(
         harness.setup,
         models=ModelCollection(
             tuple(
@@ -63,7 +65,7 @@ def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
                     limit={**model.limit, "context": context, "output": 512},
                     structured_output=True,
                 )
-                for model in harness.setup.models.entries
+                for model in harness.setup.models_effective()
             )
         ),
     )
@@ -90,12 +92,12 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             assert old.status == recent.status == "succeeded"
             constrain(harness)
             if output_limit is None:
-                harness.setup = replace(
+                harness.setup = replace_materialized_setup(
                     harness.setup,
                     models=ModelCollection(
                         tuple(
                             replace(model, limit={"context": 14000})
-                            for model in harness.setup.models.entries
+                            for model in harness.setup.models_effective()
                         )
                     ),
                 )
@@ -397,7 +399,7 @@ def test_compact_reads_history_pages_with_supplied_summary(tmp_path):
             async def run_compact(**input):
                 return await harness.executor.run(
                     RunSpec(
-                        setup=replace(
+                        setup=replace_materialized_setup(
                             harness.setup, tools=compact_tools(harness.setup)
                         ),
                         state=compact_state(),
@@ -571,7 +573,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
     async def scenario():
         async with harness:
             thread, end = await seed(harness)
-            original = harness.setup.models.entries[0]
+            original = harness.setup.models_effective()[0]
             reasoning_options = ({"type": "effort", "values": ["low", "high"]},)
             normal = replace(
                 original,
@@ -593,7 +595,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
                 if selection == "explicit"
                 else None
             )
-            harness.setup = replace(
+            harness.setup = replace_materialized_setup(
                 harness.setup,
                 models=ModelCollection((normal, *candidates)),
                 compact_model=configured,
@@ -671,12 +673,12 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
     async def scenario():
         async with harness:
             thread, end = await seed(harness)
-            harness.setup = replace(
+            harness.setup = replace_materialized_setup(
                 harness.setup,
                 models=ModelCollection(
                     tuple(
                         replace(model, tool_call=False)
-                        for model in harness.setup.models.entries
+                        for model in harness.setup.models_effective()
                     )
                 ),
             )

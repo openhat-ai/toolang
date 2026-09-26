@@ -339,8 +339,9 @@ Runtime calls in one model batch
 use that Model Call's captured routes, even if reload and ordinary tools adopt
 new State between calls. The next Model Call captures the new routes.
 
-`AgentSetup.models` and `AgentSetup.tools` are already filtered immutable
-collections. `AgentState.caps_for(module)` returns precomputed filtered caps.
+`AgentSetup.models_effective()` and `AgentSetup.tools()` provide the filtered
+runtime collections. They are lazily materialized and memoized in the pinned
+setup revision. `AgentState.caps_for(module)` returns precomputed filtered caps.
 At `run()`, the executor intersects every
 `RunSpec.ceilings` restriction and creates tree-level `AgentResources` using
 stable model entry keys. A ceiling cannot expand the published base. Invalid

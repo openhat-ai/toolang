@@ -24,12 +24,6 @@ ${TOOLANG_ROOT}/
   skills/
   services/
   prompts/
-  .setup/
-    models/
-      catalogs/revs/<catalog-artifact-key>/catalog.json
-      contexts/revs/<root-context-revision>/
-        effective.json
-        identity.json
   .state/
   .runtime/
   .sandbox/
@@ -46,11 +40,6 @@ ${TOOLANG_ROOT}/
       tasks/
       chores/
       archive/
-      .setup/
-        models/
-          contexts/revs/<agent-context-revision>/
-            effective.json
-            identity.json
       .state/
       .runtime/
 ```
@@ -87,7 +76,6 @@ Key paths:
 | `chores/` | Ready chore documents |
 | `drafts/` | Draft task and chore documents |
 | `archive/` | Retired task and chore documents |
-| `.setup/` | Rebuildable installed-environment caches |
 | `.state/` | Immutable Agent State revisions |
 | `.runtime/` | Live runtime state |
 
@@ -105,28 +93,18 @@ state, and runtime path from that identity.
 | `roaming` | `<source-directory>/.toolang/` |
 
 All three placements use the same layout below their calculated root:
-`agents/<agent>/` is the agent home, rebuildable setup uses `.setup/`, Agent
-State uses `.state/`, and durable operational data uses `.runtime/`.
+`agents/<agent>/` is the agent home, Agent State uses `.state/`, and durable
+operational data uses `.runtime/`. Runtime setup revisions and derived model
+views stay in memory; Toolang does not create or mount a model-cache `.setup/`
+directory. Existing legacy `.setup/models` data is ignored.
 
 
-## Setup Cache
+## Setup Data
 
-Rebuildable environment discovery data lives under:
-
-- `${TOOLANG_ROOT}/.setup/`
-
-| Path | Purpose |
-| --- | --- |
-| `models/catalogs/revs/<revision>/catalog.json` | Portable normalized static catalog artifacts shared by root and agents |
-| `models/contexts/revs/<revision>/effective.json` | Root effective model sets and query facts |
-| `models/contexts/revs/<revision>/identity.json` | Compact identity indexes for cached model contexts |
-
-Agent-specific model contexts live under
-`${TOOLANG_ROOT}/agents/<agent>/.setup/models/contexts/revs/<revision>/`, with
-the same `effective.json` and `identity.json` files.
-These Setup entries are rebuildable, immutable, content-addressed, and safe to
-reuse after root/home mount paths change. Absolute filesystem observations are
-process-local and are not persisted as cache identity.
+Setup configuration and catalog sources remain under the Toolang root and agent
+home. `SetupWatcher` captures source revisions and builds `AgentSetup` views in
+memory when their lazy accessors are first used. Model/catalog data is not stored
+or shared through a `.setup/` cache directory.
 
 
 ## Runtime Room

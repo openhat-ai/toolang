@@ -2239,6 +2239,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "tomlkit" },
+    { name = "tq-json" },
     { name = "tree-sitter" },
     { name = "tree-sitter-toolang" },
     { name = "typer" },
@@ -2285,6 +2286,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "rich", specifier = ">=14,<15" },
     { name = "tomlkit", specifier = ">=0.13,<1" },
+    { name = "tq-json", specifier = ">=0.1.0,<0.2" },
     { name = "tree-sitter", specifier = ">=0.25.2,<0.26" },
     { name = "tree-sitter-toolang", specifier = ">=0.3.3,<0.4" },
     { name = "typer", specifier = "==0.27.2" },
@@ -2302,6 +2304,15 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8,<4" },
     { name = "ruff", specifier = ">=0.15.6,<0.16" },
     { name = "ty", specifier = ">=0.0.23,<0.0.24" },
+]
+
+[[package]]
+name = "tq-json"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/a4/325485eb764ab923061648ea1fec034b95b955b472ff2aa4b900c5176dd0/tq_json-0.1.0.tar.gz", hash = "sha256:9874a31b0335553f75cb71949f7f87644343990a1dccdadeee952a2c6c399a6c", size = 17166, upload-time = "2026-09-26T07:20:16.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/88/f7f6f925041137b62d65a7087492a3119504439242634cb53c0e6461b79a/tq_json-0.1.0-py3-none-any.whl", hash = "sha256:e51112075617e69da1b08af273cd7f6ed719e914994c2e904a662b63b906ffa3", size = 10628, upload-time = "2026-09-26T07:20:15.734Z" },
 ]
 
 [[package]]

@@ -83,6 +83,8 @@ class ModelQueryView:
     description: str | None
     family: str | None
     available: bool
+    allowed: bool
+    ready: bool
     adapter: str | None
     catalog: str | None
     route: ModelRouteView
@@ -405,7 +407,9 @@ def catalog_provider_views(
             record=provider,
             name=provider.name,
             catalog=None,
-            ready=any(model._toolang.ready for model in models.get(provider.id, ())),
+            ready=any(
+                model._toolang.effective_ready for model in models.get(provider.id, ())
+            ),
             available_models=sum(
                 model.ref in available for model in models.get(provider.id, ())
             ),
@@ -433,6 +437,8 @@ def _catalog_model_view(
         description=model.description,
         family=model.family,
         available=available,
+        allowed=model._toolang.allowed,
+        ready=model._toolang.effective_ready,
         adapter=adapter,
         catalog=None,
         route=ModelRouteView(

@@ -20,7 +20,6 @@ from toolang.base.types.model import (
 )
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
-from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 from toolang.plugin.catalogs.ollama import OllamaModelCatalog
@@ -41,7 +40,7 @@ def test_empty_model_allow_keeps_complete_diagnostic_view(
 ) -> None:
     _disable_local_discovery(monkeypatch)
     monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
-    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
     home = tmp_path / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n")
@@ -154,7 +153,7 @@ def test_models_query_exports_a_valid_complete_catalog(
     monkeypatch,
 ) -> None:
     catalog = tmp_path / "api.json"
-    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(catalog, _catalog_data())
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
@@ -175,58 +174,31 @@ def test_models_query_exports_a_valid_complete_catalog(
 
     assert result.exit_code == 0, result.stderr
     data = json.loads(result.stdout, parse_float=float)
-    providers, models = parse_model_catalog_data(data)
-    assert tuple(providers) == ("test",)
-    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
-        "two",
-    )
+    assert tuple(data) == ("test",)
+    assert tuple(data["test"]["models"]) == ("two",)
 
 
-def test_models_query_accepts_combined_models_dev_catalog(
+def test_models_rejects_models_dev_combined_catalog(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     catalog = tmp_path / "catalog.json"
     catalog.write_text(
-        json.dumps(
-            {
-                "models": {
-                    "test/one": {
-                        "id": "test/one",
-                        "name": "One",
-                    }
-                },
-                "providers": _catalog_data(),
-            }
-        ),
+        json.dumps({"models": {"test/one": {"id": "test/one"}}, "providers": {}}),
         encoding="utf-8",
     )
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
         cli.app,
-        [
-            "--root",
-            str(tmp_path / "root"),
-            "models",
-            "--all",
-            "--catalog",
-            str(catalog),
-            "--query",
-            "test/one",
-            "--json",
-        ],
+        ["--root", str(tmp_path / "root"), "models", "--catalog", str(catalog)],
         env={},
     )
 
-    assert result.exit_code == 0, result.stderr
-    providers, models = parse_model_catalog_data(
-        json.loads(result.stdout, parse_float=float)
-    )
-    assert tuple(providers) == ("test",)
-    assert tuple(model.id for model in models if model._toolang.provider == "test") == (
-        "one",
-    )
+    assert result.exit_code == 1
+    assert result.exception is not None
+    assert "flat model catalog providers must be an array" in str(result.exception)
+    assert "Traceback" not in result.stderr
 
 
 def test_models_loads_catalog_limits_that_models_dev_reports_as_zero(
@@ -234,21 +206,13 @@ def test_models_loads_catalog_limits_that_models_dev_reports_as_zero(
     monkeypatch,
 ) -> None:
     catalog = tmp_path / "catalog.json"
-    providers = _catalog_data()
-    provider_models = cast(
-        dict[str, dict[str, object]],
-        cast(dict[str, object], providers["test"])["models"],
-    )
-    provider_models["one"]["limit"] = {"context": 0, "output": 8192}
-    catalog.write_text(
-        json.dumps(
-            {
-                "models": {"test/one": {"id": "test/one", "name": "One"}},
-                "providers": providers,
-            }
-        ),
-        encoding="utf-8",
-    )
+    data = _catalog_data(("one",))
+    models = cast(list[dict[str, object]], _flat_catalog_data(data)["models"])
+    models[0]["limit"] = {"context": 0, "output": 8192}
+    _write_catalog(catalog, data)
+    flat = _flat_catalog_data(data)
+    flat["models"] = models
+    catalog.write_text(json.dumps(flat), encoding="utf-8")
     _disable_local_discovery(monkeypatch)
 
     table = runner.invoke(
@@ -330,9 +294,7 @@ def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "models.dev models.json contains provider-agnostic metadata" in captured.err
-    assert "https://models.dev/catalog.json" in captured.err
-    assert "https://models.dev/api.json" in captured.err
+    assert "flat cata format" in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -341,7 +303,7 @@ def test_models_table_reports_invalid_query_without_a_traceback(
     monkeypatch,
 ) -> None:
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(catalog, _catalog_data())
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
@@ -359,7 +321,7 @@ def test_models_table_reports_invalid_query_without_a_traceback(
     )
 
     assert result.exit_code == 1
-    assert "unknown models query field 'missing'" in result.stderr
+    assert "query field 'missing' is not in the filter fields" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -373,7 +335,7 @@ def test_models_accepts_month_precision_catalog_dates(
     model["release_date"] = "2025-04"
     model["last_updated"] = "2026-01"
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _write_catalog(catalog, data)
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
@@ -401,7 +363,7 @@ def test_models_accepts_month_precision_catalog_dates(
 def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None:
     data = _catalog_data()
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _write_catalog(catalog, data)
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
@@ -469,7 +431,7 @@ def test_models_render_aligned_prices_and_group_summary(
     )
     models["one"]["cost"] = {"input": 0.43, "output": 0.87}
     models["two"]["cost"] = {"input": 1.25, "output": 10}
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
     monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
     _disable_local_discovery(monkeypatch)
     result = runner.invoke(
@@ -533,7 +495,7 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     monkeypatch,
 ) -> None:
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(catalog, _catalog_data())
 
     async def ollama_snapshot(_source) -> ModelCatalogSnapshot:
         model = Model(
@@ -687,7 +649,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     models = cast(dict[str, object], provider_data["models"])
     model = cast(dict[str, object], models["two"])
     model["provider"] = {"npm": "@ai-sdk/openai-compatible"}
-    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _write_catalog(catalog, data)
     _disable_local_discovery(monkeypatch)
 
     result = runner.invoke(
@@ -812,7 +774,7 @@ def test_catalog_reasons_only_appear_inside_model_status(
     models["one"]["provider"] = {"api": "https://one.test/v1"}
     monkeypatch.delenv("TEST_API_KEY", raising=False)
     monkeypatch.delenv("TEST_MISSING_API", raising=False)
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
     _disable_local_discovery(monkeypatch)
     rows: list[Sequence[str | Text]] = []
     monkeypatch.setattr(
@@ -848,7 +810,7 @@ def test_provider_api_and_counts_use_independent_availability(
     if available_models:
         models = cast(dict[str, dict[str, object]], provider["models"])
         models["one"]["provider"] = {"api": "https://one.test/v1"}
-    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _write_catalog(catalog, data)
     _disable_local_discovery(monkeypatch)
     rows: list[Sequence[str | Text]] = []
     monkeypatch.setattr(
@@ -930,10 +892,10 @@ def test_models_uses_isolated_resident_catalogs(
 ) -> None:
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
-    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data(("one",))))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data(("one",)))
     for name in ("alice", "models", "default"):
         home = _resident_home(tmp_path, name)
-        (home / "catalog.json").write_text(json.dumps(_catalog_data(("two",))))
+        _write_catalog(home / "catalog.json", _catalog_data(("two",)))
 
     # Repeat cross-context hits and misses after warming the catalog caches.
     for target, expected in (
@@ -960,18 +922,8 @@ def test_models_uses_isolated_resident_catalogs(
             assert result == 0, output.err
             assert not output.err
             if json_output:
-                providers, models = parse_model_catalog_data(
-                    json.loads(output.out, parse_float=float)
-                )
-                actual = (
-                    tuple(
-                        model.id
-                        for model in models
-                        if model._toolang.provider == "test"
-                    )
-                    if providers
-                    else ()
-                )
+                exported = json.loads(output.out, parse_float=float)
+                actual = tuple(exported.get("test", {}).get("models", {}))
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
@@ -987,10 +939,10 @@ def test_models_uses_agent_provider_config_and_environment(
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
     monkeypatch.delenv("TEST_AGENT_MODEL_KEY", raising=False)
-    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
     data = _catalog_data()
     cast(dict[str, object], data["test"])["env"] = ["TEST_AGENT_MODEL_KEY"]
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
     home = _resident_home(tmp_path, "alice")
     (home / ".env").write_text("TEST_AGENT_MODEL_KEY=synthetic-agent-key\n")
     _resident_home(tmp_path, "bob")
@@ -1024,15 +976,11 @@ def test_models_uses_agent_provider_config_and_environment(
         assert not output.err
         assert "synthetic-agent-key" not in output.out
         if json_output:
-            providers, models = parse_model_catalog_data(
-                json.loads(output.out, parse_float=float)
-            )
-            assert tuple(providers) == (("test",) if available else ())
+            exported = json.loads(output.out, parse_float=float)
+            assert tuple(exported) == (("test",) if available else ())
             if available:
-                assert tuple(
-                    model.id for model in models if model._toolang.provider == "test"
-                ) == ("one", "two")
-                assert providers["test"].npm == "@ai-sdk/openai-compatible"
+                assert tuple(exported["test"]["models"]) == ("one", "two")
+                assert exported["test"]["npm"] == "@ai-sdk/openai-compatible"
                 assert "resolved" not in output.out
         else:
             assert ("test/one" in output.out) is available
@@ -1068,7 +1016,7 @@ def test_model_resources_use_one_catalog_in_scope_precedence(
         provider = cast(dict[str, object], data.pop("test"))
         provider["id"] = name
         provider["name"] = name
-        paths[name].write_text(json.dumps({name: provider}))
+        _write_catalog(paths[name], {name: provider})
     monkeypatch.setattr(catalog_path, "PACKAGED_MODEL_CATALOG", paths["builtin"])
     if source in ("environment", "explicit"):
         monkeypatch.setenv("TOOLANG_MODEL_CATALOG", str(paths["environment"]))
@@ -1114,14 +1062,14 @@ def test_models_reports_agent_input_type_errors_without_a_traceback(
 ) -> None:
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
-    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
     home = _resident_home(tmp_path, "alice")
     if invalid_input == "config":
         (home / "config.toml").write_text("[models]\nproviders = []\n")
         message = "[models.providers.*] is not supported"
     else:
         (home / "catalog.json").write_text('{"test": 42}')
-        message = "provider 'test' must be an object"
+        message = "flat cata format"
 
     result = cli.main(["--root", str(tmp_path), "alice", "models", *options])
     output = capsys.readouterr()
@@ -1156,6 +1104,31 @@ def _is_red(text: Text, offset: int) -> bool:
     style = text.get_style_at_offset(Console(color_system="standard"), offset)
     assert not style.bold and not style.dim
     return style.color is not None and style.color.name == "red"
+
+
+def _flat_catalog_data(data: dict[str, object]) -> dict[str, object]:
+    """External test conversion from provider-map fixtures to cata arrays."""
+
+    if set(data) == {"providers", "models"}:
+        return data
+    providers: list[dict[str, object]] = []
+    models: list[dict[str, object]] = []
+    for provider_id, raw_provider in data.items():
+        provider = cast(dict[str, object], raw_provider)
+        providers.append(
+            {key: value for key, value in provider.items() if key != "models"}
+        )
+        raw_models = cast(dict[str, dict[str, object]], provider.get("models", {}))
+        for model_id, raw_model in raw_models.items():
+            model = dict(raw_model)
+            if "provider" in model:
+                model["override"] = model.pop("provider")
+            models.append({**model, "provider": provider_id})
+    return {"providers": providers, "models": models}
+
+
+def _write_catalog(path: Path, data: dict[str, object]) -> None:
+    path.write_text(json.dumps(_flat_catalog_data(data)), encoding="utf-8")
 
 
 def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object]:
@@ -1205,7 +1178,7 @@ def test_catalog_commands_share_default_and_complete_views(
     data["offline"] = {**provider, "id": "offline", "env": ["MISSING_KEY"]}
     data["empty"] = {**provider, "id": "empty", "models": {}}
     data["excluded"] = {**provider, "id": "excluded"}
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
     config_home = _resident_home(tmp_path, "alice") if agent else tmp_path
     (config_home / "config.toml").write_text(
         '[allow]\nmodels = ["test/one", "offline/*"]\n'
@@ -1249,7 +1222,7 @@ def test_models_json_uses_the_published_version_without_rereading_source(
     _disable_local_discovery(monkeypatch)
     monkeypatch.setenv("TEST_API_KEY", "synthetic-key")
     path = tmp_path / "catalog.json"
-    path.write_text(json.dumps(_catalog_data()))
+    _write_catalog(path, _catalog_data())
     original_setup = model_catalog_commands._setup
 
     def setup_then_remove_source(*args, **kwargs):
@@ -1273,7 +1246,7 @@ def test_full_catalog_can_inspect_unready_configured_models(
 ):
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TEST_API_KEY", raising=False)
-    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
     (tmp_path / "config.toml").write_text(f'[{setting}]\nmodel = "test/one"\n')
     result = runner.invoke(
         cli.app, ["--root", str(tmp_path), command, "--all", "--json"]
@@ -1296,7 +1269,7 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TEST_API_KEY", raising=False)
     source = tmp_path / "catalog.json"
-    source.write_text(json.dumps(_catalog_data()))
+    _write_catalog(source, _catalog_data())
     setup = asyncio.run(
         load_setup(
             AgentLayout.resident(tmp_path, "default"),
@@ -1331,7 +1304,7 @@ def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, com
     monkeypatch.setenv("TEST_API_KEY", "secret")
     data = json.loads(json.dumps(_catalog_data()))
     data["test"]["models"]["two"]["provider"] = {"mode": "missing"}
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
 
     for all_ in (False, True):
         result = runner.invoke(
@@ -1396,7 +1369,7 @@ def test_model_status_columns_separate_readiness_and_allow(
     data = _catalog_data()
     provider = cast(dict[str, object], data["test"])
     data["offline"] = {**provider, "id": "offline", "env": ["INSPECTION_MISSING_KEY"]}
-    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    _write_catalog(tmp_path / "catalog.json", data)
     (tmp_path / "config.toml").write_text(
         '[allow]\nmodels = ["test/one", "offline/one"]\n'
     )

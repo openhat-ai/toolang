@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -161,7 +163,7 @@ class _Tracer(RunTracer):
 
 def _resources(setup: AgentSetup) -> AgentResources:
     return AgentResources(
-        models=setup.models.keys(),
+        models=tuple(model.ref for model in setup.models_effective()),
         tools=tuple(
             AgentToolResource(
                 model_name=name,
@@ -169,7 +171,7 @@ def _resources(setup: AgentSetup) -> AgentResources:
                 toolset=ref.toolset,
                 name=ref.name,
             )
-            for name, tool in setup.tools.items()
+            for name, tool in setup.tools().items()
             for ref in (tool_ref_for_model_tool(name, tool),)
         ),
     )
@@ -218,7 +220,7 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
     provider = _provider()
     adapter = _Adapter()
     tool = _Tool()
-    setup = AgentSetup(
+    setup = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
@@ -290,8 +292,8 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
         SimpleNamespace(
             setup=setup,
             home=home,
-            providers=setup.providers,
-            models=setup.models,
+            providers=setup.providers_effective(),
+            models=setup.models_effective(),
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
@@ -336,7 +338,7 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
     root = tmp_path / "toolang"
     provider = _provider()
     adapter = _Adapter()
-    setup = AgentSetup(
+    setup = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
@@ -396,8 +398,8 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
         Any,
         SimpleNamespace(
             setup=setup,
-            providers=setup.providers,
-            models=setup.models,
+            providers=setup.providers_effective(),
+            models=setup.models_effective(),
             envs=setup.envs,
             layout=setup.layout,
             date="2026-01-01",
@@ -424,7 +426,7 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
     root = tmp_path / "toolang"
     provider = _provider()
     adapter = _Adapter()
-    setup = AgentSetup(
+    setup = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
@@ -480,8 +482,8 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
         Any,
         SimpleNamespace(
             setup=setup,
-            providers=setup.providers,
-            models=setup.models,
+            providers=setup.providers_effective(),
+            models=setup.models_effective(),
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
@@ -519,7 +521,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     )
     adapter = _Adapter(Message(role="assistant", parts=(audio,)))
     tool = _Tool()
-    setup = AgentSetup(
+    setup = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},

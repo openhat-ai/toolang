@@ -84,8 +84,18 @@ def load_toolsets(
 
     return {
         name: cast(Toolset, loaded.plugin)
-        for name, loaded in _load_toolsets_with_sources(config=config).items()
+        for name, loaded in load_toolsets_with_sources(config=config).items()
     }
+
+
+def load_toolsets_with_sources(
+    *,
+    config: Mapping[str, Mapping[str, Any]] | None = None,
+    names: Sequence[str] | None = None,
+) -> dict[str, LoadedPlugin]:
+    """Load toolset instances once while retaining their source metadata."""
+
+    return _load_toolsets_with_sources(config=config, names=names)
 
 
 def load_tools(
@@ -96,8 +106,18 @@ def load_tools(
 ) -> dict[str, Tool]:
     """Load leaf tools from installed toolsets and apply collection queries."""
 
+    installed = load_toolsets_with_sources(config=toolset_config, names=toolsets)
+    return tools_from_toolsets(installed, queries=queries)
+
+
+def tools_from_toolsets(
+    installed: Mapping[str, LoadedPlugin],
+    *,
+    queries: Sequence[str] | None = None,
+) -> dict[str, Tool]:
+    """Build leaf tools from already loaded toolset instances."""
+
     tools: dict[str, Tool] = {}
-    installed = _load_toolsets_with_sources(config=toolset_config, names=toolsets)
     registrations: list[tuple[str, PluginSource, ToolRef, Tool]] = []
     model_names: set[str] = set()
     for plugin_name, loaded in installed.items():

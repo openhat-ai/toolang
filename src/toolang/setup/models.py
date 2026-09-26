@@ -1,64 +1,52 @@
-"""Ordering, compact selection, and catalog projection for effective models."""
+"""Model ordering, transient query selection, and compact-model resolution."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.types.model import ModelOverride, ModelRequest
+from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.common.errors import ToolangError
-from toolang.plugin.models.collections import ModelCollection
+from toolang.plugin.models.query import (
+    filter_models,
+    order_and_allow_models,
+    resolve_model,
+)
 from toolang.plugin.models.resolution import resolve_model_reasoning
 
 
-DEFAULT_PROVIDERS = (
-    "alibaba",
-    "anthropic",
-    "deepseek",
-    "google",
-    "meta",
-    "minimax",
-    "mistral",
-    "moonshotai",
-    "openai",
-    "openrouter",
-    "xai",
-    "zai",
-    "zhipuai",
-)
-
-
 def order_models(
-    models: ModelCollection, queries: tuple[str, ...] | None
-) -> ModelCollection:
-    """Authored ordering wins; the fallback ranks providers without excluding any."""
-    if queries == ():
-        return ModelCollection()
-    return models.match(
-        queries
-        if queries is not None
-        else (*[f"{p}/*" for p in DEFAULT_PROVIDERS], "*")
-    ).compact()
+    models: Sequence[Model], queries: tuple[str, ...] | None
+) -> tuple[tuple[Model, ...], frozenset[str]]:
+    """Return every model in catalog/allow order and its allowed refs."""
+
+    return order_and_allow_models(models, queries)
 
 
 def select_compact_model(
-    models: ModelCollection, override: ModelOverride | None
+    models: Sequence[Model], override: ModelOverride | None
 ) -> ModelRequest:
-    """Select once from allowed models, independently of the normal Run model."""
+    """Select one allowed, ready tool-call model without building a collection."""
+
     if override is not None and override.identity == "unset":
         raise ToolangError("automatic compaction is disabled by compact.model")
-    eligible = models.match("*[tool_call]")
+    eligible = tuple(
+        model
+        for model in filter_models(models, ("*[tool_call]",))
+        if model._toolang.effective_ready
+    )
     if override is None:
-        if not eligible.entries:
+        if not eligible:
             raise ToolangError("compaction requires an allowed model with tool calls")
-        request = ModelRequest(eligible.entries[0].ref)
+        request = ModelRequest(eligible[0].ref)
     else:
         request = apply_model_override(None, None, override)
         assert request is not None
-        if not eligible.contains(request.ref):
+        if not any(model.ref == request.ref for model in eligible):
             raise ToolangError(
                 f"compact model {request.ref!r} must be available, allowed, and support "
                 "tool calls"
             )
-    model = eligible.resolve(request.ref)
+    model = resolve_model(eligible, request.ref)
     resolve_model_reasoning(model, request.reasoning)
     return request
