@@ -1,1398 +1,368 @@
+"""SetupWatcher publishes setup revisions with per-instance lazy accessors."""
+
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import replace
 import json
-import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import shutil
-from typing import Any
+from threading import Lock
 
 import pytest
 
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelCatalog
-from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
-from toolang.common.errors import ToolangError
-from toolang.base.types.model import (
-    Model,
-    ModelCatalogSnapshot,
-    ModelRequest,
-    ModelToolang,
-    Provider,
-    Reasoning,
-)
+from toolang.base.types.model import CatalogModel, CatalogProvider, CatalogSnapshot
 from toolang.common.layout import AgentLayout
+from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.adapters.chat_completions import (
-    ChatCompletionsModelAdapter,
-)
-from toolang.plugin.catalogs.models_dev.catalog import ModelCatalogSource
-from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
-from toolang.plugin.catalogs.ollama import OllamaModelCatalog
-from toolang.setup import SetupWatcher
+from toolang.plugin.models.query import filter_models
+from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
 from toolang.setup import watcher as watcher_module
-from toolang.setup.watcher import DEFAULT_INTERVAL_MS, load_setup
-from toolang.base.protocols.tool import Tool
+from toolang.setup.watcher import SetupWatcher
 
 
-def _mock_config(monkeypatch, scope, load):
-    previous = watcher_module.capture_setup_config
-
-    def capture(path):
-        is_agent = path.parent.parent.name == "agents"
-        if is_agent == (scope == "agent"):
-            config = load(path)
-            return config, watcher_module.digest(config)
-        return previous(path)
-
-    monkeypatch.setattr(watcher_module, "capture_setup_config", capture)
-
-
-class _Tool(Tool):
-    name = "one"
-    plugin_name = "test"
-    toolset = "alpha"
-
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(name=self.name, description="Use alpha one.")
-
-    async def invoke(
-        self,
-        arguments: Mapping[str, Any],
-        context: ToolContext,
-    ) -> ToolResult:
-        del arguments, context
-        return ToolResult({})
-
-
-def test_setup_watcher_current_requires_initial_refresh(tmp_path: Path) -> None:
-    watcher = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    with pytest.raises(RuntimeError, match="has not been refreshed"):
-        watcher.current()
-
-
-def test_setup_watcher_persists_secret_free_model_projection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    setup = asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-
-    assert tuple(setup.providers) == ("test",)
-    assert setup.models.refs() == ("test/one", "test/two")
-    assert all(
-        model._toolang.route.adapter == "responses" for model in setup.models.entries
-    )
-    cache_files = _context_cache_files(tmp_path, "alice")
-    assert _model_cache_names(tmp_path, "alice") == (
-        "llama_cpp",
-        "merged",
-        "ollama",
-    )
-    assert all("secret" not in path.read_text(encoding="utf-8") for path in cache_files)
-
-
-def test_setup_watcher_keeps_runtime_sandbox_separate_from_dotenv(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(
-        monkeypatch,
-        tmp_path,
-        envs={"TOOLANG_SANDBOX": "docker:spoofed"},
-    )
-
-    setup = asyncio.run(watcher.refresh())
-    docker_setup = asyncio.run(
-        SetupWatcher(
-            AgentLayout.resident(tmp_path, "alice"),
-            sandbox="docker:python:3.13-slim",
-        ).refresh()
-    )
-
-    assert setup.envs["TOOLANG_SANDBOX"] == "docker:spoofed"
-    assert setup.environment is not None
-    assert setup.environment.sandbox == "host"
-    assert docker_setup.environment is not None
-    assert docker_setup.environment.sandbox == "docker:python:3.13-slim"
-
-
-def test_setup_watcher_warm_process_reuses_persistent_projection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    expected = asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-
-    warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    actual = asyncio.run(warm.refresh())
-
-    assert actual.models.refs() == expected.models.refs()
-
-
-def test_setup_watcher_reuses_portable_cache_after_root_remount(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    host_root = tmp_path / "host"
-    guest_root = tmp_path / "guest"
-    host_root.mkdir()
-    guest_root.mkdir()
-    _write_catalog(host_root / "catalog.json", ("one", "two"))
-    expected = asyncio.run(
-        _watcher(
-            monkeypatch,
-            host_root,
-            envs={"TEST_API_KEY": "secret"},
-        ).refresh()
-    )
-    assert all(
-        str(host_root) not in cache.read_text(encoding="utf-8")
-        for cache in (*_context_cache_files(host_root, "alice"),)
-    )
-    shutil.copy2(host_root / "catalog.json", guest_root / "catalog.json")
-    source_home_cache = host_root / "agents" / "alice" / ".setup"
-    target_home_cache = guest_root / "agents" / "alice" / ".setup"
-    target_home_cache.parent.mkdir(parents=True)
-    shutil.copytree(source_home_cache, target_home_cache)
-
-    actual = asyncio.run(
-        SetupWatcher(AgentLayout.resident(guest_root, "alice")).refresh()
-    )
-
-    assert actual.models.refs() == expected.models.refs()
-
-
-def test_model_context_ignores_defaults_limits_and_tool_allow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    layout = AgentLayout.resident(tmp_path, "alice")
-    asyncio.run(SetupWatcher(layout).refresh())
-    config = {
-        "allow": {"tools": ["alpha/*"]},
-        "default": {"model": "test/one"},
-        "limit": {"tokens": 123},
+def _write_catalog(path: Path, names: tuple[str, ...] = ("one", "two")) -> None:
+    provider = {
+        "id": "test",
+        "name": "Test",
+        "env": ["TEST_API_KEY"],
+        "npm": "@ai-sdk/openai-compatible",
+        "api": "https://example.test/v1",
     }
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-
-    setup = asyncio.run(SetupWatcher(layout).refresh())
-
-    assert setup.defaults.model == ModelRequest("test/one")
-    assert setup.limits.tokens == 123
-    assert _model_cache_names(tmp_path, "alice") == (
-        "llama_cpp",
-        "merged",
-        "ollama",
-    )
-
-
-def test_model_cache_separates_root_and_agent_contexts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    envs = {"TEST_API_KEY": "secret"}
-    _watcher(monkeypatch, tmp_path, envs=envs)
-
-    alice = asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "alice")).refresh())
-    bob = asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "bob")).refresh())
-
-    assert alice.models.refs() == ("test/one",)
-    assert bob.models.refs() == ("test/one",)
-    assert _model_cache_names(tmp_path, "alice") == (
-        "llama_cpp",
-        "merged",
-        "ollama",
-    )
-    assert _model_cache_names(tmp_path, "bob") == ("llama_cpp", "merged", "ollama")
-    assert _context_cache_files(tmp_path, "alice") != _context_cache_files(
-        tmp_path, "bob"
-    )
-
-
-def test_root_inspection_owns_its_cache_and_version_without_a_default_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    envs = {"TEST_API_KEY": "secret"}
-    _watcher(monkeypatch, tmp_path, envs=envs)
-    monkeypatch.setattr(watcher_module, "load_root_setup_envs", lambda _layout: envs)
-    layout = AgentLayout.resident(tmp_path, "default")
-
-    root_setup = asyncio.run(SetupWatcher(layout, agent_context=False).refresh())
-
-    assert root_setup.models.refs() == ("test/one",)
-    assert layout.root_model_cache.is_dir()
-    assert not layout.home.exists()
-    agent_setup = asyncio.run(SetupWatcher(layout).refresh())
-    assert agent_setup.models.refs() == root_setup.models.refs()
-    assert layout.home_model_cache.is_dir()
-    assert root_setup.revision != agent_setup.revision
-    assert (
-        asyncio.run(SetupWatcher(layout, agent_context=False).refresh()).revision
-        == root_setup.revision
-    )
-
-
-def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            '"input": 1,',
-            '"input": 0.12345678901234567890123456789,',
-        ),
-        encoding="utf-8",
-    )
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    expected = asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-
-    warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-    actual = asyncio.run(warm.refresh())
-
-    expected_cost = expected.models.resolve("test/one").cost
-    actual_cost = actual.models.resolve("test/one").cost
-    assert expected_cost is not None
-    assert actual_cost is not None
-    assert actual_cost["input"] == expected_cost["input"]
-    assert isinstance(actual_cost["input"], float)
-
-
-def test_setup_watcher_warm_projection_preserves_empty_providers(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["empty"] = {
-        "id": "empty",
-        "name": "Empty",
-        "env": [],
-        "npm": "@ai-sdk/openai",
-        "models": {},
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    cold = asyncio.run(watcher.refresh())
-    warm = asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "alice")).refresh())
-
-    assert tuple(cold.providers) == ("test",)
-    assert tuple(warm.providers) == ("test",)
-
-
-@pytest.mark.parametrize(
-    "cache_content",
-    (
-        "not json",
-        '{"digest":"sha256:0","payload":{}}',
-    ),
-)
-def test_setup_watcher_treats_invalid_context_cache_as_a_miss(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    cache_content: str,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    asyncio.run(watcher.refresh())
-    cache = _context_cache_files(tmp_path, "alice")[0]
-    cache.write_text(cache_content, encoding="utf-8")
-
-    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    asyncio.run(fresh.refresh())
-
-
-def test_setup_watcher_ignores_legacy_models_context_cache(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    asyncio.run(watcher.refresh())
-    effective = _context_cache_files(tmp_path, "alice")[0]
-    legacy = effective.with_name("models.json")
-    effective.replace(legacy)
-
-    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    asyncio.run(fresh.refresh())
-
-    assert effective.is_file()
-    assert legacy.is_file()
-
-
-def test_setup_watcher_treats_stale_model_cache_as_a_miss(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-    _write_catalog(path, ("one", "two"))
-    parse_calls = 0
-    original_snapshot = ModelCatalogSource.snapshot
-
-    def count_parse(self: ModelCatalogSource) -> ModelCatalogSnapshot:
-        nonlocal parse_calls
-        parse_calls += 1
-        return original_snapshot(self)
-
-    monkeypatch.setattr(ModelCatalogSource, "snapshot", count_parse)
-    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    setup = asyncio.run(fresh.refresh())
-
-    assert parse_calls == 1
-    assert setup.models.refs() == ("test/one", "test/two")
-
-
-def test_model_cache_does_not_bypass_catalog_size_limit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    expected = asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-    config = {
-        "plugin": {
-            "model_catalog": {
-                "models_dev": {"max_bytes": 1},
-            }
-        }
-    }
-    (tmp_path / "config.toml").write_text(
-        "[plugin.model_catalog.models_dev]\nmax_bytes = 1\n",
-        encoding="utf-8",
-    )
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-
-    assert asyncio.run(watcher.refresh()) is expected
-    assert watcher.diagnostics()[0].code == "value-error"
-    assert "model catalog exceeds 1 bytes" in watcher.diagnostics()[0].message
-
-    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    with pytest.raises(ValueError, match="model catalog exceeds 1 bytes"):
-        asyncio.run(fresh.refresh())
-
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-    _mock_config(monkeypatch, "agent", lambda _layout: {})
-    monkeypatch.setattr(
-        watcher_module,
-        "load_setup_envs",
-        lambda _layout: {"TEST_API_KEY": "secret"},
-    )
-
-    with pytest.raises(ValueError, match="model catalog exceeds 1 bytes"):
-        asyncio.run(load_setup(AgentLayout.resident(tmp_path, "alice")))
-
-
-def test_model_cache_preserves_authored_headers_without_persisting_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["test"]["api"] = "https://gateway.test/v1?api_key=secret"
-    payload["test"]["models"]["one"]["provider"] = {"mode": "private"}
-    payload["test"]["models"]["one"]["experimental"] = {
-        "modes": {
-            "private": {
-                "provider": {
-                    "headers": {"Authorization": "secret"},
-                }
-            }
-        }
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    watcher = _watcher(
-        monkeypatch, tmp_path, envs={"TEST_API_KEY": "raw-environment-sentinel"}
-    )
-
-    setup = asyncio.run(watcher.refresh())
-
-    context_files = _context_cache_files(tmp_path, "alice")
-    assert all(
-        "raw-environment-sentinel" not in cache.read_text(encoding="utf-8")
-        for cache in context_files
-    )
-    assert any("Authorization" in cache.read_text() for cache in context_files)
-    route = setup.models.resolve("test/one")._toolang.route
-    assert route.headers == {"Authorization": "secret"}
-    assert route.api == "https://gateway.test/v1?api_key=secret"
-
-    warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
-
-    warm_setup = asyncio.run(warm.refresh())
-    warm_route = warm_setup.models.resolve("test/one")._toolang.route
-    assert warm_route.headers == {"Authorization": "secret"}
-    assert warm_route.api == "https://gateway.test/v1?api_key=secret"
-
-
-def test_setup_watcher_detects_local_models_without_force(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    calls = 0
-
-    async def changing_ollama(_self: object) -> ModelCatalogSnapshot:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return _empty_local("ollama")
-        model = Model(
-            id="new-local",
-            name="New Local",
-            _toolang=ModelToolang(provider="ollama", ready=True),
-        )
-        provider = Provider(
-            id="ollama",
-            name="Ollama",
-            env=(),
-            npm="@ai-sdk/openai-compatible",
-            api="http://127.0.0.1:11434/v1",
-        )
-        return ModelCatalogSnapshot(
-            providers={provider.id: provider},
-            models=(model,),
-            revision=f"runtime:ollama:{calls}",
-            local=True,
-        )
-
-    monkeypatch.setattr(OllamaModelCatalog, "snapshot", changing_ollama)
-
-    async def empty_llama(_self: object) -> ModelCatalogSnapshot:
-        return _empty_local("llama_cpp")
-
-    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_llama)
-    watcher = _watcher(
-        monkeypatch,
-        tmp_path,
-        envs={"TEST_API_KEY": "secret"},
-        patch_local=False,
-    )
-
-    first = asyncio.run(watcher.refresh())
-    second = asyncio.run(watcher.refresh())
-
-    assert first is not second
-    assert second.models.contains("ollama/new-local")
-
-
-def test_setup_watcher_serializes_refreshes_and_probes_catalogs_concurrently(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    active = 0
-    maximum = 0
-
-    async def observed_snapshot(self: object) -> ModelCatalogSnapshot:
-        nonlocal active, maximum
-        active += 1
-        maximum = max(maximum, active)
-        await asyncio.sleep(0.001)
-        active -= 1
-        provider_id = (
-            "ollama" if self.__class__.__name__ == "OllamaModelCatalog" else "llama_cpp"
-        )
-        return _empty_local(provider_id)
-
-    monkeypatch.setattr(OllamaModelCatalog, "snapshot", observed_snapshot)
-    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", observed_snapshot)
-    watcher = _watcher(
-        monkeypatch,
-        tmp_path,
-        envs={"TEST_API_KEY": "secret"},
-        patch_local=False,
-    )
-
-    async def refresh_together() -> tuple[object, ...]:
-        return tuple(await asyncio.gather(*(watcher.refresh() for _ in range(3))))
-
-    setups = asyncio.run(refresh_together())
-
-    assert maximum == 2
-    assert setups[0] is setups[1] is setups[2]
-
-
-def test_setup_watcher_retains_last_setup_when_catalog_probe_raises(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    expected = asyncio.run(watcher.refresh())
-
-    async def reject_probe(_self: object) -> ModelCatalogSnapshot:
-        raise RuntimeError("catalog unavailable")
-
-    monkeypatch.setattr(OllamaModelCatalog, "snapshot", reject_probe)
-
-    rejected = asyncio.run(watcher.refresh())
-
-    assert rejected is expected
-    assert watcher.diagnostics()[0].code == "runtime-error"
-    assert watcher.diagnostics()[0].message == "catalog unavailable"
-
-    async def recovered(_self: object) -> ModelCatalogSnapshot:
-        return _empty_local("ollama")
-
-    monkeypatch.setattr(OllamaModelCatalog, "snapshot", recovered)
-
-    assert asyncio.run(watcher.refresh()) is expected
-    assert watcher.diagnostics() == ()
-
-
-def test_setup_watcher_uses_five_second_default_probe_interval() -> None:
-    assert DEFAULT_INTERVAL_MS == 5_000.0
-
-
-def test_setup_watcher_rebuilds_when_selected_catalog_file_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    first = asyncio.run(watcher.refresh())
-
-    _write_catalog(path, ("one", "second"))
-    second = asyncio.run(watcher.refresh())
-
-    assert first.models.refs() == ("test/one",)
-    assert second.models.refs() == ("test/one", "test/second")
-
-
-def test_setup_watcher_rebuilds_when_environment_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    envs = {"TEST_API_KEY": "first"}
-    watcher = _watcher(monkeypatch, tmp_path, envs=envs)
-    first = asyncio.run(watcher.refresh())
-
-    envs["TEST_API_KEY"] = "second"
-    (tmp_path / ".env").write_text("TEST_API_KEY=second\n", encoding="utf-8")
-    second = asyncio.run(watcher.refresh())
-
-    assert first is not second
-    assert second.envs["TEST_API_KEY"] == "second"
-
-
-@pytest.mark.parametrize("agent_context", [True, False])
-def test_setup_watcher_publishes_tool_environment_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    agent_context: bool,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    envs = {"TEST_API_KEY": "secret", "SERVICE_TOKEN": "first"}
-    _watcher(monkeypatch, tmp_path, envs=envs)
-    monkeypatch.setattr(
-        watcher_module, "load_root_setup_envs", lambda _layout: dict(envs)
-    )
-    watcher = SetupWatcher(
-        AgentLayout.resident(tmp_path, "alice"), agent_context=agent_context
-    )
-    first = asyncio.run(watcher.refresh())
-
-    envs["SERVICE_TOKEN"] = "second"
-    watcher.layout.root_env.write_text("# changed\n", encoding="utf-8")
-    second = asyncio.run(watcher.refresh())
-
-    assert second is not first
-    assert second.revision != first.revision
-    assert first.envs["SERVICE_TOKEN"] == "first"
-    assert second.envs["SERVICE_TOKEN"] == "second"
-    assert asyncio.run(watcher.refresh()) is second
-
-
-def test_setup_watcher_queries_effective_adapters_before_applying_allow(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one", "two"))
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["test"]["models"]["two"]["provider"] = {
-        "shape": "chat_completions",
-        "api": "https://models.example/v1",
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    setup = asyncio.run(watcher.refresh())
-
-    assert setup.models.match("*[adapter=responses]").refs() == ("test/one",)
-    assert setup.models.match("*[route.adapter=chat_completions]").refs() == (
-        "test/two",
-    )
-    allowed = asyncio.run(
-        SetupWatcher(
-            watcher.layout, allow_overrides={"models": ("*[adapter=responses]",)}
-        ).refresh()
-    )
-    assert allowed.models.refs() == ("test/one",)
-
-
-def test_setup_watcher_warm_cache_avoids_source_parsing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    first = asyncio.run(watcher.refresh())
-
-    def reject_parse(_self: ModelCatalogSource) -> ModelCatalogSnapshot:
-        raise AssertionError("an unchanged cached catalog must not be parsed again")
-
-    monkeypatch.setattr(ModelCatalogSource, "snapshot", reject_parse)
-    warm = SetupWatcher(watcher.layout)
-    loaded = asyncio.run(warm.refresh())
-
-    assert loaded.models == first.models
-    assert loaded.revision == first.revision
-    assert asyncio.run(warm.refresh()) is loaded
-    assert warm.diagnostics() == ()
-
-
-def test_setup_watcher_keeps_probe_changes_when_cache_write_is_skipped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    first = asyncio.run(watcher.refresh())
-    model = Model(
-        id="new-local", name="Local", _toolang=ModelToolang(provider="ollama")
-    )
-    provider = Provider(
-        id="ollama",
-        name="Ollama",
-        npm="@ai-sdk/openai-compatible",
-        api="http://localhost/v1?api_key=test-placeholder",
-    )
-    probe = replace(
-        _empty_local("ollama"), providers={provider.id: provider}, models=(model,)
-    )
-
-    async def changed_probe(_self: object) -> ModelCatalogSnapshot:
-        return probe
-
-    monkeypatch.setattr(OllamaModelCatalog, "snapshot", changed_probe)
-    monkeypatch.setattr("toolang.common.cache._MAX_CACHE_BYTES", 1)
-    second = asyncio.run(watcher.refresh())
-
-    assert second is not first
-    assert second.models.contains("ollama/new-local")
-    assert asyncio.run(watcher.refresh()) is second
-    assert watcher.diagnostics() == ()
-
-
-def test_setup_watcher_failed_refresh_keeps_last_snapshot(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    expected = asyncio.run(watcher.refresh())
-    path.write_text("not json", encoding="utf-8")
-
-    actual = asyncio.run(watcher.refresh())
-
-    assert actual is expected
-    assert watcher.current() is expected
-    assert watcher.diagnostics()[0].code == "value-error"
-    assert "invalid model catalog JSON" in watcher.diagnostics()[0].message
-
-
-def test_setup_watcher_routes_only_each_plugins_canonical_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    root_config = {
-        "plugin": {
-            "toolset": {"fs": {"max_chars": 1000}},
-            "model_adapter": {"responses": {"credential_env": "ADAPTER_TOKEN"}},
-            "model_catalog": {"ollama": {"timeout": 3}},
-        }
-    }
-    agent_config = {
-        "plugin": {
-            "toolset": {"fs": {"max_chars": 2000}},
-            "model_adapter": {"responses": {"profile": "agent"}},
-        }
-    }
-    adapter_calls: list[dict[str, dict[str, object]]] = []
-    toolset_calls: list[dict[str, dict[str, object]]] = []
-    catalog_calls: list[dict[str, dict[str, object]]] = []
-    original_catalog_loader = watcher_module.load_model_catalogs
-
-    _mock_config(
-        monkeypatch,
-        "root",
-        lambda _layout: root_config,
-    )
-    _mock_config(
-        monkeypatch,
-        "agent",
-        lambda _layout: agent_config,
-    )
-    monkeypatch.setattr(
-        watcher_module,
-        "load_setup_envs",
-        lambda _layout: {
-            "TEST_API_KEY": "secret",
-        },
-    )
-
-    def load_adapters(
-        config: dict[str, dict[str, object]],
-    ) -> dict[str, ResponsesModelAdapter]:
-        adapter_calls.append(config)
-        return {"responses": ResponsesModelAdapter()}
-
-    def load_tools(
-        *, toolset_config: dict[str, dict[str, object]]
-    ) -> dict[str, object]:
-        toolset_calls.append(toolset_config)
-        return {}
-
-    def load_catalogs(
-        config: dict[str, dict[str, object]],
-    ) -> dict[str, ModelCatalog]:
-        catalog_calls.append(config)
-        return original_catalog_loader(config)
-
-    monkeypatch.setattr(watcher_module, "load_model_adapters", load_adapters)
-    monkeypatch.setattr(watcher_module, "load_tools", load_tools)
-    monkeypatch.setattr(watcher_module, "load_model_catalogs", load_catalogs)
-
-    asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "alice")).refresh())
-
-    assert adapter_calls == [
+    models = [
         {
-            "responses": {
-                "credential_env": "ADAPTER_TOKEN",
-                "profile": "agent",
-            }
+            "id": name,
+            "provider": "test",
+            "name": name.title(),
+            "tool_call": True,
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "limit": {"context": 1000, "output": 100},
         }
+        for name in names
     ]
-    assert toolset_calls == [{"fs": {"max_chars": 2000}}]
-    assert catalog_calls[0]["ollama"]["timeout"] == 3
-    assert "root" not in catalog_calls[0]["ollama"]
-    assert "mode" not in catalog_calls[0]["ollama"]
-
-
-def test_setup_watcher_publishes_only_effective_resources_and_policy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
-    root_config = {
-        "allow": {"models": ["test/*"], "tools": ["none"]},
-        "default": {"model": "test/two", "runnable": "agic:chat"},
-        "limit": {"tokens": 100, "cost": "1.5"},
-    }
-    agent_config = {
-        "allow": {"models": ["test/two"], "tools": ["none"]},
-        "limit": {"tokens": 200},
-    }
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(monkeypatch, "root", lambda _layout: root_config)
-    _mock_config(monkeypatch, "agent", lambda _layout: agent_config)
-    monkeypatch.setattr(
-        watcher_module,
-        "load_tools",
-        lambda **_kwargs: {"alpha__one": _Tool()},
-    )
-    watcher = SetupWatcher(
-        watcher.layout,
-        allow_overrides={"models": ("test/one",), "tools": ("alpha/*",)},
-        default_overrides={"model": "test/one"},
-        limit_overrides={"tokens": 300},
-    )
-
-    setup = asyncio.run(watcher.refresh())
-
-    assert setup.models.refs() == ("test/one",)
-    assert setup.tools.refs() == ("alpha/one",)
-    assert len(setup.models._matcher.items) == 1
-    assert len(setup.tools._matcher.items) == 1
-    assert tuple(setup.providers) == ("test",)
-    assert tuple(
-        model.id for model in setup.models.entries if model._toolang.provider == "test"
-    ) == ("one",)
-    assert setup.defaults.model == ModelRequest("test/one")
-    assert setup.defaults.runnable == "agic:chat"
-    assert setup.limits.tokens == 300
-    assert setup.limits.cost == 1.5
-    assert not hasattr(setup, "allow")
-    assert not hasattr(setup, "catalog")
-    assert not hasattr(setup, "ceiling")
-    assert not hasattr(setup, "bindings")
-    assert not hasattr(setup, "provider_configs")
-
-
-def test_setup_watcher_keeps_missing_default_absent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    setup = asyncio.run(watcher.refresh())
-
-    assert setup.defaults.model is None
-
-
-@pytest.mark.parametrize("query", [None, "aardvark/*, openai/*, *"])
-def test_setup_model_order_survives_cached_publication(tmp_path, monkeypatch, query):
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("z", "a"))
-    provider = json.loads(path.read_text())["test"]
     path.write_text(
-        json.dumps(
-            {
-                name: {**provider, "id": name, "api": "https://example.test/v1"}
-                for name in ("aardvark", "openai", "google")
-            }
+        json.dumps({"providers": [provider], "models": models}), encoding="utf-8"
+    )
+
+
+class _DynamicCatalog:
+    name = "dynamic"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.value = CatalogSnapshot(
+            providers={
+                "dynamic": CatalogProvider(
+                    "dynamic",
+                    "Dynamic",
+                    api="https://dynamic.test/v1",
+                    adapter="chat_completions",
+                )
+            },
+            models=(CatalogModel("initial", "Initial", provider_id="dynamic"),),
+            revision="constant-plugin-revision",
         )
-    )
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    config = {} if query is None else {"allow": {"models": query}}
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-    first = asyncio.run(watcher.refresh())
-    providers = (
-        ("google", "openai", "aardvark")
-        if query is None
-        else ("aardvark", "openai", "google")
-    )
-    expected = tuple(
-        f"{provider}/{model}" for provider in providers for model in ("a", "z")
-    )
-    assert first.models.refs() == expected
-    warm = asyncio.run(SetupWatcher(watcher.layout).refresh())
-    assert warm.models.refs() == expected
 
-
-def test_setup_watcher_rejects_compact_excluded_from_effective_models(
-    tmp_path, monkeypatch
-):
-    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    config = {"allow": {"models": "test/one"}, "compact": {"model": "test/two"}}
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-    with pytest.raises(ToolangError, match="available, allowed"):
-        asyncio.run(watcher.refresh())
-
-
-def test_setup_watcher_rejects_default_excluded_from_effective_models(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
-    config = {
-        "allow": {"models": ["test/one"]},
-        "default": {"model": "test/two"},
-    }
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-
-    with pytest.raises(ToolangError, match="model ref is unavailable: test/two"):
-        asyncio.run(watcher.refresh())
-
-
-def test_setup_watcher_validates_default_model_parameters_before_publication(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(
-        tmp_path / "catalog.json",
-        ("one",),
-        reasoning=True,
-        exhaustive_reasoning=True,
-    )
-    config: dict[str, object] = {"default": {"model": "test/one effort=high"}}
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-
-    setup = asyncio.run(watcher.refresh())
-
-    assert setup.defaults.model == ModelRequest(
-        "test/one",
-        reasoning=Reasoning(effort="high"),
-    )
-
-    config["default"] = {"model": "test/one effort=max"}
-    rejected = asyncio.run(watcher.refresh())
-
-    assert rejected is setup
-    assert (
-        "does not advertise reasoning effort 'max'" in watcher.diagnostics()[0].message
-    )
-
-
-def test_setup_watcher_retains_last_setup_when_default_becomes_unavailable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one", "two"))
-    config = {"default": {"model": "test/two"}}
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-    initial = asyncio.run(watcher.refresh())
-    _write_catalog(path, ("one",))
-
-    refreshed = asyncio.run(watcher.refresh())
-
-    assert refreshed is initial
-    assert watcher.current() is initial
-    assert watcher.diagnostics()[0].code == "toolang-error"
-
-
-def test_setup_watcher_reuses_publication_for_state_only_config_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    config: dict[str, object] = {"allow": {"prompts": ["prompt/one"]}}
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(monkeypatch, "root", lambda _layout: config)
-    initial = asyncio.run(watcher.refresh())
-    config = {"allow": {"prompts": ["prompt/two"]}}
-
-    monkeypatch.setattr(
-        watcher_module,
-        "load_model_adapters",
-        lambda _config: (_ for _ in ()).throw(
-            AssertionError("State-only config must not reload Setup adapters")
-        ),
-    )
-    monkeypatch.setattr(
-        watcher_module,
-        "load_tools",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("State-only config must not reload Setup tools")
-        ),
-    )
-
-    refreshed = asyncio.run(watcher.refresh())
-
-    assert refreshed is initial
-
-
-def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from toolang.plugin.toolsets.loading import load_tools
-
-    registered = load_tools()
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={})
-    monkeypatch.setattr(watcher_module, "load_tools", lambda **kwargs: registered)
-    _mock_config(monkeypatch, "agent", lambda layout: {"allow": {"tools": []}})
-    setup = asyncio.run(watcher.refresh())
-    assert not setup.tools.user
-    assert setup.tool_collection() is setup.tools
-    complete = setup.tool_collection(all=True)
-    assert set(complete) == set(registered)
-    assert any(name.startswith("me__") for name in complete)
-    registered.clear()
-    assert setup.tool_collection(all=True) is complete
-    assert complete.user
-    assert not setup.tools.user
-
-    from toolang.execution.compaction import compact_tools
-
-    def unexpected_load(*args, **kwargs):
-        raise AssertionError("compaction must use setup-owned tools")
-
-    monkeypatch.setattr("toolang.plugin.toolsets.loading.load_tools", unexpected_load)
-    selected = compact_tools(setup)
-    assert selected
-    assert all(name.startswith("history__") for name in selected)
-    assert all(selected[name] is complete[name] for name in selected)
-    assert set(setup.tools) == {
-        "_toolang__run",
-        "_toolang__execute",
-        "_toolang__pick",
-        "_toolang__honor",
-        "_toolang__reload",
-        "_toolang__compact",
-    }
+    async def snapshot(self):
+        self.calls += 1
+        return self.value
 
 
 def _watcher(
     monkeypatch: pytest.MonkeyPatch,
     root: Path,
     *,
-    envs: dict[str, str],
-    patch_local: bool = True,
-) -> SetupWatcher:
-    _mock_config(monkeypatch, "root", lambda _layout: {})
-    _mock_config(monkeypatch, "agent", lambda _layout: {})
-    monkeypatch.setattr(watcher_module, "load_setup_envs", lambda _layout: dict(envs))
+    envs: dict[str, str] | None = None,
+    dynamic: _DynamicCatalog | None = None,
+    validate_defaults: bool = False,
+) -> tuple[SetupWatcher, dict[str, int]]:
+    path = root / "catalog.json"
+    if not path.exists():
+        _write_catalog(path)
+    layout = AgentLayout.resident(root, "alice")
+    counts = {"adapters": 0, "toolsets": 0, "catalog_plugins": 0}
+    captured_env = envs if envs is not None else {"TEST_API_KEY": "synthetic"}
     monkeypatch.setattr(
-        watcher_module,
-        "load_model_adapters",
-        lambda _config: {
+        watcher_module, "load_root_setup_envs", lambda _layout: dict(captured_env)
+    )
+    monkeypatch.setattr(
+        watcher_module, "load_setup_envs", lambda _layout: dict(captured_env)
+    )
+    counter_lock = Lock()
+
+    def load_adapters(_config):
+        with counter_lock:
+            counts["adapters"] += 1
+        return {
             "chat_completions": ChatCompletionsModelAdapter(),
             "responses": ResponsesModelAdapter(),
-        },
-    )
-    monkeypatch.setattr(watcher_module, "load_tools", lambda **_kwargs: {})
-    if patch_local:
-
-        async def empty_ollama(_self: object) -> ModelCatalogSnapshot:
-            return _empty_local("ollama")
-
-        async def empty_llama(_self: object) -> ModelCatalogSnapshot:
-            return _empty_local("llama_cpp")
-
-        monkeypatch.setattr(OllamaModelCatalog, "snapshot", empty_ollama)
-        monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_llama)
-    return SetupWatcher(AgentLayout.resident(root, "alice"))
-
-
-def _empty_local(provider_id: str) -> ModelCatalogSnapshot:
-    provider = Provider(
-        id=provider_id,
-        name=provider_id,
-        env=(),
-        npm="@ai-sdk/openai-compatible",
-    )
-    return ModelCatalogSnapshot(
-        providers={provider_id: provider},
-        models=(),
-        revision=f"runtime:{provider_id}",
-        local=True,
-    )
-
-
-def _write_catalog(
-    path: Path,
-    model_ids: tuple[str, ...],
-    *,
-    reasoning: bool = False,
-    exhaustive_reasoning: bool = False,
-) -> None:
-    models = {
-        model_id: {
-            "id": model_id,
-            "name": model_id.title(),
-            "attachment": False,
-            "reasoning": reasoning,
-            "reasoning_options": (
-                [
-                    {
-                        "type": "effort",
-                        "values": ["low", "high"],
-                        "exhaustive": exhaustive_reasoning,
-                    }
-                ]
-                if reasoning
-                else None
-            ),
-            "tool_call": True,
-            "structured_output": True,
-            "temperature": True,
-            "release_date": "2026-01-01",
-            "last_updated": "2026-01-01",
-            "modalities": {"input": ["text"], "output": ["text"]},
-            "open_weights": False,
-            "limit": {"context": 1000, "output": 100},
-            "cost": {"input": 1, "output": 2},
         }
-        for model_id in model_ids
-    }
-    path.write_text(
-        json.dumps(
-            {
-                "test": {
-                    "id": "test",
-                    "name": "Test",
-                    "env": ["TEST_API_KEY"],
-                    "npm": "@ai-sdk/openai",
-                    "models": models,
-                }
-            }
+
+    def load_catalogs(config):
+        counts["catalog_plugins"] += 1
+        plugins: dict[str, ModelCatalog] = {
+            "models_dev": ModelsDevModelCatalog(Path(config["models_dev"]["path"]))
+        }
+        if dynamic is not None:
+            plugins["dynamic"] = dynamic
+        return plugins
+
+    def load_toolsets(**_kwargs):
+        counts["toolsets"] += 1
+        return {}
+
+    monkeypatch.setattr(watcher_module, "load_model_adapters", load_adapters)
+    monkeypatch.setattr(watcher_module, "load_model_catalogs", load_catalogs)
+    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    return (
+        SetupWatcher(
+            layout,
+            model_catalog=path,
+            agent_context=False,
+            validate_defaults=validate_defaults,
         ),
-        encoding="utf-8",
+        counts,
     )
 
 
-def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
-    return tuple(
-        sorted((root / "agents" / agent / ".setup" / "models").rglob("*.json"))
-    )
+def test_current_requires_initial_refresh(tmp_path: Path) -> None:
+    watcher = SetupWatcher(AgentLayout.resident(tmp_path, "alice"), agent_context=False)
+    with pytest.raises(RuntimeError, match="not been refreshed"):
+        watcher.current()
 
 
-def _model_cache_names(root: Path, agent: str) -> tuple[str, ...]:
-    return tuple(sorted(path.stem for path in _context_cache_files(root, agent)))
-
-
-def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
-    return tuple(sorted((root / ".setup" / "models").rglob("*.json")))
-
-
-def test_local_probe_keeps_its_stamp_across_identical_probes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_refresh_publishes_without_loading_adapters_tools_or_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    first = asyncio.run(watcher.refresh())
-    ollama_file = next(
-        path
-        for path in _context_cache_files(tmp_path, "alice")
-        if path.stem == "ollama"
-    )
-    stamp = ollama_file.stat().st_mtime_ns
-    second = asyncio.run(watcher.refresh())
-
-    assert ollama_file.stat().st_mtime_ns == stamp
-    assert second is first
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    assert setup is watcher.current()
+    assert counts == {"adapters": 0, "toolsets": 0, "catalog_plugins": 1}
+    assert not (tmp_path / ".setup" / "models").exists()
 
 
-def test_models_dev_revision_advances_when_the_file_is_touched(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_model_provider_and_effective_accessors_share_one_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    first = asyncio.run(watcher.refresh())
-    stat = path.stat()
-    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
-    second = asyncio.run(watcher.refresh())
-
-    assert second is not first
-    assert second.revision != first.revision
-    assert second.models.refs() == first.models.refs()
-
-
-def test_each_catalog_persists_one_file_without_unmodelled_fields(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    asyncio.run(watcher.refresh())
-
-    assert _model_cache_names(tmp_path, "alice") == (
-        "llama_cpp",
-        "merged",
-        "ollama",
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        models = tuple(pool.map(lambda _: setup.models(), range(8)))
+    assert all(item is models[0] for item in models)
+    assert {model.ref for model in models[0]} == {"test/one", "test/two"}
+    assert {provider.id for provider in setup.providers()} == {"test"}
+    assert tuple(model.ref for model in setup.models_effective()) == tuple(
+        model.ref for model in models[0]
     )
-    for path in _context_cache_files(tmp_path, "alice"):
-        assert "extra" not in path.read_text(encoding="utf-8")
+    assert setup.models_effective() is setup.models_effective()
+    assert {provider.id for provider in setup.providers_effective()} == {"test"}
+    assert setup.model_allowed("test/one")
+    assert counts["adapters"] == 1
+    assert not (tmp_path / ".setup" / "models").exists()
 
 
-def test_setup_filters_readiness_and_allow_but_retains_complete_catalog(
+def test_cached_model_views_are_immutable_reference_sequences(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    all_models = setup.models()
+    ready_models = setup.models_effective()
+    all_providers = setup.providers()
+    ready_providers = setup.providers_effective()
+
+    assert all(
+        isinstance(view, tuple)
+        for view in (all_models, ready_models, all_providers, ready_providers)
+    )
+    assert ready_models[0] is all_models[0]
+    assert ready_providers[0] is all_providers[0]
+    assert setup.models() is all_models
+    assert setup.models_effective() is ready_models
+
+
+def test_plugin_accessors_load_independently_of_model_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    assert not setup.tools()
+    assert not setup.toolsets()
+    assert "responses" in setup.adapters()
+    assert "models_dev" in setup.catalogs()
+    assert counts == {"adapters": 1, "toolsets": 1, "catalog_plugins": 2}
+    assert not (tmp_path / ".setup" / "models").exists()
+
+
+def test_effective_views_filter_allow_and_readiness_but_full_views_do_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one", "two"))
+    _write_catalog(path)
     data = json.loads(path.read_text())
-    data["offline"] = {**data["test"], "id": "offline", "env": ["MISSING_KEY"]}
-    path.write_text(json.dumps(data))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    _mock_config(
-        monkeypatch,
-        "root",
-        lambda _layout: {"allow": {"models": "*/one"}},
+    test_provider = dict(data["providers"][0])
+    offline_provider = {**test_provider, "id": "offline", "env": ["MISSING_KEY"]}
+    data["providers"].append(offline_provider)
+    data["models"].extend(
+        {**model, "provider": "offline"}
+        for model in tuple(data["models"])
+        if model["provider"] == "test"
     )
-
+    path.write_text(json.dumps(data), encoding="utf-8")
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    watcher.layout.root_config.write_text(
+        '[allow]\nmodels = ["test/one"]\n', encoding="utf-8"
+    )
     setup = asyncio.run(watcher.refresh())
-
-    assert setup.models.refs() == ("test/one",)
-    assert len(setup.models._matcher.items) == 1
-    assert tuple(setup.providers) == ("test",)
-    assert tuple(
-        model.id for model in setup.models.entries if model._toolang.provider == "test"
-    ) == ("one",)
-    assert setup.model_catalog().models == setup.models.entries
-    complete = setup.model_catalog(all=True)
-    assert complete.revision == setup.revision
-    assert {model.ref for model in complete.models} == {
+    assert {model.ref for model in setup.models()} == {
         "test/one",
         "test/two",
         "offline/one",
         "offline/two",
     }
-    assert set(complete.providers) == {"test", "offline", "ollama", "llama_cpp"}
-    excluded = complete.find("test", "two")
-    unready = complete.find("offline", "one")
-    assert excluded is not None and excluded._toolang.ready
-    assert unready is not None and not unready._toolang.ready
-    assert setup.models.refs() == ("test/one",)
-    persisted = json.loads(
-        next(
-            path
-            for path in _context_cache_files(tmp_path, "alice")
-            if path.stem == "merged"
-        ).read_text()
+    assert tuple(model.ref for model in setup.models_effective()) == ("test/one",)
+    assert {provider.id for provider in setup.providers()} == {"test", "offline"}
+    assert {provider.id for provider in setup.providers_effective()} == {"test"}
+    offline_model = next(
+        model for model in setup.models() if model.ref == "offline/one"
     )
-    assert len(persisted["payload"]["models"]) == 4
+    assert not offline_model._toolang.routable
+    assert not offline_model._toolang.allowed
+    assert setup.model_allowed("test/one")
+    assert not setup.model_allowed("test/two")
 
 
-def test_complete_catalog_is_pinned_without_rereading_sources(
+def test_new_setup_is_lazy_and_old_setup_stays_pinned_after_source_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one", "two"))
-    envs = {"TEST_API_KEY": "secret"}
-    watcher = _watcher(monkeypatch, tmp_path, envs=envs)
+    _write_catalog(path, ("one",))
+    watcher, counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
-    _write_catalog(path, ("three",))
-    envs.clear()
-    (tmp_path / ".env").write_text("# reload environment\n")
+    _write_catalog(path, ("two",))
     second = asyncio.run(watcher.refresh())
-    assert second.models.refs() == ()
-    assert not second.providers
-    path.unlink()
-    shutil.rmtree(tmp_path / "agents" / "alice" / ".setup")
-
-    old_catalog = first.model_catalog(all=True)
-    new_catalog = second.model_catalog(all=True)
-
-    assert tuple(model.ref for model in old_catalog.models) == ("test/one", "test/two")
-    assert all(model._toolang.ready for model in old_catalog.models)
-    assert tuple(model.ref for model in new_catalog.models) == ("test/three",)
-    assert not new_catalog.models[0]._toolang.ready
-    assert old_catalog.revision == first.revision != second.revision
-    assert new_catalog.revision == second.revision
-    assert first.catalog_sources["test"][0] == "models_dev"
-    assert first.catalog_sources["test"][1] != second.catalog_sources["test"][1]
+    assert second is not first
+    assert counts["adapters"] == 0
+    assert {model.ref for model in first.models()} == {"test/one"}
+    assert {model.ref for model in second.models()} == {"test/two"}
+    assert counts["adapters"] == 2
 
 
-def test_automatic_compaction_ignores_unready_models(tmp_path, monkeypatch):
-    from toolang.setup.models import select_compact_model
+def test_dynamic_probe_changes_publish_new_revision_without_disk_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dynamic = _DynamicCatalog()
+    watcher, _counts = _watcher(monkeypatch, tmp_path, dynamic=dynamic)
+    first = asyncio.run(watcher.refresh())
+    assert asyncio.run(watcher.refresh()) is first
+    dynamic.value = CatalogSnapshot(
+        providers=dynamic.value.providers,
+        models=(CatalogModel("changed", "Changed", provider_id="dynamic"),),
+        revision="constant-plugin-revision",
+    )
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert "dynamic/changed" in {model.ref for model in second.models()}
+    assert not (tmp_path / ".setup" / "models").exists()
 
+
+def test_touching_flat_catalog_without_content_change_preserves_setup_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
-    data = json.loads(path.read_text())
-    data["anthropic"] = {**data["test"], "id": "anthropic", "env": ["MISSING_KEY"]}
-    path.write_text(json.dumps(data))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-
-    setup = asyncio.run(watcher.refresh())
-
-    assert setup.models.effective_default(None) == "test/one"
-    assert select_compact_model(setup.models, None).ref == "test/one"
-
-
-def test_route_environment_refresh_leaves_source_cache_and_old_views_unchanged(
-    tmp_path,
-    monkeypatch,
-):
-    _write_catalog(tmp_path / "catalog.json", ("one",))
-    envs = {}
-    watcher = _watcher(monkeypatch, tmp_path, envs=envs)
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
-    source_files = tuple(
-        path
-        for path in _context_cache_files(tmp_path, "alice")
-        if path.parent.name == "sources"
-    )
-    original_files = {
-        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_files
-    }
-    first_full = first.model_catalog(all=True)
-    assert first.models.refs() == ()
-    assert first_full.models[0]._toolang.route.env is None
+    stat = path.stat()
+    path.touch()
+    assert path.stat().st_mtime_ns != stat.st_mtime_ns
 
-    envs["TEST_API_KEY"] = "secret"
-    (tmp_path / ".env").write_text("# reload environment\n")
     second = asyncio.run(watcher.refresh())
-    assert second.revision != first.revision
-    assert second.catalog_sources == first.catalog_sources
-    assert second.models.refs() == ("test/one",)
-    assert second.models.entries[0]._toolang.route.env == ("TEST_API_KEY",)
-    assert original_files == {
-        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_files
-    }
-    for path in source_files:
-        path.unlink()
-    assert first.model_catalog(all=True) == first_full
-    assert first.models.refs() == ()
-    assert second.model_catalog(all=True).models == second.models.entries
+
+    assert second is first
+    assert second.revision == first.revision
 
 
-@pytest.mark.parametrize("refresh_existing", [False, True])
-@pytest.mark.parametrize("excluded", [False, True])
-def test_setup_publishes_around_invalid_modes_and_recovers(
-    tmp_path, monkeypatch, refresh_existing, excluded
-):
+def test_invalid_catalog_refresh_keeps_last_good_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "catalog.json"
-    _write_catalog(path, ("one", "two"))
-    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    if excluded:
-        _mock_config(
-            monkeypatch,
-            "root",
-            lambda _layout: {"allow": {"models": "test/one, test/three"}},
-        )
-    previous = asyncio.run(watcher.refresh()) if refresh_existing else None
-    _write_catalog(path, ("one", "two", "three"))
-    data = json.loads(path.read_text())
-    data["test"]["models"]["two"]["provider"] = {"mode": "fast"}
-    path.write_text(json.dumps(data))
+    _write_catalog(path, ("one",))
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    good = asyncio.run(watcher.refresh())
+    path.write_text("not json", encoding="utf-8")
+    assert asyncio.run(watcher.refresh()) is good
+    assert watcher.diagnostics()
 
+
+def test_model_defaults_are_validated_when_models_are_first_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("one",))
+    watcher, _counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
+    watcher.layout.root_config.write_text(
+        '[default]\nmodel = "test/missing"\n', encoding="utf-8"
+    )
+    setup = asyncio.run(watcher.refresh())
+    with pytest.raises(ToolangError, match="model ref is unavailable: test/missing"):
+        setup.models_effective()
+
+
+def test_environment_changes_publish_a_new_lazy_setup_and_pin_old_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    envs: dict[str, str] = {}
+    watcher, counts = _watcher(monkeypatch, tmp_path, envs=envs)
+    first = asyncio.run(watcher.refresh())
+    assert not first.models_effective()
+    first_all = first.models()
+    assert not first_all[0]._toolang.routable
+
+    envs["TEST_API_KEY"] = "synthetic"
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert counts["adapters"] == 1
+    assert {model.ref for model in second.models_effective()} == {
+        "test/one",
+        "test/two",
+    }
+    assert not first.models_effective()
+    assert first.models() is first_all
+    assert counts["adapters"] == 2
+
+
+def test_full_routes_are_resolved_before_effective_adapter_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog.json"
+    _write_catalog(path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["providers"][0]["npm"] = "@ai-sdk/openai"
+    model_two = next(
+        model
+        for model in raw["models"]
+        if model["provider"] == "test" and model["id"] == "two"
+    )
+    model_two["override"] = {
+        "shape": "chat_completions",
+        "api": "https://models.example/v1",
+    }
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    watcher.layout.root_config.write_text(
+        '[allow]\nmodels = ["*[adapter=responses]"]\n', encoding="utf-8"
+    )
     setup = asyncio.run(watcher.refresh())
 
-    assert setup is not previous
-    assert not watcher.diagnostics()
-    assert set(setup.models.refs()) == {"test/one", "test/three"}
-    assert {
-        model.id for model in setup.models.entries if model._toolang.provider == "test"
-    } == {"one", "three"}
-    full = setup.model_catalog(all=True)
-    invalid = full.find("test", "two")
-    assert invalid is not None and not invalid._toolang.ready
-    assert invalid._toolang.route.adapter is None
-    assert invalid.provider is not None and invalid.provider.mode == "fast"
-    warm = asyncio.run(SetupWatcher(watcher.layout).refresh())
-    assert warm.model_catalog(all=True) == full
-    if previous is not None:
-        prior_model = previous.model_catalog(all=True).find("test", "two")
-        assert prior_model is not None and prior_model._toolang.ready
-
-    data["test"]["models"]["two"]["experimental"] = {"modes": {"fast": {}}}
-    path.write_text(json.dumps(data))
-    repaired = asyncio.run(watcher.refresh())
-    assert repaired.revision != setup.revision
-    fixed = repaired.model_catalog(all=True).find("test", "two")
-    assert fixed is not None and fixed._toolang.ready
-    assert repaired.models.contains("test/two") is not excluded
-    assert setup.model_catalog(all=True) == full
+    full = setup.models()
+    assert tuple(
+        model.ref for model in filter_models(full, ("*[adapter=responses]",))
+    ) == ("test/one",)
+    assert tuple(
+        model.ref
+        for model in filter_models(full, ("*[route.adapter=chat_completions]",))
+    ) == ("test/two",)
+    assert tuple(model.ref for model in setup.models_effective()) == ("test/one",)
+    assert {provider.id for provider in setup.providers_effective()} == {"test"}

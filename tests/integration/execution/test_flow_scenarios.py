@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 import json
 from dataclasses import replace
@@ -429,7 +431,7 @@ flow relay(_: Part[]) -> Part[]:
     second_adapter = ScriptedModelAdapter(
         [ModelCallResult(message=Message.assistant("second"))]
     )
-    second_setup = replace(
+    second_setup = replace_materialized_setup(
         harness.setup,
         adapters={second_adapter.name: second_adapter},
     )

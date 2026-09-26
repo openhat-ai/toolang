@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -74,7 +76,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
     }
     provider = FakeModels(streaming=False)
     providers = {provider.name: provider.catalog_provider()}
-    setup = AgentSetup(
+    setup = materialized_setup(
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers=providers,
         adapters={},
@@ -90,7 +92,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
             caps=(),
         ),
     )
-    return setup, state, setup.models
+    return setup, state, setup.models_effective()
 
 
 def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
@@ -112,19 +114,19 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
         AgentCeiling(models=()),
     )
 
-    assert tuple(setup.tools) == ("alpha__one", "beta__two")
-    assert setup.models.refs() == ("test/scripted",)
+    assert tuple(setup.tools()) == ("alpha__one", "beta__two")
+    assert tuple(model.ref for model in setup.models_effective()) == ("test/scripted",)
     assert tuple(item.model_name for item in alpha.tools) == ("alpha__one",)
     assert tuple(item.model_name for item in beta.tools) == ("beta__two",)
     assert no_models.models == ()
     with pytest.raises(TypeError):
-        cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
+        cast(Any, alpha.tools)["beta__two"] = setup.tools()["beta__two"]
     assert AgentResources.from_data(alpha.to_data()) == alpha
 
 
 def test_runtime_tool_narrowing_reuses_setup_collection_matcher(tmp_path: Path) -> None:
     setup, state, selection = _snapshots(tmp_path)
-    tools = tuple(cast(_Tool, tool) for tool in setup.tools.values())
+    tools = tuple(cast(_Tool, tool) for tool in setup.tools().values())
     initial_definition_calls = tuple(tool.definition_calls for tool in tools)
     agent = resolve_agent_resources(setup, state, AgentCeiling())
 

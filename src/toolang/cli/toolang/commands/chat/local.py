@@ -27,6 +27,7 @@ from toolang.execution.runnables import (
     resolve_public_runnable_query,
 )
 from toolang.execution.executor.resources import validate_agent_ceiling
+from toolang.plugin.models.query import filter_models, first_model_ref
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     model_reasoning_efforts,
@@ -146,12 +147,12 @@ class LocalChatSession:
         setup = self.setup_watcher.current()
         if queries is not None and not queries:
             return {"default": None, "items": []}
-        models = setup.models.match(queries)
+        models = filter_models(setup.models_effective(), queries)
         preferred = (
             setup.defaults.model.ref if setup.defaults.model is not None else None
         )
         return {
-            "default": models.effective_default(preferred),
+            "default": first_model_ref(models, preferred),
             "items": [
                 {
                     "ref": model.ref,
@@ -171,7 +172,7 @@ class LocalChatSession:
                         ),
                     },
                 }
-                for model in models.entries
+                for model in models
             ],
         }
 
@@ -181,7 +182,7 @@ class LocalChatSession:
     ) -> Mapping[str, Any]:
         if queries is not None and not queries:
             return {"items": []}
-        tools = self.setup_watcher.current().tools
+        tools = self.setup_watcher.current().tools()
         selected = tool_dataset(tools).query(queries)
         return {
             "items": [
@@ -505,7 +506,7 @@ class LocalChatSession:
     ) -> SessionSetting:
         model = setup.defaults.model
         if model is None:
-            fallback = setup.models.effective_default(None)
+            fallback = first_model_ref(setup.models_effective())
             model = ModelRequest(fallback) if fallback is not None else None
         runnable = setup.defaults.runnable
         if runnable is None:

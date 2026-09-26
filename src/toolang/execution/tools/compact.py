@@ -1,14 +1,14 @@
 """Execute the runtime compact tool; automatic selection belongs to preflight."""
 
 from __future__ import annotations
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from toolang.base.errors import ToolangError
 from toolang.base.types.policy import RunBindings
 from toolang.common.time import utc_now
 from toolang.lang.input import RunnableInput
 from toolang.setup.models import select_compact_model
-from ..compaction import compact_state, compact_tools, execute_algorithm, permit
+from toolang.plugin.models.query import subset_models
+from ..compaction import compact_state, execute_algorithm, permit
 from ..inspection.history import RunHistory
 from ..records import CompactControlPayload
 from ..assembly.tool_replies import control_summary
@@ -77,7 +77,7 @@ async def execute(
             resources = frame.run.agent_resources
             if resources is None:
                 raise RuntimeError(f"agent resources missing: {frame.run.run_id}")
-            models = frame.run.setup.models.subset(resources.models)
+            models = subset_models(frame.run.setup.models_effective(), resources.models)
             request = select_compact_model(models, frame.run.setup.compact_model)
             compact_thread = f"compact_{target}"
             if store.get_thread(thread_id=compact_thread) is None:
@@ -86,9 +86,7 @@ async def execute(
                 )
             # This isolated program has only read-only history tools. In particular
             # it cannot reload into the human's State or transfer out of compact.
-            setup = replace(
-                frame.run.setup, models=models, tools=compact_tools(frame.run.setup)
-            )
+            setup = frame.run.setup
             spec = RunSpec(
                 setup=setup,
                 state=compact_state(),
@@ -97,6 +95,7 @@ async def execute(
                 limits=frame.run.limits,
                 model_request=request,
                 input=RunnableInput(resolved),
+                all_tools=True,
             )
             try:
                 _producer, output = await execute_algorithm(

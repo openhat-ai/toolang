@@ -20,6 +20,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.json import dumps
 from toolang.lang.ast import AgicDecl
 from toolang.lang.types import is_generated_ref
+from toolang.plugin.models.query import resolve_model
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
     resolve_model_reasoning,
@@ -107,7 +108,7 @@ def build_agic_frame(
     ref = run.model_request.ref if run.model_request is not None else run.bindings.model
     if ref is None:
         raise ToolangError(f"run requires a model: {name}")
-    resolved_model = selection.resolve(ref)
+    resolved_model = resolve_model(selection, ref)
     if resolved_model.ref not in model_keys:
         raise ToolangError(f"model ref is outside run resources: {ref}")
     request = run.model_request
@@ -145,7 +146,7 @@ def build_agic_frame(
         if is_generated_ref(name)
         else {
             name: tool
-            for name, tool in run.setup.tools.runtime.items()
+            for name, tool in run.setup.tools().runtime.items()
             if getattr(tool, "model_callable", True)
         }
     )
@@ -169,7 +170,7 @@ def build_agic_frame(
     if not route.ready:
         raise ToolangError(f"model {resolved_model.ref!r} has no ready setup route")
     assert route.adapter is not None and route.env is not None
-    adapter = run.setup.adapters.get(route.adapter)
+    adapter = run.setup.adapters().get(route.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {route.adapter}")
     environ = {

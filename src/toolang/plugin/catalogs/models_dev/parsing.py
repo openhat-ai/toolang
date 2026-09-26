@@ -1,4 +1,4 @@
-"""Models.dev-compatible catalog record parsing, validation, and snapshot rebuild."""
+"""Flat cata catalog parsing, validation, and snapshot reconstruction."""
 
 from __future__ import annotations
 
@@ -21,26 +21,57 @@ from toolang.base.types.model import (
 def parse_model_catalog_data(
     data: object,
 ) -> tuple[dict[str, Provider], tuple[Model, ...]]:
-    """Flatten external catalog JSON into providers and owned models."""
+    """Parse the normalized flat ``{providers, models}`` catalog format."""
 
-    data = _provider_map_from_catalog_data(data)
-    providers: dict[str, Provider] = {}
-    models: list[Model] = []
-    for raw_provider_id, raw_provider in data.items():
-        if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
-            raise TypeError("model catalog provider keys must be non-empty strings")
-        provider_id = raw_provider_id.strip()
-        if not isinstance(raw_provider, Mapping):
-            raise TypeError(f"provider {provider_id!r} must be an object")
-        provider, entries = _parse_provider(
-            provider_id,
-            cast(Mapping[str, object], raw_provider),
+    if not isinstance(data, Mapping) or set(data) != {"providers", "models"}:
+        raise ValueError(
+            "model catalog must use the flat cata format with providers and models arrays"
         )
-        providers[provider_id] = provider
-        models.extend(entries)
-    return providers, tuple(
-        sorted(models, key=lambda model: (model._toolang.provider, model.id))
-    )
+    catalog = cast(Mapping[str, object], data)
+    raw_providers = catalog["providers"]
+    raw_models = catalog["models"]
+    if not isinstance(raw_providers, list):
+        raise TypeError("flat model catalog providers must be an array")
+    if not isinstance(raw_models, list):
+        raise TypeError("flat model catalog models must be an array")
+
+    providers: dict[str, Provider] = {}
+    for index, raw_provider in enumerate(raw_providers):
+        if not isinstance(raw_provider, Mapping):
+            raise TypeError(f"provider at index {index} must be an object")
+        provider = _parse_flat_provider(cast(Mapping[str, object], raw_provider))
+        if provider.id in providers:
+            raise ValueError(f"duplicate catalog provider: {provider.id}")
+        providers[provider.id] = provider
+
+    models: list[Model] = []
+    identities: set[tuple[str, str]] = set()
+    for index, raw_model in enumerate(raw_models):
+        if not isinstance(raw_model, Mapping):
+            raise TypeError(f"model at index {index} must be an object")
+        row = cast(Mapping[str, object], raw_model)
+        if "ref" in row:
+            raise ValueError(
+                f"model at index {index} must have provider and id, not ref"
+            )
+        if "provider_override" in row:
+            raise ValueError(
+                f"model at index {index} must use override, not provider_override"
+            )
+        provider_id = _required_text(
+            row.get("provider"), label=f"model at index {index} provider"
+        )
+        model_id = _required_text(row.get("id"), label=f"model at index {index} id")
+        if provider_id not in providers:
+            raise ValueError(
+                f"model {provider_id}/{model_id} does not name a catalog provider"
+            )
+        identity = (provider_id, model_id)
+        if identity in identities:
+            raise ValueError(f"duplicate catalog model: {provider_id}/{model_id}")
+        identities.add(identity)
+        models.append(_parse_model(provider_id, model_id, row))
+    return providers, tuple(models)
 
 
 def model_catalog_snapshot_from_data(
@@ -49,7 +80,7 @@ def model_catalog_snapshot_from_data(
     revision: str,
     source: Path | None = None,
 ) -> ModelCatalogSnapshot:
-    """Validate normalized catalog data and rebuild one immutable snapshot."""
+    """Validate normalized flat catalog data and preserve its file order."""
 
     providers, models = parse_model_catalog_data(data)
     return ModelCatalogSnapshot(
@@ -60,73 +91,21 @@ def model_catalog_snapshot_from_data(
     )
 
 
-def _provider_map_from_catalog_data(data: object) -> Mapping[object, object]:
-    if not isinstance(data, Mapping):
-        raise TypeError("model catalog must be a provider or combined catalog object")
-    mapping = cast(Mapping[object, object], data)
-    if set(mapping) == {"models", "providers"}:
-        raw_models = mapping["models"]
-        raw_providers = mapping["providers"]
-        if not isinstance(raw_models, Mapping):
-            raise ValueError("combined model catalog models must be an object")
-        if not isinstance(raw_providers, Mapping):
-            raise ValueError("combined model catalog providers must be an object")
-        return cast(Mapping[object, object], raw_providers)
-    if _is_provider_agnostic_model_map(mapping):
-        raise ValueError(
-            "models.dev models.json contains provider-agnostic metadata and cannot "
-            "configure model execution; use https://models.dev/catalog.json or "
-            "https://models.dev/api.json"
-        )
-    return mapping
+def _parse_flat_provider(data: Mapping[str, object]) -> Provider:
+    """Validate one provider entry from a flat cata catalog."""
 
-
-def _is_provider_agnostic_model_map(data: Mapping[object, object]) -> bool:
-    if not data:
-        return False
-    for key, value in data.items():
-        if not isinstance(key, str) or "/" not in key or not isinstance(value, Mapping):
-            return False
-        record = cast(Mapping[object, object], value)
-        if record.get("id") != key or "models" in record:
-            return False
-    return True
-
-
-def _parse_provider(
-    provider_id: str,
-    data: Mapping[str, object],
-) -> tuple[Provider, tuple[Model, ...]]:
-    parsed_id = _required_text(data.get("id"), label=f"provider {provider_id} id")
-    if parsed_id != provider_id:
-        raise ValueError(
-            f"provider key {provider_id!r} does not match id {parsed_id!r}"
-        )
-    raw_models = data.get("models")
-    if not isinstance(raw_models, Mapping):
-        raise TypeError(f"provider {provider_id!r} models must be an object")
-    models: dict[str, Model] = {}
-    for raw_model_id, raw_model in raw_models.items():
-        if not isinstance(raw_model_id, str) or not raw_model_id.strip():
-            raise TypeError(f"provider {provider_id!r} model keys must be strings")
-        model_id = raw_model_id.strip()
-        if not isinstance(raw_model, Mapping):
-            raise TypeError(f"model {provider_id}/{model_id} must be an object")
-        models[model_id] = _parse_model(
-            provider_id,
-            model_id,
-            cast(Mapping[str, object], raw_model),
-        )
+    provider_id = _required_text(data.get("id"), label="provider id")
+    name = _required_text(data.get("name"), label=f"provider {provider_id} name")
+    npm = _required_text(data.get("npm"), label=f"provider {provider_id} npm")
     env = _string_list(data.get("env"), label=f"provider {provider_id} env")
-    provider = Provider(
+    return Provider(
         id=provider_id,
-        name=_required_text(data.get("name"), label=f"provider {provider_id} name"),
+        name=name,
         env=env,
-        npm=_required_text(data.get("npm"), label=f"provider {provider_id} npm"),
+        npm=npm,
         api=_optional_text(data.get("api"), label=f"provider {provider_id} api"),
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
     )
-    return provider, tuple(models.values())
 
 
 def _parse_model(
@@ -190,7 +169,7 @@ def _parse_model(
         experimental=_optional_mapping(
             data.get("experimental"), label=f"{label} experimental"
         ),
-        provider=_model_provider(data.get("provider"), label=f"{label} provider"),
+        provider=_model_provider(data.get("override"), label=f"{label} override"),
         cost=cost,
     )
 

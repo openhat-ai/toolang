@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 import asyncio
 import json
 import sys
@@ -2555,7 +2557,7 @@ def offline_model_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from toolang.plugin.catalogs.llama_cpp import LlamaCppModelCatalog
 
     path = tmp_path / "empty-catalog.json"
-    path.write_text("{}")
+    path.write_text(json.dumps({"providers": [], "models": []}))
     monkeypatch.setattr(catalog_path, "PACKAGED_MODEL_CATALOG", path)
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
 
@@ -2582,7 +2584,8 @@ def plugin_inventory(monkeypatch: pytest.MonkeyPatch, offline_model_setup):
 
         return SimpleNamespace(
             name=name,
-            dist=SimpleNamespace(metadata={"Name": distribution}),
+            value=f"test_plugins.{name}:factory",
+            dist=SimpleNamespace(metadata={"Name": distribution}, version="test"),
             load=lambda: factory,
         )
 
@@ -2775,7 +2778,7 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
 ) -> None:
     from toolang.plugin.toolsets.loading import load_tools
 
-    published = AgentSetup(
+    published = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers={},
@@ -3215,7 +3218,7 @@ def test_agent_info_builds_state_and_setup_without_server(
             self.layout = layout
 
         async def refresh(self) -> AgentSetup:
-            return AgentSetup(
+            return materialized_setup(
                 revision="test-setup",
                 layout=self.layout,
                 providers={},
@@ -3260,7 +3263,7 @@ def test_agent_info_reports_only_state_published_caps(
             self.layout = layout
 
         async def refresh(self) -> AgentSetup:
-            return AgentSetup(
+            return materialized_setup(
                 revision="test-setup",
                 layout=self.layout,
                 providers={},
@@ -3414,7 +3417,7 @@ class _EmptySetupWatcher:
         self.layout = layout
 
     async def refresh(self) -> AgentSetup:
-        return AgentSetup(
+        return materialized_setup(
             revision="test-setup",
             layout=self.layout,
             providers={},

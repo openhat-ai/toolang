@@ -64,7 +64,7 @@ def compact_state() -> AgentState:
 
 def compact_tools(setup: AgentSetup) -> ToolCollection:
     """The internal program's read-only tools, independent of user selectors."""
-    return setup.tool_collection(all=True).match("history/*").compact()
+    return setup.tools(all=True).match("history/*").compact()
 
 
 def assemble_compaction(

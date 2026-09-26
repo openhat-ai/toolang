@@ -1,5 +1,7 @@
 """Historical templates, horizons, and current deltas form exact model calls."""
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +22,7 @@ from toolang.base.types.message import Message, ReasoningPart, TextPart, message
 from toolang.base.types.model import Model, ModelRoute, ModelToolang
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.plugin.adapters.responses import response_payload
+from toolang.plugin.models.query import resolve_model
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.assembly import history as execution_history
@@ -1304,12 +1307,14 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
         responses=[ModelCallResult(message=Message.assistant("hello"))],
     )
     model = replace(
-        harness.setup.models.resolve("test/scripted"),
+        resolve_model(harness.setup.models_effective(), "test/scripted"),
         limit={} if context is None else {"context": context},
         reasoning=capability,
         reasoning_options=None,
     )
-    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=build_model_collection((model,))
+    )
     reasoning = (
         Reasoning(budget_tokens=control)
         if isinstance(control, int)
@@ -1390,12 +1395,14 @@ def test_automatic_output_leaves_room_after_reasoning(
         responses=[ModelCallResult(), ModelCallResult()],
     )
     model = replace(
-        harness.setup.models.resolve("test/scripted"),
+        resolve_model(harness.setup.models_effective(), "test/scripted"),
         limit={},
         reasoning=reasoning_capable,
         reasoning_options=None,
     )
-    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=build_model_collection((model,))
+    )
     take_turn = harness.adapter._take_turn
 
     def respond(model, request):
@@ -1464,7 +1471,7 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
         streaming=streaming,
         responses=[ModelCallResult(message=Message.assistant("hello"))],
     )
-    model = harness.setup.models.resolve("test/scripted")
+    model = resolve_model(harness.setup.models_effective(), "test/scripted")
     model = replace(
         model,
         limit={},
@@ -1476,7 +1483,9 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
             ),
         ),
     )
-    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=build_model_collection((model,))
+    )
     monkeypatch.setattr(
         harness.adapter,
         "output_allowance",
@@ -1511,12 +1520,14 @@ def test_impossible_reservation_names_route_and_output_source(tmp_path, demand):
 
     harness = ExecutionHarness.create(tmp_path, source=SOURCE, responses=[])
     model = replace(
-        harness.setup.models.resolve("test/scripted"),
+        resolve_model(harness.setup.models_effective(), "test/scripted"),
         limit={"context": 32768},
         reasoning=True,
         reasoning_options=None,
     )
-    harness.setup = replace(harness.setup, models=build_model_collection((model,)))
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=build_model_collection((model,))
+    )
 
     async def scenario():
         async with harness:

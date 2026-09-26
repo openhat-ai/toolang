@@ -32,6 +32,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
+from toolang.plugin.models.query import filter_models
 from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
@@ -235,7 +236,7 @@ def serve(
                 endpoint=spec.endpoint,
                 started_at=started_at,
                 pid=os.getpid(),
-                models=current_setup().models.refs(),
+                models=tuple(model.ref for model in current_setup().models_effective()),
                 sandbox=sandbox,
                 process_created=host_ref.meta.get("created")
                 if host_ref is not None
@@ -360,7 +361,7 @@ def _log_state_loaded(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         state.revision[:12],
         _model_count(setup, state, ceiling=ceiling),
-        len(setup.tools),
+        len(setup.tools()),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
         _cap_count(state, "service"),
@@ -374,10 +375,10 @@ def _model_count(
     ceiling: AgentCeiling,
 ) -> int:
     if ceiling.models is None:
-        return len(setup.models)
+        return len(setup.models_effective())
     if not ceiling.models:
         return 0
-    return len(setup.models.match(ceiling.models))
+    return len(filter_models(setup.models_effective(), ceiling.models))
 
 
 async def _refresh_core(core: AgentCore) -> None:

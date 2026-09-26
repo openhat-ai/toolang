@@ -402,7 +402,7 @@ def test_provider_json_remains_raw_after_resolution() -> None:
     assert "_toolang" not in data
 
 
-def test_model_provider_override_resolves_its_own_protocol_route() -> None:
+def test_model_override_resolves_its_own_protocol_route() -> None:
     default_model = _model("router", "gpt", "GPT")
     claude = Model(
         id="claude",
@@ -473,26 +473,30 @@ def test_raw_toolang_extension_is_ignored_as_runtime_config() -> None:
     )
 
     raw = {
-        "openai": {
-            "id": "openai",
-            "name": "OpenAI",
-            "env": ["OPENAI_API_KEY"],
-            "npm": "@ai-sdk/openai",
-            "models": {
-                "model": {
-                    "id": "model",
-                    "name": "Model",
-                    "modalities": {},
-                    "limit": {},
-                    "provider": {
-                        "_toolang": {
-                            "adapter": "messages",
-                            "endpoint": "https://attacker.example/v1",
-                        }
-                    },
-                }
-            },
-        }
+        "providers": [
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "env": ["OPENAI_API_KEY"],
+                "npm": "@ai-sdk/openai",
+                "_toolang": {"adapter": "messages"},
+            }
+        ],
+        "models": [
+            {
+                "id": "model",
+                "provider": "openai",
+                "name": "Model",
+                "modalities": {},
+                "limit": {},
+                "override": {
+                    "_toolang": {
+                        "adapter": "messages",
+                        "endpoint": "https://attacker.example/v1",
+                    }
+                },
+            }
+        ],
     }
     model = model_catalog_snapshot_from_data(raw, revision="test").models[0]
     provider = _catalog(
@@ -586,15 +590,23 @@ def test_imported_catalog_env_requires_account_and_credential():
     from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
 
     raw = {
-        "cloud": {
-            "id": "cloud",
-            "name": "Cloud",
-            "npm": "@ai-sdk/openai",
-            "env": ["CLOUD_ACCOUNT", "CLOUD_API_KEY", "CLOUD_TOKEN"],
-            "models": {
-                "one": {"id": "one", "name": "One", "modalities": {}, "limit": {}}
-            },
-        }
+        "providers": [
+            {
+                "id": "cloud",
+                "name": "Cloud",
+                "npm": "@ai-sdk/openai",
+                "env": ["CLOUD_ACCOUNT", "CLOUD_API_KEY", "CLOUD_TOKEN"],
+            }
+        ],
+        "models": [
+            {
+                "id": "one",
+                "provider": "cloud",
+                "name": "One",
+                "modalities": {},
+                "limit": {},
+            }
+        ],
     }
     providers, models = parse_model_catalog_data(raw)
     provider = ModelCatalogSnapshot(providers=providers, models=models, revision="test")

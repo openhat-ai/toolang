@@ -115,8 +115,10 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 ### Model Catalog
 
 Model catalog plugins return immutable provider/model snapshots. Static and
-local discovery use the same models.dev-compatible `Provider` and `Model`
-types, but only models.dev records carry an `npm` package; every other source
+local discovery use the same `Provider` and `Model` runtime types. The bundled
+and user-selected static file uses Toolang's flat `{providers: [...], models: [...]}`
+format; convert upstream models.dev data externally before selection. Only
+models.dev-derived records carry an `npm` package; every other source
 declares its protocol through `ProviderToolang.adapter`. Catalog plugins do not
 execute model calls or install packages named by catalog metadata.
 

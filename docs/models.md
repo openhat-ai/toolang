@@ -2,21 +2,21 @@
 
 Toolang separates model knowledge, runtime readiness, and protocol execution.
 The catalog describes what exists; adapters describe how to call one protocol;
-the setup resolver joins those facts once for the current process.
+the setup watcher captures source data and lazily resolves memoized model views.
 
 ## Core Terms
 
 | Term | Meaning |
 | --- | --- |
-| `Provider` | One models.dev-compatible provider record |
-| `Model` | One model record linked by `_toolang.provider` |
+| `Provider` | One provider record in the flat catalog |
+| `Model` | One model record linked by `_toolang.provider` and an exact `ref` |
 | `ModelProvider` | Typed per-model connection overrides, including optional `ProviderToolang` declarations |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
 | `ModelRequest` | One run's concrete model demand |
 | `ModelRoute` | The effective connection published at `Model._toolang.route` |
 | `ModelCall` | One model call: content plus effective controls |
-| `ModelCollection` | The immutable effective model set published by Setup |
+| `Model views` | All catalog records and the routable, allowed records, stored as ordered references |
 
 There is no model-provider plugin layer. A provider does not execute calls, and
 an adapter does not discover models, match providers, own prices, or determine
@@ -24,16 +24,33 @@ availability.
 
 ## Static Catalog
 
-The preferred static input is the combined `{models, providers}` object from
-models.dev `catalog.json`. Toolang currently consumes its `providers` member
-and also accepts the provider map from `api.json` directly. The
-provider-agnostic `models.json` lacks provider execution records and is not a
-valid static catalog.
+Toolang loads only the flat catalog format. The bundled data is the
+[2026-09-26 release](https://github.com/openhat-ai/models/releases/download/2026-09-26/catalog.json)
+(223 providers, 2,134 models):
 
-Download the preferred input as:
+```json
+{
+  "providers": [{"id": "openai", "name": "OpenAI", "env": ["OPENAI_API_KEY"], "npm": "@ai-sdk/openai"}],
+  "models": [{"id": "gpt-5", "provider": "openai", "name": "GPT-5", "modalities": {"input": ["text"], "output": ["text"]}, "limit": {"context": 200000, "output": 8192}}]
+}
+```
+
+Each provider appears once in `providers[]`; each model appears once in
+`models[]` with a `provider` owner ID and no `ref`. Toolang composes
+`<provider-id>/<model-id>` when a ref is needed. If a model needs a connection
+override, its object belongs in `override`. Provider order and
+model order are significant and are preserved. Root, agent-home, environment,
+and CLI-selected catalog files must use this format. Toolang rejects nested
+models.dev provider maps and combined/raw models.dev catalogs; an external
+program must convert them before use. For example:
 
 ```bash
-curl -fsSL https://models.dev/catalog.json -o catalog.json
+curl -fsSL https://models.dev/catalog.json -o /tmp/models.dev.catalog.json
+jq '{providers: [.providers[] | del(.models)],
+     models: [.providers[] as $p | $p.models[]
+       | (if has("provider") then .override = .provider else . end)
+       | .provider = $p.id]}' \
+  /tmp/models.dev.catalog.json -c > catalog.json
 ```
 
 Toolang selects the catalog file in this order:
@@ -42,13 +59,13 @@ Toolang selects the catalog file in this order:
 2. `TOOLANG_MODEL_CATALOG`;
 3. the active agent home `catalog.json`;
 4. `${TOOLANG_ROOT}/catalog.json`;
-5. the lightweight catalog packaged with Toolang.
+5. the bundled flat catalog.
 
 A higher-priority file fully replaces lower-priority files. Toolang does not
-merge multiple static files and does not download catalog data during startup.
-Explicit CLI and environment paths are filename-agnostic. Implicit discovery
-recognizes only `catalog.json`; `models.json` has no special legacy meaning and
-is ignored. If no catalog is selected, Toolang uses the packaged data.
+merge multiple static files or download catalog data during startup. Explicit
+CLI and environment paths are filename-agnostic. Implicit discovery recognizes
+`catalog.json`; `models.json` has no special meaning. When no catalog is
+selected, Toolang uses the bundled data.
 
 When no agent is selected, inspection uses only the root source and root model
 context; it does not read an implicit `agents/default`. In a Docker guest, an
@@ -57,8 +74,8 @@ external `--catalog` source is mounted read-only and
 
 Use `too alice models` to inspect a resident agent's model context. It layers
 the agent's provider/plugin configuration and dotenv values over root inputs,
-and prefers its home catalog according to the precedence above. The agent
-does not need to be running. `--catalog`, `--all`, `--query/-q`, and `--json` work in
+and prefers its home catalog according to the precedence above. The agent does
+not need to be running. `--catalog`, `--all`, `--query/-q`, and `--json` work in
 both root and resident forms:
 
 ```bash
@@ -68,23 +85,19 @@ too alice models --all --query '*[available=false]'
 too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
 ```
 
-The target goes before `models` or `providers`; use `agent:<name>` when a name matches
-a command name. Both forms default to ready models permitted by `allow.models`.
-`--all` includes both unready models and models excluded by `allow.models`.
-Queries narrow the selected view; `--json` changes only the output format.
-The commands do not display `default.model`/`compact.model`. Availability reflects
-the invoking process's configuration and environment, not a running agent's
-session or sandbox.
+The target goes before `models` or `providers`; use `agent:<name>` when a name
+matches a command name. Both forms default to routable, allowed models.
+`--all` includes unready and allow-excluded records. Inspection queries run
+transiently over the selected records. `too models --json` remains a nested
+filtered export for external consumers; convert it to the flat cata format
+before supplying it back as a catalog. Availability reflects the invoking
+process's configuration and environment, not a running agent's session or
+sandbox.
 
-The importer validates both members of a combined catalog before selecting its
-provider map. It keeps models.dev provider and provider-model fields at the top
-level, drops unmodelled additive fields, parses prices as finite floats, and
-rejects an invalid complete snapshot. A zero `limit` value is the external
-format's unknown marker: the importer omits it, because Toolang represents an
-unknown limit by the absence of the key. Canonical model metadata from the
-combined input is not retained in the runtime snapshot. `Provider.to_data()`
-and `Model.to_data()` emit only raw provider catalog data, so `too models
---json` remains a round-trippable filtered catalog export.
+The flat importer validates both arrays, unique provider/model identities,
+provider references, and known field types. It drops unknown additive fields,
+parses prices as finite floats, and treats a zero `limit` value as unknown by
+omitting that key.
 
 ## Model Selection
 
@@ -100,14 +113,17 @@ model = "openai/gpt-5 effort=medium"
 model = "openai/gpt-5 effort=low"
 ```
 
-Without `allow.models`, available providers are preferred in this order: alibaba,
-anthropic, deepseek, google, meta, minimax, mistral, moonshotai, openai, openrouter,
-xai, zai, zhipuai, then all remaining providers. Models within a provider retain
-catalog order. This preference order excludes no ready models. Explicit queries
-replace the ordering; `*` preserves catalog order, while `all` restores the default.
+Without `allow.models`, all models retain their exact bundled/selected catalog
+order. There is no implicit provider-priority sort. With `allow.models`, matching
+records are ordered by query branch and then by their original catalog position;
+unmatched records remain after matches in their original relative order. Allow
+membership changes the model status and effective view, but does not delete
+records from the all view. The effective view contains models that are both
+routable and allowed. `providers` likewise retain catalog-file order.
 
-Omit `compact.model` to select the first allowed, available model with both tool
-calls and structured output. Session/request model restrictions still apply.
+Omit `default.model` to use the first model in the routable-and-allowed view.
+Omit `compact.model` to use the first model in that view with tool calls.
+Session/request model restrictions still apply.
 Compact never inherits the normal model or its effort. An explicit compact model
 must meet the same requirements; invalid choices or parameters fail without
 fallback. Set `model = "unset"` to disable automatic compaction.
@@ -120,64 +136,54 @@ it cannot reconfigure an already running agent. There is no `compact.models` set
 
 ## Catalog Plugins
 
-Catalog plugins use the `toolang.model_catalog` entry-point group and implement:
-
-```python
-class ModelCatalog(Protocol):
-    name: str
-
-    async def snapshot(self) -> CatalogSnapshot | ModelCatalogSnapshot: ...
-```
+Catalog plugins use the `toolang.model_catalog` entry-point group and return an
+immutable provider/model snapshot. The built-in `models_dev` plugin reads the
+flat cata format for its selected static file; it does not convert raw models.dev
+provider maps or combined catalogs. External catalog plugins and the built-in
+Ollama and llama.cpp plugins may still return `CatalogSnapshot` or
+`ModelCatalogSnapshot` directly.
 
 `CatalogSnapshot`, `CatalogProvider`, and `CatalogModel` are neutral plugin
 declarations. `CatalogModel.provider_id` associates the model with its provider;
 no `_toolang` data is required. Setup translates them into internal records.
-The existing `ModelCatalogSnapshot` return type remains supported for compatibility.
-
-Built-in catalog plugins live in `toolang.plugin.catalogs`:
-
-- `ModelsDevModelCatalog`, for the selected static file;
-- `OllamaModelCatalog`, for the configured Ollama endpoint;
-- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint.
-
-`toolang.setup` combines ordered snapshots with `MergedModelCatalog`, which
-rejects identity conflicts, and resolves them into effective `Provider` and
-`Model` instances. Providers contain no models list: snapshots and setup hold
-separate provider and model collections, joined by `Model._toolang.provider`.
-The parser flattens external nested catalogs and JSON export rebuilds that
-structure. Provider display counts and availability use the selected models
-joined by ownership.
+Provider and model sequences preserve the order supplied by each source, and
+merging rejects duplicate provider/model identities without sorting records.
+Provider routes belong to the declaring catalog plugin; core provider override
+tables are rejected.
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
-only their configured/default endpoint and use short timeouts. The setup watcher
-re-probes dynamic catalogs and publishes their current result; callers only read
-a published Setup version. Every source's records are cached, and a dynamic
-catalog persists one probe file whose mtime stamps its current result.
+only their configured/default endpoint and use short timeouts. `SetupWatcher`
+re-probes local catalogs as needed, but publishes a new setup revision only when
+captured configuration, environment, catalog content, plugin inputs, or semantic
+probe results change. Unchanged file timestamps and repeated identical probes
+do not create a new revision. Model catalog data is never written to a persistent
+`.setup/models` cache.
 
-Each root or agent model context keeps one cache file per catalog below the
-owning `.setup`: root inspection uses `${TOOLANG_ROOT}/.setup/models`, and an
-agent uses its home `.setup/models`. Root and agent setup revisions have distinct
-scope identities, even when their inputs match. The models.dev file is read once
-per change; its revision is the
-payload digest plus the file mtime. A local catalog's file is rewritten only when
-its probe result differs, so its mtime marks when the current run of identical
-results was first saved. Cache revisions cover model-affecting configuration,
-plugin provenance, environment values, catalog revisions, and effective
-`allow.models`; they contain neither absolute paths nor environment values, so a
-cache produced on the host stays reusable when the same root and home are mounted
-at different guest paths. Invalid, unsafe, or legacy cache entries are misses, and
-a cache write failure does not reject a valid in-memory Setup.
+Each published `AgentSetup` pins one revision's configuration, environment, and
+catalog source snapshots. Its synchronous accessors materialize resources on
+first use and memoize them only for that setup instance:
 
-Persistence retains all source records, independently of readiness or allow rules.
-Both source caches and private full-view payloads store each model once in a
-top-level list; provider records contain neither models nor model IDs.
-The published setup indexes only ready, allowed models and their providers.
-`setup.model_catalog()` returns that default view; `setup.model_catalog(all=True)`
-materializes the complete resolved view from compact serialized records pinned to
-that setup version. Full reads do not retain another query index, re-read a source,
-or change the models available to a run. Old setup versions remain consistent
-after later refreshes or cache deletion.
+- `setup.models()` and `setup.providers()` return all ordered model/provider
+  records, including unready, allow-excluded, and empty-provider records.
+- `setup.models_effective()` and `setup.providers_effective()` return routable,
+  allowed records in the same relative order.
+- Model status is one compact bit field with `ROUTABLE` and `ALLOWED` bits.
+  Allow policy never deletes a model from the all view.
+- All/effective model views are immutable tuples referencing the same model records;
+  provider views preserve catalog-file order. No model collection query indexes
+  are built during setup loading.
+- `setup.tools()` returns the allow-filtered tools; `setup.tools(all=True)` is
+  the pre-allow view used for inspection and internal algorithms.
+- `setup.toolsets()`, `setup.adapters()`, and `setup.catalogs()` load their
+  plugin families independently. Model route resolution uses the captured
+  adapters and source snapshots without loading toolsets.
+
+Inspection filters and runnable model directives use `tq-json` transiently on
+these records. The setup does not retain a `ModelCollection` or matcher cache.
+A source or setup change causes the watcher to publish a new generation;
+existing references keep their captured inputs and memoized views. The watcher
+retains the last good setup when source validation or dynamic probes fail.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 
@@ -189,92 +195,47 @@ credential_env = "COMPANY_CATALOG_TOKEN"
 
 The merged mapping is passed unchanged to the catalog factory; the plugin owns
 resolution of `credential_env` when it needs the credential. Built-in
-`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Provider routes
-belong to the declaring catalog plugin; core provider override tables are rejected.
+`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled.
 
 ## One-Time Route Resolution
 
-After catalog snapshots are merged, the setup resolver enriches every
-`Provider` with its default route and every `Model` with its effective route:
+When model data is first accessed, the setup resolver merges captured catalog
+snapshots and enriches every provider with its default route and every model
+with its effective route:
 
 ```text
 ProviderToolang: { env: declared rule, adapter: declared adapter, route: ModelRoute }
-ModelToolang:    { provider: string, ready: bool, route: ModelRoute }
+ModelToolang:    { provider: string, status: ROUTABLE | ALLOWED, route: ModelRoute }
 ModelRoute:      { adapter: string?, api: string?, env: rule?, headers, options }
 ```
 
-Setup resolves routes before publication. Provider metadata retains trusted
+The `ROUTABLE` bit records route readiness; `ALLOWED` records policy membership.
+The effective view is their intersection. Provider metadata retains trusted
 catalog declarations plus its effective default route; each model carries its
 own effective route. Model-level protocol and API overrides remain catalog
-facts, without injected resolution fields. CLI and executor consume these
-published routes, and adapters receive `(model, request, *, environ)`.
+facts, without injected resolution fields. Adapters receive
+`(model, request, *, environ)`.
 
 `Provider.api` stays the raw catalog value. Setup resolves model/provider API
 values, adapter defaults, and templates into `route.api`. Route environment
 rules contain names only; actual values remain in `setup.envs`.
 
-A missing/uninstalled adapter or invalid selected catalog mode yields
-`route.adapter=None`; an unresolved API
-yields `route.api=None`; unmet environment requirements yield `route.env=None`.
-An empty env rule means no credential is required. Setup resolves each field
-independently and sets `ready` only when all three are non-None. No issues list
-is stored. Headers and options are recursively immutable; adapters copy them
-into mutable provider request payloads.
+A missing/uninstalled adapter or invalid selected catalog mode makes a route
+non-routable; an unresolved API or unmet environment requirements also prevent
+routing. An empty env rule means no credential is required. Setup resolves each
+field independently. Headers and options are recursively immutable; adapters
+copy them into mutable provider request payloads.
 
 A declared `provider.mode` must select an object in `experimental.modes`.
-Missing or invalid selections make only that model unavailable, with empty
-effective headers/options; other models still publish. The full view preserves
-its source declarations, and a corrected catalog revision can restore readiness.
-Explicit default/compact selections still require an available model.
+Missing or invalid selections make only that model non-routable, with empty
+effective headers/options; other models still publish. The all view preserves
+its source declarations, and a corrected catalog revision can restore
+routability.
 
-Source cache files preserve complete catalog declarations, never effective
-routes or readiness. The version-pinned full view includes resolved facts in
-its private in-memory serialization. Changing credentials rebuilds setup facts
-without rewriting an otherwise unchanged catalog cache.
-
-For the built-in `openrouter` and `vercel` gateway providers, model IDs with
-`anthropic/<model>` or `openai/<model>` select the Messages or Responses adapter,
-respectively, unless the model or trusted provider explicitly declares another
-adapter. Other namespaces keep the provider default (currently Chat Completions);
-model ID prefixes do not imply a Google Generate Content route. Gateway model
-routes retain the gateway API base. The Messages adapter uses Bearer auth for
-these gateway providers, while direct Anthropic Messages routes use `x-api-key`.
-
-The resolver applies:
-
-- model-level `provider.api` before provider-level catalog `api` before the
-  adapter's protocol default API;
-- a provider-declared `adapter` from catalogs that are not models.dev records,
-  such as local runtimes, which takes precedence
-  over the `npm` map;
-- a small maintained `npm`-to-protocol map, including the major native packages
-  whose services expose one of the built-in wire protocols;
-- environment availability rules;
-- installed-adapter and local-probe state.
-
-The resolved `_toolang.route.env` list is OR; a nested group is AND. An empty rule
-requires no environment value. A models.dev source retains its raw flat `env`
-list until setup infers the rule. During that inference, names ending in
-`_API_KEY`, `_PAT`, or `_TOKEN` are credential alternatives; other names are
-common requirements included in every alternative. Provider-specific rules
-cover schemes that cannot be inferred, such as Amazon Bedrock:
-
-```text
-[
-  [AWS_BEARER_TOKEN_BEDROCK, AWS_REGION],
-  [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION]
-]
-```
-
-`ready` is true only when an adapter is installed, an API base is concrete, one
-environment alternative is satisfied, and any local probe succeeded. Secrets
-are selected only at the call boundary; they are never stored in a record,
-catalog JSON, hashes, or inspection output.
-
-Catalog plugins own provider configuration. Core `[models.providers.*]` overrides
-are rejected. Raw `_toolang` mappings from catalog JSON are not trusted runtime
-facts. Setup resolves adapters and readiness; call assembly derives the endpoint,
-headers and options from its pinned setup. JSON exports omit Toolang facts.
+The resolver applies model-level connection overrides before provider defaults,
+then the adapter's protocol default; resolves provider environment rules; and
+checks installed-adapter and local-probe state. The resolved route environment
+contains names only, never secret values.
 
 ## Adapter Plugins
 
@@ -459,11 +420,12 @@ be loaded. Runtime setup still owns the adapter instances used for execution.
 Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
 these commands read one published setup version.
 
-`too models --query ... --json` emits another complete, deterministic,
-models.dev-compatible catalog containing only selected models, including models
-from local catalogs. It exports the same setup version used for selection without
-re-reading the source. `too providers --json` follows the same default/`--all`
-scope and preserves empty providers in the full view. Catalog inspection skips
+`too models --query ... --json` emits a deterministic nested catalog export
+containing selected models, including models from local catalogs. It exports the
+same setup version used for selection without re-reading the source. The nested
+export is not accepted as a runtime catalog until externally converted to the
+flat format. `too providers --json` follows the same default/`--all` scope and
+preserves empty providers in the full view. Catalog inspection skips
 validation of the configured default and compact model, so `--all` can diagnose
 an unready choice; execution setup still validates those choices strictly.
 Provider and model JSON never includes a Toolang-side fact or an unmodelled catalog field.
@@ -472,8 +434,10 @@ Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
 model IDs may contain additional `/` characters. Catalog and runtime models
 share query fields, including `family`, `reasoning`, `tool_call`, `temperature`,
 `structured_output`, `modalities.input`, `status`, `route.provider`,
-`route.adapter`, and `available`. Run `too query models` for the
-complete contract.
+`route.adapter`, `available`, `allowed`, and `ready`. Model inspection and
+runnable model directives use `tq-json` transiently; setup does not precompute
+model collection-query indexes. Run `too query models` for the complete field
+contract.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.
 
@@ -490,18 +454,24 @@ models = ["gateway/*"]
 model = "gateway/chat effort=high"
 ```
 
-`SetupWatcher` filters readiness and applies `allow.models` once, then publishes
-the resulting `ModelCollection`; request and runnable policy can only narrow
-that base.
+`SetupWatcher` captures `allow.models` with each revision. With no allow query,
+model order is exactly catalog order. With allow queries, matching records are
+ordered by query branch and catalog position within each branch; unmatched
+records remain at the end in their original relative order. All records remain
+available for inspection, while `models_effective()` contains only records
+marked both routable and allowed. Request and runnable policy can only narrow
+that ready view. Query matching uses `tq-json` without precomputed model
+collection indexes.
 `default.model` uses the same model body as invocation, Chat, and run-input
 settings: an optional concrete ref followed by typed assignments. The current
 assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,
 `max_output=TOKENS`, or `max_output=auto`. The effective
 ref must be present in the Setup collection, and its parameters are validated
-before Setup publication. An agent config may use a parameter-only body such
-as `effort=high` to modify the inherited root default. Setup keeps an absent
-configured model absent; Chat and Script surfaces use the first effective
-collection model as their runtime fallback. `unset` explicitly selects no
+when the model accessor first materializes a setup's model data. An agent config
+may use a parameter-only body such as `effort=high` to modify the inherited root
+default. Without `default.model`, runtime uses the first ready model in the
+policy-adjusted order. Without `compact.model`, compaction uses the first ready
+model in that order with `tool_call=true`. `unset` explicitly selects no
 model at the session or one-run layer for model-free execution.
 
 The same body is accepted by `TOOLANG_DEFAULT_MODEL`, Agent and Chat startup

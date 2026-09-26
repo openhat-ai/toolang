@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -305,7 +307,7 @@ agic reply(_: Part[]) -> Part[]:
 """,
         responses=responses,
     )
-    harness.setup = replace(
+    harness.setup = replace_materialized_setup(
         harness.setup,
         defaults=replace(
             harness.setup.defaults,
@@ -324,7 +326,7 @@ agic reply(_: Part[]) -> Part[]:
                         },
                     ),
                 )
-                for model in harness.setup.models.entries
+                for model in harness.setup.models_effective()
             )
         ),
     )
@@ -1778,7 +1780,7 @@ agic reply(_: Text) -> Text:
             )
         ],
     )
-    harness.setup = replace(
+    harness.setup = replace_materialized_setup(
         harness.setup,
         models=ModelCollection(
             tuple(
@@ -1786,7 +1788,7 @@ agic reply(_: Text) -> Text:
                     model,
                     cost={"input": 10000, "output": 20000},
                 )
-                for model in harness.setup.models.entries
+                for model in harness.setup.models_effective()
             )
         ),
     )

@@ -26,6 +26,7 @@ from toolang.state.state import (
     state_module_caps,
 )
 from toolang.plugin.models.resolution import resolve_model_reasoning
+from toolang.plugin.models.query import first_model_ref, resolve_model
 
 from .policy import (
     apply_session_setting,
@@ -179,7 +180,7 @@ def _rerun_model_request(
     if model_command.value is None:
         if setup.defaults.model is not None:
             return setup.defaults.model
-        fallback = setup.models.effective_default(None)
+        fallback = first_model_ref(setup.models_effective())
         return ModelRequest(fallback) if fallback is not None else None
     if bindings.model is None:
         return None
@@ -290,7 +291,7 @@ def materialize_model_request(
     from .executor.resources import snapshot_model_selection
 
     selection = snapshot_model_selection(setup)
-    entry = selection.resolve(request.ref)
+    entry = resolve_model(selection, request.ref)
     resolve_model_reasoning(entry, request.reasoning)
     return request
 

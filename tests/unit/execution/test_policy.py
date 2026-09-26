@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 from pathlib import Path
 
 import pytest
@@ -31,7 +33,7 @@ from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
 def _setup() -> AgentSetup:
-    return AgentSetup(
+    return materialized_setup(
         layout=AgentLayout.resident(Path("/tmp/toolang"), "alice"),
         providers={},
         adapters={},

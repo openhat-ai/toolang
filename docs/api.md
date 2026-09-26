@@ -858,8 +858,11 @@ Omitting an agent never reads an implicit `agents/default`. Tools, models, and
 providers read published setup views without starting or parsing the resident
 agent's program. Model catalog selection is `--catalog`, effective
 `TOOLANG_MODEL_CATALOG`, selected agent's `catalog.json`, root `catalog.json`,
-then packaged data. Static catalog files replace each other; root and agent
-files are not unioned. Additional catalog plugins retain their existing behavior.
+then packaged data. These files must use the flat `{providers: [...], models: [...]}`
+cata format; convert upstream models.dev data externally. Static catalog files
+replace each other; root and agent files are not unioned. Additional catalog
+plugins retain their existing behavior. Provider order follows the selected file;
+model order follows its model array unless `allow.models` branch order ranks matches.
 
 Resource `--all` shows the complete diagnostic view for that same scope:
 allow-excluded caps, internal and allow-excluded tools, or unready and allow-excluded models/providers

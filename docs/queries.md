@@ -1,6 +1,8 @@
 # Collection Queries
 
-Collection queries select an ordered subset of one typed base collection.
+Collection queries select an ordered subset of a base collection. Non-model
+collections use Toolang's typed collection-query grammar below; model queries
+use `tq-json` over model records.
 
 ## Terms
 
@@ -13,8 +15,8 @@ Collection queries select an ordered subset of one typed base collection.
 | match | An optional identity pattern plus zero or more AND predicates. |
 | query | The stable, deduplicated union of one or more matches. |
 
-The parsed query value is a `MatchUnion`; its ordered members are `Match`
-values.
+For non-model collections the parsed query is a `MatchUnion` of ordered
+`Match` values. Model queries use `tq-json` instead.
 
 ## Syntax
 
@@ -80,8 +82,9 @@ the query independently to the four cap collections and concatenates their
 results. Use `skill/reviewer` to select one kind or `reviewer` to match that
 name across kinds.
 
-Terminal Chat exposes the same collections through `/models [-a] [QUERY]`,
-`/tools [-a] [QUERY]`, and `/caps [-a] [QUERY]`. By default, the base is the
+Terminal Chat exposes models through `/models [-a] [QUERY]` using
+`tq-json`; `/tools [-a] [QUERY]` and `/caps [-a] [QUERY]` use the grammar
+above. By default, the base is the
 collection selected by the current session's `/allow` ceiling. `-a` changes the
 base to all available resources. The remaining complete command tail is one
 query and is intersected with that base. These inspection commands do not
@@ -89,9 +92,15 @@ apply or change the session ceiling.
 
 ## Ordering and Set Operations
 
-Results retain base-collection order. Reordering matches or repeated `--query`
-options does not reorder results, and overlapping matches are deduplicated by
-stable item key.
+For the non-model collections described above, results retain base-collection
+order. For model inspection, TQ query branches return matches in branch order and
+catalog order within each branch. `allow.models` uses the same branch priority:
+matched records are moved ahead of unmatched records, which remain in catalog
+order. An unset allow list preserves catalog order exactly. Overlapping matches
+are deduplicated by stable ref.
+For model sequence fields such as `modalities.input`, `=image` means `has image`;
+`!=image` means a nonempty sequence without `image`. Explicit TQ `has no image`
+also matches empty sequences.
 
 Resource directives evaluate against one immutable base:
 
@@ -101,8 +110,9 @@ Resource directives evaluate against one immutable base:
 -=  active = active difference matches
 ```
 
-An include cannot add an item outside the inherited resource base. Query order
-does not express model priority.
+An include cannot add an item outside the inherited resource base. Runnable
+model directives use TQ queries but preserve the inherited base order; the
+special query-branch priority applies to `allow.models`, not to directive order.
 
 ## CLI Help
 
@@ -116,18 +126,21 @@ too query models
 too query skills --json
 ```
 
-The collection form shows its identity, fields, types, operators, and finite
-choices. Tables remain compact presentation views; their headers and composite
-cells do not define query fields. Providers and plugin inventories do not
-support queries.
+The collection form shows the field contract. `too query models` identifies
+`tq-json` and its identity fields; see the [tq-json syntax](https://pypi.org/project/tq-json/).
+Other collections show Toolang's query operators. Tables remain compact
+presentation views; their headers and composite cells do not define query fields.
+Providers and plugin inventories do not support queries.
 
 ## Policy and Directives
 
 The six allow fields are `models`, `tools`, `psyches`, `skills`, `services`,
-and `prompts`. `[allow]`, `TOOLANG_ALLOW_*`, `--allow`, Chat `/allow` settings,
-one-run `:allow` overrides, and authored resource directives use collection
-queries. Singular `model` bindings instead accept one exact `ModelRequest` ref
-and never use this grammar.
+and `prompts`. Model allow rules, model inspection, and authored model
+`=`, `+=`, `-=` directives use `tq-json`. Tool/cap allow rules and their
+directives use Toolang collection queries. `[allow]`, `TOOLANG_ALLOW_*`,
+`--allow`, Chat `/allow` settings, and one-run `:allow` overrides follow those
+per-resource query rules. Singular `model` bindings instead accept one exact
+`ModelRequest` ref and do not use a collection query.
 
 ```bash
 toolang serve alice \

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from dataclasses import asdict, replace
 from html import escape
@@ -360,8 +362,8 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
         + "\nagic helper:\n  Help.\n",
         psyche="Apply the precise psyche.",
     )
-    entry = harness.setup.models.entries[0]
-    harness.setup = replace(
+    entry = harness.setup.models_effective()[0]
+    harness.setup = replace_materialized_setup(
         harness.setup,
         models=ModelCollection((replace(entry, tool_call=False),)),
     )

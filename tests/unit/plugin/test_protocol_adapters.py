@@ -1604,37 +1604,19 @@ def test_adapter_payload_detaches_nested_route_options(adapter):
 @pytest.mark.parametrize(
     "adapter", ["responses", "chat_completions", "messages", "generate_content"]
 )
-@pytest.mark.parametrize("cached", [False, True])
-def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(
-    adapter, cached, tmp_path
-):
+def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(adapter):
     import httpx
 
-    from toolang.base.types.model import ModelCatalogSnapshot
     from toolang.plugin.catalogs.models_dev.parsing import parse_model_catalog_data
-    from toolang.setup.cache import ModelCatalogCache
 
     raw = json.loads(
-        '{"test":{"id":"test","name":"Test","npm":"@ai-sdk/openai","env":[],"models":{"one":'
-        '{"id":"one","name":"One","modalities":{},"limit":{},"cost":{"input":0.123456789012345678901},'
-        '"provider":{"body":{"temperature":0.7,"custom":{"values":[0.25]}}}}}}}',
+        '{"providers":[{"id":"test","name":"Test","npm":"@ai-sdk/openai","env":[]}],'
+        '"models":[{"id":"one","provider":"test","name":"One","modalities":{},"limit":{},'
+        '"cost":{"input":0.123456789012345678901},'
+        '"override":{"body":{"temperature":0.7,"custom":{"values":[0.25]}}}}]}',
         parse_float=float,
     )
-    providers, models = parse_model_catalog_data(raw)
-    provider = providers["test"]
-    if cached:
-        snapshot = ModelCatalogSnapshot(
-            providers={"test": provider},
-            models=models,
-            revision="test",
-        )
-        ModelCatalogCache(tmp_path).store_source(
-            "models_dev", revision="test", snapshot=snapshot
-        )
-        loaded = ModelCatalogCache(tmp_path).load_source("models_dev", revision="test")
-        assert loaded is not None
-        provider = loaded.providers["test"]
-        models = loaded.models
+    _providers, models = parse_model_catalog_data(raw)
     model = models[0]
     assert model.provider is not None
     model = model.with_route(

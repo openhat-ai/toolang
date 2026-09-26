@@ -1,5 +1,9 @@
 # Persistent Flat Model Catalog Cache
 
+> Superseded by [Lazy AgentSetup Accessors](lazy-agent-setup-accessors.md). The
+> current design removes persistent model-catalog caches and materializes setup
+> resources lazily in memory. This document is retained as historical context.
+
 ## Goal and approved scope
 
 Speed up `models`, `providers`, `chat`, and `run/start/serve` through one runtime

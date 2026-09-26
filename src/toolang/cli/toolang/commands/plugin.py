@@ -20,6 +20,7 @@ from toolang.plugin.toolsets.collections import (
     ToolQueryView,
     tool_dataset,
 )
+from toolang.plugin.models.query import filter_models
 from toolang.setup import AgentSetup
 from toolang.setup.watcher import load_setup
 
@@ -72,7 +73,7 @@ def list_tools(
         rows = [
             (
                 *row,
-                inspection_status(allowed=item.model_name in setup.tools),
+                inspection_status(allowed=item.model_name in setup.tools()),
             )
             for row, item in zip(rows, selected, strict=True)
         ]
@@ -164,14 +165,14 @@ def model_rows(
 ) -> list[tuple[str, str, str]]:
     from toolang.plugin.models.views import model_target_profile
 
-    models = setup.models.match(model_queries) if model_queries else setup.models
+    models = filter_models(setup.models_effective(), model_queries or None)
     return [
         (
             model.ref,
             model._toolang.provider,
             model_target_profile(model),
         )
-        for model in models.entries
+        for model in models
     ]
 
 
@@ -180,7 +181,7 @@ def setup_tool_dataset(
 ) -> QueryDataset[ToolQueryView]:
     """Return the schema-owned tool query and display dataset for one setup."""
 
-    return tool_dataset(setup.tool_collection(all=all))
+    return tool_dataset(setup.tools(all=all))
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:

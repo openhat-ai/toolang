@@ -6,6 +6,7 @@ import math
 from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass, field
+from enum import IntFlag
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Self, TypeAlias
@@ -189,13 +190,101 @@ class ProviderToolang:
     route: ModelRoute = field(default_factory=ModelRoute)
 
 
-@dataclass(frozen=True, slots=True)
-class ModelToolang:
-    """Ownership and effective connection facts published by setup."""
+class ModelStatus(IntFlag):
+    """Compact per-model route and allow facts stored in one field."""
 
-    ready: bool = False
-    provider: str = ""
-    route: ModelRoute = field(default_factory=ModelRoute)
+    ROUTABLE = 1 << 0
+    ALLOWED = 1 << 1
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModelToolang:
+    """Ownership, compact status bits, and effective route for one model."""
+
+    provider: str
+    route: ModelRoute
+    status: ModelStatus
+
+    def __init__(
+        self,
+        ready: bool | None = None,
+        provider: str = "",
+        route: ModelRoute = ModelRoute(),
+        *,
+        allowed: bool = True,
+        status: ModelStatus | int | None = None,
+    ) -> None:
+        """Build compact route/allow flags; ``ready`` remains route readiness."""
+
+        if not isinstance(provider, str):
+            raise TypeError("model provider id must be text")
+        if not isinstance(route, ModelRoute):
+            raise TypeError("model route must be ModelRoute")
+        if not isinstance(allowed, bool):
+            raise TypeError("model allow state must be boolean")
+        if status is None:
+            routable = route.ready if ready is None else ready
+            if not isinstance(routable, bool):
+                raise TypeError("model routability must be boolean")
+            flags = (ModelStatus.ROUTABLE if routable else ModelStatus(0)) | (
+                ModelStatus.ALLOWED if allowed else ModelStatus(0)
+            )
+        else:
+            if isinstance(status, bool) or not isinstance(status, int):
+                raise TypeError("model status must be an integer bit field")
+            known = int(ModelStatus.ROUTABLE | ModelStatus.ALLOWED)
+            if status < 0 or status & ~known:
+                raise ValueError("model status contains unknown bits")
+            flags = ModelStatus(status)
+            if ready is not None and ready != bool(flags & ModelStatus.ROUTABLE):
+                raise ValueError("model ready argument conflicts with status")
+            if allowed is not True and allowed != bool(flags & ModelStatus.ALLOWED):
+                raise ValueError("model allow argument conflicts with status")
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "route", route)
+        object.__setattr__(self, "status", flags)
+
+    @property
+    def ready(self) -> bool:
+        """Return route readiness, independent of allow membership."""
+
+        return self.routable
+
+    @property
+    def routable(self) -> bool:
+        """Return whether the resolved provider route is usable."""
+
+        return bool(self.status & ModelStatus.ROUTABLE)
+
+    @property
+    def allowed(self) -> bool:
+        """Return whether model allow policy admitted this record."""
+
+        return bool(self.status & ModelStatus.ALLOWED)
+
+    @property
+    def effective_ready(self) -> bool:
+        """Return whether route readiness and allow policy both admit this model."""
+
+        return self.routable and self.allowed
+
+    def with_route(self, route: ModelRoute) -> ModelToolang:
+        """Replace route facts while preserving allow membership."""
+
+        flags = self.status & ModelStatus.ALLOWED
+        if route.ready:
+            flags |= ModelStatus.ROUTABLE
+        return ModelToolang(provider=self.provider, route=route, status=flags)
+
+    def with_allowed(self, allowed: bool) -> ModelToolang:
+        """Replace allow membership while preserving route readiness."""
+
+        if not isinstance(allowed, bool):
+            raise TypeError("model allow state must be boolean")
+        flags = self.status & ModelStatus.ROUTABLE
+        if allowed:
+            flags |= ModelStatus.ALLOWED
+        return ModelToolang(provider=self.provider, route=self.route, status=flags)
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,13 +441,16 @@ class Model(ModelFacts):
         """Publish a route while sharing this record's already detached catalog facts."""
 
         result = copy(self)
-        object.__setattr__(
-            result,
-            "_toolang",
-            ModelToolang(
-                ready=route.ready, provider=self._toolang.provider, route=route
-            ),
-        )
+        object.__setattr__(result, "_toolang", self._toolang.with_route(route))
+        return result
+
+    def with_allowed(self, allowed: bool) -> Self:
+        """Publish allow membership while sharing the detached model facts."""
+
+        if self._toolang.allowed == allowed:
+            return self
+        result = copy(self)
+        object.__setattr__(result, "_toolang", self._toolang.with_allowed(allowed))
         return result
 
     @property

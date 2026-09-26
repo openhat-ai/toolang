@@ -188,7 +188,9 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 
 Runtime resources such as models, tools, and caps are selected through ordered
 sets. `SetupWatcher` applies root and agent `allow.models` and `allow.tools`
-before publishing immutable `AgentSetup.models` and `AgentSetup.tools`.
+before publishing an immutable `AgentSetup` revision. Its `models()`,
+`providers()`, and `tools()` accessors materialize their data lazily and memoize
+it in that setup instance; plugin-family accessors load independently.
 `StateWatcher` publishes an `AgentState` containing captured workspace grants
 and precomputed effective caps for every module after cap-kind allow policy.
 Each completed snapshot is stable; the next root run observes the latest valid pair.

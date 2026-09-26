@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 from dataclasses import dataclass
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -48,20 +49,23 @@ class _SnapshotCatalog(ModelCatalog):
         return self.value
 
 
-def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> None:
+def test_packaged_catalog_matches_pinned_release_and_keeps_model_overrides() -> None:
     snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
     assert PACKAGED_MODEL_CATALOG.name == "catalog.json"
     assert not PACKAGED_MODEL_CATALOG.with_name("models.json").exists()
-    assert set(snapshot.providers) == {
-        "anthropic",
-        "deepseek",
-        "google",
-        "openai",
-        "openrouter",
-    }
-    assert len(snapshot.models) >= 15
-    assert PACKAGED_MODEL_CATALOG.stat().st_size < 64 * 1024
+    assert sha256(PACKAGED_MODEL_CATALOG.read_bytes()).hexdigest() == (
+        "a9594734ccc502052dd76cf2eff5127e94ffc077d645920dd60e04db6c8ddebe"
+    )
+    assert len(snapshot.providers) == 223
+    assert len(snapshot.models) == 2134
+    assert {"anthropic", "deepseek", "google", "openai", "openrouter"} <= set(
+        snapshot.providers
+    )
+    assert snapshot.models[0].ref == "302ai/deepseek-flash"
+    model = snapshot.find("agentrouter", "claude-opus-5")
+    assert model is not None and model.provider is not None
+    assert model.provider.npm == "@ai-sdk/anthropic"
 
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:
@@ -88,11 +92,106 @@ def test_merged_catalog_reuses_records_with_complete_origin() -> None:
     assert merged.providers["test"] is provider
 
 
+def test_flat_catalog_preserves_provider_and_model_file_order(tmp_path: Path) -> None:
+    path = tmp_path / "catalog.json"
+    data = {
+        "providers": [
+            {"id": "z-provider", "name": "Z", "env": [], "npm": "z"},
+            {"id": "a-provider", "name": "A", "env": [], "npm": "a"},
+        ],
+        "models": [
+            {
+                "id": "later",
+                "provider": "a-provider",
+                "name": "Later",
+                "modalities": {},
+                "limit": {},
+            },
+            {
+                "id": "first",
+                "provider": "z-provider",
+                "name": "First",
+                "modalities": {},
+                "limit": {},
+            },
+        ],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    snapshot = read_model_catalog_snapshot(path)
+
+    assert tuple(snapshot.providers) == ("z-provider", "a-provider")
+    assert tuple(model.ref for model in snapshot.models) == (
+        "a-provider/later",
+        "z-provider/first",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    (
+        ({"provider": "missing"}, "does not name a catalog provider"),
+        ({"provider": 42}, "provider must be text"),
+        ({"provider": ""}, "provider is required"),
+        ({"provider": {"shape": "messages"}}, "provider must be text"),
+        ({"ref": "test/one"}, "must have provider and id, not ref"),
+        ({"provider_override": {}}, "must use override, not provider_override"),
+    ),
+)
+def test_flat_model_requires_an_existing_provider_and_rejects_legacy_refs(
+    mutation: dict[str, object], error: str
+) -> None:
+    payload = _flat_catalog_data(_catalog_data())
+    payload["models"][0].update(mutation)
+    with pytest.raises((TypeError, ValueError), match=error):
+        parse_model_catalog_data(payload)
+
+
+def test_flat_catalog_rejects_missing_provider_and_invalid_override() -> None:
+    payload = _flat_catalog_data(_catalog_data())
+    row = payload["models"][0]
+    row.pop("provider")
+    with pytest.raises(ValueError, match="model at index 0 provider is required"):
+        parse_model_catalog_data(payload)
+    row["provider"] = "test"
+    row["override"] = "not a connection override"
+    with pytest.raises(TypeError, match="override must be an object"):
+        parse_model_catalog_data(payload)
+
+
+def test_flat_catalog_composes_refs_and_keeps_connection_overrides() -> None:
+    payload = {
+        "providers": [
+            {"id": "with/slash", "name": "Slash", "env": [], "npm": "@ai-sdk/openai"},
+        ],
+        "models": [
+            {
+                "provider": "with/slash",
+                "id": "nested/model",
+                "name": "Nested",
+                "modalities": {},
+                "limit": {},
+                "override": {
+                    "shape": "messages",
+                    "api": "https://test.invalid/v1",
+                },
+            }
+        ],
+    }
+    providers, models = parse_model_catalog_data(payload)
+    assert tuple(providers) == ("with/slash",)
+    assert models[0].ref == "with/slash/nested/model"
+    assert models[0].provider == ModelProvider(
+        shape="messages", api="https://test.invalid/v1"
+    )
+    assert models[0]._toolang.provider == "with/slash"
+
+
 def test_catalog_reader_attaches_origin_without_rematerializing_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "models.json"
-    path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(path, _catalog_data())
 
     def reject_replace(*args: object, **kwargs: object) -> None:
         raise AssertionError("catalog records must not be replaced after parsing")
@@ -114,7 +213,7 @@ def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     payload = _catalog_data()
     payload["test"]["future_provider_field"] = {"enabled": True}
     payload["test"]["models"]["one"]["future_model_field"] = ["value"]
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
 
     snapshot = read_model_catalog_snapshot(path)
     model = snapshot.find("test", "one")
@@ -126,53 +225,42 @@ def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     assert "future_model_field" not in exported["test"]["models"]["one"]
 
 
-def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
+def test_catalog_import_rejects_models_dev_provider_map_and_combined_data(
+    tmp_path: Path,
+) -> None:
+    provider_map = _catalog_data()
     path = tmp_path / "catalog.json"
-    providers = _catalog_data()
-    canonical_models = {
-        "test/one": {
-            "id": "test/one",
-            "name": "One",
-            "description": "Provider-agnostic metadata",
-        }
-    }
+    path.write_text(json.dumps(provider_map), encoding="utf-8")
+    with pytest.raises(ValueError, match="flat cata format"):
+        read_model_catalog_snapshot(path)
+
     path.write_text(
-        json.dumps({"models": canonical_models, "providers": providers}),
+        json.dumps(
+            {"models": {"test/one": {"id": "test/one"}}, "providers": provider_map}
+        ),
         encoding="utf-8",
     )
-
-    combined = read_model_catalog_snapshot(path)
-    first_revision = combined.revision
-    api_path = tmp_path / "api.json"
-    api_path.write_text(json.dumps(providers), encoding="utf-8")
-    direct = read_model_catalog_snapshot(api_path)
-    canonical_models["test/one"]["description"] = "Updated metadata"
-    path.write_text(
-        json.dumps({"models": canonical_models, "providers": providers}),
-        encoding="utf-8",
-    )
-    updated = read_model_catalog_snapshot(path)
-
-    assert combined.to_data() == updated.to_data()
-    assert combined.to_data() == direct.to_data()
-    assert updated.revision != first_revision
+    with pytest.raises(TypeError, match="providers must be an array"):
+        read_model_catalog_snapshot(path)
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (("models", []), ("providers", [])),
+    (("models", {}), ("providers", {})),
 )
 def test_catalog_import_validates_combined_top_level_members(
     tmp_path: Path,
     field: str,
     value: object,
 ) -> None:
-    payload: dict[str, object] = {"models": {}, "providers": _catalog_data()}
+    payload: dict[str, object] = {"models": [], "providers": []}
     payload[field] = value
     path = tmp_path / "catalog.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
 
-    with pytest.raises(ValueError, match=rf"combined model catalog {field}"):
+    with pytest.raises(
+        TypeError, match=rf"flat model catalog {field} must be an array"
+    ):
         read_model_catalog_snapshot(path)
 
 
@@ -192,7 +280,7 @@ def test_catalog_import_treats_zero_limits_as_unknown(
     path = tmp_path / "models.json"
     payload = _catalog_data()
     payload["test"]["models"]["one"]["limit"] = limit
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
 
     model = read_model_catalog_snapshot(path).find("test", "one")
 
@@ -208,7 +296,7 @@ def test_catalog_import_rejects_limits_that_are_not_counts(
     path = tmp_path / "models.json"
     payload = _catalog_data()
     payload["test"]["models"]["one"]["limit"] = {"context": value}
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
 
     with pytest.raises(TypeError, match=r"model test/one limit\.context"):
         read_model_catalog_snapshot(path)
@@ -220,7 +308,7 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     payload["test"]["models"]["one"]["cost"]["tiers"] = [
         {"input": 3, "tier": {"type": "context", "size": 200}}
     ]
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
 
     model = read_model_catalog_snapshot(path).find("test", "one")
 
@@ -244,7 +332,7 @@ def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
     payload["test"]["models"]["one"]["reasoning_options"] = [
         {"type": "effort", "values": ["low", "high"], "exhaustive": True}
     ]
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_catalog(path, payload)
     model = read_model_catalog_snapshot(path).models[0]
     assert model.reasoning_options is not None
     option = cast(dict[str, Any], model.reasoning_options[0])
@@ -260,11 +348,11 @@ def test_catalog_reasoning_options_are_deeply_immutable(tmp_path: Path) -> None:
     ]
 
 
-def test_catalog_rejects_inconsistent_identity_as_a_complete_snapshot() -> None:
-    payload = _catalog_data()
-    payload["test"]["models"]["one"]["id"] = "other"
+def test_catalog_rejects_duplicate_model_identity_as_a_complete_snapshot() -> None:
+    payload = _flat_catalog_data(_catalog_data())
+    payload["models"].append(dict(payload["models"][0]))
 
-    with pytest.raises(ValueError, match="does not match id"):
+    with pytest.raises(ValueError, match="duplicate catalog model: test/one"):
         parse_model_catalog_data(payload)
 
 
@@ -276,7 +364,7 @@ def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
     configured = tmp_path / "models.json"
     explicit = tmp_path / "explicit-models.json"
     for path in (root, home, configured, explicit):
-        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+        _write_catalog(path, _catalog_data())
 
     assert resolve_model_catalog_path(layout) == home.resolve()
     assert resolve_model_catalog_path(layout, include_agent=False) == root.resolve()
@@ -307,9 +395,9 @@ def test_catalog_source_ignores_implicit_models_files(
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
     for path in (layout.home / "models.json", layout.root / "models.json"):
-        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+        _write_catalog(path, _catalog_data())
     packaged = tmp_path / "packaged-catalog.json"
-    packaged.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(packaged, _catalog_data())
     monkeypatch.setattr(catalog_path_module, "PACKAGED_MODEL_CATALOG", packaged)
 
     assert resolve_model_catalog_path(layout) == packaged.resolve()
@@ -323,8 +411,8 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
     layout.home.mkdir(parents=True)
     legacy = layout.home / "models.json"
     root = layout.root / "catalog.json"
-    legacy.write_text(json.dumps(_catalog_data()), encoding="utf-8")
-    root.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _write_catalog(legacy, _catalog_data())
+    _write_catalog(root, _catalog_data())
 
     assert resolve_model_catalog_path(layout) == root.resolve()
 
@@ -335,7 +423,9 @@ def test_filtered_export_round_trips_deterministically() -> None:
 
     first = dumps(snapshot.to_data(models=selected))
     second = dumps(snapshot.to_data(models=selected))
-    imported, models = parse_model_catalog_data(json.loads(first, parse_float=float))
+    imported, models = parse_model_catalog_data(
+        _flat_catalog_data(json.loads(first, parse_float=float))
+    )
 
     assert first == second
     assert tuple(imported) == ("test",)
@@ -377,6 +467,29 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
 
     assert provider_adapter(provider) == "messages"
     assert provider.api is None
+
+
+def _flat_catalog_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Test-side external conversion from fixture provider maps to cata arrays."""
+
+    if set(data) == {"providers", "models"}:
+        return data
+    providers: list[dict[str, Any]] = []
+    models: list[dict[str, Any]] = []
+    for provider_id, provider in data.items():
+        providers.append(
+            {key: value for key, value in provider.items() if key != "models"}
+        )
+        for model_id, model in provider.get("models", {}).items():
+            facts = dict(model)
+            if "provider" in facts:
+                facts["override"] = facts.pop("provider")
+            models.append({**facts, "provider": provider_id})
+    return {"providers": providers, "models": models}
+
+
+def _write_catalog(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(_flat_catalog_data(data)), encoding="utf-8")
 
 
 def _catalog_data() -> dict[str, Any]:

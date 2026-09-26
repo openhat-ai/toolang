@@ -19,7 +19,6 @@ def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:
 
     assert {(item.local_path, item.hosted_path) for item in mounts} == {
         (local_root / "config.toml", hosted_root / "config.toml"),
-        (local_root / ".setup", hosted_root / ".setup"),
         (local_root / ".state", hosted_root / ".state"),
         (local_root / "psyches", hosted_root / "psyches"),
         (local_root / "skills", hosted_root / "skills"),
@@ -27,10 +26,10 @@ def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:
         (local_root / "prompts", hosted_root / "prompts"),
     }
     assert (local_root / "config.toml").is_file()
+    assert not (local_root / ".setup").exists()
     assert all(
         (local_root / name).is_dir()
         for name in (
-            ".setup",
             ".state",
             "psyches",
             "skills",

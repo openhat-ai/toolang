@@ -26,11 +26,9 @@ too providers --all
 too models
 ```
 
-To load additional providers and models, replace the bundled catalog with the full [models.dev](https://models.dev/) catalog:
-
-```bash
-curl -fsSL https://models.dev/catalog.json -o ~/.toolang/catalog.json
-```
+To use additional providers or models, put a compatible flat catalog at
+`~/.toolang/catalog.json`. See [Model Catalog](docs/models.md#static-catalog)
+for the format and an upstream conversion example.
 
 ## Remote agents
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -356,7 +358,7 @@ class ExecutionHarness:
         adapter = ScriptedModelAdapter(responses)
         layout = AgentLayout.resident(root, "alice")
         providers = {provider.name: provider.catalog_provider()}
-        setup = AgentSetup(
+        setup = materialized_setup(
             revision="test-setup",
             layout=layout,
             providers=providers,

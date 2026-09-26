@@ -1,5 +1,7 @@
 """The compact command runs an ordinary script against local durable history."""
 
+from tests.support.setup import replace_materialized_setup
+
 import asyncio
 from contextlib import closing
 from dataclasses import replace
@@ -44,12 +46,12 @@ def reply(value):
 def harness(tmp_path):
     h = ExecutionHarness.create(tmp_path, source=SOURCE, responses=[])
     (h.setup.layout.home / "agent.too").write_text(SOURCE, encoding="utf-8")
-    h.setup = replace(
+    h.setup = replace_materialized_setup(
         h.setup,
         models=ModelCollection(
             tuple(
                 replace(model, structured_output=True)
-                for model in h.setup.models.entries
+                for model in h.setup.models_effective()
             )
         ),
     )
@@ -442,7 +444,7 @@ def test_forget_without_models_replaces_summary_and_survives_restart(harness):
     first = asyncio.run(run(h, before="run_8"))
     calls = len(h.adapter.invocations)
     setup = h.setup
-    h.setup = replace(
+    h.setup = replace_materialized_setup(
         setup, models=ModelCollection(()), defaults=RunDefaults(), compact_model=None
     )
     forgotten = asyncio.run(run(h, algorithm="FORGET", before="run_8"))
@@ -660,12 +662,12 @@ def test_waiting_compact_rejects_a_summary_replaced_by_forget(
 
 def test_text_algorithm_does_not_require_native_structured_output(harness):
     h = harness
-    h.setup = replace(
+    h.setup = replace_materialized_setup(
         h.setup,
         models=ModelCollection(
             tuple(
                 replace(model, structured_output=False)
-                for model in h.setup.models.entries
+                for model in h.setup.models_effective()
             )
         ),
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 import asyncio
 from dataclasses import replace
 
@@ -551,7 +553,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
 
 def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
-    setup = harness.setup.__class__(
+    setup = materialized_setup(
         layout=harness.setup.layout,
         providers={},
         adapters={},

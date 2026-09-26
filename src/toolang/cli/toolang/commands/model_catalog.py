@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.base.types.model import Model, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
     context_agent,
@@ -23,18 +23,16 @@ from toolang.cli.common.output import (
     echo_table,
     inspection_status,
 )
-from toolang.cli.common.query import query_items
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.json import dumps
 from toolang.plugin.models.collections import (
-    MODEL_SCHEMA,
     CatalogProviderView,
     catalog_provider_views,
 )
+from toolang.plugin.models.query import filter_models, model_refs
 from toolang.setup import AgentSetup
 from toolang.setup.watcher import load_setup
-from toolang.setup.records import ModelRecord
 
 
 def models_command(
@@ -60,42 +58,45 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
+    setup = _setup(ctx, model_catalog=model_catalog)
+    models = setup.models() if all_ else setup.models_effective()
+    providers = setup.providers() if all_ else setup.providers_effective()
+    snapshot = ModelCatalogSnapshot(
+        providers={provider.id: provider for provider in providers},
+        models=tuple(models),
+        revision=setup.revision,
+    )
     try:
-        listing = _setup(ctx, model_catalog=model_catalog).model_listing()
-    except TypeError as error:
-        raise ClickException(str(error)) from error
-    dataset = listing.all if all_ else listing.default
-    try:
-        if query:
-            MODEL_SCHEMA.parse(query)
-        selected = cast(tuple[ModelRecord, ...], query_items(dataset, query))
-    except ToolangError as error:
+        selected_models = filter_models(models, query)
+    except (ToolangError, ValueError) as error:
         raise ClickException(str(error)) from error
     if json_:
-        content = dumps(listing.export(selected))
-        typer.echo(content, nl=False)
+        typer.echo(dumps(snapshot.to_data(models=selected_models)), nl=False)
         return
-    headers, raw_rows = dataset.table(selected)
-    # Readiness remains queryable; the table groups it with policy in STATUS.
-    headers = (headers[0], *headers[2:])
-    rows = [(row[0], *row[2:]) for row in raw_rows]
+    headers = (
+        "MODEL",
+        "CONTEXT",
+        "OUTPUT",
+        "INPUT",
+        "CAPABILITIES",
+        "PRICE ($/1M)",
+    )
+    rows = [_model_row(model) for model in selected_models]
+    rows = _align_model_prices(rows)
     justify = (None, "right", "right", None, None, "right")
     if all_:
         headers = (*headers, "STATUS")
         rows = [
-            (
-                *row,
-                _model_status(model),
-            )
-            for row, model in zip(rows, selected, strict=True)
+            (*row, _model_status(model))
+            for row, model in zip(rows, selected_models, strict=True)
         ]
         justify = (*justify, None)
     if rows:
         echo_table(headers, rows, justify=justify)
     echo_collection_summary(
-        len(selected),
+        len(selected_models),
         "model",
-        group=(len({model.provider for model in selected}), "provider"),
+        group=(len({model._toolang.provider for model in selected_models}), "provider"),
     )
 
 
@@ -116,16 +117,14 @@ def providers_command(
     """List catalog providers and runtime availability."""
 
     setup = _setup(ctx, model_catalog=model_catalog)
-    snapshot = setup.model_catalog(all=all_)
-    base_providers = tuple(
-        snapshot.providers[provider_id] for provider_id in sorted(snapshot.providers)
-    )
+    models = setup.models() if all_ else setup.models_effective()
+    base_providers = setup.providers() if all_ else setup.providers_effective()
     by_provider: dict[str, list[Model]] = {
         provider.id: [] for provider in base_providers
     }
-    for model in snapshot.models:
+    for model in models:
         by_provider[model._toolang.provider].append(model)
-    available = set(setup.models.refs())
+    available = set(model_refs(setup.models_effective()))
     selected_views = catalog_provider_views(
         base_providers,
         models=by_provider,
@@ -221,16 +220,70 @@ def _provider_env_declarations(provider: Provider) -> tuple[str, ...]:
     return tuple(item if isinstance(item, str) else " + ".join(item) for item in rule)
 
 
-def _model_status(model: ModelRecord) -> str:
+def _model_row(model: Model) -> tuple[str, ...]:
+    """Format the public model table without constructing a query dataset."""
+
+    context = model.limit.get("context")
+    output = model.limit.get("output")
+    modalities = ",".join(model.modalities.get("input", ())) or "-"
+    capabilities = (
+        ",".join(
+            name
+            for name in ("tool_call", "reasoning", "temperature", "structured_output")
+            if getattr(model, name) is True
+        )
+        or "-"
+    )
+    cost = model.cost or {}
+    prices = " / ".join(_format_price(cost.get(name)) for name in ("input", "output"))
+    return (
+        model.ref,
+        "-" if context is None else f"{context:_}",
+        "-" if output is None else f"{output:_}",
+        modalities,
+        capabilities,
+        prices,
+    )
+
+
+def _align_model_prices(rows: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Align the two public price columns as the former model dataset did."""
+
+    if not rows:
+        return rows
+    pairs = [row[-1].split(" / ") for row in rows]
+    widths = [max(len(pair[side]) for pair in pairs) for side in range(2)]
+    return [
+        (
+            *row[:-1],
+            " / ".join(
+                value.rjust(width) for value, width in zip(pair, widths, strict=True)
+            ),
+        )
+        for row, pair in zip(rows, pairs, strict=True)
+    ]
+
+
+def _format_price(value: object) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"model price must be numeric, got {value!r}")
+    return f"{value:.2f}"
+
+
+def _model_status(model: Model) -> str:
+    route = model._toolang.route
     status = inspection_status(
-        allowed=model.allowed_order is not None, ready=model.ready
+        allowed=model._toolang.allowed,
+        ready=model._toolang.routable,
     )
     reason = "; ".join(
         reason
         for missing, reason in (
-            (model.adapter is None, "No adapter"),
-            (not model.api_present, "No API URL"),
-            (not model.env_present, "Missing env"),
+            (route.adapter is None, "No adapter"),
+            (route.api is None, "No API URL"),
+            (route.env is None, "Missing env"),
         )
         if missing
     )

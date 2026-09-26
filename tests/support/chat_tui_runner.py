@@ -10,8 +10,10 @@ from toolang.base.types.model import ModelRequest
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.plugin.models.collections import ModelCollection
+from toolang.plugin.models.query import resolve_model
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
+from tests.support.setup import replace_materialized_setup
 from toolang.state.watcher import StateRefresh
 
 
@@ -25,9 +27,11 @@ def run_chat_tui(
     """Run a local chat TUI with fixed setup and state snapshots."""
 
     if models:
-        setup = replace(
+        setup = replace_materialized_setup(
             setup,
-            models=ModelCollection(tuple(setup.models.resolve(ref) for ref in models)),
+            models=ModelCollection(
+                tuple(resolve_model(setup.models_effective(), ref) for ref in models)
+            ),
         )
 
     class SetupWatcher:

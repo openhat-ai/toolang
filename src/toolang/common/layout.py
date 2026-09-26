@@ -82,22 +82,6 @@ class AgentLayout:
         return self.home / ".env"
 
     @property
-    def root_setup(self) -> Path:
-        return self.root / ".setup"
-
-    @property
-    def home_setup(self) -> Path:
-        return self.home / ".setup"
-
-    @property
-    def root_model_cache(self) -> Path:
-        return self.root_setup / "models"
-
-    @property
-    def home_model_cache(self) -> Path:
-        return self.home_setup / "models"
-
-    @property
     def root_state(self) -> Path:
         return self.root / ".state" / "root"
 

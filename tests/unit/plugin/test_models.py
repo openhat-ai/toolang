@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.setup import materialized_setup
+
 from collections.abc import Mapping
 import asyncio
 from dataclasses import replace
@@ -64,7 +66,7 @@ from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
 from toolang.plugin.models.views import _format_decimal_unit
-from toolang.setup import AgentSetup, ModelCollection, ToolCollection
+from toolang.setup import ModelCollection, ToolCollection
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 from toolang.plugin.loading import load_model_adapters
@@ -2230,7 +2232,7 @@ def _prepared_agic(
             control_input=CallInput({}),
             state=cast(Any, state),
             state_ref=ControlRef.for_run("run_1", 0),
-            setup=AgentSetup(
+            setup=materialized_setup(
                 revision="test-setup",
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
