@@ -23,6 +23,7 @@ from toolang.base.types.model import ModelProvider
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
 _APP_ATTRIBUTION_URL = "https://toolang.ai"
 _APP_ATTRIBUTION_TITLE = "Toolang"
+_VERCEL_CODING_AGENT_API = "https://ai-gateway.vercel.sh/coding-agent/v1"
 
 # Toolang-owned provider conventions: agent-side data keyed by provider id.
 PROVIDER_CONVENTIONS: Mapping[str, Mapping[str, object]] = {
@@ -210,12 +211,14 @@ def _api_template(value: str | None, default: str | None) -> str | None:
 def _provider_api_template(
     provider: Provider, adapter: RouteAdapter | None
 ) -> str | None:
-    return _api_template(
-        provider.api,
-        _default_api(
+    default = (
+        _VERCEL_CODING_AGENT_API
+        if provider.id == "vercel"
+        else _default_api(
             adapter, npm=provider.npm if not provider._toolang.adapter else None
-        ),
+        )
     )
+    return _api_template(provider.api, default)
 
 
 def _model_api_template(
@@ -236,6 +239,8 @@ def _model_api_template(
     if gateway_route:
         if provider.api is not None:
             return _api_template(provider.api, None)
+        if provider.id == "vercel":
+            return _VERCEL_CODING_AGENT_API
         gateway = _NPM_ROUTES.get(provider.npm or "")
         if gateway is not None and gateway[1] is not None:
             return gateway[1]

@@ -339,6 +339,7 @@ def test_adapter_sends_the_recorded_output_reservation(
     (
         "https://api.anthropic.com/v1",
         "https://api.minimax.io/anthropic/v1",
+        "https://ai-gateway.vercel.sh/coding-agent/v1",
     ),
 )
 def test_messages_adapter_appends_resource_to_resolved_api(api: str) -> None:

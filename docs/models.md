@@ -237,6 +237,12 @@ then the adapter's protocol default; resolves provider environment rules; and
 checks installed-adapter and local-probe state. The resolved route environment
 contains names only, never secret values.
 
+For provider ID `vercel`, Gateway model routes default to
+`https://ai-gateway.vercel.sh/coding-agent/v1` so Vercel can classify new
+requests as coding-agent traffic. Explicit provider/model API routes still take
+precedence; other provider IDs are unchanged. The Messages adapter appends
+`/messages` to this base, producing `/coding-agent/v1/messages`.
+
 ## Adapter Plugins
 
 Adapter plugins use the `toolang.model_adapter` entry-point group and implement:
