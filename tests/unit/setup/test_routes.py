@@ -121,9 +121,13 @@ def test_gateway_model_namespace_selects_native_adapter(
         expected_api = (
             "https://openrouter.ai/api/v1"
             if provider_id == "openrouter"
-            else "https://ai-gateway.vercel.sh/v1"
+            else "https://ai-gateway.vercel.sh/coding-agent/v1"
         )
         assert resolved_model._toolang.route.api == expected_api
+    if provider_id == "vercel":
+        assert resolved_model._toolang.route.api == (
+            "https://ai-gateway.vercel.sh/coding-agent/v1"
+        )
 
 
 @pytest.mark.parametrize(
@@ -319,12 +323,46 @@ def test_vercel_gateway_provider_receives_app_attribution_headers() -> None:
 
     route = _provider_for(resolved)._toolang.route
     model = _model_for(resolved, "model")
-    assert route.api == "https://ai-gateway.vercel.sh/v1"
+    assert route.api == "https://ai-gateway.vercel.sh/coding-agent/v1"
     assert route.headers == {
         "http-referer": "https://toolang.ai",
         "x-title": "Toolang",
     }
+    assert model._toolang.route.api == route.api
     assert model._toolang.route.headers == route.headers
+
+
+def test_vercel_gateway_provider_preserves_explicit_api_routes() -> None:
+    provider = _provider(
+        "vercel",
+        npm="@ai-sdk/gateway",
+        env=("AI_GATEWAY_API_KEY",),
+        api="https://catalog.example/v1",
+    )
+    default_model = _model_for(provider, "model")
+    custom_model = replace(
+        default_model,
+        id="custom-model",
+        provider=ModelProvider(api="https://model.example/v1"),
+    )
+    provider = _replace_catalog(
+        provider,
+        models={default_model.id: default_model, custom_model.id: custom_model},
+    )
+
+    resolved = resolve_catalog_providers(
+        provider,
+        adapters=_adapters(),
+        environ={"AI_GATEWAY_API_KEY": "secret"},
+    )
+
+    assert _provider_for(resolved)._toolang.route.api == "https://catalog.example/v1"
+    assert (
+        _model_for(resolved, "model")._toolang.route.api == "https://catalog.example/v1"
+    )
+    assert _model_for(resolved, "custom-model")._toolang.route.api == (
+        "https://model.example/v1"
+    )
 
 
 def test_vercel_gateway_attribution_is_not_applied_to_other_providers() -> None:
@@ -351,7 +389,24 @@ def test_vercel_gateway_attribution_is_not_applied_to_other_providers() -> None:
         environ={"CUSTOM_API_KEY": "custom", "OPENROUTER_API_KEY": "router"},
     )
 
+    generic_gateway = _provider(
+        "custom-gateway",
+        npm="@ai-sdk/gateway",
+        env=("CUSTOM_GATEWAY_API_KEY",),
+    )
+    generic_gateway = resolve_catalog_providers(
+        generic_gateway,
+        adapters=_adapters(),
+        environ={"CUSTOM_GATEWAY_API_KEY": "custom"},
+    )
+
     assert _provider_for(regular)._toolang.route.api == "https://custom.example/v1"
+    assert _provider_for(generic_gateway)._toolang.route.api == (
+        "https://ai-gateway.vercel.sh/v1"
+    )
+    assert _model_for(generic_gateway, "model")._toolang.route.api == (
+        "https://ai-gateway.vercel.sh/v1"
+    )
     assert _provider_for(regular)._toolang.route.headers == {}
     assert _model_for(regular, "model")._toolang.route.headers == {}
     assert _provider_for(openrouter)._toolang.route.headers == {
