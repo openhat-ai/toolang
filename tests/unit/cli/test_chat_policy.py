@@ -275,3 +275,20 @@ def test_chat_allows_explicit_attempts_with_incomplete_reasoning_metadata(
         {"items": [{"ref": "p/m", "parameters": {"reasoning": metadata}}]},
         ModelRequest("p/m", reasoning=control),
     )
+
+
+def test_run_workdir_override_retains_base_after_relative_session_cd() -> None:
+    setting = replace(_surface(), workdir="src", workdir_base="repo://")
+    request = build_run_request(
+        thread_id="term_test",
+        request_id="term_pending_cd",
+        input=CallInput({"_": "inspect"}),
+        override=RunOverride(workdir="tests"),
+        setting=setting,
+        surface=_surface(),
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
+    )
+
+    assert request.workdir == "src/tests"
+    assert request.workdir_base == "repo://"

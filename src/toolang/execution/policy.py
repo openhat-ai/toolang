@@ -41,6 +41,7 @@ from .types import (
     SessionSetting,
 )
 import math
+import posixpath
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -300,15 +301,27 @@ def materialize_run_setting(
         for ceiling in (session.allow, run_ceiling)
         if ceiling is not None and _ceiling_restricts(ceiling)
     )
+    workdir, workdir_base = session.workdir, session.workdir_base
+    if override.workdir is not None:
+        workdir = override.workdir
+        if workdir.startswith("/") or "://" in workdir:
+            workdir_base = None
+        elif session.workdir is None:
+            workdir_base = session.workdir_base
+        elif "://" in session.workdir:
+            workdir_base = session.workdir
+        else:
+            workdir = posixpath.normpath(posixpath.join(session.workdir, workdir))
+            workdir_base = (
+                None if session.workdir.startswith("/") else session.workdir_base
+            )
     return ceilings, SessionSetting(
         model=model,
         runnable=runnable,
         allow=session.allow,
         limits=limits,
-        workdir=(override.workdir if override.workdir is not None else session.workdir),
-        workdir_base=(
-            session.workdir if override.workdir is not None else session.workdir_base
-        ),
+        workdir=workdir,
+        workdir_base=workdir_base,
     )
 
 
