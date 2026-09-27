@@ -282,6 +282,9 @@ async def _execute(
                 workspaces={
                     name: Path(path) for name, path in agent_state.workspaces.items()
                 },
+                cwd=state.execution.store.current_cwd(run.run_id)
+                if state.execution is not None
+                else run.cwd,
             )
             tool_paths = tool.paths(call.input, context)
             paths = tuple(
@@ -773,11 +776,12 @@ def _tool_context(
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
+    cwd: str = "",
 ) -> ToolContext:
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
         raise ToolangError(f"unknown toolset plugin for tool: {tool.name}")
-    args = (layout.home, layout.tool_room(plugin_name), workspaces or {})
+    args = (layout.home, layout.tool_room(plugin_name), workspaces or {}, cwd)
     if plugin_name == "_toolang" and runtime is not None:
         return RuntimeToolContext(*args, runtime=runtime)
     if plugin_name == "history" and history is not None:

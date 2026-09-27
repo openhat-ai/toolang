@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import locale
 import os
+from pathlib import Path
 import signal
 from typing import Any
 
@@ -15,7 +16,11 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.base.utils.paths import resolve_tool_path
+from toolang.base.utils.workspace_paths import (
+    parse_cwd,
+    resolve_input_path,
+    workspace_uri,
+)
 from toolang.base.utils.tool_descriptions import action_summary
 
 DEFAULT_TIMEOUT_SEC = 30
@@ -24,12 +29,12 @@ DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 @dataclass(slots=True)
 class ShellToolset:
-    """Shell execution tools scoped to one agent home."""
+    """Start commands at the current Run workspace location."""
 
     config: dict[str, Any]
     name: str = "shell"
     description: str | None = (
-        "Run non-interactive shell commands inside the current agent home."
+        "Run non-interactive shell commands from the current Run directory."
     )
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
@@ -51,22 +56,18 @@ class ShellToolset:
     def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="execute",
-            description="Run one shell command and capture stdout and stderr. Optional workspace anchors cwd at that workspace root, including paths starting with /.",
+            description="Run one shell command from the current Run directory and capture stdout and stderr. Shell command paths are not sandboxed.",
             paths=_paths,
             summary=_summary,
         )
         async def execute(
             command: str,
-            cwd: str | None = None,
             timeout_sec: int = self._timeout_sec,
             max_output_chars: int = self._max_output_chars,
-            workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             assert context is not None
-            resolved_cwd, _workspace, _relative = resolve_tool_path(
-                str(cwd or "").strip() or ".", context, workspace=workspace
-            )
+            resolved_cwd, name, relative = _location(context)
             timeout = _int_value(timeout_sec, default=self._timeout_sec)
             output_limit = _int_value(max_output_chars, default=self._max_output_chars)
             launch = asyncio.create_task(
@@ -100,7 +101,7 @@ class ShellToolset:
             out = _decode_output(stdout)
             err = _decode_output(stderr)
             return {
-                "cwd": str(resolved_cwd),
+                "cwd": workspace_uri(name, relative),
                 "exit_code": process.returncode,
                 "ok": process.returncode == 0,
                 "stdout": out[:output_limit],
@@ -144,14 +145,22 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return ShellToolset(config=dict(config))
 
 
+def _location(context: ToolContext) -> tuple[Path, str, str]:
+    workspace, relative = parse_cwd(context.cwd)
+    if workspace is None:
+        raise ToolangError("shell requires a current workspace; use _toolang.cd")
+    return resolve_input_path(workspace_uri(workspace, relative), context)
+
+
 def _paths(
     arguments: Mapping[str, Any], context: ToolContext
 ) -> Mapping[str, tuple[str, ...]]:
-    value = str(arguments.get("cwd") or "").strip() or "."
-    _resolved, workspace, relative = resolve_tool_path(
-        value, context, workspace=arguments.get("workspace")
-    )
-    return {workspace: (relative,)} if workspace is not None else {}
+    if "workspace" in arguments or "cwd" in arguments:
+        raise ToolangError(
+            "shell.execute uses the Run cwd; per-call cwd is unavailable"
+        )
+    _resolved, workspace, relative = _location(context)
+    return {workspace: (relative,)}
 
 
 def _int_value(value: object, *, default: int) -> int:

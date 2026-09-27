@@ -272,13 +272,6 @@ def _validate_workspace_roots(workspaces: Mapping[str, str]) -> None:
             other_path = resolved[other_name]
             if _same_workspace_path(path, other_path):
                 raise ValueError(f"workspace path already configured as {name}: {path}")
-            if _workspace_path_is_within(path, other_path) or _workspace_path_is_within(
-                other_path, path
-            ):
-                raise ValueError(
-                    "workspace roots must not overlap: "
-                    f"{name}={path}, {other_name}={other_path}"
-                )
 
 
 def _same_workspace_path(path: Path, other: Path) -> bool:
@@ -288,12 +281,6 @@ def _same_workspace_path(path: Path, other: Path) -> bool:
         return path.samefile(other)
     except OSError:
         return False
-
-
-def _workspace_path_is_within(path: Path, root: Path) -> bool:
-    if path.is_relative_to(root):
-        return True
-    return any(_same_workspace_path(parent, root) for parent in path.parents)
 
 
 def _resolve_workspace_path(path: Path) -> Path:

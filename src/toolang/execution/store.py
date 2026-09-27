@@ -28,6 +28,7 @@ from toolang.lang.types import is_agic_ref
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
+from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.run_results import run_completion, run_receipt, scheduled_run
@@ -49,6 +50,7 @@ from .inspection import (
 )
 from .records import (
     CompactControlPayload,
+    CwdControlPayload,
     CreateControlPayload,
     ControlPayload,
     ExecuteControlPayload,
@@ -340,6 +342,7 @@ class RunStore:
         authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
         schedule_receipt: bool = False,
+        cwd: str = "",
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -442,6 +445,7 @@ class RunStore:
                     input=input,
                     horizon=horizon,
                     sandbox=sandbox,
+                    cwd=cwd,
                     authored_input=authored_input,
                     authored_commands=authored_commands,
                     authored_session_commands=authored_session_commands,
@@ -1171,6 +1175,44 @@ class RunStore:
                     *control_indexes,
                 ),
             )
+
+    def apply_reload_with_cwd_invalidations(
+        self,
+        *,
+        run_id: str,
+        index: int,
+        invalidated_runs: Sequence[str],
+        finished_at: str,
+    ) -> None:
+        """Apply State adoption and all affected Run locations in one transaction."""
+        with self.write_transaction():
+            self.finish_run_controls(
+                run_id=run_id, indexes=(index,), finished_at=finished_at
+            )
+            cause = ControlRef.for_run(run_id, index)
+            for target in dict.fromkeys(invalidated_runs):
+                run = self.get_run(run_id=target)
+                if run is None or run.status not in {"pending", "running"}:
+                    continue
+                if not self.current_cwd(target):
+                    continue
+                next_index = self._conn.execute(
+                    'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
+                    (target,),
+                ).fetchone()[0]
+                self._insert_control(
+                    ref=ControlRef.for_run(target, int(next_index)),
+                    kind="cwd",
+                    timing="immediate",
+                    payload=CwdControlPayload(cwd="", cause="invalidated", state=cause),
+                    request=None,
+                    status="applied",
+                    error=None,
+                    created_at=finished_at,
+                    finished_at=finished_at,
+                    claimed=True,
+                    triggered_by=None,
+                )
 
     def fail_pending_run_controls(
         self, *, run_id: str, finished_at: str, error: str
@@ -2815,6 +2857,19 @@ class RunStore:
                 raise ValueError(f"conflicting step_begin event: {ref}")
         return step
 
+    def current_cwd(self, run_id: str) -> str:
+        """Rebuild the Run's working location from accepted controls."""
+        initial = self.get_run_control(run_id=run_id, index=0)
+        if initial is None or not isinstance(initial.payload, RunControlPayload):
+            raise ValueError(f"run preparation not found: {run_id}")
+        location = initial.payload.cwd
+        for control in self.list_run_controls(run_id=run_id, kind="cwd"):
+            if control.status == "applied" and isinstance(
+                control.payload, CwdControlPayload
+            ):
+                location = control.payload.cwd
+        return location
+
     def finish_step(
         self,
         *,
@@ -2858,6 +2913,35 @@ class RunStore:
                         str(ref),
                     ),
                 )
+                if (
+                    kind == "tool"
+                    and status == "succeeded"
+                    and isinstance(existing_step.given, ToolStepGiven)
+                    and existing_step.given.call.name == "_toolang__cd"
+                    and output is not None
+                    and isinstance(output.local.value, ToolResultPart)
+                ):
+                    cwd = output.local.value.output.get("cwd")
+                    if not isinstance(cwd, str):
+                        raise ValueError("successful cd Step requires a cwd result")
+                    parse_cwd(cwd)
+                    index = self._conn.execute(
+                        'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
+                        (ref.run_id,),
+                    ).fetchone()[0]
+                    self._insert_control(
+                        ref=ControlRef(RunRef(ref.run_id), int(index)),
+                        kind="cwd",
+                        timing="immediate",
+                        payload=CwdControlPayload(cwd=cwd, state=existing_step.state),
+                        request=None,
+                        status="applied",
+                        error=None,
+                        created_at=finished_at,
+                        finished_at=finished_at,
+                        claimed=True,
+                        triggered_by=ref,
+                    )
             row = self._conn.execute(
                 "SELECT * FROM steps WHERE id = ?",
                 (str(ref),),

@@ -78,6 +78,10 @@ class ToolContext:
     home: Path
     room: Path
     workspaces: Mapping[str, Path] = field(default_factory=dict)
+    cwd: str = ""
+    _input_paths: dict[tuple[str, bool], tuple[Path, str, str]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
     # A context belongs to one invocation. Reusing resolutions binds preflight
     # and execution to the same targets without a second execution protocol.
     _paths: dict[tuple[Path, str, bool], tuple[Path, str]] = field(

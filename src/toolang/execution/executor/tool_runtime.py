@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
+from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
@@ -50,6 +51,30 @@ class _ToolRuntime(ToolRuntime):
     transfer: _ExecuteCommitted | None = None
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
+
+    async def cd(self, path: str, context: ToolContext) -> ToolResult:
+        if self.tool_call_count != 1:
+            raise ToolangError(
+                "_toolang/cd must be the only tool call in its Model Call"
+            )
+        target, name, relative = resolve_input_path(path, context)
+        if not target.is_dir():
+            raise ToolangError(f"cd target is not a directory: {path}")
+        return ToolResult({"cwd": workspace_uri(name, relative)})
+
+    async def workspaces(self, context: ToolContext) -> ToolResult:
+        return ToolResult(
+            {
+                "entries": [
+                    {
+                        "name": name,
+                        "path": workspace_uri(name),
+                        "available": root.is_dir(),
+                    }
+                    for name, root in sorted(context.workspaces.items())
+                ]
+            }
+        )
 
     async def reload(self) -> ToolResult:
         execution = self.state.execution

@@ -54,34 +54,37 @@ toolset; user resource selectors apply only to user tools.
 
 ## Filesystem
 
-`fs` is scoped to the current agent home.
+`fs` operates inside configured Agent State workspaces. It provides
+`read`, `write`, `append`, `list`, `glob`, `stat`, `mkdir`, and `remove`.
+Each operation takes a `path` (default `"."` for `list` and `glob`), with no
+`workspace` or `cwd` argument. Path forms are:
 
-It provides structured file operations such as:
+- `src/main.py`, `./src`, `../tests`: relative to the Run's current directory,
+  staying within its selected workspace. These fail when no workspace is selected.
+- `:repo://src/main.py`: from `repo`'s root, regardless of current directory;
+  `:repo://` addresses that root. `repo://src/main.py` is shorthand except when
+  `repo` matches a built-in scheme. `fs` always returns the unambiguous `:repo://`
+  form, with UTF-8 percent-encoded path components.
+- `/path` or `file:///path`: OS-absolute, using the most specific matching
+  configured workspace. `file://src/main.py` is relative to Run cwd.
 
-- `read`
-- `write`
-- `append`
-- `list`
-- `glob`
-- `stat`
-- `mkdir`
-- `remove`
-
-`fs` paths and `shell` cwd accept an optional `workspace` name from the published
-State. With that anchor, `/src` means `src` under the workspace root. Without it,
-paths resolve from the agent home; overlapping workspace matches
-require an explicit name. Workspace configuration does not expand home access.
+The old `workspace://repo/path` format and `fs.list("workspace://")` are no longer
+supported. `_toolang.workspaces()` lists names, availability, and root references.
+A single available configured workspace is selected at Run start; with zero or
+multiple workspaces the cwd is unselected until `_toolang.cd(path=":repo://")`.
+`_toolang.cd` takes one path and must be the only tool call in its Model Call. It
+changes only its Run's durable location. `fs` never changes cwd. Child Runs
+inherit the location at acceptance; they cannot change the parent Run's cwd.
 
 
 ## Shell
 
-`shell` runs one non-interactive command inside the current agent home.
-
-It returns structured:
-
-- `stdout`
-- `stderr`
-- `exit_code`
+`shell.execute(command, timeout_sec=..., max_output_chars=...)` starts in the
+current Run directory; `cwd` and `workspace` arguments are not accepted. The
+result includes `cwd`, `stdout`, `stderr`, and `exit_code`. It fails when cwd is
+unselected or unavailable. An in-command `cd` affects only that subprocess.
+The command text is interpreted by the shell and OS, not Toolang's path resolver;
+without an OS sandbox, a command can access paths outside the workspaces.
 
 
 ## Web Search
@@ -194,7 +197,8 @@ remain authoritative.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__execute`, `_toolang__reload`, and `_toolang__pick` tools. `hands` and
+`_toolang__run`, `_toolang__execute`, `_toolang__reload`, `_toolang__pick`,
+`_toolang__cd`, and `_toolang__workspaces` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions. An
 executor without State refresh still exposes reload and returns a correlated
 error if it is called. Statement-generated Flow evaluators, output-repair

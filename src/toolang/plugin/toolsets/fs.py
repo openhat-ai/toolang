@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
@@ -19,20 +18,19 @@ from toolang.base.types.tool import (
     ToolResult,
 )
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.base.utils.tool_descriptions import action_summary, workspace_label
+from toolang.base.utils.tool_descriptions import action_summary
 from toolang.base.utils.workspace_paths import (
     authorize_workspace_path,
-    parse_workspace_uri,
-    resolve_workspace_path,
+    resolve_input_path,
     workspace_root,
     workspace_uri,
 )
 
 DEFAULT_MAX_CHARS = 20_000
 _PATH_GUIDANCE = (
-    " Use workspace://<name>/<path> for a configured workspace."
-    " Alternatively, provide workspace with a root-relative path."
-    " Agent home and the process working directory are not implicit roots."
+    " Use relative paths from the current Run directory, /OS-absolute paths,"
+    " or :<workspace>://<path> from a workspace root."
+    " Agent home is not an implicit root."
 )
 
 
@@ -62,8 +60,7 @@ class FilesystemToolset:
     def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="list",
-            description="List a directory, or list available workspaces at workspace://."
-            + _PATH_GUIDANCE,
+            description="List one directory." + _PATH_GUIDANCE,
         )
         def list_dir(
             path: str = ".",
@@ -238,12 +235,20 @@ class _FilesystemTool(Tool):
         return self.tool.name
 
     def definition(self) -> ToolDefinition:
-        return self.tool.definition()
+        definition = self.tool.definition()
+        parameters = dict(definition.parameters)
+        parameters["properties"] = {
+            key: value
+            for key, value in parameters["properties"].items()
+            if key != "workspace"
+        }
+        parameters["required"] = [
+            name for name in parameters["required"] if name != "workspace"
+        ]
+        return ToolDefinition(definition.name, definition.description, parameters)
 
     def summary(
-        self,
-        arguments: Mapping[str, Any],
-        result: ToolResult | None = None,
+        self, arguments: Mapping[str, Any], result: ToolResult | None = None
     ) -> str | None:
         verbs = {
             "list": ("list", "Listing", "Listed"),
@@ -256,18 +261,9 @@ class _FilesystemTool(Tool):
             "remove": ("remove", "Removing", "Removed"),
         }[self.name]
         path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
-        workspace = arguments.get("workspace")
         if not isinstance(path, str):
             return None
-        if path == "workspace://" and self.name == "list" and workspace is None:
-            return action_summary(result, verbs, "workspaces")
-        if path.startswith("workspace:"):
-            if workspace is not None:
-                return None
-            workspace, path = parse_workspace_uri(path)
-        if not isinstance(workspace, str) or not workspace:
-            return None
-        target = workspace_label(workspace, path)
+        target = f"“{path}”"
         if self.name == "glob":
             target = f"{arguments.get('pattern', '*')} in {target}"
         return action_summary(result, verbs, target)
@@ -275,12 +271,9 @@ class _FilesystemTool(Tool):
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> ToolResult:
-        target = self._target(arguments)
-        if target is None:
-            return ToolResult(await asyncio.to_thread(_list_workspaces, context))
-        name, value = target
-        resolved, relative = resolve_workspace_path(
-            name, value, context, follow=self.name != "remove"
+        value = self._target(arguments)
+        resolved, name, relative = resolve_input_path(
+            value, context, follow=self.name != "remove"
         )
         uri = workspace_uri(name, relative)
         kwargs = dict(arguments, path=str(resolved), workspace=name)
@@ -310,47 +303,19 @@ class _FilesystemTool(Tool):
     def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]]:
-        target = self._target(arguments)
-        if target is None:
-            return {}
-        name, value = target
-        _resolved, relative = resolve_workspace_path(
-            name, value, context, follow=self.name != "remove"
+        value = self._target(arguments)
+        _resolved, name, relative = resolve_input_path(
+            value, context, follow=self.name != "remove"
         )
         return {name: (relative,)}
 
-    def _target(self, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
+    def _target(self, arguments: Mapping[str, Any]) -> str:
+        if "workspace" in arguments or "cwd" in arguments:
+            raise ToolangError("fs accepts path, not workspace or cwd arguments")
         value = arguments.get("path", "." if self.name in {"list", "glob"} else None)
         if not isinstance(value, str) or not value:
             raise ToolangError("tool requires a non-empty path")
-        workspace = arguments.get("workspace")
-        if value.startswith("workspace:"):
-            if workspace is not None:
-                raise ToolangError("workspace URI cannot be combined with workspace")
-            if value == "workspace://":
-                if self.name != "list":
-                    raise ToolangError("only fs.list can address workspace://")
-                return None
-            name, relative = parse_workspace_uri(value)
-        else:
-            if "://" in value:
-                raise ToolangError(f"unsupported filesystem URI: {value}")
-            if not isinstance(workspace, str) or not workspace:
-                raise ToolangError(
-                    "use a workspace URI or specify workspace; agent home is not accessible"
-                )
-            name, relative = workspace, value
-        return name, relative
-
-
-def _list_workspaces(context: ToolContext) -> dict[str, Any]:
-    return {
-        "path": "workspace://",
-        "entries": [
-            {"name": name, "path": workspace_uri(name), "available": root.is_dir()}
-            for name, root in sorted(context.workspaces.items())
-        ],
-    }
+        return value
 
 
 def _list_directory(path: Path, root: Path) -> dict[str, Any]:

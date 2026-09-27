@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
 import logging
 import threading
 import time
@@ -19,6 +20,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
+from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
@@ -377,6 +379,7 @@ class RunExecutor:
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
+            cwd=bound.cwd,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -473,6 +476,7 @@ class RunExecutor:
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
+            cwd=bound.cwd,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -1346,9 +1350,27 @@ class RunExecutor:
                             controls.pop(candidate.index, None)
                             active.reload_states.pop(candidate.index, None)
                         continue
-                    self.store.finish_run_controls(
+                    old_state = execution._current_state[0]
+                    invalidated = []
+                    for run in self.store.list_run_tree(root_run_id=active.root_run_id):
+                        if run.status not in {"pending", "running"}:
+                            continue
+                        selected, _relative = parse_cwd(self.store.current_cwd(run.id))
+                        if selected is None:
+                            continue
+                        before = old_state.workspaces.get(selected)
+                        after = state.workspaces.get(selected)
+                        if (
+                            before is None
+                            or after is None
+                            or Path(before).resolve() != Path(after).resolve()
+                            or not Path(after).is_dir()
+                        ):
+                            invalidated.append(run.id)
+                    self.store.apply_reload_with_cwd_invalidations(
                         run_id=active.root_run_id,
-                        indexes=(candidate.index,),
+                        index=candidate.index,
+                        invalidated_runs=invalidated,
                         finished_at=utc_now(),
                     )
                     execution._current_state = (
@@ -2551,7 +2573,9 @@ class _Execution:
                 binding, runnable = prepare(state, state_ref)
                 assert binding.parent is not None
                 binding = replace(
-                    binding, horizon=self.horizon_for(binding.parent.run_id)
+                    binding,
+                    horizon=self.horizon_for(binding.parent.run_id),
+                    cwd=self.store.current_cwd(binding.parent.run_id),
                 )
             except (ToolangError, TypeError, ValueError) as exc:
                 raise _RunRejected(str(exc) or type(exc).__name__) from exc
@@ -2572,6 +2596,7 @@ class _Execution:
                     model_request=binding.model_request,
                     input=binding.control_input,
                     sandbox=None,
+                    cwd=binding.cwd,
                     occurrence=binding.occurrence,
                     request_id=None,
                     created_at=binding.created_at,
@@ -3187,6 +3212,13 @@ def _bind_run(
         settings=resolve_settings(runnable, module),
         created_at=utc_now(),
         horizon=spec.horizon,
+        cwd=(
+            workspace_uri(name)
+            if len(spec.state.workspaces) == 1
+            and (name := next(iter(spec.state.workspaces)))
+            and Path(spec.state.workspaces[name]).is_dir()
+            else ""
+        ),
     )
 
 

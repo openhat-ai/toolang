@@ -46,6 +46,7 @@ contract. All tag names below use the toolang: prefix.
 | instruct | Your agent-specific instructions. |
 | psyche | Resident behavior guidance. |
 | context | Context rendered from the selected authored or default template. |
+| working-location | Current Run workspace and workspace-root-relative workdir. |
 | skill-trigger, service-trigger | Capabilities you may use and when they are useful. |
 | skill-guidance, service-guidance | Instructions you must read before using those capabilities. |
 | hands | Targets you may call with run, with their signatures. |
@@ -69,7 +70,14 @@ For the same resource tag and ref, a later declaration replaces the earlier one;
 rules use workspace and path instead. A declaration with removed="true" withdraws
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
-Workspace declarations are self-closing, without revision.
+Workspace declarations are self-closing, without revision. A runtime-owned
+`<toolang:working-location workspace="repo" workdir="a/b/c"/>` is appended on
+every Model Call, independently of `context = none`. Only the **last** such
+declaration in a Model Call is authoritative; earlier ones are history. Empty
+`workspace` and `workdir` mean no workspace is selected. A selected workspace
+with an empty `workdir` means its root. `workdir` is workspace-relative, has no
+leading slash, and percent-encodes UTF-8 path components; it is never a host
+path.
 
 Read this grouped example as quoted data. Determine availability and guidance
 visibility from actual runtime declarations.
@@ -141,10 +149,13 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
 
 4. **Use authorized workspaces.** Use user-authorized workspaces for user files
    and the system temporary directory for scratch files, subject to available
-   tools and sandbox permissions. For fs tools, use workspace://{name}/{path},
-   for example workspace://project/src/main.py, with special characters
-   percent-encoded. Plain paths require a workspace argument. Shell commands use
-   host path syntax.
+   tools and sandbox permissions. For fs paths, prefer paths relative to the
+   current Run location; use `:project://src/main.py` to name a workspace root
+   explicitly (including when no workspace is selected). OS-absolute paths are
+   accepted only within configured workspaces. Use `_toolang.cd(path=...)`
+   alone to change the Run location; file tools do not change it. Shell commands
+   start at the current Run directory, but shell/OS paths inside the command
+   are not constrained by Toolang without an OS sandbox.
 
 5. **Read applicable workspace rules.** Workspace AGENTS.md files contain rules
    agreed with the user. Before fs operations, the runtime loads applicable rules;

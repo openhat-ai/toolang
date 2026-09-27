@@ -394,6 +394,17 @@ async def _execute(state: _AgicState) -> Message | None:
         state.output = ref
         state.record_output(ref)
         if result.tool_calls:
+            if len(result.tool_calls) != 1 and any(
+                call.name == "_toolang__cd" for call in result.tool_calls
+            ):
+                await tool_step.skip(state, result.tool_calls)
+                state.messages.append(
+                    Message.user(
+                        "_toolang.cd must be the only tool call in its Model Call. "
+                        "None of these tool calls were executed; retry separately."
+                    )
+                )
+                continue
             # A reload inside this batch changes State, not its routing authority.
             routes = state.prepared.routes
             if state.steer_before_next_step():

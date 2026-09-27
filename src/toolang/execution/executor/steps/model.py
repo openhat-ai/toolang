@@ -144,6 +144,11 @@ def _candidate(
             prepared.run.horizon != state.model_frame.run.horizon
             or prepared.recall != state.model_frame.recall
         ),
+        working_location=prompting.working_location_message(
+            state.execution.store.current_cwd(prepared.run.run_id)
+            if state.execution is not None
+            else prepared.run.cwd
+        ),
     )
     request = ModelCall(
         instructions=prepared.instructions,
@@ -230,6 +235,9 @@ def _boundary(
         state.messages.copy(),
         step=StepRef.from_local(prepared.run.run_id, (state.next_step,)),
         controls=controls,
+        working_location=prompting.working_location_message(
+            execution.store.current_cwd(prepared.run.run_id)
+        ),
     )
     required = replace(
         request,
