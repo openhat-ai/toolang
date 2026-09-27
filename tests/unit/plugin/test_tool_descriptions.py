@@ -15,9 +15,9 @@ from toolang.plugin.toolsets.web import WebToolset
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"path": ":repo://src/file.txt"},
-        {"path": ":repo://src/file.txt", "max_chars": 1024},
-        {"path": ":repo://src/file.txt", "unexpected": "ignored in the summary"},
+        {"path": "repo://src/file.txt"},
+        {"path": "repo://src/file.txt", "max_chars": 1024},
+        {"path": "repo://src/file.txt", "unexpected": "ignored in the summary"},
     ],
 )
 @pytest.mark.parametrize(
@@ -54,8 +54,8 @@ def test_workspace_descriptions_do_not_resolve_paths(
 @pytest.mark.parametrize(
     "arguments,target",
     [
-        ({"path": ":repo://"}, "repo:/"),
-        ({"path": ":repo://a%20file"}, "repo:/a file"),
+        ({"path": "repo://"}, "repo:/"),
+        ({"path": "repo://a%20file"}, "repo:/a file"),
         ({"path": "."}, "“.”"),
     ],
 )
@@ -80,7 +80,7 @@ def test_fs_verbs(name, expected):
         FilesystemToolset({})
         .tools()[name]
         .summary(
-            {"path": ":repo://file", "pattern": "*.py"},
+            {"path": "repo://file", "pattern": "*.py"},
             ToolResult(),
         )
         == expected
@@ -232,4 +232,4 @@ def test_pick_keeps_remote_resource_identity_in_its_label():
 
 def test_running_file_summary_preserves_authored_trailing_dots():
     tool = FilesystemToolset({}).tools()["read"]
-    assert tool.summary({"path": ":repo://file..."}) == ("Reading repo:/file...")
+    assert tool.summary({"path": "repo://file..."}) == ("Reading repo:/file...")

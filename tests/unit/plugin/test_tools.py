@@ -33,7 +33,7 @@ def _tool_context(
         room=home / ".runtime" / "tools" / plugin_name,
         services=services,
         workspaces=workspaces or ({"repo": home} if plugin_name == "shell" else {}),
-        cwd=":repo://" if plugin_name == "shell" else "",
+        cwd="repo://" if plugin_name == "shell" else "",
     )
 
 
@@ -84,12 +84,12 @@ def test_filesystem_tool_reads_and_writes_within_workspace(tmp_path: Path) -> No
 
     written = _invoke(
         tools["write"],
-        {"path": ":repo://notes/todo.txt", "text": "hello"},
+        {"path": "repo://notes/todo.txt", "text": "hello"},
         context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": ":repo://notes/todo.txt"},
+        {"path": "repo://notes/todo.txt"},
         context,
     )
 
@@ -108,12 +108,12 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
 
     appended = _invoke(
         tools["append"],
-        {"path": ":repo://outbox/index.md", "text": "- hello\n"},
+        {"path": "repo://outbox/index.md", "text": "- hello\n"},
         context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": ":repo://outbox/index.md"},
+        {"path": "repo://outbox/index.md"},
         context,
     )
 

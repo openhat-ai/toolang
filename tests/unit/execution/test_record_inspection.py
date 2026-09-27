@@ -622,7 +622,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         ("reload", ReloadControlPayload(revision), {"state"}),
         (
             "cwd",
-            CwdControlPayload(":repo://", state=ControlRef.for_run("run_control", 0)),
+            CwdControlPayload("repo://", state=ControlRef.for_run("run_control", 0)),
             {"cwd", "cause", "state"},
         ),
         (

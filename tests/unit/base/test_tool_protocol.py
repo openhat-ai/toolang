@@ -120,7 +120,7 @@ def test_calls_share_tools_but_not_resolved_targets(tmp_path):
     old = ToolContext(tmp_path, tmp_path, {"repo": first})
     new = replace(old, workspaces={"repo": second})
     write = load_tools(queries=("fs/write",))["fs__write"]
-    old_input = {"path": ":repo://file", "text": "old"}
+    old_input = {"path": "repo://file", "text": "old"}
     new_input = {**old_input, "text": "new"}
     assert write.paths(old_input, old) == write.paths(new_input, new)
 
@@ -144,14 +144,14 @@ def test_workspace_root_alias_is_bound_for_one_call(tmp_path):
     alias.symlink_to(first, target_is_directory=True)
     context = ToolContext(tmp_path, tmp_path, {"repo": alias})
     listing = load_tools(queries=("fs/list",))["fs__list"]
-    arguments = {"path": ":repo://"}
+    arguments = {"path": "repo://"}
     assert listing.paths(arguments, context) == {"repo": ("/",)}
     alias.unlink()
     alias.symlink_to(second, target_is_directory=True)
     result = asyncio.run(listing.invoke(arguments, context))
     assert result.error is None
     assert result.output["entries"] == [
-        {"name": "file", "path": ":repo://file", "is_dir": False}
+        {"name": "file", "path": "repo://file", "is_dir": False}
     ]
     assert (
         asyncio.run(listing.invoke(arguments, replace(context))).output["entries"] == []
