@@ -8,6 +8,7 @@ from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_linked_state_source_mounts,
     prepare_root_mounts,
+    prepare_workspace_mounts,
 )
 
 
@@ -95,3 +96,40 @@ def test_root_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None
     assert SandboxMount(
         source.resolve(), hosted_root / "catalog.json", read_only=True
     ) in prepare_root_mounts(local_root, hosted_root)
+
+
+def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None:
+    local_home = tmp_path / "agents/alice"
+    local_home.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    sdk = repo / "sdk"
+    sdk.mkdir(parents=True)
+    missing = tmp_path / "missing"
+    (local_home / "config.toml").write_text(
+        f'[workspaces]\nrepo = "{repo}"\nsdk = "{sdk}"\nmissing = "{missing}"\n'
+    )
+    hosted_home = Path("/root/.toolang/agents/alice")
+    mounts, mapping = prepare_workspace_mounts(local_home, hosted_home)
+    assert mounts == (
+        SandboxMount(repo.resolve(), hosted_home / ".workspaces/repo"),
+        SandboxMount(sdk.resolve(), hosted_home / ".workspaces/repo/sdk"),
+    )
+    assert mapping == {
+        "repo": (str(repo), str(hosted_home / ".workspaces/repo")),
+        "sdk": (str(sdk), str(hosted_home / ".workspaces/repo/sdk")),
+    }
+
+
+def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) -> None:
+    local_home = tmp_path / "agents/alice"
+    local_home.mkdir(parents=True)
+    root = tmp_path / "repo"
+    child = root / "child"
+    child.mkdir(parents=True)
+    (local_home / "config.toml").write_text(
+        f'[workspaces]\naa = "{child}"\nzz = "{root}"\n'
+    )
+    mounts, mapping = prepare_workspace_mounts(local_home, Path("/guest/alice"))
+    assert [mount.local_path for mount in mounts] == [root.resolve(), child.resolve()]
+    assert mapping["aa"][1] == "/guest/alice/.workspaces/zz/child"
+    assert mounts[1].hosted_path.is_relative_to(mounts[0].hosted_path)

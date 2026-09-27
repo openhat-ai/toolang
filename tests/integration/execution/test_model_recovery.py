@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tests.support.execution_assertions import (
-    without_route_snapshots,
+    without_runtime_snapshots,
     assert_replayed,
     assert_run_event_integrity,
 )
@@ -263,9 +263,9 @@ def test_network_backoff_is_cancelable_and_accepts_steering(
             )
             assert len(harness.adapter.invocations) == (1 if action == "cancel" else 2)
             if action == "retry":
-                assert without_route_snapshots(
+                assert without_runtime_snapshots(
                     harness.adapter.invocations[0].call.messages
-                ) == without_route_snapshots(
+                ) == without_runtime_snapshots(
                     harness.adapter.invocations[1].call.messages
                 )
             if action == "steer":

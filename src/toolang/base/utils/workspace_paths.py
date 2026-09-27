@@ -38,6 +38,8 @@ _KNOWN = frozenset(
 def _decode(value: str, *, relative: bool = True) -> str:
     if _BAD_ESCAPE.search(value):
         raise ToolangError(f"invalid path escape: {value}")
+    if re.search(r"%2f", value, flags=re.IGNORECASE):
+        raise ToolangError(f"encoded path separator is not allowed: {value}")
     try:
         path = unquote(value, errors="strict")
     except UnicodeDecodeError as exc:
@@ -156,6 +158,11 @@ def resolve_input_path(
                         "relative path requires a current workspace; use _toolang.cd"
                     )
                 path = str(Path(current) / path)
+            elif name == "workspace":
+                raise ToolangError(
+                    "workspace:// is no longer supported; use :repo://path for files "
+                    "or _toolang.workspaces() to list workspaces"
+                )
             elif name in _KNOWN:
                 raise ToolangError(
                     f"unsupported path scheme: {name}; use :{name}:// for a workspace"

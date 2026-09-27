@@ -70,8 +70,9 @@ Each operation takes a `path` (default `"."` for `list` and `glob`), with no
 
 The old `workspace://repo/path` format and `fs.list("workspace://")` are no longer
 supported. `_toolang.workspaces()` lists names, availability, and root references.
-A single available configured workspace is selected at Run start; with zero or
-multiple workspaces the cwd is unselected until `_toolang.cd(path=":repo://")`.
+Exactly one configured workspace is selected at Run start if it is available;
+with zero or multiple configured workspaces, or an unavailable sole workspace,
+cwd is unselected until `_toolang.cd(path=":repo://")`.
 `_toolang.cd` takes one path and must be the only tool call in its Model Call. It
 changes only its Run's durable location. `fs` never changes cwd. Child Runs
 inherit the location at acceptance; they cannot change the parent Run's cwd.
@@ -83,8 +84,12 @@ inherit the location at acceptance; they cannot change the parent Run's cwd.
 current Run directory; `cwd` and `workspace` arguments are not accepted. The
 result includes `cwd`, `stdout`, `stderr`, and `exit_code`. It fails when cwd is
 unselected or unavailable. An in-command `cd` affects only that subprocess.
+`cwd` in the result is the portable `:repo://path` reference, not a host path.
 The command text is interpreted by the shell and OS, not Toolang's path resolver;
 without an OS sandbox, a command can access paths outside the workspaces.
+Guest sandboxes mount available workspaces at startup; a State change granting a
+new workspace or remapping an existing one cannot use a missing mount until the
+sandbox is restarted with that binding.
 
 
 ## Web Search

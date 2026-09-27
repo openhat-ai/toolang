@@ -33,7 +33,7 @@ from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.setup import ModelCollection, ToolCollection
 from toolang.state.state import CapSource, StateCap, agent_state_revision
-from tests.support.execution_assertions import without_route_snapshots
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -194,7 +194,7 @@ flow hello_flow(_: Text) -> Text:
             )
 
             assert root.status == "succeeded", root.error
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             )[-1] == Message.user("hello world")
 
@@ -253,7 +253,7 @@ flow hello_flow(_: Text) -> Text:
             )
 
             assert first.status == second.status == "succeeded"
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             ) == [
                 Message.user("hello world"),

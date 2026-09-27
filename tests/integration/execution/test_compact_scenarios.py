@@ -9,7 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_assertions import assert_replayed, without_route_snapshots
+from tests.support.execution_assertions import (
+    assert_replayed,
+    without_runtime_snapshots,
+)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -352,7 +355,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
             assert [step.kind for step in steps] == ["tool", "model"]
             request = RunHistory(harness.store).get_model_call(steps[-1].ref)
             assert request == harness.adapter.invocations[-1].call
-            assert without_route_snapshots(request.messages) == [
+            assert without_runtime_snapshots(request.messages) == [
                 Message.user("Earlier facts."),
                 Message.user("middle"),
                 Message.assistant("middle"),

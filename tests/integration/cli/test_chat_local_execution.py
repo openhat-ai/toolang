@@ -12,7 +12,7 @@ from typing import Any
 from anyio import to_process
 import pytest
 
-from tests.support.execution_assertions import without_route_snapshots
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingTool,
@@ -528,7 +528,7 @@ agic chat(_: Part[]) -> Part[]:
         assert session.get_result(runs[0].id, thread_id=None).output == (
             TextPart("hello back"),
         )
-        assert without_route_snapshots(
+        assert without_runtime_snapshots(
             harness.adapter.invocations[0].call.messages
         ) == [Message.user("hello")]
         assert setup_refreshes == 1

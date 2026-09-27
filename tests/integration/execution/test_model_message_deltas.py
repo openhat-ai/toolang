@@ -14,7 +14,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
     steer_message,
     assert_replayed,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -259,7 +259,7 @@ def test_online_tool_loops_only_record_and_render_additions(
                 len(step.given.call.messages.delta)
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [1, *([3] * 12)]
+            ] == [2, *([4] * 12)]
             for step in model_steps[1:]:
                 assert isinstance(step.given, StoredModelStepGiven)
                 assert all(
@@ -273,7 +273,7 @@ def test_online_tool_loops_only_record_and_render_additions(
             )
             assert [
                 len(item.call.messages) for item in harness.adapter.invocations
-            ] == list(range(1, 38, 3))
+            ] == list(range(2, 51, 4))
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -465,7 +465,7 @@ def test_interrupted_model_end_preserves_referenced_output(
                     )
                     for call in requests
                 )
-                assert without_route_snapshots(
+                assert without_runtime_snapshots(
                     harness.adapter.invocations[-1].call.messages
                 ) == [
                     Message.user("start"),
@@ -537,7 +537,7 @@ def test_steer_and_interrupted_model_begin_replay_once(
                 "succeeded" if interruption == "steer" else "canceled"
             ), root.error
             if interruption == "steer":
-                final = without_route_snapshots(
+                final = without_runtime_snapshots(
                     harness.adapter.invocations[-1].call.messages
                 )
                 assert final.count(Message.user("start")) == 1
@@ -658,7 +658,7 @@ def test_retry_deletes_its_deltas_and_can_reuse_step_ids(tmp_path: Path) -> None
             assert len(saved) == 1
             assert saved[0].ref == old[0].ref
             assert harness.store.get_step(ref=old[-1].ref) is None
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [Message.user("start")]
 

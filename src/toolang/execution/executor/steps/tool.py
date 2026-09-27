@@ -279,10 +279,10 @@ async def _execute(
                 history=_ToolHistory(state.execution.store.db_path, run.thread)
                 if plugin_name == "history" and state.execution is not None
                 else None,
-                workspaces={
-                    name: Path(path) for name, path in agent_state.workspaces.items()
-                },
-                cwd=state.execution.store.current_cwd(run.run_id)
+                workspaces=run.setup.workspace_roots(agent_state.workspaces),
+                workspace_names=tuple(agent_state.workspaces),
+                workspace_bindings=agent_state.workspaces,
+                cwd=state.execution.cwd_for_run(run.run_id)
                 if state.execution is not None
                 else run.cwd,
             )
@@ -777,11 +777,20 @@ def _tool_context(
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
     cwd: str = "",
+    workspace_names: tuple[str, ...] = (),
+    workspace_bindings: Mapping[str, str] | None = None,
 ) -> ToolContext:
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
         raise ToolangError(f"unknown toolset plugin for tool: {tool.name}")
-    args = (layout.home, layout.tool_room(plugin_name), workspaces or {}, cwd)
+    args = (
+        layout.home,
+        layout.tool_room(plugin_name),
+        workspaces or {},
+        cwd,
+        workspace_names,
+        workspace_bindings or {},
+    )
     if plugin_name == "_toolang" and runtime is not None:
         return RuntimeToolContext(*args, runtime=runtime)
     if plugin_name == "history" and history is not None:

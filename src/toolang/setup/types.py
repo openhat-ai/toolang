@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+import json
+import os
 from pathlib import Path
 import platform
 from threading import Lock
 from types import MappingProxyType
-from typing import TypeVar, cast
+from typing import TypeVar, cast, Literal
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import Toolset
@@ -34,6 +36,13 @@ class AgentEnvironment:
     root: Path
     home: Path
     working_directory: Path
+    workspace_mounts: Mapping[str, tuple[Path, Path]] = field(default_factory=dict)
+    workspace_location: Literal["host", "guest"] = "host"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "workspace_mounts", MappingProxyType(dict(self.workspace_mounts))
+        )
 
     @classmethod
     def capture(
@@ -46,6 +55,31 @@ class AgentEnvironment:
 
         if not sandbox or sandbox != sandbox.strip():
             raise ValueError("agent environment requires a canonical sandbox")
+        location = os.environ.get(
+            "TOOLANG_WORKSPACE_LOCATION",
+            "host" if sandbox.partition(":")[0] == "host" else "guest",
+        )
+        if location not in {"host", "guest"}:
+            raise ValueError("invalid sandbox workspace location")
+        raw_mounts = json.loads(
+            os.environ.get("TOOLANG_WORKSPACE_MOUNTS", "{}")
+            if location == "guest"
+            else "{}"
+        )
+        if not isinstance(raw_mounts, dict):
+            raise ValueError("sandbox workspace mounts must be an object")
+        mounts: dict[str, tuple[Path, Path]] = {}
+        if location == "guest":
+            for name, roots in raw_mounts.items():
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(roots, list)
+                    or len(roots) != 2
+                    or not all(isinstance(root, str) for root in roots)
+                    or not all(Path(root).is_absolute() for root in roots)
+                ):
+                    raise ValueError("invalid sandbox workspace mount mapping")
+                mounts[name] = Path(roots[0]), Path(roots[1])
         return cls(
             sandbox=sandbox,
             system=platform.system(),
@@ -55,6 +89,8 @@ class AgentEnvironment:
             root=layout.root,
             home=layout.home,
             working_directory=Path.cwd().resolve(),
+            workspace_mounts=mounts,
+            workspace_location=cast(Literal["host", "guest"], location),
         )
 
 
@@ -135,6 +171,17 @@ class AgentSetup:
         default=lambda: {}, repr=False, compare=False
     )
     _lazy: _LazyValues = field(default_factory=_LazyValues, repr=False, compare=False)
+
+    def workspace_roots(self, grants: Mapping[str, str]) -> dict[str, Path]:
+        """Intersect State grants with mounts captured by the hosting environment."""
+        if self.environment is None or self.environment.workspace_location == "host":
+            return {name: Path(source) for name, source in grants.items()}
+        result = {}
+        for name, source in grants.items():
+            mounted = self.environment.workspace_mounts.get(name)
+            if mounted is not None and mounted[0] == Path(source):
+                result[name] = mounted[1]
+        return result
 
     def models(self) -> tuple[Model, ...]:
         """Load and memoize every ordered model record, including unavailable ones."""

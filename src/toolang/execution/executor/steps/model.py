@@ -145,7 +145,7 @@ def _candidate(
             or prepared.recall != state.model_frame.recall
         ),
         working_location=prompting.working_location_message(
-            state.execution.store.current_cwd(prepared.run.run_id)
+            state.execution.cwd_for_run(prepared.run.run_id)
             if state.execution is not None
             else prepared.run.cwd
         ),
@@ -236,7 +236,7 @@ def _boundary(
         step=StepRef.from_local(prepared.run.run_id, (state.next_step,)),
         controls=controls,
         working_location=prompting.working_location_message(
-            execution.store.current_cwd(prepared.run.run_id)
+            execution.cwd_for_run(prepared.run.run_id)
         ),
     )
     required = replace(

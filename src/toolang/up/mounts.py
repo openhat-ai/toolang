@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toolang.base.types.sandbox import SandboxMount
+from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.source import observe_home_source, observe_root_source
 
 _ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
@@ -69,3 +70,36 @@ def prepare_linked_state_source_mounts(
         for item in observation.files
         if item.source.is_symlink()
     )
+
+
+def prepare_workspace_mounts(
+    local_home: Path, hosted_home: Path
+) -> tuple[tuple[SandboxMount, ...], dict[str, tuple[str, str]]]:
+    """Capture mounted grants at sandbox startup; never mount later State additions."""
+    configured = ConfiguredWorkspaces(local_home / "config.toml").list()
+    available = sorted(
+        (
+            (name, source, Path(source).resolve())
+            for name, source in configured.items()
+            if Path(source).is_dir()
+        ),
+        key=lambda item: (len(item[2].parts), item[0]),
+    )
+    mounts: list[SandboxMount] = []
+    mapping: dict[str, tuple[str, str]] = {}
+    # Preserve the nesting of State roots in the guest so OS-absolute paths
+    # select the same most-specific workspace on both sides of the boundary.
+    for name, source, root in available:
+        ancestors = [
+            (parent, mount.hosted_path)
+            for mount in mounts
+            if root.is_relative_to(parent := mount.local_path)
+        ]
+        if ancestors:
+            parent, guest_parent = max(ancestors, key=lambda item: len(item[0].parts))
+            guest = guest_parent / root.relative_to(parent)
+        else:
+            guest = hosted_home / ".workspaces" / name
+        mounts.append(SandboxMount(local_path=root, hosted_path=guest))
+        mapping[name] = (source, str(guest))
+    return tuple(mounts), mapping

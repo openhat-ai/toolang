@@ -79,6 +79,8 @@ class ToolContext:
     room: Path
     workspaces: Mapping[str, Path] = field(default_factory=dict)
     cwd: str = ""
+    workspace_names: tuple[str, ...] = ()
+    workspace_bindings: Mapping[str, str] = field(default_factory=dict)
     _input_paths: dict[tuple[str, bool], tuple[Path, str, str]] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
@@ -90,6 +92,9 @@ class ToolContext:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspaces", MappingProxyType(dict(self.workspaces)))
+        object.__setattr__(
+            self, "workspace_bindings", MappingProxyType(dict(self.workspace_bindings))
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -161,7 +161,7 @@ def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
             identity,
             identity,
             "fs__write",
-            {"path": "workspace://repo/src/result", "text": "done"},
+            {"path": ":repo://src/result", "text": "done"},
         )
 
     harness, repo, initial = _harness(

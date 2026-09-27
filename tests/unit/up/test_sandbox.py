@@ -1109,3 +1109,49 @@ def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
 
     def runtime_root(self, local_root: Path) -> Path:
         return Path("/runtime")
+
+
+def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    missing = tmp_path / "missing"
+    spec.serve.layout.config.write_text(
+        f'[workspaces]\nrepo = "{repo}"\nmissing = "{missing}"\n',
+        encoding="utf-8",
+    )
+    handle = asyncio.run(sandbox.launch(spec))
+    try:
+        prepare = implementation.calls[0]
+        assert isinstance(prepare, tuple)
+        request = cast(SandboxRequest, prepare[2])
+        hosted = Path("/runtime/agents/alice/.workspaces/repo")
+        assert SandboxMount(repo, hosted) in request.mounts
+        assert not any(mount.local_path == missing for mount in request.mounts)
+        assert request.envs["TOOLANG_WORKSPACE_LOCATION"] == "guest"
+        assert json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"]) == {
+            "repo": [str(repo), str(hosted)]
+        }
+        new = tmp_path / "new"
+        new.mkdir()
+        spec.serve.layout.config.write_text(
+            f'[workspaces]\nrepo = "{repo}"\nnew = "{new}"\n',
+            encoding="utf-8",
+        )
+        # This launch retains only the mounts captured before the config changed.
+        assert not any(mount.local_path == new for mount in request.mounts)
+        assert "new" not in json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])
+    finally:
+        asyncio.run(sandbox.stop(spec.serve.layout, force=True))
+    assert handle.state.sandbox == "fake:value:with:colons"

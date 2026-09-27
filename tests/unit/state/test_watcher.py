@@ -603,7 +603,7 @@ def test_invalid_workspace_change_keeps_last_publication_and_recovers(
         config.write_text(
             (
                 f'[workspaces]\nroot = "{tmp_path / "repo"}"\n'
-                f'child = "{tmp_path / "repo" / "child"}"\n'
+                f'child = "{tmp_path / "repo"}"\n'
             ),
             encoding="utf-8",
         )
@@ -612,7 +612,7 @@ def test_invalid_workspace_change_keeps_last_publication_and_recovers(
 
         assert rejected.state is initial
         assert len(rejected.diagnostics) == 1
-        assert "workspace roots must not overlap" in rejected.diagnostics[0].message
+        assert "workspace path already configured" in rejected.diagnostics[0].message
 
         config.write_text(
             f'[workspaces]\ntwo = "{tmp_path / "two"}"\n',

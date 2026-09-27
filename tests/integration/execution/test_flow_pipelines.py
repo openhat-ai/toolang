@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests import FIXTURES_ROOT
-from tests.support.execution_assertions import without_route_snapshots
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
@@ -109,7 +109,7 @@ def test_delivery_pipeline_preserves_inputs_and_accumulates_reviews(
             assert harness.adapter.pending_responses == 0
             prompts = [
                 message_text(
-                    without_route_snapshots(invocation.call.messages)[-1].parts
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
                 )
                 for invocation in harness.adapter.invocations
             ]

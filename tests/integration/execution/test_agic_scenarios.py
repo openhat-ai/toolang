@@ -13,7 +13,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
-    without_route_snapshots,
+    without_runtime_snapshots,
     route_snapshots,
 )
 from tests.support.execution_harness import (
@@ -110,7 +110,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
 
             assert record.status == "succeeded"
             assert harness.store.run_output(run_id=record.id) == (TextPart("done"),)
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             ) == [Message.user("Reply to hello in brief.")]
             steps = harness.store.list_steps(run_id=record.id)
@@ -185,6 +185,8 @@ agic helper(_: Text) -> Boolean:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -204,8 +206,8 @@ agic helper(_: Text) -> Boolean:
             assert repair.instructions == initial.instructions
             assert "<toolang:instruct>" not in repair.instructions
             assert repair.output_schema == initial.output_schema
-            assert without_route_snapshots(repair.messages)[-1].role == "user"
-            repair_part = without_route_snapshots(repair.messages)[-1].parts[0]
+            assert without_runtime_snapshots(repair.messages)[-1].role == "user"
+            repair_part = without_runtime_snapshots(repair.messages)[-1].parts[0]
             assert isinstance(repair_part, TextPart)
             assert repair_part.text == (
                 "Your previous response did not satisfy the required Boolean output "
@@ -267,7 +269,7 @@ agic reply(_: Part[]) -> Part[]:
                 ),
             )
             assert [
-                without_route_snapshots(call.call.messages)
+                without_runtime_snapshots(call.call.messages)
                 for call in harness.adapter.invocations
             ] == [[Message.user("hello")]] * (retries + 1)
             assert active[0].preceded_by == (ControlRef.for_run(run.id, retries),)
@@ -534,7 +536,7 @@ agic inspect(_: Part[]) -> Part[]:
             )
 
             assert record.status == "succeeded"
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             ) == [Message(role="user", parts=input)]
             assert harness.store.run_output(run_id=record.id) == (audio,)
@@ -1352,7 +1354,7 @@ agic calculate(_: Part[]) -> Part[]:
             assert [
                 step.kind for step in harness.store.list_steps(run_id=record.id)
             ] == ["model", "tool", "model"]
-            followup = without_route_snapshots(
+            followup = without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             )
             assert [message.role for message in followup] == [
@@ -1452,7 +1454,7 @@ agic calculate(_: Text) -> Text:
                 ToolStepNoted(summary="Failed silent"),
                 ToolStepNoted(summary="Failed tool"),
             ]
-            followup = without_route_snapshots(
+            followup = without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             )
             results = [

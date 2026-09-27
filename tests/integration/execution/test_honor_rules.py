@@ -56,12 +56,12 @@ def _results(messages):
 
 
 def _call(identity, name="fs__write", **arguments):
-    return ToolCall(
-        identity,
-        identity,
-        name,
-        arguments or {"workspace": "repo", "path": "/src/result", "text": "done"},
-    )
+    if not arguments and name == "fs__write":
+        arguments = {"path": ":repo://src/result", "text": "done"}
+    if "workspace" in arguments:
+        workspace = arguments.pop("workspace")
+        arguments["path"] = f":{workspace}://{arguments['path'].lstrip('/')}"
+    return ToolCall(identity, identity, name, arguments)
 
 
 def _calls(*calls):
@@ -136,7 +136,6 @@ def _tool_steps(harness, run):
     [
         ("fs__write", {"path": "/src/result", "text": "done"}),
         ("fs__read", {"path": "/src/AGENTS.md"}),
-        ("shell__execute", {"cwd": "/src", "command": "printf done > result"}),
     ],
 )
 def test_honor_precedes_blocked_batch_and_retry_executes_once(
@@ -434,7 +433,7 @@ def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
                     "_toolang__honor",
                     paths=[{"workspace": "repo", "path": "/"}],
                 ),
-                _call("unscoped", path="notes", text="okay"),
+                _call("unscoped", path="../notes", text="okay"),
             ),
             _answer(),
         ],
@@ -447,7 +446,7 @@ def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
             steps = _tool_steps(harness, run)
             assert len(steps) == 2 and all(s.given.trigger == "model" for s in steps)
             assert "unknown tool call" in steps[0].output.local.value.error
-            assert "agent home is not accessible" in steps[1].output.local.value.error
+            assert "escapes workspace" in steps[1].output.local.value.error
             assert not (repo.parent / "notes").exists()
             assert not _recalls(harness, run)
 
@@ -460,8 +459,8 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
     harness, repo, publication = _harness(
         tmp_path,
         [
-            _calls(_call("list", "fs__list", path="workspace://"), _call("blocked")),
-            _calls(_call("changed", path="workspace://repo/src/other", text="changed")),
+            _calls(_call("list", "_toolang__workspaces"), _call("blocked")),
+            _calls(_call("changed", path=":repo://src/other", text="changed")),
             _answer(),
         ],
     )
@@ -477,7 +476,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
             assert [part.tool_call_id for part in results] == ["list", "blocked"]
             assert results[0].error is None and results[1].error == RETRY_MESSAGE
             assert [step.given.call.name for step in _tool_steps(harness, run)] == [
-                "fs__list",
+                "_toolang__workspaces",
                 "_toolang__honor",
                 "fs__write",
             ]
@@ -655,7 +654,7 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
             ]
             assert controls[1].payload.content == controls[2].payload.content
             assert (
-                "specify workspace"
+                "relative path requires a current workspace"
                 in _tool_steps(harness, run)[-1].output.local.value.error
             )
             assert not (repo / "src/result").exists()
@@ -818,7 +817,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
 
 def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path):
     def call(identity):
-        return _call(identity, "fs__list", path="workspace://repo/link")
+        return _call(identity, "fs__list", path=":repo://link")
 
     harness, repo, publication = _harness(
         tmp_path, [_calls(call("first")), _calls(call("retry")), _answer()]
@@ -846,7 +845,7 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
                 == RETRY_MESSAGE
             )
             assert retried.output.local.value.error is None
-            assert retried.output.local.value.output["path"] == "workspace://repo/link"
+            assert retried.output.local.value.output["path"] == ":repo://link"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

@@ -18,9 +18,10 @@ from toolang.base.types.tool import (
     ToolResult,
 )
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.base.utils.tool_descriptions import action_summary
+from toolang.base.utils.tool_descriptions import action_summary, workspace_label
 from toolang.base.utils.workspace_paths import (
     authorize_workspace_path,
+    parse_cwd,
     resolve_input_path,
     workspace_root,
     workspace_uri,
@@ -261,9 +262,19 @@ class _FilesystemTool(Tool):
             "remove": ("remove", "Removing", "Removed"),
         }[self.name]
         path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
-        if not isinstance(path, str):
+        if not isinstance(path, str) or "workspace" in arguments or "cwd" in arguments:
             return None
-        target = f"“{path}”"
+        if path.startswith("workspace://"):
+            return None
+        try:
+            name, relative = parse_cwd(path)
+            target = (
+                workspace_label(name, relative) if name is not None else f"“{path}”"
+            )
+        except ToolangError:
+            if path.startswith(":"):
+                return None
+            target = f"“{path}”"
         if self.name == "glob":
             target = f"{arguments.get('pattern', '*')} in {target}"
         return action_summary(result, verbs, target)

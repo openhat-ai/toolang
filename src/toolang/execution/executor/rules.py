@@ -42,7 +42,8 @@ def check_rules(
     bindings = {
         item.target: item.revision
         for item in workspace_declarations(
-            {name: str(path) for name, path in context.workspaces.items()}
+            context.workspace_bindings
+            or {name: str(path) for name, path in context.workspaces.items()}
         )
     }
     if any(

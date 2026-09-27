@@ -325,8 +325,13 @@ class CwdControlPayload:
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
-        if self.cause == "invalidated" and self.cwd != "":
-            raise ValueError("workspace invalidation must unselect cwd")
+        if self.cause not in {"cd", "invalidated"}:
+            raise ValueError("invalid working location cause")
+        if self.cause == "invalidated":
+            if self.cwd != "":
+                raise ValueError("workspace invalidation must unselect cwd")
+            if self.state is None:
+                raise ValueError("workspace invalidation requires a State control")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1004,9 +1009,13 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             prompt_invocations=prompt_invocations,
         )
     if kind == "cwd":
+        raw_cwd = payload.get("cwd")
+        raw_cause = payload.get("cause")
+        if not isinstance(raw_cwd, str) or raw_cause not in {"cd", "invalidated"}:
+            raise ValueError("cwd control requires a location and cause")
         return CwdControlPayload(
-            cwd=_required_payload_text(payload, "cwd") if payload.get("cwd") else "",
-            cause=cast(Literal["cd", "invalidated"], payload.get("cause", "cd")),
+            cwd=raw_cwd,
+            cause=cast(Literal["cd", "invalidated"], raw_cause),
             state=ControlRef.parse(cast(str, payload["state"]))
             if payload.get("state") is not None
             else None,

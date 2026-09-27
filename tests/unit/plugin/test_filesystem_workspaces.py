@@ -30,7 +30,7 @@ def _invoke(fs, name, **arguments):
 
 def test_all_filesystem_operations_and_uri_results(fs):
     _tools, _context, repo = fs
-    with pytest.raises(ToolangError, match="unsupported path scheme: workspace"):
+    with pytest.raises(ToolangError, match="workspace:// is no longer supported"):
         _invoke(fs, "list", path="workspace://")
     assert _invoke(fs, "mkdir", path=":repo://src")["path"] == ":repo://src"
     uri = ":repo://src/a%20%23%3F%25%E4%B8%AD.txt"
@@ -94,7 +94,7 @@ def test_parent_traversal_cannot_escape(fs, path):
     "name", ["read", "write", "append", "stat", "mkdir", "remove", "glob"]
 )
 def test_namespace_root_is_only_for_listing(fs, name):
-    with pytest.raises(ToolangError, match="unsupported path scheme: workspace"):
+    with pytest.raises(ToolangError, match="workspace:// is no longer supported"):
         _invoke(fs, name, path="workspace://", text="bad")
 
 
@@ -289,7 +289,7 @@ def test_call_keeps_its_captured_grant_but_next_call_uses_new_context(fs):
     other.mkdir()
     args = {"path": ":repo://file", "text": "old"}
     assert tools["fs__write"].paths(args, context) == {"repo": ("/file",)}
-    with pytest.raises(ToolangError, match="unsupported path scheme: workspace"):
+    with pytest.raises(ToolangError, match="workspace:// is no longer supported"):
         tools["fs__list"].paths({"path": "workspace://"}, context)
     changed = replace(context, workspaces={"repo": other, "new": repo})
     assert (
@@ -378,3 +378,59 @@ def test_absolute_paths_choose_deepest_root_while_named_paths_keep_identity(tmp_
     assert write.paths(
         {"path": "sdk/result", "text": "done"}, replace(context, cwd=":repo://")
     ) == {"repo": ("/sdk/result",)}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [":repo://src%2Ffile", "repo://src%2ffile", "file://src%2Ffile", "file:///%2Ftmp"],
+)
+def test_decoding_cannot_change_uri_path_segments(fs, path):
+    with pytest.raises(ToolangError, match="encoded path separator"):
+        _invoke(fs, "read", path=path)
+
+
+def test_slash_root_is_an_explicit_grant_but_nested_root_wins_absolute_paths(tmp_path):
+    from pathlib import Path
+    from toolang.base.utils.workspace_paths import resolve_input_path
+    from toolang.state.config import ConfiguredWorkspaces
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    configured = ConfiguredWorkspaces.parse(
+        f'[workspaces]\nall = "/"\nrepo = "{repo}"\n'
+    )
+    assert configured == {"all": "/", "repo": str(repo)}
+    context = ToolContext(
+        home, home, workspaces={"all": Path("/"), "repo": repo}, cwd=":all://"
+    )
+    _path, name, relative = resolve_input_path(str(repo / "file"), context)
+    assert (name, relative) == ("repo", "/file")
+    _path, name, relative = resolve_input_path(str(tmp_path / "outside"), context)
+    assert name == "all"
+    assert relative == str(tmp_path / "outside")
+
+
+def test_forced_workspace_name_takes_precedence_over_a_built_in_scheme(tmp_path):
+    from toolang.base.utils.workspace_paths import resolve_input_path
+
+    named = tmp_path / "file-workspace"
+    current = tmp_path / "current"
+    named.mkdir()
+    current.mkdir()
+    context = ToolContext(
+        tmp_path, tmp_path, workspaces={"file": named, "repo": current}, cwd=":repo://"
+    )
+    assert resolve_input_path(":file://data", context) == (
+        named / "data",
+        "file",
+        "/data",
+    )
+    assert resolve_input_path("file://data", context) == (
+        current / "data",
+        "repo",
+        "/data",
+    )
+    with pytest.raises(ToolangError, match="unsupported path scheme"):
+        resolve_input_path("https://data", context)

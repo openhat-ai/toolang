@@ -9,7 +9,7 @@ from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
     steer_message,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -97,9 +97,9 @@ agic chat(_: Part[]) -> Part[]:
             assert step.index == 0
             assert step.preceded_by == (ControlRef.for_run(run.id, 0),)
             assert isinstance(step.given, StoredModelStepGiven)
-            assert len(step.given.call.messages.delta) == 1
+            assert len(step.given.call.messages.delta) == 2
             assert len(harness.adapter.invocations) == 1
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             ) == [Message.user("start")]
 
@@ -226,7 +226,7 @@ def test_controls_received_before_model_begin_enter_that_call(
             run = await asyncio.wait_for(handle, timeout=2)
             assert run.status == "succeeded", run.error
             (call,) = harness.adapter.invocations
-            assert without_route_snapshots(call.call.messages) == [
+            assert without_runtime_snapshots(call.call.messages) == [
                 Message.user("Start."),
                 *([steer_message("first change")] if prepared else []),
                 steer_message("latest change"),
@@ -315,14 +315,18 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                 len(step.given.call.messages.delta)
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [1, 4 if skip_tools else 3]
+            ] == [2, 5 if skip_tools else 4]
             first, second = harness.adapter.invocations
-            assert second.call.messages[:1] == first.call.messages
-            assert [message.role for message in second.call.messages] == [
+            assert (
+                second.call.messages[: len(first.call.messages)] == first.call.messages
+            )
+            assert [
+                message.role
+                for message in without_runtime_snapshots(second.call.messages)
+            ] == [
                 "user",
                 "assistant",
                 "tool",
-                "user",  # Current hands/handoffs snapshots.
                 *(["user"] if skip_tools else []),
             ]
             assert sum(

@@ -13,7 +13,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
     last_tool_result,
     route_snapshots,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     ExecutionHarness,
@@ -102,7 +102,7 @@ agic helper() -> Text:
             )
             child_call = harness.adapter.invocations[1].call
             assert route_snapshots(child_call) == {"hands": [], "handoffs": []}
-            assert without_route_snapshots(child_call.messages) == [
+            assert without_runtime_snapshots(child_call.messages) == [
                 Message.user("Main.")
             ]
             controls = [
@@ -225,6 +225,8 @@ agic child(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -299,7 +301,7 @@ flow check(_: Part[]) -> Text:
             runs = harness.store.list_run_tree(root_run_id=root.id)
             assert len(runs) == 3
             reviewer_call = harness.adapter.invocations[1].call
-            assert reviewer_call.messages[-1] == Message.user(
+            assert reviewer_call.messages[-2] == Message.user(
                 '<toolang:hands enabled="false"/>\n<toolang:handoffs enabled="false"/>\n\nReview candidate'
             )
 
@@ -1714,6 +1716,8 @@ agic target(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -1721,6 +1725,8 @@ agic target(_: Text) -> Text:
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -1730,6 +1736,8 @@ agic target(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -1739,7 +1747,10 @@ agic target(_: Text) -> Text:
             assert len(web.calls) == 1
             assert web.calls[0][0] == {"query": "work"}
             assert target_call.continuation is None
-            assert [message.role for message in target_call.messages] == ["user"]
+            assert [
+                message.role
+                for message in without_runtime_snapshots(target_call.messages)
+            ] == ["user"]
             assert "Target work" in str(target_call.messages[0].parts[0])
 
     asyncio.run(scenario())
@@ -1904,6 +1915,8 @@ agic caller() -> Text:
             ]
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -2432,6 +2445,8 @@ agic target(_: Text) -> Text:
             before_reload = harness.adapter.invocations[1].call
             after_reload = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_reload.tools} == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",
@@ -2439,6 +2454,8 @@ agic target(_: Text) -> Text:
                 "beta__use",
             }
             assert {tool.name for tool in after_reload.tools} == {
+                "_toolang__cd",
+                "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
                 "_toolang__reload",

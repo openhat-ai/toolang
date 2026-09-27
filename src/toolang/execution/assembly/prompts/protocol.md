@@ -71,7 +71,7 @@ rules use workspace and path instead. A declaration with removed="true" withdraw
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
 Workspace declarations are self-closing, without revision. A runtime-owned
-`<toolang:working-location workspace="repo" workdir="a/b/c"/>` is appended on
+`&lt;toolang:working-location workspace="repo" workdir="a/b/c"/&gt;` is appended on
 every Model Call, independently of `context = none`. Only the **last** such
 declaration in a Model Call is authoritative; earlier ones are history. Empty
 `workspace` and `workdir` mean no workspace is selected. A selected workspace
