@@ -7,7 +7,11 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ToolContext
-from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
+from toolang.base.utils.workspace_paths import (
+    parse_cwd,
+    resolve_input_path,
+    workspace_uri,
+)
 from toolang.plugin.toolsets.loading import load_tools
 
 
@@ -436,3 +440,24 @@ def test_name_uris_are_workspace_paths_and_file_url_forms_are_not_special(tmp_pa
     )
     with pytest.raises(ToolangError, match="workspace path must be relative"):
         resolve_input_path("file:///tmp", context)
+
+
+def test_path_guidance_teaches_only_accepted_workspace_references(fs):
+    """Regression: guidance taught `:<workspace>://<path>`, which the resolver rejects."""
+
+    tools, context, _repo = fs
+    descriptions = {
+        name: tool.definition().description
+        for name, tool in tools.items()
+        if name.startswith("fs__")
+    }
+    assert descriptions
+    for description in descriptions.values():
+        assert "name://path such as repo://src/main.py" in description
+        assert ":" + "<workspace>" not in description
+    assert resolve_input_path("repo://src/main.py", context)[1:] == (
+        "repo",
+        "/src/main.py",
+    )
+    with pytest.raises(ToolangError, match="invalid path reference"):
+        resolve_input_path(":repo://src/main.py", context)

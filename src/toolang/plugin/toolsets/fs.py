@@ -30,7 +30,7 @@ from toolang.base.utils.workspace_paths import (
 DEFAULT_MAX_CHARS = 20_000
 _PATH_GUIDANCE = (
     " Use relative paths from the current Run directory, /OS-absolute paths,"
-    " or :<workspace>://<path> from a workspace root."
+    " or name://path such as repo://src/main.py from a workspace root."
     " Agent home is not an implicit root."
 )
 
