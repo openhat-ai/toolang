@@ -356,7 +356,7 @@ agic calculate(_: Text) -> Boolean:
         connection = sqlite3.connect(reopened.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                7,  # Includes the route snapshot and Run workdir content.
+                8,  # Includes route, workspace, and Run workdir declarations.
             )
             assert (
                 connection.execute(
@@ -368,7 +368,7 @@ agic calculate(_: Text) -> Boolean:
                 len(step.given.call.messages.delta)
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [2, 4]
+            ] == [3, 5]
         finally:
             connection.close()
     finally:

@@ -19,6 +19,7 @@ from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.query import resolve_query_sentinels
 
 CAP_ALLOW_FIELDS = tuple(f"{kind}s" for kind in CAP_KINDS)
+WORKSPACE_ORDER_KEY = "__toolang_workspace_order__"
 _CAP_TABLES = tuple(CAP_DIR_BY_KIND[kind] for kind in CAP_KINDS)
 _WORKSPACE_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _WORKSPACE_NAME_SEPARATOR_RE = re.compile(r"[^a-z0-9]+")
@@ -42,7 +43,7 @@ class ConfiguredWorkspaces:
         return file_write_lock(self.lock_path)
 
     def list(self) -> dict[str, str]:
-        """Return configured workspace paths sorted by stable name."""
+        """Return configured workspace paths in config insertion order."""
 
         content = _read_config_text(self.config_path)
         if content is None:
@@ -117,7 +118,7 @@ def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
     if not isinstance(raw, Mapping):
         raise ValueError("workspaces config must be a table")
     workspaces: dict[str, str] = {}
-    for name, path in sorted(cast(Mapping[str, object], raw).items()):
+    for name, path in cast(Mapping[str, object], raw).items():
         _validate_workspace_name(name)
         if not isinstance(path, str) or not path:
             raise ValueError(f"workspace path must be a non-empty string: {name}")
@@ -166,9 +167,14 @@ def project_state_config(config: Mapping[str, object]) -> dict[str, object]:
 def canonical_state_config(content: bytes) -> bytes:
     """Encode a deterministic TOML artifact containing only State-owned fields."""
 
-    projected = project_state_config(
-        cast(dict[str, object], tomllib.loads(content.decode("utf-8")))
-    )
+    config = cast(dict[str, object], tomllib.loads(content.decode("utf-8")))
+    projected = project_state_config(config)
+    workspaces = config.get("workspaces")
+    if isinstance(workspaces, Mapping):
+        projected = {
+            WORKSPACE_ORDER_KEY: list(workspaces),
+            **projected,
+        }
     return tomlkit.dumps(projected).encode("utf-8")
 
 

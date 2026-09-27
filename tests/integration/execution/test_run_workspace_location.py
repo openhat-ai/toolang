@@ -60,11 +60,10 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
             assert harness.store.current_cwd(result.id) == "repo://src"
             assert [
                 len(_locations(inv.call)) for inv in harness.adapter.invocations
-            ] == [
-                1,
-                2,
-                3,
-            ]  # Older declarations stay in the history; only the last is live.
+            ] == [1, 2, 3]
+            assert [
+                _workspace_lists(inv.call)[-1] for inv in harness.adapter.invocations
+            ] == ["tmp,repo", "tmp,repo", "tmp,repo"]
             assert (
                 "without an OS sandbox"
                 in harness.adapter.invocations[0].call.instructions
@@ -107,6 +106,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
         tmp_path,
         source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
         prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
         responses=[
             ModelCallResult(
                 tool_calls=(
@@ -115,7 +115,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
             ),
             ScriptedModelTurn(
                 result=ModelCallResult(
-                    tool_calls=(ToolCall("list", "list", "_toolang__workspaces", {}),)
+                    tool_calls=(ToolCall("tmp", "tmp", "fs__stat", {"path": "tmp://"}),)
                 ),
                 gate=gate,
             ),
@@ -148,7 +148,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
                     if applied is not None and applied.status == "applied":
                         break
                     await asyncio.sleep(0.01)
-            assert harness.store.current_cwd(handle.run_id) == ""
+            assert harness.store.current_cwd(handle.run_id) == "tmp://"
             changes = [
                 c
                 for c in harness.store.list_run_controls(
@@ -165,16 +165,14 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
             result = await handle
             assert result.status == "succeeded", result.error
             assert _locations(harness.adapter.invocations[-1].call)[-1] == (
-                '<toolang:workdir path=""/>'
+                '<toolang:workdir path="tmp://"/>'
             )
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("count", [0, 1, 2])
-def test_initial_workspace_is_selected_only_when_unambiguous_and_available(
-    tmp_path, count
-):
+def test_initial_workdir_uses_last_available_workspace(tmp_path, count):
     roots = {}
     for i in range(count):
         root = tmp_path / f"repo{i}"
@@ -200,7 +198,106 @@ def test_initial_workspace_is_selected_only_when_unambiguous_and_available(
             )
             assert run.status == "succeeded", run.error
             assert harness.store.current_cwd(run.id) == (
-                "repo0://" if count == 1 else ""
+                f"repo{count - 1}://" if count else "tmp://"
+            )
+            assert _workspace_lists(harness.adapter.invocations[0].call) == [
+                ",".join(("tmp", *(f"repo{i}" for i in range(count))))
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_tmp_workspace_is_implicit_and_configured_tmp_cannot_replace_it(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    configured_tmp = tmp_path / "configured-tmp"
+    configured_tmp.mkdir()
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text(
+        tomlkit.dumps({"workspaces": {"repo": str(repo), "tmp": str(configured_tmp)}})
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
+        prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "write",
+                        "write",
+                        "fs__write",
+                        {"path": "tmp://marker", "text": "scratch"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                )
+            )
+            assert run.status == "succeeded", run.error
+            assert (home / ".tmp/marker").read_text() == "scratch"
+            assert not (configured_tmp / "marker").exists()
+            assert harness.store.current_cwd(run.id) == "repo://"
+            assert _workspace_lists(harness.adapter.invocations[0].call) == ["tmp,repo"]
+
+    asyncio.run(scenario())
+
+
+def test_root_run_workdir_continues_from_previous_root_final_value(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text(
+        tomlkit.dumps({"workspaces": {"repo": str(repo)}})
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
+        prepare_state=True,
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall("cd", "cd", "_toolang__chdir", {"path": "tmp://"}),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("first")),
+            ModelCallResult(message=Message.assistant("second")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="chat")
+            )
+            second = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="chat")
+            )
+            assert first.status == second.status == "succeeded"
+            assert harness.store.current_cwd(first.id) == "tmp://"
+            assert (
+                harness.executor.initial_workdir(harness.setup, harness.state, thread)
+                == "tmp://"
+            )
+            assert harness.store.current_cwd(second.id) == "tmp://"
+            assert _locations(harness.adapter.invocations[0].call) == [
+                '<toolang:workdir path="repo://"/>'
+            ]
+            assert _locations(harness.adapter.invocations[-1].call)[-1] == (
+                '<toolang:workdir path="tmp://"/>'
             )
 
     asyncio.run(scenario())
@@ -268,9 +365,16 @@ def _locations(call):
     ]
 
 
-def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
-    tmp_path,
-):
+def _workspace_lists(call):
+    return [
+        part.text.split('list="', 1)[1].split('"', 1)[0]
+        for message in call.messages
+        for part in message.parts
+        if isinstance(part, TextPart) and part.text.startswith("<toolang:workspace ")
+    ]
+
+
+def test_unavailable_workspace_is_omitted_and_tmp_remains_usable(tmp_path):
     missing = tmp_path / "missing"
     _configured_home(tmp_path, {"offline": missing})
     harness = ExecutionHarness.create(
@@ -279,9 +383,6 @@ def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
         prepare_state=True,
         tools=load_tools(queries=("fs/*",)),
         responses=[
-            ModelCallResult(
-                tool_calls=(ToolCall("list", "list", "_toolang__workspaces", {}),)
-            ),
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
@@ -305,7 +406,7 @@ def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
                 )
             )
             assert result.status == "succeeded", result.error
-            assert harness.store.current_cwd(result.id) == ""
+            assert harness.store.current_cwd(result.id) == "tmp://"
             assert not missing.exists()
             from toolang.base.types.message import ToolResultPart
 
@@ -316,15 +417,11 @@ def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
                 for p in (step.output.local.value,)
                 if isinstance(p, ToolResultPart)
             ]
-            assert replies[0].output == {
-                "entries": [
-                    {"name": "offline", "path": "offline://", "available": False}
-                ]
-            }
-            assert "not available" in (replies[1].error or "")
+            assert "not available" in (replies[0].error or "")
             assert _locations(harness.adapter.invocations[0].call) == [
-                '<toolang:workdir path=""/>'
+                '<toolang:workdir path="tmp://"/>'
             ]
+            assert _workspace_lists(harness.adapter.invocations[0].call) == ["tmp"]
 
     asyncio.run(scenario())
 
@@ -344,6 +441,7 @@ flow parent:
   run child
 """,
         prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
         responses=[
             ModelCallResult(
                 tool_calls=(
@@ -688,8 +786,8 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
             assert [
                 _locations(inv.call)[-1] for inv in harness.adapter.invocations
             ] == [
-                '<toolang:workdir path=""/>',
-                '<toolang:workdir path=""/>',
+                '<toolang:workdir path="other://"/>',
+                '<toolang:workdir path="other://"/>',
                 '<toolang:workdir path="repo://a%20b%25%E4%B8%AD"/>',
             ]
 
@@ -704,7 +802,11 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
     guest = tmp_path / "guest-root"
     host.mkdir()
     guest.mkdir()
-    _configured_home(tmp_path, {"repo": host})
+    home = _configured_home(tmp_path, {"repo": host})
+    tmp_root = home / ".tmp"
+    tmp_root.mkdir()
+    guest_tmp = guest / "tmp-workspace"
+    guest_tmp.mkdir()
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
@@ -728,7 +830,10 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
             harness.setup.environment,
             sandbox="docker:test",
             container=True,
-            workspace_mounts={"repo": (host, guest)},
+            workspace_mounts={
+                "tmp": (tmp_root, guest_tmp),
+                "repo": (host, guest),
+            },
             workspace_location="guest",
         ),
     )
@@ -778,6 +883,7 @@ flow parent:
   run child
 """,
         prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
         responses=[
             ModelCallResult(
                 tool_calls=(
@@ -788,7 +894,7 @@ flow parent:
             ),
             ScriptedModelTurn(
                 result=ModelCallResult(
-                    tool_calls=(ToolCall("list", "list", "_toolang__workspaces", {}),)
+                    tool_calls=(ToolCall("tmp", "tmp", "fs__stat", {"path": "tmp://"}),)
                 ),
                 gate=gate,
             ),
@@ -822,8 +928,8 @@ flow parent:
                         break
                     await asyncio.sleep(0.01)
             assert [harness.store.current_cwd(run.id) for run in (parent, child)] == [
-                "",
-                "",
+                "tmp://",
+                "tmp://",
             ]
             for run in (parent, child):
                 invalidations = [
@@ -839,7 +945,7 @@ flow parent:
             assert result.status == "succeeded", result.error
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:workdir path=""/>'
+                == '<toolang:workdir path="tmp://"/>'
             )
 
     asyncio.run(scenario())
@@ -859,6 +965,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
         tmp_path,
         source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
         prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
         responses=[
             ModelCallResult(
                 tool_calls=(
@@ -869,7 +976,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             ),
             ScriptedModelTurn(
                 result=ModelCallResult(
-                    tool_calls=(ToolCall("list", "list", "_toolang__workspaces", {}),)
+                    tool_calls=(ToolCall("tmp", "tmp", "fs__stat", {"path": "tmp://"}),)
                 ),
                 gate=gate,
             ),
@@ -903,7 +1010,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             gate.release()
             completed = await handle
             assert completed.status == "succeeded", completed.error
-            assert harness.store.current_cwd(completed.id) == ""
+            assert harness.store.current_cwd(completed.id) == "tmp://"
             first_step = harness.store.list_steps(run_id=completed.id)[0].ref
             with pytest.raises(ValueError, match="applied Agent State reloads"):
                 harness.executor.retry(
@@ -917,7 +1024,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             )
             assert fresh.status == "succeeded", fresh.error
             assert fresh.id != completed.id
-            assert harness.store.current_cwd(completed.id) == ""
+            assert harness.store.current_cwd(completed.id) == "tmp://"
             assert harness.store.current_cwd(fresh.id) == "repo://"
 
     asyncio.run(scenario())

@@ -319,6 +319,7 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
         "  /agic      AGIC                    Switch the session agic",
         "  /flow      FLOW                    Switch the session flow",
         "  /allow     FIELD=QUERY...          Set session resource ceilings",
+        "  /cd        [PATH]                  Set or show the session workdir",
         "  /limit     FIELD=VALUE...          Set session run limits",
         "",
         "Inspection commands:",
@@ -355,6 +356,7 @@ def test_run_override_help_explains_lifetime_and_uses_shared_forms() -> None:
         ":agic AGIC",
         ":flow FLOW",
         ":runnable RUNNABLE",
+        ":workdir PATH",
         ":allow FIELD=QUERY...",
         ":limit FIELD=VALUE...",
     )
@@ -646,6 +648,22 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     assert app.setting.model == selected
     assert slashes.outcome_lines(result) == ("Allowed 1 model",)
     assert app.status_refreshes == 1
+
+
+def test_cd_sets_or_resets_only_the_session_workdir() -> None:
+    app = _App()
+    app.setting = replace(app.setting, workdir="repo://src", workdir_base=None)
+
+    changed = _outcome(slashes.handle(app, QuickCommand("cd", "../tests")))
+    assert app.setting.workdir == "../tests"
+    assert app.setting.workdir_base == "repo://src"
+    assert slashes.outcome_lines(changed) == ("Session workdir set to ../tests",)
+
+    reset = _outcome(slashes.handle(app, QuickCommand("cd", "default")))
+    assert app.setting.workdir is None
+    assert app.setting.workdir_base is None
+    assert slashes.outcome_lines(reset) == ("Session workdir reset",)
+    assert app.status_refreshes == 2
 
 
 def test_model_reconciliation_prefers_the_available_configured_default() -> None:

@@ -53,6 +53,9 @@ from ...types import (
     RunRef,
     StepRef,
     TypedRef,
+    RecallTarget,
+    RulesRecallTarget,
+    WorkspaceRecallTarget,
 )
 from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
@@ -104,19 +107,44 @@ def _candidate(
             if state.messages.started
             else prepared.declarations
         )
-        visible = {item.target: item.revision for item in resident}
+        visible: dict[RecallTarget, str] = {
+            item.target: item.revision for item in resident
+        }
         if history is not None and "near" in prepared.recall:
             visible.update(history.recalls)
         if messages.started:
             visible.update(messages.recalls)
+        visible.update(state.visible_recalls)
         visible.update(
             (control.payload.target, control.payload.revision)
             for control in preceding
             if isinstance(control.payload, RecallControlPayload)
         )
-        additions = required_declarations(
-            (*prepared.declarations, *prepared.workspaces),
-            visible,
+        current_workspace_bindings = tuple(
+            item
+            for item in prepared.workspaces
+            if isinstance(item.target, WorkspaceRecallTarget)
+            and item.target.ref in prepared.workspace_names
+        )
+        stale_rules = tuple(
+            item
+            for item in required_declarations(current_workspace_bindings, visible)
+            if isinstance(item.target, RulesRecallTarget)
+        )
+        visible = {
+            target: revision
+            for target, revision in visible.items()
+            if not isinstance(target, WorkspaceRecallTarget)
+        }
+        visible.update(
+            (item.target, item.revision) for item in current_workspace_bindings
+        )
+        additions = (
+            *stale_rules,
+            *required_declarations(
+                (*prepared.declarations, *prepared.workspaces),
+                visible,
+            ),
         )
         for payload in additions:
             state.execution.recall(RunRef(prepared.run.run_id), payload, visible)
@@ -143,6 +171,9 @@ def _candidate(
         reset=(
             prepared.run.horizon != state.model_frame.run.horizon
             or prepared.recall != state.model_frame.recall
+        ),
+        workspace=prompting.workspace_message(
+            prepared.workspace_names, prepared.workspaces
         ),
         workdir=prompting.workdir_message(
             state.execution.cwd_for_run(prepared.run.run_id)

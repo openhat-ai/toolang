@@ -25,9 +25,7 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal[
-        "reload", "run", "execute", "pick", "honor", "compact", "chdir", "workspaces"
-    ]
+    name: Literal["reload", "run", "execute", "pick", "honor", "compact", "chdir"]
     description: str
     parameters: dict[str, object]
 
@@ -102,10 +100,6 @@ class ToolangTool(Tool):
             if not isinstance(path, str) or not path or set(arguments) != {"path"}:
                 raise ToolangError("_toolang/chdir requires only a non-empty path")
             return await runtime.chdir(path, context)
-        if self.name == "workspaces":
-            if arguments:
-                raise ToolangError("_toolang/workspaces does not accept input")
-            return await runtime.workspaces(context)
         if self.name == "compact":
             if not {"thread", "end"} <= set(arguments) or set(arguments) - {
                 "thread",
@@ -222,22 +216,12 @@ _RUN_PARAMETERS: dict[str, object] = {
 _TOOLS = (
     ToolangTool(
         "chdir",
-        "Change this Run's working directory. Call it alone in a Model Call; "
-        "Use repo://path for a workspace root or a relative path from cwd.",
+        "Switch this Run's workdir. Call it alone in a Model Call. "
+        "The target must exist and be a directory.",
         {
             "type": "object",
             "properties": {"path": {"type": "string"}},
             "required": ["path"],
-            "additionalProperties": False,
-        },
-    ),
-    ToolangTool(
-        "workspaces",
-        "List workspace names, availability, and portable root references.",
-        {
-            "type": "object",
-            "properties": {},
-            "required": [],
             "additionalProperties": False,
         },
     ),

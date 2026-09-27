@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import posixpath
+import shlex
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeAlias, cast
 
 from typer._click.exceptions import ClickException
@@ -331,6 +333,41 @@ def _runnable(app: AppContext, command: str, argument: str) -> SlashOutcome:
     return _success(f"Runnable set to {setting.runnable or 'none'}")
 
 
+def _cd(app: AppContext, command: str, argument: str) -> SlashOutcome:
+    """Set or display the current Chat-session workdir."""
+    del command
+    setting = app.get_setting()
+    try:
+        values = shlex.split(argument, comments=False, posix=True)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if not values:
+        current = setting.workdir or "thread/default"
+        return _success(f"Session workdir: {current}")
+    if len(values) != 1:
+        raise ValueError("/cd requires one path")
+    path = values[0]
+    if path in {"default", "unset"}:
+        updated = replace(setting, workdir=None, workdir_base=None)
+        _commit_setting(app, updated)
+        return _success("Session workdir reset")
+    if not path or path.startswith(":"):
+        raise ValueError("/cd requires one valid path")
+    if "://" in path or path.startswith("/"):
+        workdir, base = path, None
+    else:
+        current = setting.workdir
+        if current is not None and "://" not in current and not current.startswith("/"):
+            workdir = posixpath.normpath(posixpath.join(current, path))
+            base = setting.workdir_base
+        else:
+            workdir = path
+            base = current or setting.workdir_base
+    updated = replace(setting, workdir=workdir, workdir_base=base)
+    _commit_setting(app, updated)
+    return _success(f"Session workdir set to {workdir}")
+
+
 def _setting(app: AppContext, command: str, argument: str) -> SlashOutcome:
     update = parse_setting_override(command, argument)
     previous = app.get_setting()
@@ -647,6 +684,13 @@ SLASHES: tuple[SlashCommand, ...] = (
         category="session",
         argument="required",
         focused_help=_ALLOW_HELP,
+    ),
+    SlashCommand(
+        "cd",
+        "[PATH]",
+        "Set or show the session workdir",
+        _cd,
+        category="session",
     ),
     SlashCommand(
         "limit",

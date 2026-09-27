@@ -915,6 +915,8 @@ async def _execute_remote(
                     ),
                     model=model,
                     policy=RunPolicy(allow=ceilings, limits=effective.limits),
+                    workdir=effective.workdir,
+                    workdir_base=effective.workdir_base,
                 ),
                 tracer=tracer,
             )
@@ -1037,11 +1039,10 @@ async def _remote_script_defaults(
         response = await client.get(f"{endpoint}/api/v1/runs/defaults")
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, Mapping) or set(payload) != {
-            "model",
-            "runnable",
-            "policy",
-        }:
+        if not isinstance(payload, Mapping) or set(payload) not in (
+            {"model", "runnable", "policy"},
+            {"model", "runnable", "policy", "workdir"},
+        ):
             raise ValueError
         model = payload.get("model")
         runnable = payload.get("runnable")
@@ -1053,10 +1054,14 @@ async def _remote_script_defaults(
             else None
         )
         policy = TypeAdapter(RunPolicy).validate_python(payload.get("policy"))
+        workdir = payload.get("workdir")
+        if workdir is not None and (not isinstance(workdir, str) or not workdir):
+            raise ValueError
         return SessionSetting(
             model=model_request,
             runnable=runnable,
             limits=policy.limits,
+            workdir=workdir,
         )
     except (
         httpx.HTTPError,

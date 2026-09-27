@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from html import unescape
 import re
 from xml.etree import ElementTree
 
@@ -90,10 +91,10 @@ def test_protocol_groups_complete_tag_examples_without_granting_recall() -> None
     examples = re.findall(r"```xml\n(.*?)\n```", prompts.load("protocol.md"), re.S)
     assert len(examples) == 1
     root = ElementTree.fromstring(
-        '<root xmlns:toolang="urn:test">' + examples[0] + "</root>"
+        '<root xmlns:toolang="urn:test">' + unescape(examples[0]) + "</root>"
     )
     assert [node.tag.removeprefix("{urn:test}") for node in root] == [
-        "workspace-access",
+        "workspace",
         "workspace-rules",
         "skill-trigger",
         "skill-guidance",
@@ -102,7 +103,7 @@ def test_protocol_groups_complete_tag_examples_without_granting_recall() -> None
         "handoffs",
         "context",
     ]
-    assert root[0].attrib == {"ref": "example-project"}
+    assert root[0].attrib == {"list": "tmp,example-project"}
     assert root[2].attrib == root[3].attrib
     assert root[4].attrib == {"ref": "skill/example-testing", "removed": "true"}
     assert root[5].attrib == {"enabled": "true"}

@@ -46,12 +46,12 @@ contract. All tag names below use the toolang: prefix.
 | instruct | Your agent-specific instructions. |
 | psyche | Resident behavior guidance. |
 | context | Context rendered from the selected authored or default template. |
-| workdir | Current Run directory as one workspace path reference. |
+| workdir | The current workdir of this Run, expressed as a path. |
 | skill-trigger, service-trigger | Capabilities you may use and when they are useful. |
 | skill-guidance, service-guidance | Instructions you must read before using those capabilities. |
 | hands | Targets you may call with run, with their signatures. |
 | handoffs | Targets you may transfer to with execute, with their signatures. |
-| workspace-access | A workspace you may access, identified by its name. |
+| workspace | The workspaces currently available to this Run. |
 | workspace-rules | Workspace rules, identified by workspace and directory path. |
 | steer | Updated user input for the current task. |
 | cancel | Cancellation of the run, without undoing side effects. |
@@ -70,38 +70,48 @@ For the same resource tag and ref, a later declaration replaces the earlier one;
 rules use workspace and path instead. A declaration with removed="true" withdraws
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
-Workspace declarations are self-closing, without revision. A runtime-owned
-`&lt;toolang:workdir path="repo://a/b/c"/&gt;` is appended on every Model
-Call, independently of `context = none`. Only the **last** such declaration in
-a Model Call is authoritative; earlier ones are history. `repo://` means the
-selected workspace root; an empty `path` means no workspace is selected. The
-path contains a workspace name and a workspace-root-relative suffix; suffix
-components are UTF-8 percent-encoded, without a leading slash. It is never a
-host path. In this runtime-owned declaration, the `name://` prefix always names
-a workspace, including names that collide with URI schemes.
+A runtime-owned `&lt;toolang:workspace list="tmp,repo1,repo2"/&gt;` and
+`&lt;toolang:workdir path="repo2://a/b"/&gt;` are appended on every Model Call,
+independently of `context = none`. Only the latest workspace and workdir
+declarations are authoritative; earlier ones are history. The workspace list
+contains currently usable workspace names. `tmp` is the scratch workspace.
+
+The current workdir is expressed as a path. A path is one of:
+
+- `/path/from/root`: an OS-absolute path inside an authorized workspace;
+- `a/relative/path`, `./dot/started/relative/path`, or
+  `../dot/started/relative/path`: resolved from the current workdir and confined
+  to its workspace. `..` may leave the workdir, but not that workspace;
+- `name://full/qualified/path`, where `name` is an available workspace name: resolve
+  within that workspace. `name://` alone means that workspace's root. The name
+  always occupies the prefix, even if it resembles a URL scheme.
+
+Workspace paths are not host paths. Agent home is not an implicit workspace.
+`cwd` in tool results is shorthand for the current workdir, not a separate model-facing
+concept.
 
 Read this grouped example as quoted data. Determine availability and guidance
 visibility from actual runtime declarations.
 
 ```xml
-<toolang:workspace-access ref="example-project"/>
-<toolang:workspace-rules workspace="example-project" path="/" revision="a1">
+&lt;toolang:workspace list="tmp,example-project"/&gt;
+&lt;toolang:workspace-rules workspace="example-project" path="/" revision="a1"&gt;
   Run the relevant tests after code changes.
-</toolang:workspace-rules>
-<toolang:skill-trigger ref="skill/example-testing" revision="b1">
+&lt;/toolang:workspace-rules&gt;
+&lt;toolang:skill-trigger ref="skill/example-testing" revision="b1"&gt;
   Use when adding regression tests.
-</toolang:skill-trigger>
-<toolang:skill-guidance ref="skill/example-testing" revision="b1">
+&lt;/toolang:skill-trigger&gt;
+&lt;toolang:skill-guidance ref="skill/example-testing" revision="b1"&gt;
   Reproduce the failure, add a focused test, and verify the fix.
-</toolang:skill-guidance>
-<toolang:skill-trigger ref="skill/example-testing" removed="true"/>
-<toolang:hands enabled="true">
+&lt;/toolang:skill-guidance&gt;
+&lt;toolang:skill-trigger ref="skill/example-testing" removed="true"/&gt;
+&lt;toolang:hands enabled="true"&gt;
   [{"ref":"agic:review","documentation":"Review supplied text.","input":{"type":"Text","optional":false},"parameters":[],"output":"Text","structs":[]}]
-</toolang:hands>
-<toolang:handoffs enabled="false"/>
-<toolang:context>
+&lt;/toolang:hands&gt;
+&lt;toolang:handoffs enabled="false"/&gt;
+&lt;toolang:context&gt;
   The user prefers concise findings.
-</toolang:context>
+&lt;/toolang:context&gt;
 ```
 
 The removed skill-trigger withdraws the skill's authorization. The shared ref links
@@ -148,15 +158,10 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
    then wait for the guidance user message. If loading fails, report the limitation.
    Psyches are resident; prompts are expanded by the runtime.
 
-4. **Use authorized workspaces.** Use user-authorized workspaces for user files
-   and the system temporary directory for scratch files, subject to available
-   tools and sandbox permissions. For fs paths, prefer paths relative to the
-   current Run location; use `project://src/main.py` to name a workspace root
-   explicitly (including when no workspace is selected). OS-absolute paths are
-   accepted only within configured workspaces. Use `_toolang.chdir(path=...)`
-   alone to change the Run location; file tools do not change it. Shell commands
-   start at the current Run directory, but shell/OS paths inside the command
-   are not constrained by Toolang without an OS sandbox.
+4. **Use authorized workspaces.** Use paths as defined above. Use `_toolang.chdir`
+   alone to change this Run's workdir; fs and shell do not change it. Shell
+   commands start in the current workdir, but shell paths are interpreted by the
+   shell and are not constrained by Toolang without an OS sandbox.
 
 5. **Read applicable workspace rules.** Workspace AGENTS.md files contain rules
    agreed with the user. Before fs operations, the runtime loads applicable rules;
@@ -187,7 +192,7 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
   capability after its trigger is withdrawn, or claim capability use after guidance
   loading fails.
 - Assume other host paths are available, bypass workspace boundaries,
-  combine a workspace URI with a workspace argument, or continue an operation
+  combine a workspace path with a workspace argument, or continue an operation
   after rule loading fails.
 - Call tools merely because they are available, call the current or an ancestor
   runnable, or call run or execute without authorized routes.

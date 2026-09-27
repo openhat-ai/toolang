@@ -30,6 +30,7 @@ from ..types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     StepRef,
+    WorkspaceRecallTarget,
 )
 from .common import _ExecuteCommitted, _RunRejected
 from ..recall import required_declarations
@@ -60,23 +61,6 @@ class _ToolRuntime(ToolRuntime):
         if not target.is_dir():
             raise ToolangError(f"chdir target is not a directory: {path}")
         return ToolResult({"cwd": workspace_uri(name, relative)})
-
-    async def workspaces(self, context: ToolContext) -> ToolResult:
-        return ToolResult(
-            {
-                "entries": [
-                    {
-                        "name": name,
-                        "path": workspace_uri(name),
-                        "available": root is not None and root.is_dir(),
-                    }
-                    for name in sorted(
-                        set(context.workspace_names) | set(context.workspaces)
-                    )
-                    for root in (context.workspaces.get(name),)
-                ]
-            }
-        )
 
     async def reload(self) -> ToolResult:
         execution = self.state.execution
@@ -133,8 +117,12 @@ class _ToolRuntime(ToolRuntime):
             workspaces=self.state.prepared.run.setup.workspace_roots(
                 captured.workspaces
             ),
-            workspace_names=tuple(captured.workspaces),
-            workspace_bindings=captured.workspaces,
+            workspace_names=tuple(
+                self.state.prepared.run.setup.workspace_grants(captured.workspaces)
+            ),
+            workspace_bindings=self.state.prepared.run.setup.workspace_grants(
+                captured.workspaces
+            ),
             cwd=execution.cwd_for_run(self.step.run_id),
         )
         pending = execution.runtime_controls(self.step.run_id)
@@ -147,7 +135,9 @@ class _ToolRuntime(ToolRuntime):
         # A reload may precede honor in the same tool batch. Retire the old
         # binding's rules before freshly loaded rules enter the next call.
         for payload in required_declarations(
-            workspace_declarations(captured.workspaces),
+            workspace_declarations(
+                self.state.prepared.run.setup.workspace_grants(captured.workspaces)
+            ),
             {
                 target: revision
                 for target, revision in visible.items()
@@ -155,6 +145,14 @@ class _ToolRuntime(ToolRuntime):
             },
         ):
             execution.recall(self.step, payload, self.state.visible_recalls)
+        self.state.visible_recalls.update(
+            (item.target, item.revision)
+            for item in workspace_declarations(
+                self.state.prepared.run.setup.workspace_grants(captured.workspaces)
+            )
+            if isinstance(item.target, WorkspaceRecallTarget)
+            and item.target.ref in context.workspaces
+        )
         summaries = {
             ref: control_summary(ref, payload)
             for payload in load_rules(context, paths, set(visible))

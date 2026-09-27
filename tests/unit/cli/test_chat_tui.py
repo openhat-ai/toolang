@@ -77,6 +77,7 @@ from toolang.cli.toolang.commands.chat.base import (
     RunBlocked,
     RunDisconnected,
     RunRecovered,
+    RunWorkdirUpdated,
     SteerReceipt,
     SteerError,
 )
@@ -6598,3 +6599,23 @@ def test_terminal_focus_reports_preserve_chat_draft_and_status(
             await app.app.cancel_and_wait_for_background_tasks()
 
     asyncio.run(exercise())
+
+
+def test_chat_tui_seeds_and_updates_session_workdir() -> None:
+    class WorkdirClient(FakeClient):
+        def initial_workdir(self, thread_id: str | None) -> str:
+            assert thread_id == "term_existing"
+            return "repo://from-history"
+
+    app = tui.ChatTuiApp(
+        thread_id="term_existing",
+        setting=WorkdirClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=WorkdirClient(),
+    )
+
+    assert app.setting.workdir == "repo://from-history"
+    app._handle_run_state(RunWorkdirUpdated("run_1", "tmp://final"))
+    assert app.setting.workdir == "tmp://final"
+    assert app.setting.workdir_base is None

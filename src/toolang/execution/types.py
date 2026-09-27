@@ -170,6 +170,8 @@ class SessionSetting:
     runnable: str | None
     allow: AgentCeiling = AgentCeiling()
     limits: RunLimits = RunLimits()
+    workdir: str | None = None
+    workdir_base: str | None = None
 
     def __post_init__(self) -> None:
         if self.model is not None and not isinstance(self.model, ModelRequest):
@@ -183,6 +185,14 @@ class SessionSetting:
             raise TypeError("session allow must be an AgentCeiling")
         if not isinstance(self.limits, RunLimits):
             raise TypeError("session limits must be RunLimits")
+        if self.workdir is not None and (
+            not isinstance(self.workdir, str) or not self.workdir
+        ):
+            raise ValueError("session workdir must be non-empty text or none")
+        if self.workdir_base is not None and (
+            not isinstance(self.workdir_base, str) or not self.workdir_base
+        ):
+            raise ValueError("session workdir base must be non-empty text or none")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +203,7 @@ class RunOverride:
     runnable: str | None = None
     allow: tuple[AllowOverride, ...] = ()
     limits: tuple[LimitOverride, ...] = ()
+    workdir: str | None = None
 
     def __post_init__(self) -> None:
         if self.model is not None and not isinstance(self.model, ModelOverride):
@@ -213,6 +224,10 @@ class RunOverride:
             isinstance(item, LimitOverride) for item in self.limits
         ):
             raise TypeError("run limit overrides must be LimitOverride objects")
+        if self.workdir is not None and (
+            not isinstance(self.workdir, str) or not self.workdir
+        ):
+            raise ValueError("run workdir override must be non-empty text or none")
         fields = [item.field for item in self.limits]
         if len(fields) != len(set(fields)):
             raise ValueError("run limit override fields must be unique")
@@ -226,6 +241,7 @@ class RunOverride:
             and self.runnable is None
             and not self.allow
             and not self.limits
+            and self.workdir is None
         )
 
 

@@ -172,12 +172,29 @@ class AgentSetup:
     )
     _lazy: _LazyValues = field(default_factory=_LazyValues, repr=False, compare=False)
 
+    def workspace_grants(self, grants: Mapping[str, str]) -> dict[str, str]:
+        """Add the implicit tmp grant before configured workspaces; first name wins."""
+        tmp_source = str(self.layout.home / ".tmp")
+        if (
+            self.environment is not None
+            and self.environment.workspace_location == "guest"
+        ):
+            captured = self.environment.workspace_mounts.get("tmp")
+            if captured is not None:
+                tmp_source = str(captured[0])
+        result = {"tmp": tmp_source}
+        result.update(
+            (name, source) for name, source in grants.items() if name != "tmp"
+        )
+        return result
+
     def workspace_roots(self, grants: Mapping[str, str]) -> dict[str, Path]:
-        """Intersect State grants with mounts captured by the hosting environment."""
+        """Intersect ordered workspace grants with mounts captured by hosting."""
+        ordered = self.workspace_grants(grants)
         if self.environment is None or self.environment.workspace_location == "host":
-            return {name: Path(source) for name, source in grants.items()}
+            return {name: Path(source) for name, source in ordered.items()}
         result = {}
-        for name, source in grants.items():
+        for name, source in ordered.items():
             mounted = self.environment.workspace_mounts.get(name)
             if mounted is not None and mounted[0] == Path(source):
                 result[name] = mounted[1]

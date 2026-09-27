@@ -134,6 +134,8 @@ def build_run_request(
         ),
         model=model,
         policy=RunPolicy(allow=ceilings, limits=effective.limits),
+        workdir=effective.workdir,
+        workdir_base=effective.workdir_base,
     )
 
 

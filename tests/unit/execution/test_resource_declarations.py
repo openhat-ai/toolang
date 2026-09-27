@@ -178,12 +178,8 @@ def test_workspace_remap_retracts_old_rules_without_loading_new_ones():
     assert required_declarations((unchanged,), visible) == ()
     assert required_declarations((remapped,), visible) == (
         RecallControlPayload(rules, "0", ""),
-        remapped,
     )
-    assert set(required_declarations((), visible)) == {
-        RecallControlPayload(workspace, "0", ""),
-        RecallControlPayload(rules, "0", ""),
-    }
+    assert required_declarations((), visible) == (RecallControlPayload(rules, "0", ""),)
     assert (
         resource_text(workspace, remapped.revision, "")
         == '<toolang:workspace-access ref="repo"/>'

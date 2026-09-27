@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
+from hashlib import sha256
 from html import escape
 import json
 import re
@@ -12,7 +13,7 @@ from typing import cast
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
-from toolang.base.types.message import Message, Part, TextPart
+from toolang.base.types.message import Message, MessageRecall, Part, TextPart
 from toolang.base.types.model import Model
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.errors import ToolangError
@@ -43,7 +44,9 @@ from ..types import PromptSetting
 from ..records import ControlRecord, RecallControlPayload
 from ..types import (
     ModelMessages,
+    MessageTemplate,
     StepRef,
+    WorkspaceRecallTarget,
     Local,
     PsycheRecallTarget,
     SkillTriggerRecallTarget,
@@ -131,6 +134,7 @@ def messages(
     history: HistorySelection | None = None,
     recall: Sequence[str] = ("far", "near"),
     reset: bool = False,
+    workspace: MessageTemplate | None = None,
     workdir: str | None = None,
 ) -> tuple[list[Message], ModelMessages]:
     """Assemble one staged buffer and its matching durable message description.
@@ -145,6 +149,8 @@ def messages(
         current.append(Message.user(context))
     for control in controls:
         current.append_control(control)
+    if workspace is not None:
+        current.append_template(workspace, lambda _ref: "")
     if workdir is not None:
         current.append(Message.user(workdir))
 
@@ -166,8 +172,28 @@ def messages(
     return [*prefix, *current.messages], recorded
 
 
+def workspace_message(
+    names: Sequence[str], bindings: Sequence[RecallControlPayload]
+) -> MessageTemplate:
+    """Declare usable workspaces and retain their binding revisions internally."""
+    revisions = {
+        item.target.ref: item.revision
+        for item in bindings
+        if isinstance(item.target, WorkspaceRecallTarget) and item.target.ref in names
+    }
+    encoded = json.dumps(revisions, sort_keys=True, separators=(",", ":"))
+    revision = sha256(encoded.encode()).hexdigest()
+    value = escape(",".join(names), quote=True)
+    return MessageTemplate(
+        role="user",
+        content=(f'<toolang:workspace list="{value}"/>',),
+        tag="workspace",
+        recall=MessageRecall(encoded, revision),
+    )
+
+
 def workdir_message(cwd: str) -> str:
-    """The newest portable Run location is repeated for each Model Call."""
+    """Declare the current workdir on one Model Call."""
     name, relative = parse_cwd(cwd)
     value = workspace_uri(name, relative) if name else ""
     return f'<toolang:workdir path="{escape(value, quote=True)}"/>'

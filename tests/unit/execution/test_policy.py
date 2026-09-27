@@ -68,6 +68,7 @@ def _setup() -> AgentSetup:
         (":agic review", RunOverride(runnable="agic:review")),
         (":flow research", RunOverride(runnable="flow:research")),
         (":runnable custom", RunOverride(runnable="custom")),
+        (":workdir repo://src", RunOverride(workdir="repo://src")),
         (
             ":limit tokens=200 cost=1.25 time=none",
             RunOverride(

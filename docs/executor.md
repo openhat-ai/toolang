@@ -293,13 +293,14 @@ Trigger and guidance tags share a source-free ref such as `skill/testing` but
 have separate visibility. Withdrawals append a revision-zero tombstone; previous
 calls and their content remain unchanged. Public message payloads omit metadata.
 
-Every model call sees the available workspaces, including its first call:
-`<toolang:workspace-access ref="project"/>`. Names are the refs; host roots and binding
-revisions stay internal. Assembly does not scan rules. Preflight blocks a
-path-aware operation until applicable rules are current and model-visible.
-On a remap, honor withdraws old scoped rules and presents the new binding before
-new rules; loading failure never permits the original operation. Compaction and
-`recall = none` re-present bindings when the previous declarations are no longer visible.
+Every Model Call receives the current usable workspace names as
+`<toolang:workspace list="tmp,repo1"/>` and the current workdir as
+`<toolang:workdir path="repo1://src"/>`. These runtime declarations are refreshed on
+every call; workspace names do not expose host roots. Assembly does not scan rules;
+preflight blocks a path-aware operation until applicable rules are current and model-visible.
+On a remap, honor withdraws old scoped rules and presents the new binding before new rules;
+loading failure never permits the original operation. Compaction and `recall = none`
+re-present rules when their prior declarations are no longer visible.
 
 Default instruct retains the agent name. Default context contains only date,
 timezone, model provider, and model name. Authored instruct/context selection

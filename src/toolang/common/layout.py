@@ -170,3 +170,18 @@ def _safe_log_label(value: str) -> str:
         for char in value.strip()
     )
     return text.strip("._") or "default"
+
+
+def ensure_tmp_workspace(home: Path) -> Path:
+    """Create and validate one agent-owned implicit scratch workspace."""
+
+    resolved_home = home.expanduser().resolve()
+    if not resolved_home.is_dir():
+        raise FileNotFoundError(f"agent home is not available: {resolved_home}")
+    root = resolved_home / ".tmp"
+    if root.is_symlink():
+        raise ValueError(f"implicit tmp workspace must not be a symlink: {root}")
+    root.mkdir(exist_ok=True)
+    if not root.is_dir() or root.resolve().parent != resolved_home:
+        raise ValueError(f"implicit tmp workspace is not a directory: {root}")
+    return root

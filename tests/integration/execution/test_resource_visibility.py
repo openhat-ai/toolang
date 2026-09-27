@@ -27,7 +27,6 @@ from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
-    WorkspaceRecallTarget,
 )
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateRefresh
@@ -37,7 +36,7 @@ def _workspace_messages(call):
     return [
         message_text(message.parts)
         for message in call.messages
-        if message_text(message.parts).startswith("<toolang:workspace-access ")
+        if message.tag == "workspace"
     ]
 
 
@@ -83,19 +82,16 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
             assert all(run.status == "succeeded" for run in runs)
             for invocation in harness.adapter.invocations:
                 call = invocation.call
-                assert _workspace_messages(call) == [
-                    '<toolang:workspace-access ref="a"/>',
-                    '<toolang:workspace-access ref="z"/>',
+                assert _workspace_messages(call)[-1:] == [
+                    '<toolang:workspace list="tmp,a"/>'
                 ]
                 text = call.instructions + "".join(
                     message_text(m.parts) for m in call.messages
                 )
                 assert str(repo) not in text
                 assert "Root rules." not in text
-            assert len(_declarations(harness, runs[0], "workspace")) == 2
-            assert len(_declarations(harness, runs[1], "workspace")) == (
-                0 if recall == "default" else 2
-            )
+            assert not _declarations(harness, runs[0], "workspace")
+            assert not _declarations(harness, runs[1], "workspace")
             for run in runs:
                 for step in harness.store.list_steps(run_id=run.id):
                     assert isinstance(step.given, StoredModelStepGiven)
@@ -130,7 +126,7 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
                 thread=thread,
                 begin=first.id,
                 end=retained.id,
-                summary='Earlier: <toolang:workspace-access ref="repo"/>',
+                summary='Earlier: <toolang:workspace list="tmp,repo"/>',
             )
             current = await harness.executor.run(
                 replace(
@@ -140,9 +136,9 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
                 tracer=tracer,
             )
             assert all(r.status == "succeeded" for r in (first, retained, current))
-            assert len(_declarations(harness, current, "workspace")) == 1
-            assert _workspace_messages(harness.adapter.invocations[-1].call) == [
-                '<toolang:workspace-access ref="repo"/>',
+            assert not _declarations(harness, current, "workspace")
+            assert _workspace_messages(harness.adapter.invocations[-1].call)[-1:] == [
+                '<toolang:workspace list="tmp,repo"/>',
             ]
 
     asyncio.run(scenario())
@@ -339,11 +335,11 @@ def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, co
                 for c in harness.store.list_run_controls(run_id=run.id)
                 if isinstance(c.payload, RecallControlPayload)
             ]
-            assert all(c.payload.target.kind == "workspace" for c in controls)
+            assert not controls
             for step in harness.store.list_steps(run_id=run.id):
                 if isinstance(step.given, StoredModelStepGiven):
                     assert all(
-                        m.recall is None or m.tag == "workspace-access"
+                        m.recall is None or m.tag == "workspace"
                         for m in step.given.call.messages.delta
                     )
 
@@ -422,25 +418,17 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
         async with harness:
             run = await harness.executor.run(_spec(harness, initial), tracer=tracer)
             assert run.status == "succeeded", run.error
-            controls = _declarations(harness, run, "workspace")
-            assert [c.payload.target for c in controls] == [
-                WorkspaceRecallTarget("repo"),
-                WorkspaceRecallTarget("added"),
-                WorkspaceRecallTarget("repo"),
-                WorkspaceRecallTarget("repo"),
-                WorkspaceRecallTarget("repo"),
-            ]
-            assert controls[0].payload.revision == controls[-1].payload.revision
-            assert controls[2].payload.revision != controls[0].payload.revision
-            assert controls[3].payload.revision == "0"
-            assert all(c.triggered_by is None for c in controls)
+            assert not _declarations(harness, run, "workspace")
             messages = [
                 _workspace_messages(i.call) for i in harness.adapter.invocations
             ]
-            assert [len(m) for m in messages] == [1, 2, 3, 4, 5, 5]
-            assert messages[-1][-2:] == [
-                '<toolang:workspace-access ref="repo" removed="true"/>',
-                '<toolang:workspace-access ref="repo"/>',
+            assert [group[-1] for group in messages] == [
+                '<toolang:workspace list="tmp,repo"/>',
+                '<toolang:workspace list="tmp,repo"/>',
+                '<toolang:workspace list="tmp"/>',
+                '<toolang:workspace list="tmp"/>',
+                '<toolang:workspace list="tmp,repo"/>',
+                '<toolang:workspace list="tmp,repo"/>',
             ]
             assert all("revision=" not in text for group in messages for text in group)
 

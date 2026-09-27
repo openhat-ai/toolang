@@ -52,6 +52,15 @@ def _results(harness, run):
     }
 
 
+def _workspace_lists(call):
+    return [
+        part.text.split('list="', 1)[1].split('"', 1)[0]
+        for message in call.messages
+        for part in message.parts
+        if isinstance(part, TextPart) and part.text.startswith("<toolang:workspace ")
+    ]
+
+
 def test_rules_preserve_trailing_spaces_in_workspace_paths(tmp_path):
     uri = "repo://notes%20/result"
     harness, repo, publication = _harness(
@@ -140,7 +149,6 @@ def test_retry_keeps_still_authorized_recorded_workspace_grants(
         tmp_path,
         [
             RuntimeError("temporary failure"),
-            _calls(_call("list", "_toolang__workspaces")),
             _answer(),
         ],
     )
@@ -170,11 +178,9 @@ def test_retry_keeps_still_authorized_recorded_workspace_grants(
                     RetryRequest(source=run.id, commands=(), request_id="retry")
                 )
                 assert retried.status == "succeeded", retried.error
-                result = _results(harness, retried)["list"]
-                assert result.error is None
-                assert result.output == {
-                    "entries": [{"name": "repo", "path": "repo://", "available": True}],
-                }
+                assert _workspace_lists(harness.adapter.invocations[-1].call)[-1:] == [
+                    "tmp,repo"
+                ]
                 assert watcher.load(original.revision).workspaces == {"repo": str(repo)}
             finally:
                 await executor.stop()
@@ -194,7 +200,7 @@ def test_workspace_retry_requires_a_current_authorization_source(tmp_path):
                 with pytest.raises(ValueError, match="current workspace authorization"):
                     executor.retry(run.id, setup=harness.setup, state=original)
                 assert harness.store.get_run(run_id=run.id) == run
-                assert len(harness.store.list_run_controls(run_id=run.id)) == 2
+                assert len(harness.store.list_run_controls(run_id=run.id)) == 1
             finally:
                 await executor.stop()
 
@@ -357,13 +363,9 @@ def test_reload_updates_revision_listing_grants_and_mapping_in_one_run(tmp_path)
     harness, _repo, _pub = _harness(
         tmp_path,
         [
-            _calls(
-                _call("before-list", "_toolang__workspaces"),
-                _call("before-write", path="moving://file", text="before"),
-            ),
+            _calls(_call("before-write", path="moving://file", text="before")),
             _calls(
                 ToolCall("reload", "reload", "_toolang__reload", {}),
-                _call("after-list", "_toolang__workspaces"),
                 _call("removed", path="removed://file", text="bad"),
                 _call("moved", path="moving://file", text="after"),
                 _call("added", path="added://file", text="new"),
@@ -390,13 +392,11 @@ def test_reload_updates_revision_listing_grants_and_mapping_in_one_run(tmp_path)
             assert run.status == "succeeded", run.error
             results = _results(harness, run)
             assert results["reload"].error is None
-            assert [e["name"] for e in results["before-list"].output["entries"]] == [
-                "moving",
-                "removed",
+            assert _workspace_lists(harness.adapter.invocations[0].call)[-1:] == [
+                "tmp,moving,removed"
             ]
-            assert [e["name"] for e in results["after-list"].output["entries"]] == [
-                "added",
-                "moving",
+            assert _workspace_lists(harness.adapter.invocations[-1].call)[-1:] == [
+                "tmp,moving,added"
             ]
             assert "not available" in results["removed"].error
             assert results["moved"].error is results["added"].error is None

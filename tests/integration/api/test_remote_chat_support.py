@@ -326,6 +326,7 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(setup.layout)
     core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
+    (core.layout.home / ".tmp" / "subdir").mkdir(parents=True)
     agents.write_runtime_state(
         core.layout,
         endpoint="http://127.0.0.1:7001",
@@ -347,6 +348,9 @@ agic chat(_: Part[]) -> Part[]:
             defaults = client.get("/api/v1/runs/defaults")
             created = client.post("/api/v1/threads", json={"client": "tui"})
             thread_id = created.json()["thread"]["id"]
+            thread_defaults = client.get(
+                "/api/v1/runs/defaults", params={"thread_id": thread_id}
+            )
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
             unknown = client.get("/api/v1/threads/term_missing/result")
             wrong_namespace = client.get("/api/v1/threads/run_missing/result")
@@ -360,11 +364,16 @@ agic chat(_: Part[]) -> Part[]:
                         "ref": TEST_MODEL_REF,
                     },
                     "policy": {"allow": [], "limits": {}},
+                    "workdir": "subdir",
+                    "workdir_base": "tmp://",
                 },
             )
             run_id = executed.headers["X-Toolang-Run-ID"]
             explicit_response = client.get(f"/api/v1/runs/{run_id}")
             latest_response = client.get(f"/api/v1/threads/{thread_id}/result")
+            final_thread_defaults = client.get(
+                "/api/v1/runs/defaults", params={"thread_id": thread_id}
+            )
 
         explicit = TypeAdapter(RunDetail).validate_python(explicit_response.json())
         latest = TypeAdapter(RunDetail).validate_python(latest_response.json())
@@ -385,6 +394,11 @@ agic chat(_: Part[]) -> Part[]:
             "max_output": None,
         }
         assert defaults.json()["runnable"] == "agic:chat"
+        assert defaults.json()["workdir"] == "tmp://"
+        assert thread_defaults.status_code == 200
+        assert thread_defaults.json()["workdir"] == "tmp://"
+        assert final_thread_defaults.status_code == 200
+        assert final_thread_defaults.json()["workdir"] == "tmp://subdir"
         assert models.status_code == 200
         assert models.json()["default"] == TEST_MODEL_REF
         assert core.store.list_runs(limit=None) == [core.store.get_run(run_id=run_id)]

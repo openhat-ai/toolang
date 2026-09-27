@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
+import json
 import re
 
 from toolang.base.types.message import Message
@@ -52,7 +53,7 @@ def required_declarations(
     current = {item.target: item for item in declarations}
     result: list[RecallControlPayload] = []
     for target, revision in visible.items():
-        if revision == "0":
+        if revision == "0" or isinstance(target, WorkspaceRecallTarget):
             continue
         if isinstance(target, SkillRecallTarget | ServiceRecallTarget):
             trigger = (
@@ -72,7 +73,10 @@ def required_declarations(
         if stale:
             result.append(RecallControlPayload(target, "0", ""))
     result.extend(
-        item for item in declarations if visible.get(item.target) != item.revision
+        item
+        for item in declarations
+        if not isinstance(item.target, WorkspaceRecallTarget)
+        and visible.get(item.target) != item.revision
     )
     return tuple(result)
 
@@ -107,6 +111,19 @@ def recall_revisions(
         if message.role != "user" or message.recall is None:
             continue
         ref = message.recall.ref
+        if message.tag == "workspace":
+            try:
+                bindings = json.loads(ref)
+            except json.JSONDecodeError as exc:
+                raise ValueError("invalid workspace binding metadata") from exc
+            if not isinstance(bindings, dict) or any(
+                not isinstance(name, str) or not isinstance(revision, str)
+                for name, revision in bindings.items()
+            ):
+                raise ValueError("invalid workspace binding metadata")
+            for name, revision in bindings.items():
+                revisions[WorkspaceRecallTarget(name)] = revision
+            continue
         if message.tag == "workspace-rules":
             workspace, separator, path = ref.partition("/")
             if not workspace or not separator:

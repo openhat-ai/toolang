@@ -249,6 +249,8 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                         "time": None,
                     },
                 },
+                "workdir": None,
+                "workdir_base": None,
             },
         )
 

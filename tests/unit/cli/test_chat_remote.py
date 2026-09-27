@@ -52,8 +52,41 @@ def _run_defaults() -> dict[str, object]:
             "ref": "test/model",
         },
         "runnable": "agic:chat",
+        "workdir": "tmp://",
         "policy": {"allow": [], "limits": {}},
     }
+
+
+def test_remote_chat_initial_workdir_uses_selected_thread() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/runs/defaults":
+            defaults = _run_defaults()
+            if request.url.params.get("thread_id"):
+                defaults["workdir"] = "repo://from-history"
+            return httpx.Response(200, json=defaults)
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert session.initial_workdir(None) == "tmp://"
+        assert session.initial_workdir("term_existing") == "repo://from-history"
+    finally:
+        session.close()
+
+    assert requests[-1].url.params["thread_id"] == "term_existing"
 
 
 def _models() -> dict[str, object]:

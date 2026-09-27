@@ -44,6 +44,8 @@ from .base import (
     RunBlocked,
     RunDisconnected,
     RunRecovered,
+    RunWorkdirUpdated,
+    final_workdir,
 )
 from .policy import (
     build_run_request,
@@ -190,6 +192,30 @@ class RemoteChatSession:
 
     def initial_setting(self) -> SessionSetting:
         return self._session_defaults()
+
+    def initial_workdir(self, thread_id: str | None) -> str:
+        if thread_id is None:
+            workdir = self._session_defaults().workdir
+            if workdir is None:
+                raise _RemoteChatProtocolError(
+                    "remote chat defaults omitted the initial workdir"
+                )
+            return workdir
+        return cast(str, self._submit(self._initial_workdir(thread_id)).result())
+
+    async def _initial_workdir(self, thread_id: str) -> str:
+        payload = await self._request_json(
+            "GET",
+            "/api/v1/runs/defaults",
+            operation="run defaults",
+            params={"thread_id": thread_id},
+        )
+        workdir = _session_setting(payload).workdir
+        if workdir is None:
+            raise _RemoteChatProtocolError(
+                "remote chat defaults omitted the initial workdir"
+            )
+        return workdir
 
     def apply_setting(
         self,
@@ -666,7 +692,9 @@ class RemoteChatSession:
 
         _emit_state(on_state, RunAccepted(handle.run_id))
         try:
-            await handle.wait()
+            detail = await handle.wait()
+            if on_state is not None and (workdir := final_workdir(detail)) is not None:
+                _emit_state(on_state, RunWorkdirUpdated(handle.run_id, workdir))
             return
         except RemoteRunClientError:
             if self._closed:
@@ -1020,7 +1048,10 @@ def _mapping(payload: object, *, operation: str) -> Mapping[str, object]:
 
 def _session_setting(payload: object) -> SessionSetting:
     body = _mapping(payload, operation="run defaults")
-    if set(body) != {"model", "runnable", "policy"}:
+    if set(body) not in (
+        {"model", "runnable", "policy"},
+        {"model", "runnable", "policy", "workdir"},
+    ):
         raise _RemoteChatProtocolError("remote chat run defaults returned invalid data")
     model = body.get("model")
     runnable = body.get("runnable")
@@ -1042,10 +1073,16 @@ def _session_setting(payload: object) -> SessionSetting:
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned invalid policy"
         ) from exc
+    workdir = body.get("workdir")
+    if workdir is not None and (not isinstance(workdir, str) or not workdir):
+        raise _RemoteChatProtocolError(
+            "remote chat run defaults returned an invalid workdir"
+        )
     return SessionSetting(
         model=model_request,
         runnable=runnable,
         limits=policy.limits,
+        workdir=workdir,
     )
 
 

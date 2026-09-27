@@ -1298,10 +1298,12 @@ def test_model_call_keeps_content_separate_and_schema_detached(
     )
 
     assert request.instructions == prepared.instructions
-    assert request.messages == [
-        *prepared.inputs.rendered_input[1],
-        Message.user('<toolang:workdir path=""/>'),
-    ]
+    assert request.messages[:-2] == list(prepared.inputs.rendered_input[1])
+    workspace_message, workdir_message = request.messages[-2:]
+    assert workspace_message.tag == "workspace"
+    assert workspace_message.recall is not None
+    assert workspace_message.parts == (TextPart('<toolang:workspace list=""/>'),)
+    assert workdir_message == Message.user('<toolang:workdir path=""/>')
     assert request.messages is not buffer.messages
     assert request.messages[0] is buffer.messages[0]
     assert recorded.head == StepRef.from_local(prepared.run.run_id, (0,))
@@ -1869,7 +1871,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     )
 
     assert result == Message(role="assistant", parts=(audio,))
-    assert provider.requests[0].messages[-2] == Message(
+    assert provider.requests[0].messages[-3] == Message(
         "user",
         (
             TextPart(

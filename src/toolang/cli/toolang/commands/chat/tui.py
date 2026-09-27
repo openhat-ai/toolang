@@ -68,6 +68,8 @@ from .base import (
     RunBlocked,
     RunDisconnected,
     RunRecovered,
+    RunWorkdirUpdated,
+    final_workdir,
     SteerError,
     SteerReceipt,
     ThreadTitle,
@@ -293,6 +295,11 @@ class ChatTuiApp:
         self.input_history = input_history
         self.client = client
         self.setting = setting
+        resolve_workdir = getattr(client, "initial_workdir", None)
+        if callable(resolve_workdir):
+            workdir = resolve_workdir(thread_id)
+            if isinstance(workdir, str) and workdir:
+                self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
         self.ui_events: asyncio.Queue[ChatUIEvent] = asyncio.Queue()
         self.queue: list[QueuedCall] = []
         self.active_run_id: str | None = None
@@ -1119,6 +1126,11 @@ class ChatTuiApp:
             self.title.refresh()
 
     def _handle_run_state(self, state: ChatRunState) -> None:
+        if isinstance(state, RunWorkdirUpdated):
+            self.setting = replace(
+                self.setting, workdir=state.workdir, workdir_base=None
+            )
+            return
         if isinstance(state, RunAccepted):
             if self.active_run_id not in {None, state.run_id}:
                 self.submission_blocked = (
@@ -1152,6 +1164,8 @@ class ChatTuiApp:
             )
             return
         if isinstance(state, RunRecovered):
+            if (workdir := final_workdir(state.detail)) is not None:
+                self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
             if self.submission_blocked is None:
                 self.status_bar.clear_persistent_error()
             events.handle_run_state(state, self.app_context)
@@ -1193,7 +1207,7 @@ def _is_run_event(value: object) -> TypeGuard[RunEvent]:
 def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
     return isinstance(
         value,
-        (RunAccepted, RunDisconnected, RunRecovered, RunBlocked),
+        (RunAccepted, RunDisconnected, RunRecovered, RunBlocked, RunWorkdirUpdated),
     )
 
 

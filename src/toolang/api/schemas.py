@@ -43,7 +43,15 @@ def _reject_materialized_run_unknowns(value: object) -> None:
     data = cast(Mapping[str, object], value)
     _reject_keys(
         data,
-        {"thread_id", "request_id", "runnable", "model", "policy"},
+        {
+            "thread_id",
+            "request_id",
+            "runnable",
+            "model",
+            "policy",
+            "workdir",
+            "workdir_base",
+        },
         "run request",
     )
     runnable = data.get("runnable")
@@ -305,6 +313,8 @@ class AuthoredRunRequest(ApiRequest):
     runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
+    workdir: StrictText | None = None
+    workdir_base: StrictText | None = None
 
     @model_validator(mode="before")
     @classmethod
