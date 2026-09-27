@@ -29,12 +29,12 @@ DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 @dataclass(slots=True)
 class ShellToolset:
-    """Start commands at the current Run workspace location."""
+    """Run shell commands in the current workdir."""
 
     config: dict[str, Any]
     name: str = "shell"
     description: str | None = (
-        "Run non-interactive shell commands from the current Run directory."
+        "Run non-interactive shell commands in the current workdir."
     )
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
@@ -56,7 +56,11 @@ class ShellToolset:
     def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="execute",
-            description="Run one shell command from the current Run directory and capture stdout and stderr. Shell command paths are not sandboxed.",
+            description=(
+                "Run one shell command and capture stdout and stderr. It requires a "
+                "workdir; shell paths are not constrained by Toolang without an OS "
+                "sandbox, and the result cwd is the current workdir path."
+            ),
             paths=_paths,
             summary=_summary,
         )

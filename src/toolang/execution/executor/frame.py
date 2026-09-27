@@ -39,6 +39,7 @@ from ..recall import recall_sources, history_variables
 from .budget import text_tokens
 from .common import BoundRun
 from .resources import (
+    available_workspaces,
     workspace_declarations,
     resource_caps,
     resource_tools,
@@ -74,6 +75,7 @@ class _AgicFrame:
     services: tuple[ToolService, ...]
     declarations: tuple[RecallControlPayload, ...] = ()
     workspaces: tuple[RecallControlPayload, ...] = ()
+    workspace_names: tuple[str, ...] = ()
     recall: tuple[str, ...] = ("far", "near")
     reasoning: Reasoning | None = None
     output_budget: int | None = None
@@ -237,7 +239,10 @@ def build_agic_frame(
         tools=tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
-        workspaces=workspace_declarations(run.state.workspaces),
+        workspaces=workspace_declarations(
+            run.setup.workspace_grants(run.state.workspaces)
+        ),
+        workspace_names=available_workspaces(run.setup, run.state),
         recall=recall_sources(run.settings.recall),
         reasoning=reasoning,
         output_budget=output,

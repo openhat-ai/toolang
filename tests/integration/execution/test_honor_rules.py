@@ -459,7 +459,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
     harness, repo, publication = _harness(
         tmp_path,
         [
-            _calls(_call("list", "_toolang__workspaces"), _call("blocked")),
+            _calls(_call("blocked")),
             _calls(_call("changed", path="repo://src/other", text="changed")),
             _answer(),
         ],
@@ -473,10 +473,9 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
             assert not (repo / "src/result").exists()
             assert (repo / "src/other").read_text() == "changed"
             results = _results(harness.adapter.invocations[1].call.messages)
-            assert [part.tool_call_id for part in results] == ["list", "blocked"]
-            assert results[0].error is None and results[1].error == RETRY_MESSAGE
+            assert [part.tool_call_id for part in results] == ["blocked"]
+            assert results[0].error == RETRY_MESSAGE
             assert [step.given.call.name for step in _tool_steps(harness, run)] == [
-                "_toolang__workspaces",
                 "_toolang__honor",
                 "fs__write",
             ]
@@ -632,9 +631,15 @@ def test_restart_recovers_intercepted_reply_once_without_rule_files(
 def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
     repo_call = _call("repo")
     sdk_call = _call("sdk", workspace="sdk", path="/result", text="done")
-    bare_call = _call("ambiguous", path="repo/src/result", text="bad")
+    bare_call = _call("relative", path="result", text="bad")
     harness, repo, publication = _harness(
-        tmp_path, [_calls(repo_call, sdk_call, bare_call), _answer()]
+        tmp_path,
+        [
+            _calls(repo_call),
+            _calls(repo_call, sdk_call),
+            _calls(bare_call),
+            _answer(),
+        ],
     )
     # Exercise rules identity independently of configured-root overlap validation.
     publication = replace(
@@ -653,11 +658,8 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
                 RulesRecallTarget("sdk", "/"),
             ]
             assert controls[1].payload.content == controls[2].payload.content
-            assert (
-                "relative path requires a current workspace"
-                in _tool_steps(harness, run)[-1].output.local.value.error
-            )
-            assert not (repo / "src/result").exists()
+            assert _tool_steps(harness, run)[-1].output.local.value.error is None
+            assert (repo / "src/result").read_text() == "bad"
 
     asyncio.run(scenario())
 

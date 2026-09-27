@@ -324,8 +324,11 @@ async def rerun_authored_run_stream(
 
 
 @router.get("/defaults", summary="Get Run Defaults")
-async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
-    """Return concrete defaults for a client-owned run session."""
+async def run_defaults(
+    core: AgentCoreDep,
+    thread_id: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """Return concrete defaults and workdir for a client-owned run session."""
 
     setup = core.setup.current()
     state = core.state.current()
@@ -345,9 +348,14 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
             runnable = f"flow:{default_flow}"
     if runnable is not None:
         runnable = resolve_public_runnable_query(state, runnable).ref
+    try:
+        workdir = core.executor.initial_workdir(setup, state, thread_id)
+    except (OSError, ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "model": model,
         "runnable": runnable,
+        "workdir": workdir,
         "policy": {
             "allow": [],
             "limits": {

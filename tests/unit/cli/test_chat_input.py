@@ -30,6 +30,7 @@ from toolang.lang.input import CallInput, resolve_input_parts
         ("/runnable", QuickCommand("runnable")),
         ("/allow models=openai/*", QuickCommand("allow", "models=openai/*")),
         ("/limit time=30", QuickCommand("limit", "time=30")),
+        ("/cd repo://src", QuickCommand("cd", "repo://src")),
         ("/queue edit 2", QuickCommand("queue", "edit 2")),
         ("/steer revise this", QuickCommand("steer", "revise this")),
         ("/steer", QuickCommand("steer")),
@@ -183,3 +184,10 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
 def test_invalid_chat_input_is_rejected(source: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         parse_chat_input(source)
+
+
+def test_workdir_run_override_preserves_path_and_runnable_input() -> None:
+    assert parse_chat_input(":workdir repo://src\nInspect files") == (
+        RunOverride(workdir="repo://src"),
+        CallInput({"_": "Inspect files"}),
+    )

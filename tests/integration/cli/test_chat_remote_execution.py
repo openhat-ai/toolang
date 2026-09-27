@@ -13,7 +13,7 @@ from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
-from toolang.cli.toolang.commands.chat.base import RunAccepted
+from toolang.cli.toolang.commands.chat.base import RunAccepted, RunWorkdirUpdated
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.execution.events import RunBegin, RunEnd, RunEvent
 from toolang.execution.types import RunOverride
@@ -119,7 +119,10 @@ agic chat(_: Part[]) -> Part[]:
         assert isinstance(events[0], RunBegin)
         assert isinstance(events[-1], RunEnd)
         root_id = events[0].run
-        assert states == [RunAccepted(root_id)]
+        assert states == [
+            RunAccepted(root_id),
+            RunWorkdirUpdated(root_id, "tmp://"),
+        ]
         assert result.run_id == root_id
         assert result.output == (TextPart("remote response"),)
         assert errors == []

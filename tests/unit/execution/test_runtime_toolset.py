@@ -30,7 +30,6 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     assert set(tools.runtime) == {
         "_toolang__run",
         "_toolang__chdir",
-        "_toolang__workspaces",
         "_toolang__execute",
         "_toolang__reload",
         "_toolang__pick",

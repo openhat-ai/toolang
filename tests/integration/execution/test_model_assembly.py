@@ -216,10 +216,10 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
             ]
-            assert [len(given.call.messages.delta) for given in givens] == [2, 5, 8]
+            assert [len(given.call.messages.delta) for given in givens] == [3, 7, 11]
             assert [
                 sum(m.source is None for m in g.call.messages.delta) for g in givens
-            ] == [2, 2, 2]
+            ] == [3, 3, 3]
             assert isinstance(givens[1].call.messages.delta[0].content[0], ContentRef)
             assert (
                 givens[1].call.messages.delta[0].content

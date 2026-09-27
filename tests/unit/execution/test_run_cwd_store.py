@@ -110,11 +110,19 @@ def test_legacy_run_control_without_cwd_starts_unselected(tmp_path):
         {"cwd": None, "cause": "cd"},
         {"cwd": 0, "cause": "cd"},
         {"cwd": "", "cause": "wrong"},
-        {"cwd": "repo://", "cause": "invalidated", "state": "run_abc@0"},
-        {"cwd": "", "cause": "invalidated"},
         {"cwd": "workspace://repo/", "cause": "cd"},
     ],
 )
 def test_cwd_control_rejects_noncanonical_or_uncaused_data(payload):
     with pytest.raises((ToolangError, TypeError, ValueError)):
         control_payload_from_data("cwd", payload)
+
+
+def test_legacy_workspace_invalidation_without_fallback_remains_readable() -> None:
+    payload = control_payload_from_data(
+        "cwd",
+        {"cwd": "", "cause": "invalidated", "state": "run_abc@0"},
+    )
+
+    assert isinstance(payload, CwdControlPayload)
+    assert payload.cwd == ""

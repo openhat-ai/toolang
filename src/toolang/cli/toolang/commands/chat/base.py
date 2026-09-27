@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
-from toolang.execution.records import execution_error_message
+from toolang.execution.records import (
+    CwdControlPayload,
+    RunControlPayload,
+    execution_error_message,
+)
 from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest
 from toolang.execution.types import (
     ErrorMessage,
@@ -80,7 +84,32 @@ class RunBlocked:
     message: str
 
 
-ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBlocked
+@dataclass(frozen=True, slots=True)
+class RunWorkdirUpdated:
+    """A completed Run's final workdir for its in-memory Chat session."""
+
+    run_id: str
+    workdir: str
+
+
+ChatRunState: TypeAlias = (
+    RunAccepted | RunDisconnected | RunRecovered | RunBlocked | RunWorkdirUpdated
+)
+
+
+def final_workdir(detail: RunDetail) -> str | None:
+    """Project the final workdir from one Run's accepted and applied controls."""
+
+    value: str | None = None
+    for control in sorted(detail.controls, key=lambda item: item.index):
+        if isinstance(control.payload, RunControlPayload):
+            value = control.payload.cwd
+        elif (
+            isinstance(control.payload, CwdControlPayload)
+            and control.status == "applied"
+        ):
+            value = control.payload.cwd
+    return value
 
 
 @dataclass(frozen=True, slots=True)

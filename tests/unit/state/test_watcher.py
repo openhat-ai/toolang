@@ -575,7 +575,7 @@ def test_workspace_change_publishes_a_new_state_revision(
             "one": str(tmp_path / "one"),
             "two": str(tmp_path / "two"),
         }
-        assert tuple(changed.workspaces) == ("one", "two")
+        assert tuple(changed.workspaces) == ("two", "one")
         assert watcher.load(changed.revision) is changed
         with pytest.raises(TypeError):
             changed.workspaces["three"] = str(tmp_path / "three")  # type: ignore[index]

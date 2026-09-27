@@ -76,6 +76,8 @@ from .base import (
     ChatRunState,
     RunBlocked,
     RunRecovered,
+    RunWorkdirUpdated,
+    final_workdir,
     friendly_error as chat_friendly_error,
 )
 from .blocks import MutableBlock
@@ -443,6 +445,11 @@ def _chat_interactive_scripted_local(
     progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
 ) -> None:
     renderer = _ScriptedRunRenderer()
+    resolve_workdir = getattr(client, "initial_workdir", None)
+    if callable(resolve_workdir):
+        workdir = resolve_workdir(thread_id)
+        if isinstance(workdir, str) and workdir:
+            setting = replace(setting, workdir=workdir, workdir_base=None)
     context = _ScriptedAppContext(
         client,
         setting=setting,
@@ -529,7 +536,22 @@ def _chat_interactive_scripted_local(
             detail = exc.message if isinstance(exc, ClickException) else str(exc)
             typer.echo(chat_friendly_error(detail), err=True)
             continue
-        client.run(request, renderer.render, errors.append, renderer.handle_state)
+
+        def handle_state(state: ChatRunState) -> None:
+            renderer.handle_state(state)
+            workdir = (
+                state.workdir
+                if isinstance(state, RunWorkdirUpdated)
+                else final_workdir(state.detail)
+                if isinstance(state, RunRecovered)
+                else None
+            )
+            if workdir is not None:
+                context.set_setting(
+                    replace(context.get_setting(), workdir=workdir, workdir_base=None)
+                )
+
+        client.run(request, renderer.render, errors.append, handle_state)
         failure = errors[-1] if errors else renderer.failure
         if failure:
             typer.echo(chat_friendly_error(failure), err=True)

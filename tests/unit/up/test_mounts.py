@@ -105,19 +105,28 @@ def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None
     sdk = repo / "sdk"
     sdk.mkdir(parents=True)
     missing = tmp_path / "missing"
+    configured_tmp = tmp_path / "user-tmp"
+    configured_tmp.mkdir()
     (local_home / "config.toml").write_text(
-        f'[workspaces]\nrepo = "{repo}"\nsdk = "{sdk}"\nmissing = "{missing}"\n'
+        f'[workspaces]\nrepo = "{repo}"\nsdk = "{sdk}"\n'
+        f'tmp = "{configured_tmp}"\nmissing = "{missing}"\n'
     )
     hosted_home = Path("/root/.toolang/agents/alice")
     mounts, mapping = prepare_workspace_mounts(local_home, hosted_home)
+    tmp_root = local_home / ".tmp"
+    hosted_tmp = hosted_home / ".workspaces/tmp"
+    assert tmp_root.is_dir()
     assert mounts == (
         SandboxMount(repo.resolve(), hosted_home / ".workspaces/repo"),
         SandboxMount(sdk.resolve(), hosted_home / ".workspaces/repo/sdk"),
+        SandboxMount(tmp_root.resolve(), hosted_tmp),
     )
     assert mapping == {
         "repo": (str(repo), str(hosted_home / ".workspaces/repo")),
         "sdk": (str(sdk), str(hosted_home / ".workspaces/repo/sdk")),
+        "tmp": (str(tmp_root.resolve()), str(hosted_tmp)),
     }
+    assert not any(mount.local_path == configured_tmp for mount in mounts)
 
 
 def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) -> None:
@@ -130,6 +139,10 @@ def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) 
         f'[workspaces]\naa = "{child}"\nzz = "{root}"\n'
     )
     mounts, mapping = prepare_workspace_mounts(local_home, Path("/guest/alice"))
-    assert [mount.local_path for mount in mounts] == [root.resolve(), child.resolve()]
+    assert [mount.local_path for mount in mounts] == [
+        root.resolve(),
+        child.resolve(),
+        (local_home / ".tmp").resolve(),
+    ]
     assert mapping["aa"][1] == "/guest/alice/.workspaces/zz/child"
     assert mounts[1].hosted_path.is_relative_to(mounts[0].hosted_path)

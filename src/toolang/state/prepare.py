@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 import re
 
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, ensure_tmp_workspace
 
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import Program
@@ -91,6 +91,7 @@ def prepare_agent_state(
 
     _require_root(layout)
     _require_agent_home(layout)
+    ensure_tmp_workspace(layout.home)
     overrides = normalize_cap_overrides(allow_overrides)
     with _agent_check_lock(layout):
         root, home = prepare_root_home(

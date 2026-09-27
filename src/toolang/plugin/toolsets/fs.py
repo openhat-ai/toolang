@@ -28,11 +28,6 @@ from toolang.base.utils.workspace_paths import (
 )
 
 DEFAULT_MAX_CHARS = 20_000
-_PATH_GUIDANCE = (
-    " Use relative paths from the current Run directory, /OS-absolute paths,"
-    " or :<workspace>://<path> from a workspace root."
-    " Agent home is not an implicit root."
-)
 
 
 @dataclass(slots=True)
@@ -41,7 +36,7 @@ class FilesystemToolset:
 
     config: dict[str, Any]
     name: str = "fs"
-    description: str | None = "Inspect and edit workspace files."
+    description: str | None = "Inspect and edit files."
     _max_chars: int = field(init=False, repr=False)
     _tools: dict[str, Tool] = field(init=False, repr=False)
     _path_locks: dict[Path, threading.Lock] = field(init=False, repr=False)
@@ -61,7 +56,7 @@ class FilesystemToolset:
     def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="list",
-            description="List one directory." + _PATH_GUIDANCE,
+            description="List one directory.",
         )
         def list_dir(
             path: str = ".",
@@ -73,7 +68,7 @@ class FilesystemToolset:
 
         @tool(
             name="read",
-            description="Read one text file." + _PATH_GUIDANCE,
+            description="Read one text file.",
         )
         def read_text(
             path: str,
@@ -92,7 +87,7 @@ class FilesystemToolset:
 
         @tool(
             name="write",
-            description="Write one text file." + _PATH_GUIDANCE,
+            description="Write one text file.",
         )
         def write_text(
             path: str,
@@ -108,7 +103,7 @@ class FilesystemToolset:
 
         @tool(
             name="append",
-            description="Append text to one file." + _PATH_GUIDANCE,
+            description="Append text to one file.",
         )
         def append_text(
             path: str,
@@ -125,7 +120,7 @@ class FilesystemToolset:
 
         @tool(
             name="glob",
-            description="Match file paths under one directory." + _PATH_GUIDANCE,
+            description="Match file paths under one directory.",
         )
         def glob(
             path: str = ".",
@@ -141,7 +136,7 @@ class FilesystemToolset:
 
         @tool(
             name="stat",
-            description="Inspect one file or directory." + _PATH_GUIDANCE,
+            description="Inspect one file or directory.",
         )
         def stat(
             path: str, workspace: str | None = None, context: ToolContext | None = None
@@ -158,7 +153,7 @@ class FilesystemToolset:
 
         @tool(
             name="mkdir",
-            description="Create one directory." + _PATH_GUIDANCE,
+            description="Create one directory.",
         )
         def mkdir(
             path: str,
@@ -172,7 +167,7 @@ class FilesystemToolset:
 
         @tool(
             name="remove",
-            description="Remove one file or directory." + _PATH_GUIDANCE,
+            description="Remove one file or directory.",
         )
         def remove(
             path: str,

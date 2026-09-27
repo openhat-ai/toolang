@@ -1183,6 +1183,7 @@ class RunStore:
         index: int,
         invalidated_runs: Sequence[str],
         finished_at: str,
+        fallback_workdir: str = "tmp://",
     ) -> None:
         """Apply State adoption and all affected Run locations in one transaction."""
         with self.write_transaction():
@@ -1204,7 +1205,9 @@ class RunStore:
                     ref=ControlRef.for_run(target, int(next_index)),
                     kind="cwd",
                     timing="immediate",
-                    payload=CwdControlPayload(cwd="", cause="invalidated", state=cause),
+                    payload=CwdControlPayload(
+                        cwd=fallback_workdir, cause="invalidated", state=cause
+                    ),
                     request=None,
                     status="applied",
                     error=None,

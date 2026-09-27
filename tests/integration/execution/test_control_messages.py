@@ -120,13 +120,12 @@ agic chat(_: Part[]) -> Part[]:
                 messages = without_runtime_snapshots(following.messages)
                 assert [item.role for item in messages] == [
                     "user",
-                    "user",  # The selected workspace's access declaration.
                     "assistant",
                     "tool",
                     "user",
                     *(["user"] if action == "cancel" else []),
                 ]
-                marker = messages[4]
+                marker = messages[3]
                 assert message_text(marker.parts).startswith(
                     f'<toolang:{action} description="'
                 )

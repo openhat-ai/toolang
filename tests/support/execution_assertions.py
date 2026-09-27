@@ -60,21 +60,26 @@ def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
 def without_runtime_snapshots(messages: Sequence[Message]) -> list[Message]:
     """Compare authored messages while excluding separately tested runtime notices.
 
-    The workdir declaration has dedicated tests asserting its exact
-    placement and contents. Other integration tests can assert their own
-    message histories without duplicating that unrelated runtime contract.
+    Workspace and workdir declarations have dedicated tests asserting their
+    exact placement and contents. Other integration tests can assert their own
+    message histories without duplicating those runtime contracts.
     """
     return [
         message
         for message in without_route_snapshots(messages)
         if not (
             message.role == "user"
-            and message.recall is None
-            and len(message.parts) == 1
-            and isinstance(message.parts[0], TextPart)
-            and re.fullmatch(
-                r'<toolang:workdir path="[^"]*"/>',
-                message.parts[0].text,
+            and (
+                message.tag == "workspace"
+                or (
+                    message.recall is None
+                    and len(message.parts) == 1
+                    and isinstance(message.parts[0], TextPart)
+                    and re.fullmatch(
+                        r'<toolang:workdir path="[^"]*"/>',
+                        message.parts[0].text,
+                    )
+                )
             )
         )
     ]

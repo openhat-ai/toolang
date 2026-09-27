@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 
 import pytest
 
@@ -74,6 +76,23 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
             limits=RunLimits(tokens=2000, cost=1.5, time=60),
         ),
     )
+
+
+def test_run_workdir_override_uses_the_session_workdir_as_its_base() -> None:
+    setting = replace(_surface(), workdir="repo://src")
+    request = build_run_request(
+        thread_id="term_test",
+        request_id="term_workdir",
+        input=CallInput({"_": "inspect"}),
+        override=RunOverride(workdir="../tests"),
+        setting=setting,
+        surface=_surface(),
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
+    )
+
+    assert request.workdir == "../tests"
+    assert request.workdir_base == "repo://src"
 
 
 def test_model_identity_change_clears_unmentioned_parameters() -> None:

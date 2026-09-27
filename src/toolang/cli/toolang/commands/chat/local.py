@@ -52,7 +52,14 @@ from toolang.state.state import (
     state_program,
 )
 from toolang.execution.values import parts_from_local
-from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
+from .base import (
+    ChatExecutorMetadata,
+    ChatResult,
+    ChatRunState,
+    RunAccepted,
+    RunWorkdirUpdated,
+    final_workdir,
+)
 from .policy import (
     build_run_request,
     reconcile_session_model,
@@ -310,6 +317,19 @@ class LocalChatSession:
             raise RuntimeError("local chat session settings are not initialized")
         return self._surface
 
+    def initial_workdir(self, thread_id: str | None) -> str:
+        return cast(
+            str,
+            self._submit(self._initial_workdir(thread_id)).result(),
+        )
+
+    async def _initial_workdir(self, thread_id: str | None) -> str:
+        return self.executor.initial_workdir(
+            self.setup_watcher.current(),
+            self.state_watcher.current(),
+            thread_id,
+        )
+
     def apply_setting(
         self,
         setting: SessionSetting,
@@ -488,7 +508,9 @@ class LocalChatSession:
         )
         if on_state is not None:
             on_state(RunAccepted(handle.run_id))
-        await handle.wait()
+        detail = await handle.wait()
+        if on_state is not None and (workdir := final_workdir(detail)) is not None:
+            on_state(RunWorkdirUpdated(handle.run_id, workdir))
 
     def _materialize_model_ref(self, ref: str) -> str:
         return materialize_model_request(

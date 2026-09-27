@@ -133,8 +133,9 @@ def _state(*flows: FlowDecl) -> Any:
     )
 
 
-def _setup() -> AgentSetup:
-    layout = AgentLayout.resident(Path("/"), "alice")
+def _setup(tmp_path: Path) -> AgentSetup:
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    layout.home.mkdir(parents=True, exist_ok=True)
     return materialized_setup(
         revision="test-setup",
         layout=layout,
@@ -147,9 +148,10 @@ def _setup() -> AgentSetup:
     )
 
 
-def _model_setup() -> AgentSetup:
+def _model_setup(tmp_path: Path) -> AgentSetup:
     provider = FakeModels(streaming=False)
-    layout = AgentLayout.resident(Path("/"), "alice")
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    layout.home.mkdir(parents=True, exist_ok=True)
     providers = {provider.name: provider.catalog_provider()}
     return materialized_setup(
         revision="test-setup",
@@ -274,7 +276,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     owner_thread = threading.get_ident()
 
     record = asyncio.run(
-        _start(executor, _setup(), _state(flow), _name(flow), tracer=tracer)
+        _start(executor, _setup(tmp_path), _state(flow), _name(flow), tracer=tracer)
     )
 
     assert record.status == "succeeded"
@@ -291,7 +293,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert isinstance(run_control.payload, RunControlPayload)
     assert run_control.payload.runnable == "flow:pipeline"
     assert run_control.payload.model_request is None
-    assert run_control.payload.limits == _setup().limits
+    assert run_control.payload.limits == _setup(tmp_path).limits
     assert run_control.payload.input == {}
     assert run_control.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
@@ -318,7 +320,7 @@ def test_run_executor_validates_args_against_runnable_params(
         span=Span(line=1),
     )
     executor = _executor(tmp_path)
-    setup = _setup()
+    setup = _setup(tmp_path)
     state = _state(flow)
 
     async def scenario() -> None:
@@ -377,7 +379,7 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
         with pytest.raises(ToolangError, match="non-text parts"):
             executor.run(
                 _spec(
-                    setup=_setup(),
+                    setup=_setup(tmp_path),
                     state=_state(flow),
                     thread="term_test",
                     runnable=_name(flow),
@@ -400,7 +402,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
         with pytest.raises(ValueError, match="tool query matched no items"):
             executor.run(
                 _spec(
-                    setup=_setup(),
+                    setup=_setup(tmp_path),
                     state=_state(flow),
                     thread="term_test",
                     runnable=_name(flow),
@@ -438,7 +440,7 @@ def test_top_level_agic_has_no_containing_step_events(
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
     record = asyncio.run(
-        _start(executor, _model_setup(), state, "default", tracer=tracer)
+        _start(executor, _model_setup(tmp_path), state, "default", tracer=tracer)
     )
 
     assert record.status == "succeeded"
@@ -471,7 +473,7 @@ def test_runtime_failure_is_recorded_directly_on_the_run(
 
     monkeypatch.setattr(agic_run, "execute", fail_agic)
     record = asyncio.run(
-        _start(executor, _model_setup(), state, "default", tracer=tracer)
+        _start(executor, _model_setup(tmp_path), state, "default", tracer=tracer)
     )
 
     assert record.status == "failed"
@@ -499,7 +501,7 @@ def test_event_delivery_does_not_read_run_state_per_event(
         return original(run_id=run_id)
 
     monkeypatch.setattr(executor.store, "get_run", get_run)
-    record = asyncio.run(_start(executor, _setup(), _state(flow), _name(flow)))
+    record = asyncio.run(_start(executor, _setup(tmp_path), _state(flow), _name(flow)))
 
     assert record.status == "succeeded"
     assert reads == 2  # Root acceptance and the shared thread-history snapshot.
@@ -530,7 +532,7 @@ def test_run_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
         with pytest.raises(ToolangError, match="Runnable name is not unique"):
             executor.run(
                 _spec(
-                    setup=_setup(),
+                    setup=_setup(tmp_path),
                     state=state,
                     thread="term_test",
                     runnable=runnable,
@@ -549,7 +551,7 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
     record = asyncio.run(
         _start(
             executor,
-            _setup(),
+            _setup(tmp_path),
             _state(flow),
             _name(flow),
             tracer=_RecordingTracer(store, fail=True),
@@ -574,7 +576,7 @@ def test_run_handle_shields_execution_from_waiter_cancellation(
     async def scenario() -> Any:
         handle = executor.run(
             _spec(
-                setup=_setup(),
+                setup=_setup(tmp_path),
                 state=_state(flow),
                 thread="term_test",
                 runnable=_name(flow),
@@ -607,7 +609,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
     first = asyncio.run(
         _start(
             executor,
-            _setup(),
+            _setup(tmp_path),
             _state(flow),
             _name(flow),
             run_id="run_unique",
@@ -620,7 +622,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
         asyncio.run(
             _start(
                 executor,
-                _setup(),
+                _setup(tmp_path),
                 _state(flow),
                 _name(flow),
                 run_id="run_unique",
@@ -652,7 +654,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     root = asyncio.run(
         _start(
             executor,
-            _setup(),
+            _setup(tmp_path),
             _state(parent, child),
             _name(parent),
             tracer=tracer,
@@ -727,7 +729,7 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         "alpha__one": RecordingTool("alpha__one", output={}),
         "beta__two": RecordingTool("beta__two", output={}),
     }
-    base_setup = _setup()
+    base_setup = _setup(tmp_path)
     setup = materialized_setup(
         revision="test-setup",
         layout=base_setup.layout,
@@ -778,7 +780,7 @@ def test_parallel_children_preserve_input_and_output_types(
     )
     parent = FlowDecl(name="parent", span=Span(line=2))
     executor = _executor(tmp_path)
-    setup = _setup()
+    setup = _setup(tmp_path)
     state = _state(parent, child)
     binding = BoundRun(
         run_id="run_root",
@@ -838,7 +840,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
     child = FlowDecl(name="child", output="Number", span=Span(line=1))
     parent = FlowDecl(name="parent", span=Span(line=2))
     executor = _executor(tmp_path)
-    setup = _setup()
+    setup = _setup(tmp_path)
     state = _state(parent, child)
     binding = BoundRun(
         run_id="run_root",
@@ -925,7 +927,9 @@ def test_flow_step_events_record_only_values_read_by_the_statement(
     )
     executor = _executor(tmp_path)
 
-    root = asyncio.run(_start(executor, _setup(), _state(parent, child), _name(parent)))
+    root = asyncio.run(
+        _start(executor, _setup(tmp_path), _state(parent, child), _name(parent))
+    )
 
     steps = [
         step
@@ -1598,7 +1602,7 @@ def test_remote_process_can_cancel_an_owned_run(
     async def scenario() -> Any:
         handle = executor.run(
             _spec(
-                setup=_setup(),
+                setup=_setup(tmp_path),
                 state=_state(flow),
                 thread="term_test",
                 runnable=_name(flow),
@@ -1653,7 +1657,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
     async def scenario() -> Any:
         handle = executor.run(
             _spec(
-                setup=_setup(),
+                setup=_setup(tmp_path),
                 state=_state(flow),
                 thread="term_test",
                 runnable=_name(flow),
@@ -1686,7 +1690,7 @@ def test_executor_stop_persists_run_before_owner_task_starts(
     async def scenario() -> Any:
         handle = executor.run(
             _spec(
-                setup=_setup(),
+                setup=_setup(tmp_path),
                 state=_state(flow),
                 thread="term_test",
                 runnable=_name(flow),

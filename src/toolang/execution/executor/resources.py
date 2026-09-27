@@ -42,6 +42,15 @@ from toolang.state.types import EntryKind
 _Runnable = AgicDecl | FlowDecl
 
 
+def available_workspaces(setup: AgentSetup, state: AgentState) -> tuple[str, ...]:
+    """Return usable workspace names in runtime order."""
+    return tuple(
+        name
+        for name, root in setup.workspace_roots(state.workspaces).items()
+        if root.is_dir()
+    )
+
+
 def workspace_declarations(
     workspaces: Mapping[str, str],
 ) -> tuple[RecallControlPayload, ...]:
@@ -52,7 +61,7 @@ def workspace_declarations(
             sha256(json.dumps([name, root], ensure_ascii=False).encode()).hexdigest(),
             "",
         )
-        for name, root in sorted(workspaces.items())
+        for name, root in workspaces.items()
     )
 
 

@@ -439,6 +439,8 @@ class RunRequest:
     runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
+    workdir: str | None = None
+    workdir_base: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str):
@@ -455,6 +457,14 @@ class RunRequest:
             raise TypeError("run request model must be ModelRequest or none")
         if not isinstance(self.policy, RunPolicy):
             raise TypeError("run request policy must be RunPolicy")
+        if self.workdir is not None and (
+            not isinstance(self.workdir, str) or not self.workdir
+        ):
+            raise ValueError("run request workdir must be non-empty text or none")
+        if self.workdir_base is not None and (
+            not isinstance(self.workdir_base, str) or not self.workdir_base
+        ):
+            raise ValueError("run request workdir base must be non-empty text or none")
 
 
 @dataclass(frozen=True, slots=True)

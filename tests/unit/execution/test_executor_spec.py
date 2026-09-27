@@ -33,6 +33,8 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "bindings",
         "limits",
         "model_request",
+        "workdir",
+        "workdir_base",
         "ceilings",
         "input",
         "authored_input",

@@ -737,10 +737,10 @@ grants service tools.
   `removed="true"` withdraws a resource; omission does not. Revision zero is an
   internal tombstone, not a model-facing revision. Trigger and guidance share a
   ref but have separate visibility. Definition changes retract stale guidance.
-- Workspaces are self-closing declarations such as
-  `<toolang:workspace-access ref="project"/>`, visible before the first model call.
-  Their ref is the workspace name; no body or revision is shown. Path-aware
-  preflight loads applicable `toolang:workspace-rules` before allowing the operation.
+- Each Model Call receives the usable workspace names in
+  `<toolang:workspace list="tmp,repo1"/>` and its current workdir in
+  `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
+  workspace roots are not exposed.
 - Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
   not themselves add a model-facing lifecycle message. Reload can change the
   instructions and resource declarations at a later call boundary.

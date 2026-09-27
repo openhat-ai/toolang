@@ -49,6 +49,7 @@ from toolang.common.github import (
     parse_github_url,
 )
 
+from .config import WORKSPACE_ORDER_KEY
 from .types import (
     EntryKind,
     EntryShape,
@@ -562,13 +563,16 @@ class AgentState:
         object.__setattr__(
             self, "allow_overrides", freeze_mapping(self.allow_overrides)
         )
-        object.__setattr__(
-            self,
-            "workspaces",
-            freeze_mapping(
-                cast(Mapping[str, str], self.home_config.get("workspaces", {}))
-            ),
-        )
+        raw_workspaces = cast(Mapping[str, str], self.home_config.get("workspaces", {}))
+        ordered_workspaces: dict[str, str] = {}
+        raw_order = self.home_config.get(WORKSPACE_ORDER_KEY)
+        if isinstance(raw_order, tuple | list):
+            for name in raw_order:
+                if isinstance(name, str) and name in raw_workspaces:
+                    ordered_workspaces.setdefault(name, raw_workspaces[name])
+        for name, path in raw_workspaces.items():
+            ordered_workspaces.setdefault(name, path)
+        object.__setattr__(self, "workspaces", freeze_mapping(ordered_workspaces))
         caps_index = dict(self.caps)
         if tuple(sorted(caps_index)) != tuple(caps_index):
             raise ValueError("Agent State caps must be sorted by identity")
@@ -849,8 +853,10 @@ def validate_program_term(
 def _merge_config(
     base: Mapping[str, object], override: Mapping[str, object]
 ) -> dict[str, object]:
-    merged = dict(base)
+    merged = {key: value for key, value in base.items() if key != WORKSPACE_ORDER_KEY}
     for key, value in override.items():
+        if key == WORKSPACE_ORDER_KEY:
+            continue
         current = merged.get(key)
         if isinstance(current, Mapping) and isinstance(value, Mapping):
             merged[key] = _merge_config(

@@ -46,9 +46,20 @@ tools = ["shell/*"]
 
 
 def test_state_config_projection_includes_workspaces() -> None:
-    assert (
-        canonical_state_config(b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n')
-        == b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n'
+    assert canonical_state_config(
+        b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n'
+    ) == (
+        b'__toolang_workspace_order__ = ["toolang"]\n\n'
+        b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n'
+    )
+
+
+def test_canonical_workspace_config_retains_insertion_order_metadata() -> None:
+    data = canonical_state_config(
+        b'[workspaces]\nzeta = "/zeta"\nalpha = "/alpha"\n'
+    ).decode()
+    assert data.startswith(
+        '__toolang_workspace_order__ = ["zeta", "alpha"]\n\n[workspaces]'
     )
 
 
@@ -71,16 +82,16 @@ def test_configured_workspaces_preserve_unrelated_toml_and_workspace_data(
     assert config.read_text(encoding="utf-8").startswith(original)
 
 
-def test_configured_workspaces_load_sorted_unavailable_absolute_paths() -> None:
+def test_configured_workspaces_preserve_unavailable_absolute_path_order() -> None:
     workspaces = ConfiguredWorkspaces.parse(
         '[workspaces]\nzeta = "/unavailable/zeta"\nalpha = "/unavailable/alpha"\n'
     )
 
     assert workspaces == {
-        "alpha": "/unavailable/alpha",
         "zeta": "/unavailable/zeta",
+        "alpha": "/unavailable/alpha",
     }
-    assert tuple(workspaces) == ("alpha", "zeta")
+    assert tuple(workspaces) == ("zeta", "alpha")
 
 
 def test_configured_workspaces_load_unresolvable_absolute_path(
@@ -229,3 +240,27 @@ def test_configured_workspaces_reject_duplicates_but_allow_nested_adds(
         "nested": str(nested.resolve()),
         "root": str(root.resolve()),
     }
+
+
+def test_workspace_order_survives_state_layer_roundtrip(tmp_path: Path) -> None:
+    import tomlkit
+
+    from toolang.common.layout import AgentLayout
+    from toolang.state.prepare import prepare_agent_state
+    from toolang.state.prepare import load_agent_state
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    first, last = tmp_path / "first", tmp_path / "last"
+    first.mkdir()
+    last.mkdir()
+    layout.config.write_text(
+        tomlkit.dumps({"workspaces": {"first": str(first), "last": str(last)}}),
+        encoding="utf-8",
+    )
+
+    prepared = prepare_agent_state(layout)
+    loaded = load_agent_state(layout, prepared.revision)
+
+    assert tuple(prepared.workspaces) == ("first", "last")
+    assert tuple(loaded.workspaces) == ("first", "last")

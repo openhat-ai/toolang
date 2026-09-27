@@ -58,6 +58,7 @@ SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxy
         "agic": ("AGIC", ("AGIC",)),
         "flow": ("FLOW", ("FLOW",)),
         "runnable": ("RUNNABLE", ("RUNNABLE",)),
+        "workdir": ("PATH", ("PATH",)),
         "allow": ("FIELD=QUERY...", ("FIELD=QUERY...",)),
         "limit": ("FIELD=VALUE...", ("FIELD=VALUE...",)),
     }
@@ -95,6 +96,10 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
         if named:
             raise ValueError(f"/{command} does not accept named runnable input")
         return override
+    if command == "workdir":
+        if len(tokens) != 1:
+            raise ValueError("workdir requires exactly one path")
+        return RunOverride(workdir=tokens[0])
     if command == "allow":
         return _allow_override(tokens)
     return _limit_override(tokens)
@@ -162,6 +167,7 @@ def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
 
     model: ModelOverride | None = None
     runnable: str | None = None
+    workdir: str | None = None
     allow: list[AllowOverride] = []
     allow_positions: dict[AllowField, int] = {}
     limits: list[LimitOverride] = []
@@ -175,6 +181,10 @@ def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
             if runnable is not None:
                 raise ValueError("duplicate runnable override")
             runnable = override.runnable
+        if override.workdir is not None:
+            if workdir is not None:
+                raise ValueError("duplicate workdir override")
+            workdir = override.workdir
         for item in override.allow:
             position = allow_positions.get(item.field)
             if position is None:
@@ -196,6 +206,7 @@ def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
         runnable=runnable,
         allow=tuple(allow),
         limits=tuple(limits),
+        workdir=workdir,
     )
 
 
@@ -259,7 +270,14 @@ def apply_session_setting(
         runnable = surface.runnable if update.runnable == "default" else update.runnable
     allow = _replace_allow_fields(current.allow, update)
     limits = _apply_limit_overrides(current.limits, update.limits)
-    return SessionSetting(model=model, runnable=runnable, allow=allow, limits=limits)
+    return SessionSetting(
+        model=model,
+        runnable=runnable,
+        allow=allow,
+        limits=limits,
+        workdir=update.workdir if update.workdir is not None else current.workdir,
+        workdir_base=current.workdir_base,
+    )
 
 
 def materialize_run_setting(
@@ -287,6 +305,10 @@ def materialize_run_setting(
         runnable=runnable,
         allow=session.allow,
         limits=limits,
+        workdir=(override.workdir if override.workdir is not None else session.workdir),
+        workdir_base=(
+            session.workdir if override.workdir is not None else session.workdir_base
+        ),
     )
 
 
@@ -355,6 +377,10 @@ def _try_parse_override(
     if name == "model":
         raw_body = line[len(tokens[0]) :].lstrip(" \t")
         return RunOverride(model=parse_model_body(raw_body)), CallInput(), None
+    if name == "workdir":
+        if len(body) != 1 or not body[0]:
+            raise ValueError(":workdir requires exactly one path")
+        return RunOverride(workdir=body[0]), CallInput(), None
     if name in {"runnable", "agic", "flow"}:
         raw_body = line[len(tokens[0]) :].lstrip(" \t")
         header = parse_call_input_header(raw_body, label=f":{name} runnable call")

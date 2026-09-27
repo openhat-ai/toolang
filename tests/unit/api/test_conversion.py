@@ -56,6 +56,8 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
                 ],
                 "limits": {"tokens": 4000, "cost": "2.50"},
             },
+            "workdir": "repo://src",
+            "workdir_base": "repo://",
         }
     )
 
@@ -80,6 +82,8 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             ),
             limits=RunLimits(tokens=4000, cost=2.5),
         ),
+        workdir="repo://src",
+        workdir_base="repo://",
     )
 
 

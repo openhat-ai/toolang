@@ -11,15 +11,20 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.types.tool import ToolResult
+from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
+from toolang.common.layout import ensure_tmp_workspace
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
-from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
+from toolang.base.utils.workspace_paths import (
+    parse_cwd,
+    resolve_input_path,
+    workspace_uri,
+)
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
@@ -134,6 +139,7 @@ from .resources import (
     resolve_runnable_resources,
     snapshot_model_selection,
     validate_model_binding,
+    available_workspaces,
 )
 from .limits import (
     _RunLimitExceeded,
@@ -204,6 +210,8 @@ class RunSpec:
     bindings: RunBindings
     limits: RunLimits
     model_request: ModelRequest | None = None
+    workdir: str | None = None
+    workdir_base: str | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = field(default_factory=CallInput)
     authored_input: CallInput[str] | None = None
@@ -328,6 +336,86 @@ class RunExecutor:
 
         self._require_available()
 
+    def _workdir_context(
+        self, setup: AgentSetup, state: AgentState, cwd: str
+    ) -> ToolContext:
+        grants = setup.workspace_grants(state.workspaces)
+        return ToolContext(
+            home=setup.layout.home,
+            room=setup.layout.tool_room("_toolang"),
+            workspaces=setup.workspace_roots(state.workspaces),
+            workspace_names=tuple(grants),
+            workspace_bindings=grants,
+            cwd=cwd,
+        )
+
+    def _default_workdir(self, setup: AgentSetup, state: AgentState) -> str:
+        environment = setup.environment
+        if environment is None or environment.workspace_location == "host":
+            ensure_tmp_workspace(setup.layout.home)
+        names = available_workspaces(setup, state)
+        if not names or names[0] != "tmp":
+            raise ToolangError("implicit tmp workspace is unavailable")
+        return workspace_uri(names[-1])
+
+    def _valid_workdir(
+        self, setup: AgentSetup, state: AgentState, value: str
+    ) -> str | None:
+        try:
+            path, name, relative = resolve_input_path(
+                value,
+                self._workdir_context(
+                    setup, state, self._default_workdir(setup, state)
+                ),
+            )
+        except (OSError, ToolangError, ValueError):
+            return None
+        if not path.is_dir():
+            return None
+        return workspace_uri(name, relative)
+
+    def initial_workdir(
+        self,
+        setup: AgentSetup,
+        state: AgentState,
+        thread: str | None = None,
+    ) -> str:
+        """Resolve a new Chat session's latest root workdir or runtime default."""
+        default = self._default_workdir(setup, state)
+        if thread is None:
+            return default
+        for run in self.store.list_runs(thread_id=thread, limit=None):
+            if run.parent is not None or run.finished_at is None:
+                continue
+            try:
+                current = self.store.current_cwd(run.id)
+            except (KeyError, ValueError):
+                return default
+            return (
+                (self._valid_workdir(setup, state, current) or default)
+                if current
+                else default
+            )
+        return default
+
+    def _initial_workdir(
+        self, spec: RunSpec, *, inherit_thread_workdir: bool = True
+    ) -> str:
+        """Resolve one root Run's workdir from its explicit path or thread history."""
+        previous = (
+            self.initial_workdir(spec.setup, spec.state, spec.thread)
+            if inherit_thread_workdir
+            else self._default_workdir(spec.setup, spec.state)
+        )
+        if spec.workdir is None:
+            return previous
+        base = spec.workdir_base or previous
+        context = self._workdir_context(spec.setup, spec.state, base)
+        target, name, relative = resolve_input_path(spec.workdir, context)
+        if not target.is_dir():
+            raise ToolangError(f"workdir target is not a directory: {spec.workdir}")
+        return workspace_uri(name, relative)
+
     def run(
         self,
         spec: RunSpec | RunRequest,
@@ -355,6 +443,7 @@ class RunExecutor:
         loop = asyncio.get_running_loop()
         if spec.horizon is None:
             spec = replace(spec, horizon=available_horizon(self.store, spec.thread))
+        spec = replace(spec, workdir=self._initial_workdir(spec), workdir_base=None)
         sandbox = _setup_sandbox(spec.setup)
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         if not isinstance(spec.limits, RunLimits):
@@ -454,6 +543,11 @@ class RunExecutor:
             spec,
             horizon=available_horizon(self.store, spec.thread)
             or self.store.run_horizon(source),
+        )
+        spec = replace(
+            spec,
+            workdir=self._initial_workdir(spec, inherit_thread_workdir=False),
+            workdir_base=None,
         )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
@@ -1389,9 +1483,10 @@ class RunExecutor:
                         index=candidate.index,
                         invalidated_runs=invalidated,
                         finished_at=utc_now(),
+                        fallback_workdir=workspace_uri("tmp"),
                     )
                     for invalidated_run in invalidated:
-                        execution._cwd_cache[invalidated_run] = ""
+                        execution._cwd_cache[invalidated_run] = workspace_uri("tmp")
                     execution._current_state = (
                         state,
                         ControlRef(RunRef(active.root_run_id), candidate.index),
@@ -3241,14 +3336,7 @@ def _bind_run(
         settings=resolve_settings(runnable, module),
         created_at=utc_now(),
         horizon=spec.horizon,
-        cwd=(
-            workspace_uri(name)
-            if len(spec.state.workspaces) == 1
-            and len(roots := spec.setup.workspace_roots(spec.state.workspaces)) == 1
-            and (name := next(iter(roots)))
-            and roots[name].is_dir()
-            else ""
-        ),
+        cwd=spec.workdir or "",
     )
 
 
