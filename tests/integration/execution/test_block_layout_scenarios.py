@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult
@@ -71,9 +72,9 @@ def test_block_ownership_preserves_iteration_counts_and_prompt_boundaries(
                 "run",
             ]
             assert [
-                message_text(invocation.call.messages[-1].parts).split(
-                    "</toolang:context>\n\n", 1
-                )[-1]
+                message_text(
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
+                ).split("</toolang:context>\n\n", 1)[-1]
                 for invocation in harness.adapter.invocations
             ] == prompts
             loops = [step.noted for step in steps if step.kind == "loop"]
@@ -120,7 +121,9 @@ def test_until_receives_locals_defined_in_its_body(
             assert root.status == "succeeded", root.error
             assert len(harness.adapter.invocations) == 1
             prompt = message_text(
-                harness.adapter.invocations[0].call.messages[-1].parts
+                without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
+                    -1
+                ].parts
             )
             assert "Reviewed evidence." in prompt
             loop = harness.store.list_steps(run_id=root.id)[0]

@@ -16,7 +16,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
-    without_route_snapshots,
+    without_runtime_snapshots,
     route_snapshots,
 )
 from tests.support.execution_harness import (
@@ -225,7 +225,7 @@ def test_instruct_selection_preserves_layers_and_guidance_delivery(
                     "<toolang:psyche "
                 )
             assert "_toolang__pick" in {tool.name for tool in first.tools}
-            assert without_route_snapshots(first.messages) == [
+            assert without_runtime_snapshots(first.messages) == [
                 Message.user("Complete the task.")
             ]
             assert GUIDANCE not in instructions
@@ -458,7 +458,7 @@ def test_pick_reuses_pending_then_visible_guidance(
             for invocation in harness.adapter.invocations[1:]:
                 recalled = [
                     m
-                    for m in without_route_snapshots(invocation.call.messages)
+                    for m in without_runtime_snapshots(invocation.call.messages)
                     if m.role == "user"
                     and message_text(m.parts).startswith(
                         f"<toolang:{kind}-guidance ref="

@@ -11,6 +11,7 @@ import re
 from typing import cast
 
 from toolang.base.protocols.tool import Tool
+from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
 from toolang.base.types.message import Message, Part, TextPart
 from toolang.base.types.model import Model
 from toolang.base.types.tool import ToolDefinition
@@ -130,6 +131,7 @@ def messages(
     history: HistorySelection | None = None,
     recall: Sequence[str] = ("far", "near"),
     reset: bool = False,
+    workdir: str | None = None,
 ) -> tuple[list[Message], ModelMessages]:
     """Assemble one staged buffer and its matching durable message description.
 
@@ -143,6 +145,8 @@ def messages(
         current.append(Message.user(context))
     for control in controls:
         current.append_control(control)
+    if workdir is not None:
+        current.append(Message.user(workdir))
 
     recorded = current.take_delta(step, reset=reset)
     prefix: list[Message] = []
@@ -160,6 +164,13 @@ def messages(
     if templates:
         recorded = replace(recorded, delta=(*templates, *recorded.delta))
     return [*prefix, *current.messages], recorded
+
+
+def workdir_message(cwd: str) -> str:
+    """The newest portable Run location is repeated for each Model Call."""
+    name, relative = parse_cwd(cwd)
+    value = workspace_uri(name, relative) if name else ""
+    return f'<toolang:workdir path="{escape(value, quote=True)}"/>'
 
 
 def tools(selected: Mapping[str, Tool]) -> tuple[ToolDefinition, ...]:

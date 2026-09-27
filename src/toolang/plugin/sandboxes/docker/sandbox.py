@@ -70,6 +70,8 @@ _CONTROL_ENV_NAMES = frozenset(
         "TOOLANG_SANDBOX",
         "TOOLANG_SANDBOX_DESCRIPTION",
         "TOOLANG_SANDBOX_INSTANCE",
+        "TOOLANG_WORKSPACE_MOUNTS",
+        "TOOLANG_WORKSPACE_LOCATION",
         "HOSTNAME",
     }
 )
@@ -351,6 +353,10 @@ class DockerSandbox:
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(request.hosted_root),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
+                "TOOLANG_WORKSPACE_MOUNTS": request.envs.get(
+                    "TOOLANG_WORKSPACE_MOUNTS", "{}"
+                ),
+                "TOOLANG_WORKSPACE_LOCATION": "guest",
             },
             mounts=tuple(mounts),
             ports=(

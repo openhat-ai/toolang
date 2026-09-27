@@ -19,7 +19,7 @@ from tests.support.execution_harness import (
 from tests.support.execution_assertions import (
     assert_replayed,
     steer_message,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
@@ -51,8 +51,14 @@ def test_immediate_control_stops_shell_and_preserves_history(
     call = ToolCall(
         "sleep", "sleep", shell.name, {"command": "echo $$ > started; exec sleep 10"}
     )
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text(
+        f'[workspaces]\nrepo = "{home}"\n', encoding="utf-8"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
+        prepare_state=True,
         source="""
 agic chat(_: Part[]) -> Part[]:
   context = none
@@ -111,15 +117,16 @@ agic chat(_: Part[]) -> Part[]:
                 assert "\n# Runtime contract\n" in first.instructions
                 assert "<toolang:instruct>" not in first.instructions
                 assert following.instructions == first.instructions
-                messages = without_route_snapshots(following.messages)
+                messages = without_runtime_snapshots(following.messages)
                 assert [item.role for item in messages] == [
                     "user",
+                    "user",  # The selected workspace's access declaration.
                     "assistant",
                     "tool",
                     "user",
                     *(["user"] if action == "cancel" else []),
                 ]
-                marker = messages[3]
+                marker = messages[4]
                 assert message_text(marker.parts).startswith(
                     f'<toolang:{action} description="'
                 )
@@ -356,7 +363,7 @@ agic chat(_: Part[]) -> Part[]:
             run = await asyncio.wait_for(handle, 2)
             assert run.status == "succeeded", run.error
             call = harness.adapter.invocations[-1].call
-            adopted = without_route_snapshots(call.messages)[3:]
+            adopted = without_runtime_snapshots(call.messages)[3:]
             assert [message.parts[0] for message in adopted] == [
                 TextPart('<toolang:skill-guidance ref="testing" revision="old">'),
                 steer_message("new direction").parts[0],
@@ -370,7 +377,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.store.list_run_controls(run_id=run.id)[-1].ref,
             )
             assert harness.store.recent_conversation_messages(thread_id=thread) == [
-                *without_route_snapshots(call.messages),
+                *without_runtime_snapshots(call.messages),
                 Message.assistant("done"),
             ]
         assert_replayed(harness.store.db_path, tracer.events)

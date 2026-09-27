@@ -11,6 +11,7 @@ import threading
 
 import pytest
 
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -186,7 +187,9 @@ agic worker:
                 (override or before, override or after),
                 strict=True,
             ):
-                text = message_text(invocation.call.messages[-1].parts)
+                text = message_text(
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
+                )
                 assert ("Previous result" in text) == (recall == "near"), text
                 assert ("History=[]." in text) == (recall == "none"), text
 
@@ -267,7 +270,7 @@ flow parent:
             assert len(workers) == 2
             for invocation in workers:
                 assert "Previous result" in message_text(
-                    invocation.call.messages[-1].parts
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
                 )
                 assert "Transferred instruction." in invocation.call.instructions
 
@@ -346,7 +349,7 @@ agic parent:
             ):
                 assert f"{prefix} instruction." in invocation.call.instructions
                 assert f"{prefix} context." in message_text(
-                    invocation.call.messages[-1].parts
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
                 )
 
     asyncio.run(scenario())

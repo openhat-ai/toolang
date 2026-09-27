@@ -599,11 +599,11 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert steps[0].output == Output(RecordLocal.typed("Part[]", (audio,)), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
-        request_text = message_text(adapter.requests[0].messages[-1].parts)
+        request_text = message_text(adapter.requests[0].messages[-2].parts)
         assert f"date: {record.created_at.partition('T')[0]}" in request_text
         assert "timezone: UTC" in request_text
         assert request_text.endswith("Answer: hello; focus=events")
-        assert image in adapter.requests[0].messages[-1].parts
+        assert image in adapter.requests[0].messages[-2].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given == ModelStepGiven(
@@ -641,7 +641,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         connection = sqlite3.connect(store.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                3,
+                4,
             )
             assert (
                 connection.execute(

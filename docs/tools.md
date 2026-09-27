@@ -54,34 +54,45 @@ toolset; user resource selectors apply only to user tools.
 
 ## Filesystem
 
-`fs` is scoped to the current agent home.
+`fs` operates inside configured Agent State workspaces. It provides
+`read`, `write`, `append`, `list`, `glob`, `stat`, `mkdir`, and `remove`.
+Each operation takes a `path` (default `"."` for `list` and `glob`), with no
+`workspace` or `cwd` argument. Path forms are:
 
-It provides structured file operations such as:
+- `src/main.py`, `./src`, `../tests`: relative to the current Run directory,
+  confined to its selected workspace. These fail when no workspace is selected.
+- `repo://src/main.py`: relative to workspace `repo`'s root; `repo://` denotes
+  that root. Every `name://...` form names a configured workspace, not a generic
+  URL scheme. To move into a directory, call `_toolang.chdir(path="repo://src")`.
+- `/path`: OS-absolute and allowed only within a configured workspace; nested
+  workspaces resolve to the most-specific matching root.
 
-- `read`
-- `write`
-- `append`
-- `list`
-- `glob`
-- `stat`
-- `mkdir`
-- `remove`
-
-`fs` paths and `shell` cwd accept an optional `workspace` name from the published
-State. With that anchor, `/src` means `src` under the workspace root. Without it,
-paths resolve from the agent home; overlapping workspace matches
-require an explicit name. Workspace configuration does not expand home access.
-
+All `name://...` paths are workspace-root references, with no generic URL
+scheme dispatch. `file://` has no file-URL meaning; `file://x` is a path in a
+workspace named `file` if that workspace is configured. `file:///x` is invalid
+because workspace-relative paths cannot begin with `/`. The previous
+`workspace://<name>/<path>` namespace alias and `fs.list("workspace://")`
+workspace-discovery behavior are removed. Thus `workspace://repo/path` means
+`repo/path` inside a workspace literally named `workspace`; use
+`_toolang.workspaces()` to list workspaces.
+Exactly one configured, available workspace becomes the Run's initial directory;
+with zero or multiple workspaces, or an unavailable sole workspace, workdir is
+unselected. `_toolang.chdir(path=...)` changes the Run's durable location and must
+be the only tool call in its Model Call. `fs` never changes workdir. Child Runs
+inherit the location at acceptance but cannot change their parent's workdir.
 
 ## Shell
 
-`shell` runs one non-interactive command inside the current agent home.
-
-It returns structured:
-
-- `stdout`
-- `stderr`
-- `exit_code`
+`shell.execute(command, timeout_sec=..., max_output_chars=...)` starts in the
+current Run directory; `cwd` and `workspace` arguments are not accepted. The
+result includes `cwd`, `stdout`, `stderr`, and `exit_code`. It fails when cwd is
+unselected or unavailable. An in-command `cd` affects only that subprocess.
+`cwd` in the result is the portable `repo://path` reference, not a host path.
+The command text is interpreted by the shell and OS, not Toolang's path resolver;
+without an OS sandbox, a command can access paths outside the workspaces.
+Guest sandboxes mount available workspaces at startup; a State change granting a
+new workspace or remapping an existing one cannot use a missing mount until the
+sandbox is restarted with that binding.
 
 
 ## Web Search
@@ -194,7 +205,8 @@ remain authoritative.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__execute`, `_toolang__reload`, and `_toolang__pick` tools. `hands` and
+`_toolang__run`, `_toolang__execute`, `_toolang__reload`, `_toolang__pick`,
+`_toolang__chdir`, and `_toolang__workspaces` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions. An
 executor without State refresh still exposes reload and returns a correlated
 error if it is called. Statement-generated Flow evaluators, output-repair

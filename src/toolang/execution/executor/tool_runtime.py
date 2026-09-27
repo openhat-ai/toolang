@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
+from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
@@ -50,6 +50,33 @@ class _ToolRuntime(ToolRuntime):
     transfer: _ExecuteCommitted | None = None
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
+
+    async def chdir(self, path: str, context: ToolContext) -> ToolResult:
+        if self.tool_call_count != 1:
+            raise ToolangError(
+                "_toolang/chdir must be the only tool call in its Model Call"
+            )
+        target, name, relative = resolve_input_path(path, context)
+        if not target.is_dir():
+            raise ToolangError(f"chdir target is not a directory: {path}")
+        return ToolResult({"cwd": workspace_uri(name, relative)})
+
+    async def workspaces(self, context: ToolContext) -> ToolResult:
+        return ToolResult(
+            {
+                "entries": [
+                    {
+                        "name": name,
+                        "path": workspace_uri(name),
+                        "available": root is not None and root.is_dir(),
+                    }
+                    for name in sorted(
+                        set(context.workspace_names) | set(context.workspaces)
+                    )
+                    for root in (context.workspaces.get(name),)
+                ]
+            }
+        )
 
     async def reload(self) -> ToolResult:
         execution = self.state.execution
@@ -103,7 +130,12 @@ class _ToolRuntime(ToolRuntime):
         context = ToolContext(
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),
-            workspaces={name: Path(path) for name, path in captured.workspaces.items()},
+            workspaces=self.state.prepared.run.setup.workspace_roots(
+                captured.workspaces
+            ),
+            workspace_names=tuple(captured.workspaces),
+            workspace_bindings=captured.workspaces,
+            cwd=execution.cwd_for_run(self.step.run_id),
         )
         pending = execution.runtime_controls(self.step.run_id)
         visible = dict(self.state.visible_recalls)

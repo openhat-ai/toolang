@@ -16,6 +16,7 @@ from toolang.base.types.tool import (
     RuntimeToolContext,
 )
 from toolang.base.utils.tool_descriptions import action_summary, workspace_label
+from toolang.base.utils.workspace_paths import resolve_input_path
 
 TOOLSET_NAME = "_toolang"
 
@@ -24,7 +25,9 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["reload", "run", "execute", "pick", "honor", "compact"]
+    name: Literal[
+        "reload", "run", "execute", "pick", "honor", "compact", "chdir", "workspaces"
+    ]
     description: str
     parameters: dict[str, object]
 
@@ -75,12 +78,34 @@ class ToolangTool(Tool):
     def model_callable(self) -> bool:
         return self.name not in {"honor", "compact"}
 
+    def paths(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> Mapping[str, tuple[str, ...]]:
+        if self.name != "chdir":
+            return {}
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path or set(arguments) != {"path"}:
+            raise ToolangError("_toolang/chdir requires only a non-empty path")
+        target, name, relative = resolve_input_path(path, context)
+        if not target.is_dir():
+            raise ToolangError(f"chdir target is not a directory: {path}")
+        return {name: (relative,)}
+
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> ToolResult:
         if not isinstance(context, RuntimeToolContext):
             raise ToolangError("runtime operations are unavailable for this tool call")
         runtime = context.runtime
+        if self.name == "chdir":
+            path = arguments.get("path")
+            if not isinstance(path, str) or not path or set(arguments) != {"path"}:
+                raise ToolangError("_toolang/chdir requires only a non-empty path")
+            return await runtime.chdir(path, context)
+        if self.name == "workspaces":
+            if arguments:
+                raise ToolangError("_toolang/workspaces does not accept input")
+            return await runtime.workspaces(context)
         if self.name == "compact":
             if not {"thread", "end"} <= set(arguments) or set(arguments) - {
                 "thread",
@@ -195,6 +220,27 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
+    ToolangTool(
+        "chdir",
+        "Change this Run's working directory. Call it alone in a Model Call; "
+        "Use repo://path for a workspace root or a relative path from cwd.",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolangTool(
+        "workspaces",
+        "List workspace names, availability, and portable root references.",
+        {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    ),
     ToolangTool(
         "compact",
         "Compact a complete history prefix before the next model call.",

@@ -19,6 +19,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
+from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
@@ -377,6 +378,7 @@ class RunExecutor:
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
+            cwd=bound.cwd,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -473,6 +475,7 @@ class RunExecutor:
             model_request=bound.model_request,
             input=bound.control_input,
             sandbox=sandbox,
+            cwd=bound.cwd,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -1080,12 +1083,28 @@ class RunExecutor:
             self._update_control_state(event)
         if isinstance(event, StepBegin) and active.execution is not None:
             active.execution._adopt_step_relations(event)
+        if (
+            isinstance(event, StepEnd)
+            and event.kind == "tool"
+            and event.status == "succeeded"
+            and active.execution is not None
+        ):
+            stored = self.store.get_step(ref=event.step)
+            if (
+                stored is not None
+                and isinstance(stored.given, ToolStepGiven)
+                and stored.given.call.name == "_toolang__chdir"
+            ):
+                active.execution._cwd_cache[event.step.run_id] = self.store.current_cwd(
+                    event.step.run_id
+                )
         self._update_cached_control_state(event)
         self._track_active_run(event, active)
         if isinstance(event, RunEnd):
             active.ended.add(event.run)
             if active.execution is not None:
                 active.execution._active_bindings.pop(event.run, None)
+                active.execution._cwd_cache.pop(event.run, None)
                 active.execution._run_lineages.pop(event.run, None)
         if active.tracer is not None:
             try:
@@ -1346,11 +1365,33 @@ class RunExecutor:
                             controls.pop(candidate.index, None)
                             active.reload_states.pop(candidate.index, None)
                         continue
-                    self.store.finish_run_controls(
+                    old_state = execution._current_state[0]
+                    old_roots = active.root_setup.workspace_roots(old_state.workspaces)
+                    new_roots = active.root_setup.workspace_roots(state.workspaces)
+                    invalidated = []
+                    for run in self.store.list_run_tree(root_run_id=active.root_run_id):
+                        if run.status not in {"pending", "running"}:
+                            continue
+                        selected, _relative = parse_cwd(execution.cwd_for_run(run.id))
+                        if selected is None:
+                            continue
+                        before = old_roots.get(selected)
+                        after = new_roots.get(selected)
+                        if (
+                            before is None
+                            or after is None
+                            or before.resolve() != after.resolve()
+                            or not after.is_dir()
+                        ):
+                            invalidated.append(run.id)
+                    self.store.apply_reload_with_cwd_invalidations(
                         run_id=active.root_run_id,
-                        indexes=(candidate.index,),
+                        index=candidate.index,
+                        invalidated_runs=invalidated,
                         finished_at=utc_now(),
                     )
+                    for invalidated_run in invalidated:
+                        execution._cwd_cache[invalidated_run] = ""
                     execution._current_state = (
                         state,
                         ControlRef(RunRef(active.root_run_id), candidate.index),
@@ -1554,6 +1595,8 @@ class _Execution:
             self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, Output] = {}
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
+        # Durable controls are authoritative; this is only an online projection.
+        self._cwd_cache: dict[str, str] = {}
         self._run_lineages: dict[str, tuple[str, ...]] = {
             root.run_id: (_qualified_identity(root),)
         }
@@ -1570,6 +1613,12 @@ class _Execution:
             root = next(iter(self._active_bindings.values()))
             self._history = self.store.message_history(root.root_run_id)
         return self._history
+
+    def cwd_for_run(self, run_id: str) -> str:
+        """Read the Run's committed location, caching only while it is active."""
+        if run_id not in self._cwd_cache:
+            self._cwd_cache[run_id] = self.store.current_cwd(run_id)
+        return self._cwd_cache[run_id]
 
     def state_snapshot(self) -> tuple[AgentState, ControlRef]:
         """Read the live binding before an uncommitted ModelCall preparation."""
@@ -2551,7 +2600,9 @@ class _Execution:
                 binding, runnable = prepare(state, state_ref)
                 assert binding.parent is not None
                 binding = replace(
-                    binding, horizon=self.horizon_for(binding.parent.run_id)
+                    binding,
+                    horizon=self.horizon_for(binding.parent.run_id),
+                    cwd=self.cwd_for_run(binding.parent.run_id),
                 )
             except (ToolangError, TypeError, ValueError) as exc:
                 raise _RunRejected(str(exc) or type(exc).__name__) from exc
@@ -2572,6 +2623,7 @@ class _Execution:
                     model_request=binding.model_request,
                     input=binding.control_input,
                     sandbox=None,
+                    cwd=binding.cwd,
                     occurrence=binding.occurrence,
                     request_id=None,
                     created_at=binding.created_at,
@@ -2579,6 +2631,7 @@ class _Execution:
                     horizon=binding.horizon,
                     schedule_receipt=not begin,
                 )
+                self._cwd_cache[binding.run_id] = binding.cwd
                 self.executor._register_child_run(
                     run_id=binding.run_id,
                     root_run_id=binding.root_run_id,
@@ -2602,6 +2655,7 @@ class _Execution:
                     await self.executor._emit_event_locked(self._active, event)
             except BaseException:
                 self._active_bindings.pop(binding.run_id, None)
+                self._cwd_cache.pop(binding.run_id, None)
                 self._run_lineages.pop(binding.run_id, None)
                 raise
             return binding, runnable
@@ -3187,6 +3241,14 @@ def _bind_run(
         settings=resolve_settings(runnable, module),
         created_at=utc_now(),
         horizon=spec.horizon,
+        cwd=(
+            workspace_uri(name)
+            if len(spec.state.workspaces) == 1
+            and len(roots := spec.setup.workspace_roots(spec.state.workspaces)) == 1
+            and (name := next(iter(roots)))
+            and roots[name].is_dir()
+            else ""
+        ),
     )
 
 

@@ -135,6 +135,7 @@ class BoundRun:
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
     horizon: RunRef | None = None
+    cwd: str = ""
 
 
 @dataclass(frozen=True, slots=True)

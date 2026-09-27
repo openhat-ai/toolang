@@ -242,3 +242,27 @@ def test_failed_lazy_load_publishes_no_partial_value_and_can_retry():
         setup.models()
     assert not setup.models()
     assert calls == 2
+
+
+def test_guest_workspace_roots_require_matching_captured_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    layout = AgentLayout.resident(tmp_path / "host", "alice")
+    guest = Path("/srv/toolang/agents/alice/.workspaces/repo")
+    repo = tmp_path / "repo"
+    monkeypatch.setenv(
+        "TOOLANG_WORKSPACE_MOUNTS", json.dumps({"repo": [str(repo), str(guest)]})
+    )
+    setup = AgentSetup(
+        layout=layout,
+        envs={},
+        environment=AgentEnvironment.capture(layout, sandbox="docker:python:3.13-slim"),
+    )
+    assert setup.workspace_roots({"repo": str(repo)}) == {"repo": guest}
+    assert setup.workspace_roots({"repo": str(tmp_path / "replacement")}) == {}
+    assert setup.workspace_roots({"added": str(tmp_path / "added")}) == {}
+    assert AgentSetup(layout=layout, envs={}).workspace_roots({"repo": str(repo)}) == {
+        "repo": repo
+    }

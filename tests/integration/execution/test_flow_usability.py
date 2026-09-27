@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.execution.events import RunBegin
 from toolang.base.types.message import Message, TextPart, message_text
@@ -433,7 +434,9 @@ flow main():
                 harness.run_spec(thread=thread, runnable="main")
             )
             assert run.status == "succeeded", run.error
-            messages = harness.adapter.invocations[-1].call.messages
+            messages = without_runtime_snapshots(
+                harness.adapter.invocations[-1].call.messages
+            )
             assert len(messages) == 1
             text = message_text(messages[0].parts)
             assert "flow=[]; history=[" in text

@@ -10,7 +10,7 @@ import pytest
 
 from tests.support.execution_assertions import (
     assert_replayed,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -152,7 +152,7 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
             )
             assert "Current user objective." not in call.instructions
             assert "Unselected context." not in call.instructions
-            (message,) = without_route_snapshots(call.messages)
+            (message,) = without_runtime_snapshots(call.messages)
             assert message.role == "user"
             text = message_text(message.parts)
             assert text.endswith("Current user objective.")
@@ -193,7 +193,7 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
             runs = [await _run(harness, thread, f"input {i}", tracer) for i in range(3)]
             assert all(run.status == "succeeded" for run in runs)
             assert [
-                without_route_snapshots(inv.call.messages)
+                without_runtime_snapshots(inv.call.messages)
                 for inv in harness.adapter.invocations
             ] == [
                 [Message.user("input 0")],
@@ -216,10 +216,10 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
             ]
-            assert [len(given.call.messages.delta) for given in givens] == [1, 3, 5]
+            assert [len(given.call.messages.delta) for given in givens] == [2, 5, 8]
             assert [
                 sum(m.source is None for m in g.call.messages.delta) for g in givens
-            ] == [1, 1, 1]
+            ] == [2, 2, 2]
             assert isinstance(givens[1].call.messages.delta[0].content[0], ContentRef)
             assert (
                 givens[1].call.messages.delta[0].content
@@ -279,14 +279,14 @@ flow job(_: Part[]) -> Part[]:
                 Message.user("chat"),
             ]
             assert (
-                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
+                without_runtime_snapshots(harness.adapter.invocations[-1].call.messages)
                 == expected
             )
             # Each Flow contributes its public exchange once, even when an
             # earlier model call has already imported those messages.
             following = await _run(harness, thread, "continue", tracer, horizon=horizon)
             assert following.status == "succeeded", following.error
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [
                 *expected,
@@ -400,7 +400,7 @@ agic next() -> Part[]:
                 tracer.events.extend(hooked.events)
             assert run.status == "succeeded", run.error
             assert (
-                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
+                without_runtime_snapshots(harness.adapter.invocations[-1].call.messages)
                 == expected
             )
 
@@ -475,7 +475,7 @@ def test_compact_preparation_survives_failed_begin(
             assert run.status == "succeeded", run.error
             (step,) = harness.store.list_steps(run_id=target)
             assert compact.ref in step.preceded_by
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )[0] == Message.user("Earlier facts.")
             assert harness.store.run_horizon(target) == horizon
@@ -549,16 +549,16 @@ def test_each_call_records_context_without_rerendering_history(
             assert reads == [(first.id, second.id)]
             assert len(renderings) == 2  # two complete historical roots
             before, after, final = [
-                without_route_snapshots(item.call.messages)
+                without_runtime_snapshots(item.call.messages)
                 for item in harness.adapter.invocations[-3:]
             ]
             assert before[
                 : len(
-                    without_route_snapshots(
+                    without_runtime_snapshots(
                         harness.adapter.invocations[1].call.messages
                     )
                 )
-            ] == without_route_snapshots(harness.adapter.invocations[1].call.messages)
+            ] == without_runtime_snapshots(harness.adapter.invocations[1].call.messages)
             for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
@@ -688,7 +688,7 @@ agic describe() -> Text:
                 tracer=tracer,
             )
             assert run.status == "succeeded", run.error
-            (message,) = without_route_snapshots(
+            (message,) = without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )
             text = message_text(message.parts)
@@ -717,15 +717,15 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
             harness.threads.rewind(thread_id=thread, run_id=second.id)
             await _run(harness, thread, "replacement", tracer)
             await _run(harness, fork, "forked", tracer)
-            assert Message.user("second") in without_route_snapshots(
+            assert Message.user("second") in without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )
-            assert Message.user("replacement") not in without_route_snapshots(
+            assert Message.user("replacement") not in without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )
             harness.threads.rewind(thread_id=fork, run_id=second.id)
             await _run(harness, fork, "new fork tail", tracer)
-            assert Message.user("second") not in without_route_snapshots(
+            assert Message.user("second") not in without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )
 
@@ -781,7 +781,7 @@ def test_reload_captures_recall_without_reading_state_during_replay(
             run = await asyncio.wait_for(handle, 2)
             assert run.status == "succeeded", run.error
             before, after = [
-                without_route_snapshots(item.call.messages)
+                without_runtime_snapshots(item.call.messages)
                 for item in harness.adapter.invocations[-2:]
             ]
             assert before == [
@@ -901,7 +901,7 @@ agic child() -> Text:
                 )
             assert horizons == [old, new]
             calls = [item.call for item in harness.adapter.invocations[2:]]
-            messages = [without_route_snapshots(call.messages) for call in calls]
+            messages = [without_runtime_snapshots(call.messages) for call in calls]
             assert messages[0][0] == Message.user("Old far.")
             assert "Snapshot: Old far." in message_text(messages[1][0].parts)
             assert "Snapshot: New far." in message_text(messages[2][-1].parts)
@@ -967,7 +967,7 @@ def test_initial_horizon_and_recall_selection(
                 if recall in {None, "default"}
                 else tuple(recall.split(", "))
             )
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [
                 *([Message.user("Earlier facts.")] if "far" in selected else []),
@@ -985,15 +985,15 @@ def test_initial_horizon_and_recall_selection(
             assert isinstance(step.given, StoredModelStepGiven)
             assert step.given.call.messages.head == step.ref
             assert len(step.given.call.messages.delta) == len(
-                without_route_snapshots(harness.adapter.invocations[-1].call.messages)
+                harness.adapter.invocations[-1].call.messages
             )
             entry = harness.store.get_run_control(run_id=run.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
             assert entry.payload.horizon == horizon
             assert first.id not in message_text(
-                without_route_snapshots(harness.adapter.invocations[-1].call.messages)[
-                    0
-                ].parts
+                without_runtime_snapshots(
+                    harness.adapter.invocations[-1].call.messages
+                )[0].parts
             )
 
     asyncio.run(scenario())
@@ -1042,7 +1042,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             run = await _run(harness, thread, "current", tracer, runnable="chat")
             assert run.status == "succeeded", run.error
             before, after = [
-                without_route_snapshots(item.call.messages)
+                without_runtime_snapshots(item.call.messages)
                 for item in harness.adapter.invocations[-2:]
             ]
             assert before[0] == Message.user("first")
@@ -1073,7 +1073,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             entry = harness.store.get_run_control(run_id=rerun.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
             assert entry.payload.horizon == horizon
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )[0] == Message.user("Earlier facts.")
 
@@ -1211,7 +1211,7 @@ def test_compaction_excludes_the_covered_roots_terminal_reply(tmp_path, summary)
                 harness, thread, "current input", tracer, horizon=horizon
             )
             assert current.status == "succeeded", current.error
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [
                 Message.user(summary),
@@ -1264,7 +1264,7 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
             horizon = _summary(harness, thread, roots[1].id)
             current = await _run(harness, thread, "current", tracer, horizon=horizon)
             assert current.status == "succeeded", current.error
-            messages = without_route_snapshots(
+            messages = without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )
             assert [m.role for m in messages] == [

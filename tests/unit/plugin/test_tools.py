@@ -32,7 +32,8 @@ def _tool_context(
         home=home,
         room=home / ".runtime" / "tools" / plugin_name,
         services=services,
-        workspaces=workspaces or {},
+        workspaces=workspaces or ({"repo": home} if plugin_name == "shell" else {}),
+        cwd="repo://" if plugin_name == "shell" else "",
     )
 
 
@@ -83,12 +84,12 @@ def test_filesystem_tool_reads_and_writes_within_workspace(tmp_path: Path) -> No
 
     written = _invoke(
         tools["write"],
-        {"path": "workspace://repo/notes/todo.txt", "text": "hello"},
+        {"path": "repo://notes/todo.txt", "text": "hello"},
         context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": "workspace://repo/notes/todo.txt"},
+        {"path": "repo://notes/todo.txt"},
         context,
     )
 
@@ -107,12 +108,12 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
 
     appended = _invoke(
         tools["append"],
-        {"path": "workspace://repo/outbox/index.md", "text": "- hello\n"},
+        {"path": "repo://outbox/index.md", "text": "- hello\n"},
         context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": "workspace://repo/outbox/index.md"},
+        {"path": "repo://outbox/index.md"},
         context,
     )
 
@@ -125,7 +126,9 @@ def test_filesystem_tool_rejects_unanchored_paths(tmp_path: Path) -> None:
     home.mkdir()
     tool = create_filesystem_tool({}).tools()["read"]
 
-    with pytest.raises(ToolangError, match="specify workspace"):
+    with pytest.raises(
+        ToolangError, match="relative path requires a current workspace"
+    ):
         _invoke(
             tool,
             {"path": "../secret.txt"},

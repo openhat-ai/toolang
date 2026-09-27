@@ -200,10 +200,6 @@ def test_configured_workspaces_reject_filesystem_aliases(
         ('workspaces = "invalid"\n', "workspaces config must be a table"),
         ('[workspaces]\nBad_Name = "/tmp/repo"\n', "must use kebab case"),
         ('[workspaces]\nrepo = "relative/repo"\n', "workspace path must be absolute"),
-        (
-            '[workspaces]\nroot = "/tmp/repo"\nchild = "/tmp/repo/child"\n',
-            "workspace roots must not overlap",
-        ),
     ),
 )
 def test_configured_workspaces_reject_invalid_config(
@@ -214,7 +210,7 @@ def test_configured_workspaces_reject_invalid_config(
         ConfiguredWorkspaces.parse(content)
 
 
-def test_configured_workspaces_reject_duplicate_and_nested_adds(
+def test_configured_workspaces_reject_duplicates_but_allow_nested_adds(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "config.toml"
@@ -228,5 +224,8 @@ def test_configured_workspaces_reject_duplicate_and_nested_adds(
         configured.add(tmp_path, name="ROOT")
     with pytest.raises(ValueError, match="workspace path already configured as root"):
         configured.add(root, name="duplicate")
-    with pytest.raises(ValueError, match="workspace roots must not overlap"):
-        configured.add(nested, name="nested")
+    assert configured.add(nested, name="nested") == ("nested", str(nested.resolve()))
+    assert configured.list() == {
+        "nested": str(nested.resolve()),
+        "root": str(root.resolve()),
+    }

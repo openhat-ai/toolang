@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter, ValidationInfo
 
 from toolang.base.money import cost_text
+from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
@@ -290,6 +291,7 @@ class RunControlPayload:
     ]
     model_request: ModelRequest | None = None
     sandbox: str | None = None
+    cwd: str = ""
     authored_input: CallInput[str] | None = None
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
@@ -297,6 +299,7 @@ class RunControlPayload:
     horizon: RunRef | None = None
 
     def __post_init__(self) -> None:
+        parse_cwd(self.cwd)
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
         _validate_run_payload(
             self.state,
@@ -310,6 +313,25 @@ class RunControlPayload:
             self.authored_session_commands,
             self.prompt_invocations,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CwdControlPayload:
+    """One durable Run-local working location transition."""
+
+    cwd: str
+    cause: Literal["chdir", "invalidated"] = "chdir"
+    state: ControlRef | None = None
+
+    def __post_init__(self) -> None:
+        parse_cwd(self.cwd)
+        if self.cause not in {"chdir", "invalidated"}:
+            raise ValueError("invalid working location cause")
+        if self.cause == "invalidated":
+            if self.cwd != "":
+                raise ValueError("workspace invalidation must unselect cwd")
+            if self.state is None:
+                raise ValueError("workspace invalidation requires a State control")
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,6 +474,7 @@ PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
     | ReloadControlPayload
+    | CwdControlPayload
     | CompactControlPayload
     | ExecuteControlPayload
     | SteerControlPayload
@@ -462,6 +485,7 @@ ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControl
 ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
+    "cwd": CwdControlPayload,
     "retry": RetryControlPayload,
     "reload": ReloadControlPayload,
     "compact": CompactControlPayload,
@@ -978,10 +1002,23 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             else None,
             model_request=model_request,
             sandbox=sandbox,
+            cwd=cast(str, payload.get("cwd", "")),
             authored_input=authored_input,
             authored_commands=authored_commands,
             authored_session_commands=authored_session_commands,
             prompt_invocations=prompt_invocations,
+        )
+    if kind == "cwd":
+        raw_cwd = payload.get("cwd")
+        raw_cause = payload.get("cause")
+        if not isinstance(raw_cwd, str) or raw_cause not in {"chdir", "invalidated"}:
+            raise ValueError("cwd control requires a location and cause")
+        return CwdControlPayload(
+            cwd=raw_cwd,
+            cause=cast(Literal["chdir", "invalidated"], raw_cause),
+            state=ControlRef.parse(cast(str, payload["state"]))
+            if payload.get("state") is not None
+            else None,
         )
     if kind == "reload":
         return ReloadControlPayload(
@@ -1046,6 +1083,12 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
             "target": _RECALL_TARGET_ADAPTER.dump_python(payload.target, mode="json"),
             "revision": payload.revision,
             "content": payload.content,
+        }
+    if isinstance(payload, CwdControlPayload):
+        return {
+            "cwd": payload.cwd,
+            "cause": payload.cause,
+            "state": str(payload.state) if payload.state else None,
         }
     if isinstance(payload, ReloadControlPayload):
         return {"state": payload.state}
@@ -1784,6 +1827,7 @@ def _run_payload_data(
             else None
         ),
         "input": call_input_to_data(payload.input),
+        "cwd": payload.cwd,
     }
     if payload.state is not None:
         data["state"] = payload.state

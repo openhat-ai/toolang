@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from toolang.setup.config import (
 from toolang.up.mounts import (
     prepare_linked_state_source_mounts,
     prepare_root_mounts,
+    prepare_workspace_mounts,
 )
 from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
@@ -198,6 +200,11 @@ async def _launch_locked(
             )
         on_host = implementation.location == "host"
         hosted_home = hosted_root / "agents" / spec.serve.layout.name
+        workspace_mounts, workspace_mapping = (
+            ((), {})
+            if on_host
+            else prepare_workspace_mounts(spec.serve.layout.home, hosted_home)
+        )
         request = SandboxRequest(
             local_root=spec.serve.layout.root,
             local_home=spec.serve.layout.home,
@@ -223,6 +230,8 @@ async def _launch_locked(
                 **spec.environ,
                 "TOOLANG_ROOT": str(hosted_root),
                 "TOOLANG_SANDBOX": spec.sandbox,
+                "TOOLANG_WORKSPACE_MOUNTS": json.dumps(workspace_mapping),
+                "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
             },
             dotenv_envs=spec.dotenv_envs,
             mounts=(
@@ -230,6 +239,7 @@ async def _launch_locked(
                 if on_host
                 else (
                     *prepare_root_mounts(spec.serve.layout.root, hosted_root),
+                    *workspace_mounts,
                     *prepare_linked_state_source_mounts(
                         spec.serve.layout.root,
                         spec.serve.layout.name,

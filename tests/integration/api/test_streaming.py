@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 import pytest
 
-from tests.support.execution_assertions import without_route_snapshots
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import (
     TEST_MODEL_REF,
@@ -251,7 +251,7 @@ agic answer(_: Part[]) -> Part[]:
             assert decoded[5].data == part
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "succeeded"
-        assert without_route_snapshots(
+        assert without_runtime_snapshots(
             harness.adapter.invocations[0].call.messages
         ) == [
             Message(

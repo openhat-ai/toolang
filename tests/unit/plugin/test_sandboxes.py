@@ -442,6 +442,8 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_HOST_GATEWAY": "host.docker.internal",
         "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
+        "TOOLANG_WORKSPACE_MOUNTS": "{}",
+        "TOOLANG_WORKSPACE_LOCATION": "guest",
     }
     assert run_call["log_path"] is None
 

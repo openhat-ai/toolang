@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tests.support.setup import materialized_setup
+from tests.support.execution_assertions import without_runtime_snapshots
 
 from collections.abc import Mapping
 import asyncio
@@ -1130,7 +1131,10 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
         "previous_response_id": "resp-1",
         "baseline_count": 2,
     }
-    assert [item.to_data() for item in provider.requests[1].messages] == [
+    assert [
+        item.to_data()
+        for item in without_runtime_snapshots(provider.requests[1].messages)
+    ] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
             "role": "assistant",
@@ -1198,7 +1202,10 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
     assert result == Message.assistant("done")
     assert provider.requests[0].continuation is None
     assert provider.requests[1].continuation is None
-    assert [item.to_data() for item in provider.requests[1].messages] == [
+    assert [
+        item.to_data()
+        for item in without_runtime_snapshots(provider.requests[1].messages)
+    ] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
             "role": "assistant",
@@ -1291,7 +1298,10 @@ def test_model_call_keeps_content_separate_and_schema_detached(
     )
 
     assert request.instructions == prepared.instructions
-    assert request.messages == list(prepared.inputs.rendered_input[1])
+    assert request.messages == [
+        *prepared.inputs.rendered_input[1],
+        Message.user('<toolang:workdir path=""/>'),
+    ]
     assert request.messages is not buffer.messages
     assert request.messages[0] is buffer.messages[0]
     assert recorded.head == StepRef.from_local(prepared.run.run_id, (0,))
@@ -1859,7 +1869,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     )
 
     assert result == Message(role="assistant", parts=(audio,))
-    assert provider.requests[0].messages[-1] == Message(
+    assert provider.requests[0].messages[-2] == Message(
         "user",
         (
             TextPart(

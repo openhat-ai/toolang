@@ -57,6 +57,29 @@ def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
     return result
 
 
+def without_runtime_snapshots(messages: Sequence[Message]) -> list[Message]:
+    """Compare authored messages while excluding separately tested runtime notices.
+
+    The workdir declaration has dedicated tests asserting its exact
+    placement and contents. Other integration tests can assert their own
+    message histories without duplicating that unrelated runtime contract.
+    """
+    return [
+        message
+        for message in without_route_snapshots(messages)
+        if not (
+            message.role == "user"
+            and message.recall is None
+            and len(message.parts) == 1
+            and isinstance(message.parts[0], TextPart)
+            and re.fullmatch(
+                r'<toolang:workdir path="[^"]*"/>',
+                message.parts[0].text,
+            )
+        )
+    ]
+
+
 def route_snapshots(call: ModelCall) -> dict[str, list[dict[str, Any]]]:
     """Read the latest sibling snapshots, checking their explicit wire contract."""
     for message in reversed(call.messages):

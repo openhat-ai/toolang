@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from tests.support.execution_assertions import without_route_snapshots
+from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_fixtures import (
     project_run_end,
     project_run_start,
@@ -161,7 +161,7 @@ agic chat(_: Text) -> Text:
             assert detail is not None
             assert detail.input_text == "first question"
             assert summary.title == "first question"
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             ) == [
                 Message.user("first question"),
@@ -213,7 +213,7 @@ agic chat(_: Part[]) -> Part[]:
                     primary=resolve_input_parts("second question"),
                 )
             )
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             ) == [
                 Message.user("first question"),
@@ -232,7 +232,7 @@ agic chat(_: Part[]) -> Part[]:
                     primary=resolve_input_parts("branch question"),
                 )
             )
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[2].call.messages
             ) == [
                 Message.user("first question"),
@@ -318,7 +318,7 @@ agic calculate(_: Text) -> Boolean:
             assert harness.adapter.invocations[1].call.continuation == {
                 "cursor": "turn-1"
             }
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             )[-1].parts == (
                 ToolResultPart(
@@ -356,7 +356,7 @@ agic calculate(_: Text) -> Boolean:
         connection = sqlite3.connect(reopened.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                6,  # Includes the standalone per-call route snapshot content.
+                7,  # Includes the route snapshot and Run workdir content.
             )
             assert (
                 connection.execute(
@@ -368,7 +368,7 @@ agic calculate(_: Text) -> Boolean:
                 len(step.given.call.messages.delta)
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [1, 3]
+            ] == [2, 4]
         finally:
             connection.close()
     finally:

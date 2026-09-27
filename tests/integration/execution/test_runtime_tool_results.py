@@ -10,7 +10,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     steer_message,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -215,7 +215,7 @@ def test_steer_during_result_delivery_preserves_result_once(
             assert skipped.status == "canceled" and skipped.aborted_by == steer.ref
             results = [
                 part
-                for message in without_route_snapshots(
+                for message in without_runtime_snapshots(
                     harness.adapter.invocations[-1].call.messages
                 )
                 for part in message.parts
@@ -317,7 +317,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
             if interruption == "steer":
                 assert [
                     part
-                    for message in without_route_snapshots(
+                    for message in without_runtime_snapshots(
                         harness.adapter.invocations[-1].call.messages
                     )
                     for part in message.parts
@@ -539,7 +539,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
                 assert part.tool_call_id == request.tool_call_id
                 assert part.error == "canceled by steer"
             if followup:
-                messages = without_route_snapshots(
+                messages = without_runtime_snapshots(
                     harness.adapter.invocations[1].call.messages
                 )
                 assert messages[-2].role == "tool"
@@ -596,7 +596,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             steer = handle.steer(Message.user("extra requirement"), timing="immediate")
             root = await asyncio.wait_for(handle, timeout=2)
             assert root.status == "succeeded", root.error
-            followup = without_route_snapshots(
+            followup = without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             )
             assert Message.user("Child task.") in followup
@@ -704,7 +704,7 @@ def test_steer_at_tool_begin_closes_the_started_step(
             assert step.output is not None
             assert (
                 parts_from_local(step.output.local)
-                == without_route_snapshots(
+                == without_runtime_snapshots(
                     harness.adapter.invocations[-1].call.messages
                 )[-2].parts
             )
@@ -776,7 +776,7 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
             ]
             parts = tuple(
                 part
-                for message in without_route_snapshots(
+                for message in without_runtime_snapshots(
                     harness.adapter.invocations[-1].call.messages
                 )
                 for part in message.parts

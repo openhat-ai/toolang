@@ -15,7 +15,7 @@ from tests import FIXTURES_ROOT
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
-    without_route_snapshots,
+    without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -540,7 +540,7 @@ flow relay(_: Part[]) -> Part[]:
             ] == ["bracket"]
             assert root_control.payload.prompt_invocations[0].cap_ref
             assert child_control.payload.prompt_invocations[0].cap_ref
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             ) == [Message.user("[hello]")]
 
@@ -837,7 +837,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert isinstance(payload, RunControlPayload)
             assert not hasattr(payload, "rerun_from")
             assert [
-                without_route_snapshots(call.call.messages)
+                without_runtime_snapshots(call.call.messages)
                 for call in harness.adapter.invocations
             ] == [
                 [Message.user('Reply to hello in brief with ["one","two"].')],
@@ -1194,7 +1194,7 @@ flow research(brief: Brief) -> Text:
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert child_run_control.payload.runnable == "agic:echo"
             assert "Module-Local Input" in message_text(
-                without_route_snapshots(harness.adapter.invocations[0].call.messages)[
+                without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
                     0
                 ].parts
             )
@@ -1289,7 +1289,7 @@ flow mapped(_: Text) -> Text[]:
             assert _output_value(harness, root.id) == ["ONE", "TWO"]
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
             assert [
-                without_route_snapshots(invocation.call.messages)[-1]
+                without_runtime_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [Message.user("one"), Message.user("two")]
             children = [
@@ -1397,14 +1397,14 @@ def test_research_pipeline_reshapes_filters_and_sorts(
             assert harness.adapter.pending_responses == 0
             prompts = [
                 message_text(
-                    without_route_snapshots(invocation.call.messages)[-1].parts
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
                 ).strip()
                 for invocation in harness.adapter.invocations
             ]
             assert prompts[0] == f"Research question:\n{topic}"
             assert prompts[1:7] == [f"Query:\n{query}" for query in queries]
             assert all(
-                len(without_route_snapshots(invocation.call.messages)) == 1
+                len(without_runtime_snapshots(invocation.call.messages)) == 1
                 for invocation in harness.adapter.invocations[7:13]
             )
             assert prompts[7:13] == [
@@ -1588,7 +1588,7 @@ flow summary(_: Text) -> Text:
             assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "a+b+c"
             assert _root_step_kinds(harness, root.id) == ["run", "run"]
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             )[-1] == (Message.user('["a","b","c"]'))
 
@@ -1638,7 +1638,7 @@ flow folded(_: Text) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert _root_step_kinds(harness, root.id) == ["run", "loop"]
             assert [
-                without_route_snapshots(invocation.call.messages)[-1]
+                without_runtime_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [
                 Message.user("ab"),
@@ -1688,7 +1688,7 @@ flow folded(_: Text) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert [
                 message_text(
-                    without_route_snapshots(invocation.call.messages)[-1].parts
+                    without_runtime_snapshots(invocation.call.messages)[-1].parts
                 ).rsplit("\n", 1)[-1]
                 for invocation in harness.adapter.invocations[1:]
             ] == [
@@ -1953,7 +1953,7 @@ flow repeated(_: Text) -> Text:
                 total=3,
             )
             assert [
-                without_route_snapshots(invocation.call.messages)[-1]
+                without_runtime_snapshots(invocation.call.messages)[-1]
                 for invocation in harness.adapter.invocations
             ] == [
                 Message.user("zero"),
@@ -2013,7 +2013,7 @@ flow repeated(_: Text) -> Text:
             assert run.status == "succeeded"
             assert harness.store.run_output_text(run_id=run.id) == "recovered"
             assert [
-                without_route_snapshots(
+                without_runtime_snapshots(
                     harness.adapter.invocations[index].call.messages
                 )[-1]
                 for index in (0, 2, 4, 5)
@@ -2327,7 +2327,7 @@ flow scattered(_: Text) -> Text[]:
                 "type": "array",
             }
             assert "Return distinct pieces of this source:\nsplit" in message_text(
-                without_route_snapshots(harness.adapter.invocations[0].call.messages)[
+                without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
                     -1
                 ].parts
             )
@@ -2368,7 +2368,7 @@ flow relay(_: Text, suffix: Text) -> Text:
             )
 
             assert root.status == "succeeded"
-            assert without_route_snapshots(
+            assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
             ) == [Message.user("hello!")]
             child = next(
