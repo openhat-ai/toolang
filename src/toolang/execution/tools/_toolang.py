@@ -26,7 +26,7 @@ class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
     name: Literal[
-        "reload", "run", "execute", "pick", "honor", "compact", "cd", "workspaces"
+        "reload", "run", "execute", "pick", "honor", "compact", "chdir", "workspaces"
     ]
     description: str
     parameters: dict[str, object]
@@ -81,14 +81,14 @@ class ToolangTool(Tool):
     def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]]:
-        if self.name != "cd":
+        if self.name != "chdir":
             return {}
         path = arguments.get("path")
         if not isinstance(path, str) or not path or set(arguments) != {"path"}:
-            raise ToolangError("_toolang/cd requires only a non-empty path")
+            raise ToolangError("_toolang/chdir requires only a non-empty path")
         target, name, relative = resolve_input_path(path, context)
         if not target.is_dir():
-            raise ToolangError(f"cd target is not a directory: {path}")
+            raise ToolangError(f"chdir target is not a directory: {path}")
         return {name: (relative,)}
 
     async def invoke(
@@ -97,11 +97,11 @@ class ToolangTool(Tool):
         if not isinstance(context, RuntimeToolContext):
             raise ToolangError("runtime operations are unavailable for this tool call")
         runtime = context.runtime
-        if self.name == "cd":
+        if self.name == "chdir":
             path = arguments.get("path")
             if not isinstance(path, str) or not path or set(arguments) != {"path"}:
-                raise ToolangError("_toolang/cd requires only a non-empty path")
-            return await runtime.cd(path, context)
+                raise ToolangError("_toolang/chdir requires only a non-empty path")
+            return await runtime.chdir(path, context)
         if self.name == "workspaces":
             if arguments:
                 raise ToolangError("_toolang/workspaces does not accept input")
@@ -221,9 +221,9 @@ _RUN_PARAMETERS: dict[str, object] = {
 
 _TOOLS = (
     ToolangTool(
-        "cd",
+        "chdir",
         "Change this Run's working directory. Call it alone in a Model Call; "
-        "use a relative path from cwd or :repo://path from a workspace root.",
+        "Use repo://path for a workspace root or a relative path from cwd.",
         {
             "type": "object",
             "properties": {"path": {"type": "string"}},

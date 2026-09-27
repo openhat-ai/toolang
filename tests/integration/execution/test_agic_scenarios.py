@@ -185,7 +185,7 @@ agic helper(_: Text) -> Boolean:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",

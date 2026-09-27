@@ -356,7 +356,7 @@ agic calculate(_: Text) -> Boolean:
         connection = sqlite3.connect(reopened.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                7,  # Includes the route snapshot and Run working-location content.
+                7,  # Includes the route snapshot and Run workdir content.
             )
             assert (
                 connection.execute(

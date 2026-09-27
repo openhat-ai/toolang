@@ -2917,13 +2917,13 @@ class RunStore:
                     kind == "tool"
                     and status == "succeeded"
                     and isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "_toolang__cd"
+                    and existing_step.given.call.name == "_toolang__chdir"
                     and output is not None
                     and isinstance(output.local.value, ToolResultPart)
                 ):
                     cwd = output.local.value.output.get("cwd")
                     if not isinstance(cwd, str):
-                        raise ValueError("successful cd Step requires a cwd result")
+                        raise ValueError("successful chdir Step requires a cwd result")
                     parse_cwd(cwd)
                     index = self._conn.execute(
                         'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
@@ -2933,7 +2933,9 @@ class RunStore:
                         ref=ControlRef(RunRef(ref.run_id), int(index)),
                         kind="cwd",
                         timing="immediate",
-                        payload=CwdControlPayload(cwd=cwd, state=existing_step.state),
+                        payload=CwdControlPayload(
+                            cwd=cwd, cause="chdir", state=existing_step.state
+                        ),
                         request=None,
                         status="applied",
                         error=None,

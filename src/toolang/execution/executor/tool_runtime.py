@@ -51,14 +51,14 @@ class _ToolRuntime(ToolRuntime):
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
 
-    async def cd(self, path: str, context: ToolContext) -> ToolResult:
+    async def chdir(self, path: str, context: ToolContext) -> ToolResult:
         if self.tool_call_count != 1:
             raise ToolangError(
-                "_toolang/cd must be the only tool call in its Model Call"
+                "_toolang/chdir must be the only tool call in its Model Call"
             )
         target, name, relative = resolve_input_path(path, context)
         if not target.is_dir():
-            raise ToolangError(f"cd target is not a directory: {path}")
+            raise ToolangError(f"chdir target is not a directory: {path}")
         return ToolResult({"cwd": workspace_uri(name, relative)})
 
     async def workspaces(self, context: ToolContext) -> ToolResult:

@@ -1,4 +1,4 @@
-"""Cwd controls share one durable commit boundary with successful cd Steps."""
+"""Cwd controls share one durable commit boundary with successful chdir Steps."""
 
 import pytest
 
@@ -27,7 +27,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             input=Message.user("start"),
         )
         ref = StepRef.from_local(run.id, (0,))
-        call = ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"})
+        call = ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://src"})
         store.begin_step(
             ref=ref,
             kind="tool",
@@ -36,7 +36,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             started_at="2026-09-27T00:00:00Z",
         )
         part = ToolResultPart(
-            "cd", "_toolang__cd", "_toolang__cd", {"cwd": ":repo://src"}
+            "chdir", "_toolang__chdir", "_toolang__chdir", {"cwd": "repo://src"}
         )
 
         def finish():
@@ -70,11 +70,11 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
         (control,) = store.list_run_controls(run_id=run.id, kind="cwd")
         assert control.triggered_by == ref
         assert isinstance(control.payload, CwdControlPayload)
-        assert control.payload.cwd == ":repo://src"
-        assert store.current_cwd(run.id) == ":repo://src"
+        assert control.payload.cwd == "repo://src"
+        assert store.current_cwd(run.id) == "repo://src"
         reopened = RunStore(store.db_path)
         try:
-            assert reopened.current_cwd(run.id) == ":repo://src"
+            assert reopened.current_cwd(run.id) == "repo://src"
         finally:
             reopened.close()
     finally:
@@ -110,7 +110,7 @@ def test_legacy_run_control_without_cwd_starts_unselected(tmp_path):
         {"cwd": None, "cause": "cd"},
         {"cwd": 0, "cause": "cd"},
         {"cwd": "", "cause": "wrong"},
-        {"cwd": ":repo://", "cause": "invalidated", "state": "run_abc@0"},
+        {"cwd": "repo://", "cause": "invalidated", "state": "run_abc@0"},
         {"cwd": "", "cause": "invalidated"},
         {"cwd": "workspace://repo/", "cause": "cd"},
     ],

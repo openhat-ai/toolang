@@ -131,7 +131,7 @@ def messages(
     history: HistorySelection | None = None,
     recall: Sequence[str] = ("far", "near"),
     reset: bool = False,
-    working_location: str | None = None,
+    workdir: str | None = None,
 ) -> tuple[list[Message], ModelMessages]:
     """Assemble one staged buffer and its matching durable message description.
 
@@ -145,8 +145,8 @@ def messages(
         current.append(Message.user(context))
     for control in controls:
         current.append_control(control)
-    if working_location is not None:
-        current.append(Message.user(working_location))
+    if workdir is not None:
+        current.append(Message.user(workdir))
 
     recorded = current.take_delta(step, reset=reset)
     prefix: list[Message] = []
@@ -166,14 +166,11 @@ def messages(
     return [*prefix, *current.messages], recorded
 
 
-def working_location_message(cwd: str) -> str:
+def workdir_message(cwd: str) -> str:
     """The newest portable Run location is repeated for each Model Call."""
     name, relative = parse_cwd(cwd)
-    value = workspace_uri(name, relative).partition("://")[2] if name else ""
-    return (
-        f'<toolang:working-location workspace="{escape(name or "", quote=True)}" '
-        f'workdir="{escape(value, quote=True)}"/>'
-    )
+    value = workspace_uri(name, relative) if name else ""
+    return f'<toolang:workdir path="{escape(value, quote=True)}"/>'
 
 
 def tools(selected: Mapping[str, Tool]) -> tuple[ToolDefinition, ...]:

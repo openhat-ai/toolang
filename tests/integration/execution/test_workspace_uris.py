@@ -53,7 +53,7 @@ def _results(harness, run):
 
 
 def test_rules_preserve_trailing_spaces_in_workspace_paths(tmp_path):
-    uri = ":repo://notes%20/result"
+    uri = "repo://notes%20/result"
     harness, repo, publication = _harness(
         tmp_path,
         [
@@ -173,9 +173,7 @@ def test_retry_keeps_still_authorized_recorded_workspace_grants(
                 result = _results(harness, retried)["list"]
                 assert result.error is None
                 assert result.output == {
-                    "entries": [
-                        {"name": "repo", "path": ":repo://", "available": True}
-                    ],
+                    "entries": [{"name": "repo", "path": "repo://", "available": True}],
                 }
                 assert watcher.load(original.revision).workspaces == {"repo": str(repo)}
             finally:
@@ -204,7 +202,7 @@ def test_workspace_retry_requires_a_current_authorization_source(tmp_path):
 
 
 def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
-    uri = ":external://file"
+    uri = "external://file"
     harness, _repo, _pub = _harness(
         tmp_path,
         [
@@ -253,7 +251,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
 def test_rule_symlinks_cannot_escape_the_workspace(tmp_path, external):
     harness, _repo, _pub = _harness(
         tmp_path,
-        [_calls(_call("write", path=":repo://file", text="bad")), _answer()],
+        [_calls(_call("write", path="repo://file", text="bad")), _answer()],
     )
     root = (tmp_path if external else harness.setup.layout.home) / "workspace"
     root.mkdir()
@@ -277,7 +275,7 @@ def test_explicit_workspace_cannot_create_an_unavailable_root_in_home(tmp_path):
     harness, _repo, _pub = _harness(
         tmp_path,
         [
-            _calls(_call("write", workspace="missing", path="file", text="done")),
+            _calls(_call("write", path="missing://file", text="done")),
             _answer(),
         ],
     )
@@ -295,7 +293,7 @@ def test_explicit_workspace_cannot_create_an_unavailable_root_in_home(tmp_path):
 
 
 def test_remove_symlink_honors_rules_then_unlinks_without_removing_the_target(tmp_path):
-    arguments = {"path": ":repo://alias", "recursive": True}
+    arguments = {"path": "repo://alias", "recursive": True}
     harness, repo, publication = _harness(
         tmp_path,
         [
@@ -361,14 +359,14 @@ def test_reload_updates_revision_listing_grants_and_mapping_in_one_run(tmp_path)
         [
             _calls(
                 _call("before-list", "_toolang__workspaces"),
-                _call("before-write", path=":moving://file", text="before"),
+                _call("before-write", path="moving://file", text="before"),
             ),
             _calls(
                 ToolCall("reload", "reload", "_toolang__reload", {}),
                 _call("after-list", "_toolang__workspaces"),
-                _call("removed", path=":removed://file", text="bad"),
-                _call("moved", path=":moving://file", text="after"),
-                _call("added", path=":added://file", text="new"),
+                _call("removed", path="removed://file", text="bad"),
+                _call("moved", path="moving://file", text="after"),
+                _call("added", path="added://file", text="new"),
             ),
             _answer(),
         ],
@@ -420,7 +418,7 @@ def test_honor_retry_resolves_the_new_workspace_state(tmp_path, change):
         assert changed is not None
         return StateRefresh(changed)
 
-    uri = ":repo://file"
+    uri = "repo://file"
     harness, _repo, _pub = _harness(
         tmp_path,
         [
@@ -487,7 +485,7 @@ def test_reload_during_a_tool_keeps_its_path_and_updates_the_next_step(
         return await original_invoke(self, arguments, context)
 
     monkeypatch.setattr(_FilesystemTool, "invoke", invoke)
-    uri = ":repo://file"
+    uri = "repo://file"
     harness, _repo, _pub = _harness(
         tmp_path,
         [
@@ -530,7 +528,7 @@ def test_reload_during_a_tool_keeps_its_path_and_updates_the_next_step(
 def test_parallel_children_recheck_workspace_rules_after_root_reload(tmp_path):
     initial_gates = (AsyncGate(), AsyncGate())
     gates = (AsyncGate(), AsyncGate())
-    uri = ":repo://file"
+    uri = "repo://file"
     source = """
 agic chat(_: Part[]) -> Text:
   recall = none

@@ -57,10 +57,10 @@ def _results(messages):
 
 def _call(identity, name="fs__write", **arguments):
     if not arguments and name == "fs__write":
-        arguments = {"path": ":repo://src/result", "text": "done"}
+        arguments = {"path": "repo://src/result", "text": "done"}
     if "workspace" in arguments:
         workspace = arguments.pop("workspace")
-        arguments["path"] = f":{workspace}://{arguments['path'].lstrip('/')}"
+        arguments["path"] = f"{workspace}://{arguments['path'].lstrip('/')}"
     return ToolCall(identity, identity, name, arguments)
 
 
@@ -460,7 +460,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
         tmp_path,
         [
             _calls(_call("list", "_toolang__workspaces"), _call("blocked")),
-            _calls(_call("changed", path=":repo://src/other", text="changed")),
+            _calls(_call("changed", path="repo://src/other", text="changed")),
             _answer(),
         ],
     )
@@ -817,7 +817,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
 
 def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path):
     def call(identity):
-        return _call(identity, "fs__list", path=":repo://link")
+        return _call(identity, "fs__list", path="repo://link")
 
     harness, repo, publication = _harness(
         tmp_path, [_calls(call("first")), _calls(call("retry")), _answer()]
@@ -845,7 +845,7 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
                 == RETRY_MESSAGE
             )
             assert retried.output.local.value.error is None
-            assert retried.output.local.value.output["path"] == ":repo://link"
+            assert retried.output.local.value.output["path"] == "repo://link"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

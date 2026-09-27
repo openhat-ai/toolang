@@ -264,15 +264,13 @@ class _FilesystemTool(Tool):
         path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
         if not isinstance(path, str) or "workspace" in arguments or "cwd" in arguments:
             return None
-        if path.startswith("workspace://"):
-            return None
         try:
             name, relative = parse_cwd(path)
             target = (
                 workspace_label(name, relative) if name is not None else f"“{path}”"
             )
         except ToolangError:
-            if path.startswith(":"):
+            if "://" in path or path.startswith(":"):
                 return None
             target = f"“{path}”"
         if self.name == "glob":

@@ -78,7 +78,7 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
     ],
 )
 def test_tool_summary_preserves_trailing_dots_in_target(status, expected) -> None:
-    call = ToolCall("tool-1", "call-1", "fs__read", {"path": ":repo://file..."})
+    call = ToolCall("tool-1", "call-1", "fs__read", {"path": "repo://file..."})
     context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
 
     assert _tool_summary(context, status) == expected

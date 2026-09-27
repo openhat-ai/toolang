@@ -29,7 +29,7 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
         "_toolang__run",
-        "_toolang__cd",
+        "_toolang__chdir",
         "_toolang__workspaces",
         "_toolang__execute",
         "_toolang__reload",
@@ -69,7 +69,7 @@ class _Runtime:
         await asyncio.sleep(0)
         return ToolResult({"controls": [self.marker]})
 
-    async def cd(self, path, context):
+    async def chdir(self, path, context):
         return ToolResult({"cwd": path})
 
     async def workspaces(self, context):

@@ -1300,7 +1300,7 @@ def test_model_call_keeps_content_separate_and_schema_detached(
     assert request.instructions == prepared.instructions
     assert request.messages == [
         *prepared.inputs.rendered_input[1],
-        Message.user('<toolang:working-location workspace="" workdir=""/>'),
+        Message.user('<toolang:workdir path=""/>'),
     ]
     assert request.messages is not buffer.messages
     assert request.messages[0] is buffer.messages[0]

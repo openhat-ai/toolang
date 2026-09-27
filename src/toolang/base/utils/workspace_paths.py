@@ -11,28 +11,8 @@ from ..errors import ToolangError
 from ..types.tool import ToolContext
 
 _NAME = r"[a-z0-9]+(?:-[a-z0-9]+)*"
-_FORCED = re.compile(rf":({_NAME})://([^?#]*)\Z")
 _SCHEME = re.compile(rf"({_NAME})://([^?#]*)\Z")
 _BAD_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
-_KNOWN = frozenset(
-    {
-        "file",
-        "workspace",
-        "runspace",
-        "http",
-        "https",
-        "ftp",
-        "ftps",
-        "ws",
-        "wss",
-        "ssh",
-        "git",
-        "data",
-        "mailto",
-        "urn",
-        "about",
-    }
-)
 
 
 def _decode(value: str, *, relative: bool = True) -> str:
@@ -55,14 +35,14 @@ def workspace_uri(name: str, path: str = "") -> str:
     """The canonical unambiguous location and filesystem result spelling."""
     if re.fullmatch(_NAME, name) is None:
         raise ToolangError(f"invalid workspace name: {name}")
-    return f":{name}://" + quote(path.lstrip("/"), safe="/")
+    return f"{name}://" + quote(path.lstrip("/"), safe="/")
 
 
 def parse_cwd(cwd: str) -> tuple[str | None, str]:
     """Decode a durable canonical location without consulting the filesystem."""
     if cwd == "":
         return None, ""
-    match = _FORCED.fullmatch(cwd)
+    match = _SCHEME.fullmatch(cwd)
     if match is None:
         raise ToolangError(f"invalid working location: {cwd}")
     relative = _decode(match[2])
@@ -137,51 +117,22 @@ def resolve_input_path(
     key = (value, follow)
     if key in context._input_paths:
         return context._input_paths[key]
-    match = _FORCED.fullmatch(value)
+    match = _SCHEME.fullmatch(value)
     if match:
         name, path = match[1], _decode(match[2])
+    elif value.startswith("/"):
+        result = _absolute(value, context, follow=follow)
+        context._input_paths[key] = result
+        return result
+    elif value.startswith(":") or "://" in value:
+        raise ToolangError(f"invalid path reference: {value}")
     else:
-        match = _SCHEME.fullmatch(value)
-        if match:
-            name, path = match[1], match[2]
-            if name == "file":
-                if not path:
-                    raise ToolangError("file:// requires a path")
-                path = _decode(path, relative=not path.startswith("/"))
-                if path.startswith("/"):
-                    result = _absolute(path, context, follow=follow)
-                    context._input_paths[key] = result
-                    return result
-                name, current = parse_cwd(context.cwd)
-                if name is None:
-                    raise ToolangError(
-                        "relative path requires a current workspace; use _toolang.cd"
-                    )
-                path = str(Path(current) / path)
-            elif name == "workspace":
-                raise ToolangError(
-                    "workspace:// is no longer supported; use :repo://path for files "
-                    "or _toolang.workspaces() to list workspaces"
-                )
-            elif name in _KNOWN:
-                raise ToolangError(
-                    f"unsupported path scheme: {name}; use :{name}:// for a workspace"
-                )
-            else:
-                path = _decode(path)
-        elif value.startswith("/"):
-            result = _absolute(value, context, follow=follow)
-            context._input_paths[key] = result
-            return result
-        elif value.startswith(":") or "://" in value:
-            raise ToolangError(f"invalid path reference: {value}")
-        else:
-            name, current = parse_cwd(context.cwd)
-            if name is None:
-                raise ToolangError(
-                    "relative path requires a current workspace; use _toolang.cd"
-                )
-            path = str(Path(current) / value)
+        name, current = parse_cwd(context.cwd)
+        if name is None:
+            raise ToolangError(
+                "relative path requires a current workspace; use _toolang.chdir"
+            )
+        path = str(Path(current) / value)
     assert name is not None
     resolved, relative = resolve_workspace_path(name, path, context, follow=follow)
     result = (resolved, name, relative)

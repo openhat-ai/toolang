@@ -320,12 +320,12 @@ class CwdControlPayload:
     """One durable Run-local working location transition."""
 
     cwd: str
-    cause: Literal["cd", "invalidated"] = "cd"
+    cause: Literal["chdir", "invalidated"] = "chdir"
     state: ControlRef | None = None
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
-        if self.cause not in {"cd", "invalidated"}:
+        if self.cause not in {"chdir", "invalidated"}:
             raise ValueError("invalid working location cause")
         if self.cause == "invalidated":
             if self.cwd != "":
@@ -1011,11 +1011,11 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
     if kind == "cwd":
         raw_cwd = payload.get("cwd")
         raw_cause = payload.get("cause")
-        if not isinstance(raw_cwd, str) or raw_cause not in {"cd", "invalidated"}:
+        if not isinstance(raw_cwd, str) or raw_cause not in {"chdir", "invalidated"}:
             raise ValueError("cwd control requires a location and cause")
         return CwdControlPayload(
             cwd=raw_cwd,
-            cause=cast(Literal["cd", "invalidated"], raw_cause),
+            cause=cast(Literal["chdir", "invalidated"], raw_cause),
             state=ControlRef.parse(cast(str, payload["state"]))
             if payload.get("state") is not None
             else None,

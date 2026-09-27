@@ -144,7 +144,7 @@ def _candidate(
             prepared.run.horizon != state.model_frame.run.horizon
             or prepared.recall != state.model_frame.recall
         ),
-        working_location=prompting.working_location_message(
+        workdir=prompting.workdir_message(
             state.execution.cwd_for_run(prepared.run.run_id)
             if state.execution is not None
             else prepared.run.cwd
@@ -235,9 +235,7 @@ def _boundary(
         state.messages.copy(),
         step=StepRef.from_local(prepared.run.run_id, (state.next_step,)),
         controls=controls,
-        working_location=prompting.working_location_message(
-            execution.cwd_for_run(prepared.run.run_id)
-        ),
+        workdir=prompting.workdir_message(execution.cwd_for_run(prepared.run.run_id)),
     )
     required = replace(
         request,

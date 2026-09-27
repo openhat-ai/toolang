@@ -1093,7 +1093,7 @@ class RunExecutor:
             if (
                 stored is not None
                 and isinstance(stored.given, ToolStepGiven)
-                and stored.given.call.name == "_toolang__cd"
+                and stored.given.call.name == "_toolang__chdir"
             ):
                 active.execution._cwd_cache[event.step.run_id] = self.store.current_cwd(
                     event.step.run_id

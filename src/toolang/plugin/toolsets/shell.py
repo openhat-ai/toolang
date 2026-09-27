@@ -148,7 +148,7 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
 def _location(context: ToolContext) -> tuple[Path, str, str]:
     workspace, relative = parse_cwd(context.cwd)
     if workspace is None:
-        raise ToolangError("shell requires a current workspace; use _toolang.cd")
+        raise ToolangError("shell requires a current workspace; use _toolang.chdir")
     return resolve_input_path(workspace_uri(workspace, relative), context)
 
 

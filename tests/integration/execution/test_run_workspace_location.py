@@ -28,7 +28,9 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(
@@ -55,7 +57,7 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
             )
             assert result.status == "succeeded", result.error
             assert (repo / "src/result.txt").read_text() == "done"
-            assert harness.store.current_cwd(result.id) == ":repo://src"
+            assert harness.store.current_cwd(result.id) == "repo://src"
             assert [
                 len(_locations(inv.call)) for inv in harness.adapter.invocations
             ] == [
@@ -73,13 +75,13 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
                     for message in call.call.messages
                     for part in message.parts
                     if isinstance(part, TextPart)
-                    and part.text.startswith("<toolang:working-location ")
+                    and part.text.startswith("<toolang:workdir ")
                 ][-1]
                 for call in harness.adapter.invocations
             ] == [
-                '<toolang:working-location workspace="repo" workdir=""/>',
-                '<toolang:working-location workspace="repo" workdir="src"/>',
-                '<toolang:working-location workspace="repo" workdir="src"/>',
+                '<toolang:workdir path="repo://"/>',
+                '<toolang:workdir path="repo://src"/>',
+                '<toolang:workdir path="repo://src"/>',
             ]
 
     asyncio.run(scenario())
@@ -107,7 +109,9 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
         prepare_state=True,
         responses=[
             ModelCallResult(
-                tool_calls=(ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://"}),)
+                tool_calls=(
+                    ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://"}),
+                )
             ),
             ScriptedModelTurn(
                 result=ModelCallResult(
@@ -128,7 +132,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
                 )
             )
             await gate.wait_until_entered()
-            assert harness.store.current_cwd(handle.run_id) == ":repo://"
+            assert harness.store.current_cwd(handle.run_id) == "repo://"
             config.write_text(
                 tomlkit.dumps(
                     {"workspaces": {} if change == "remove" else {"repo": str(other)}}
@@ -161,7 +165,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
             result = await handle
             assert result.status == "succeeded", result.error
             assert _locations(harness.adapter.invocations[-1].call)[-1] == (
-                '<toolang:working-location workspace="" workdir=""/>'
+                '<toolang:workdir path=""/>'
             )
 
     asyncio.run(scenario())
@@ -196,7 +200,7 @@ def test_initial_workspace_is_selected_only_when_unambiguous_and_available(
             )
             assert run.status == "succeeded", run.error
             assert harness.store.current_cwd(run.id) == (
-                ":repo0://" if count == 1 else ""
+                "repo0://" if count == 1 else ""
             )
 
     asyncio.run(scenario())
@@ -218,12 +222,12 @@ def test_cd_mixed_batch_is_rejected_before_filesystem_mutation(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://"}),
+                    ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://"}),
                     ToolCall(
                         "write",
                         "write",
                         "fs__write",
-                        {"path": ":repo://bad", "text": "bad"},
+                        {"path": "repo://bad", "text": "bad"},
                     ),
                 )
             ),
@@ -260,8 +264,7 @@ def _locations(call):
         part.text
         for message in call.messages
         for part in message.parts
-        if isinstance(part, TextPart)
-        and part.text.startswith("<toolang:working-location ")
+        if isinstance(part, TextPart) and part.text.startswith("<toolang:workdir ")
     ]
 
 
@@ -285,7 +288,7 @@ def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
                         "write",
                         "write",
                         "fs__write",
-                        {"path": ":offline://file", "text": "x"},
+                        {"path": "offline://file", "text": "x"},
                     ),
                 )
             ),
@@ -315,12 +318,12 @@ def test_unavailable_only_workspace_starts_unselected_but_remains_discoverable(
             ]
             assert replies[0].output == {
                 "entries": [
-                    {"name": "offline", "path": ":offline://", "available": False}
+                    {"name": "offline", "path": "offline://", "available": False}
                 ]
             }
             assert "not available" in (replies[1].error or "")
             assert _locations(harness.adapter.invocations[0].call) == [
-                '<toolang:working-location workspace="" workdir=""/>'
+                '<toolang:workdir path=""/>'
             ]
 
     asyncio.run(scenario())
@@ -344,7 +347,9 @@ flow parent:
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(message=Message.assistant("first")),
@@ -366,10 +371,10 @@ flow parent:
             assert root.id == result.id
             assert [
                 harness.store.current_cwd(run.id) for run in (root, first, sibling)
-            ] == [":repo://", ":repo://src", ":repo://"]
+            ] == ["repo://", "repo://src", "repo://"]
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:working-location workspace="repo" workdir=""/>'
+                == '<toolang:workdir path="repo://"/>'
             )
 
     asyncio.run(scenario())
@@ -387,7 +392,9 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(
@@ -413,7 +420,7 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
                 )
             )
             assert run.status == "succeeded", run.error
-            assert harness.store.current_cwd(run.id) == ":repo://src"
+            assert harness.store.current_cwd(run.id) == "repo://src"
             from toolang.base.types.message import ToolResultPart
 
             outputs = [
@@ -424,9 +431,9 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
                 and isinstance(step.output.local.value, ToolResultPart)
             ]
             assert [p.output.get("cwd") for p in outputs] == [
-                ":repo://src",
-                ":repo://src",
-                ":repo://src",
+                "repo://src",
+                "repo://src",
+                "repo://src",
             ]
             assert outputs[1].output["stdout"].strip() == str(repo)
             assert outputs[2].output["stdout"].strip() == str(repo / "src")
@@ -447,7 +454,9 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             RuntimeError("temporary failure"),
@@ -466,10 +475,10 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
                 )
             )
             assert first.status == "failed", first.error
-            assert harness.store.current_cwd(first.id) == ":repo://src"
+            assert harness.store.current_cwd(first.id) == "repo://src"
             reopened = RunStore(harness.store.db_path)
             try:
-                assert reopened.current_cwd(first.id) == ":repo://src"
+                assert reopened.current_cwd(first.id) == "repo://src"
             finally:
                 reopened.close()
             recovered = await harness.executor.retry(
@@ -478,28 +487,28 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
             assert recovered.status == "succeeded", recovered.error
             # An Agic cycle restarts from its first Model Step; cd is in the
             # discarded suffix and cannot be restored by reading old output.
-            assert harness.store.current_cwd(first.id) == ":repo://"
+            assert harness.store.current_cwd(first.id) == "repo://"
             assert harness.store.list_run_controls(run_id=first.id, kind="cwd") == ()
             anchor = harness.store.list_steps(run_id=first.id)[0].ref
             restarted = await harness.executor.retry(
                 first.id, setup=harness.setup, state=harness.state, anchor=anchor
             )
             assert restarted.status == "succeeded", restarted.error
-            assert harness.store.current_cwd(first.id) == ":repo://"
+            assert harness.store.current_cwd(first.id) == "repo://"
             assert harness.store.list_run_controls(run_id=first.id, kind="cwd") == ()
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:working-location workspace="repo" workdir=""/>'
+                == '<toolang:workdir path="repo://"/>'
             )
             fresh = await harness.executor.rerun(
                 first.id, setup=harness.setup, state=harness.state
             )
             assert fresh.status == "succeeded", fresh.error
             assert fresh.id != first.id
-            assert harness.store.current_cwd(fresh.id) == ":repo://"
+            assert harness.store.current_cwd(fresh.id) == "repo://"
             # Rerun has a new initial cwd even when near history contains old declarations.
             assert _locations(harness.adapter.invocations[-1].call)[-1] == (
-                '<toolang:working-location workspace="repo" workdir=""/>'
+                '<toolang:workdir path="repo://"/>'
             )
 
     asyncio.run(scenario())
@@ -519,12 +528,16 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("first", "first", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "first", "first", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("retry", "retry", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "retry", "retry", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(message=Message.assistant("done")),
@@ -540,7 +553,7 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
                 )
             )
             assert run.status == "succeeded", run.error
-            assert harness.store.current_cwd(run.id) == ":repo://src"
+            assert harness.store.current_cwd(run.id) == "repo://src"
             assert len(harness.store.list_run_controls(run_id=run.id, kind="cwd")) == 1
             tool_names = [
                 step.given.call.name
@@ -549,7 +562,7 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
             ]
             assert tool_names == [
                 "_toolang__honor",
-                "_toolang__cd",
+                "_toolang__chdir",
             ]
             results = [
                 part
@@ -562,9 +575,9 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
             assert [
                 _locations(inv.call)[-1] for inv in harness.adapter.invocations
             ] == [
-                '<toolang:working-location workspace="repo" workdir=""/>',
-                '<toolang:working-location workspace="repo" workdir=""/>',
-                '<toolang:working-location workspace="repo" workdir="src"/>',
+                '<toolang:workdir path="repo://"/>',
+                '<toolang:workdir path="repo://"/>',
+                '<toolang:workdir path="repo://src"/>',
             ]
 
     asyncio.run(scenario())
@@ -581,7 +594,7 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
     original_invoke = ToolangTool.invoke
 
     async def invoke(self, arguments, context):
-        if self.name == "cd" and arguments.get("path") == ":repo://src":
+        if self.name == "chdir" and arguments.get("path") == "repo://src":
             await gate.wait()
         return await original_invoke(self, arguments, context)
 
@@ -593,12 +606,14 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("bad", "bad", "_toolang__cd", {"path": ":repo://missing"}),
+                    ToolCall(
+                        "bad", "bad", "_toolang__chdir", {"path": "repo://missing"}
+                    ),
                 )
             ),
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("slow", "slow", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall("slow", "slow", "_toolang__chdir", {"path": "repo://src"}),
                 )
             ),
         ],
@@ -617,7 +632,7 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
             gate.release()
             run = await asyncio.wait_for(handle, timeout=3)
             assert run.status == "canceled"
-            assert harness.store.current_cwd(run.id) == ":repo://"
+            assert harness.store.current_cwd(run.id) == "repo://"
             assert harness.store.list_run_controls(run_id=run.id, kind="cwd") == ()
 
     asyncio.run(scenario())
@@ -641,7 +656,7 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
                         "write",
                         "write",
                         "fs__write",
-                        {"path": ":repo://a%20b%25%E4%B8%AD/data", "text": "ok"},
+                        {"path": "repo://a%20b%25%E4%B8%AD/data", "text": "ok"},
                     ),
                 )
             ),
@@ -650,8 +665,8 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
                     ToolCall(
                         "cd",
                         "cd",
-                        "_toolang__cd",
-                        {"path": ":repo://a%20b%25%E4%B8%AD"},
+                        "_toolang__chdir",
+                        {"path": "repo://a%20b%25%E4%B8%AD"},
                     ),
                 )
             ),
@@ -669,13 +684,13 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
             )
             assert run.status == "succeeded", run.error
             assert (repo / "a b%中/data").read_text() == "ok"
-            assert harness.store.current_cwd(run.id) == ":repo://a%20b%25%E4%B8%AD"
+            assert harness.store.current_cwd(run.id) == "repo://a%20b%25%E4%B8%AD"
             assert [
                 _locations(inv.call)[-1] for inv in harness.adapter.invocations
             ] == [
-                '<toolang:working-location workspace="" workdir=""/>',
-                '<toolang:working-location workspace="" workdir=""/>',
-                '<toolang:working-location workspace="repo" workdir="a%20b%25%E4%B8%AD"/>',
+                '<toolang:workdir path=""/>',
+                '<toolang:workdir path=""/>',
+                '<toolang:workdir path="repo://a%20b%25%E4%B8%AD"/>',
             ]
 
     asyncio.run(scenario())
@@ -727,7 +742,7 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
                 )
             )
             assert run.status == "succeeded", run.error
-            assert harness.store.current_cwd(run.id) == ":repo://"
+            assert harness.store.current_cwd(run.id) == "repo://"
             assert (guest / "file").read_text() == "guest"
             assert not (host / "file").exists()
             written = [
@@ -737,7 +752,7 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
                 and step.output is not None
                 and isinstance(step.output.local.value, ToolResultPart)
             ]
-            assert written[0].output["path"] == ":repo://file"
+            assert written[0].output["path"] == "repo://file"
 
     asyncio.run(scenario())
 
@@ -766,7 +781,9 @@ flow parent:
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ScriptedModelTurn(
@@ -790,8 +807,8 @@ flow parent:
             )
             await gate.wait_until_entered()
             parent, child = harness.store.list_run_tree(root_run_id=handle.run_id)
-            assert harness.store.current_cwd(parent.id) == ":repo://"
-            assert harness.store.current_cwd(child.id) == ":repo://src"
+            assert harness.store.current_cwd(parent.id) == "repo://"
+            assert harness.store.current_cwd(child.id) == "repo://src"
             (home / "config.toml").write_text(
                 tomlkit.dumps({"workspaces": {"repo": str(replacement)}})
             )
@@ -822,7 +839,7 @@ flow parent:
             assert result.status == "succeeded", result.error
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:working-location workspace="" workdir=""/>'
+                == '<toolang:workdir path=""/>'
             )
 
     asyncio.run(scenario())
@@ -845,7 +862,9 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ScriptedModelTurn(
@@ -899,7 +918,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             assert fresh.status == "succeeded", fresh.error
             assert fresh.id != completed.id
             assert harness.store.current_cwd(completed.id) == ""
-            assert harness.store.current_cwd(fresh.id) == ":repo://"
+            assert harness.store.current_cwd(fresh.id) == "repo://"
 
     asyncio.run(scenario())
 
@@ -923,7 +942,9 @@ agic target() -> Text:
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__cd", {"path": ":repo://src"}),
+                    ToolCall(
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                    ),
                 )
             ),
             ModelCallResult(
@@ -949,10 +970,10 @@ agic target() -> Text:
                 )
             )
             assert run.status == "succeeded", run.error
-            assert harness.store.current_cwd(run.id) == ":repo://src"
+            assert harness.store.current_cwd(run.id) == "repo://src"
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:working-location workspace="repo" workdir="src"/>'
+                == '<toolang:workdir path="repo://src"/>'
             )
             assert len(harness.store.list_run_tree(root_run_id=run.id)) == 1
 

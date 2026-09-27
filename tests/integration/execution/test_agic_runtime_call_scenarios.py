@@ -225,7 +225,7 @@ agic child(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -1716,7 +1716,7 @@ agic target(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -1725,7 +1725,7 @@ agic target(_: Text) -> Text:
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -1736,7 +1736,7 @@ agic target(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -1915,7 +1915,7 @@ agic caller() -> Text:
             ]
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -2445,7 +2445,7 @@ agic target(_: Text) -> Text:
             before_reload = harness.adapter.invocations[1].call
             after_reload = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_reload.tools} == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
@@ -2454,7 +2454,7 @@ agic target(_: Text) -> Text:
                 "beta__use",
             }
             assert {tool.name for tool in after_reload.tools} == {
-                "_toolang__cd",
+                "_toolang__chdir",
                 "_toolang__workspaces",
                 "_toolang__execute",
                 "_toolang__pick",
