@@ -33,7 +33,7 @@ no added bold or color, just like `• Thinking`:
 ```text
 • Thinking
 › Running “cmd .line”
-› Reading repo:/src/main.py
+› Reading repo://src/main.py
 ```
 
 Change the model activity fallback from `• Thinking...` to `• Thinking` in

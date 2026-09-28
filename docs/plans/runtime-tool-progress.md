@@ -143,7 +143,7 @@ and duration formatting. Result summaries provide terminal display data.
 | pick | `Loading guidance: skill/name...` | `Loaded guidance: skill/name` |
 | reload | `Reloading agent state...` | `Reloaded agent state` |
 | compact | `Compacting thread history` | `Compacted thread history` |
-| honor | `Loading rules...` | `Loaded rules: repo:/src/AGENTS.md` |
+| honor | `Loading rules...` | `Loaded rules: repo://src/AGENTS.md` |
 
 The [tool progress definition](tool-progress.md) specifies the shared description
 hook and compact rendering. Honor's running description has no discovered-file

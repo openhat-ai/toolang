@@ -169,8 +169,8 @@ Workspace name plus relative path is the logical identity on both host and
 sandbox. Preserve that anchor through path preparation, honor, and execution;
 resolve the physical path without changing the logical anchor.
 
-Overlapping workspaces remain independent. For example, `repo:/sdk/AGENTS.md`
-and `sdk:/AGENTS.md` may be the same file, but produce distinct targets
+Overlapping workspaces remain independent. For example, `repo://sdk/AGENTS.md`
+and `sdk://AGENTS.md` may be the same file, but produce distinct targets
 `{workspace: "repo", path: "/sdk"}` and `{workspace: "sdk", path: "/"}`.
 Allow this redundancy; deduplicate by target, not physical file. Rules inherit
 from ancestors within the selected workspace only, not from host-only nesting.
