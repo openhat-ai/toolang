@@ -23,7 +23,7 @@ def test_tool_summary_intensity_follows_activity_not_live_region(
 ):
     marker = "✧" if runtime else "›"
     row = ProgressRow(
-        f"{prefix}{marker} Reading repo:/很长的目录/" + "nested/" * 30,
+        f"{prefix}{marker} Reading repo://很长的目录/" + "nested/" * 30,
         tone,
         surface="tool_summary",
     )

@@ -39,13 +39,13 @@ display input: running text uses available call data; completed text identifies
 rules files from result controls. Remove executor-specific runtime wording and
 the presentation-only discovery callback.
 
-Fs displays `workspace:/relative/path` (root: `workspace:/`); listing
+Fs displays `workspace://relative/path` (root: `workspace://`); listing
 `workspace://` displays “Listing/Listed workspaces”. Both existing URI and
 separate workspace/path arguments work unchanged. Shell shows its command, not
 stdout. Descriptions contain no result dumps or statistics. A nonzero shell exit
 does not change Step status under this presentation-only change.
 
-Honor uses “Loading rules...” and “Loaded rules: repo:/AGENTS.md”; completed
+Honor uses “Loading rules...” and “Loaded rules: repo://AGENTS.md”; completed
 summaries list only files supplied by the result. Pick uses “Loading/Loaded
 guidance: skill/name” or “service/name”, using the call's kind and resource ref.
 Reload retains “Reloading/Reloaded agent state”. These are display labels, not

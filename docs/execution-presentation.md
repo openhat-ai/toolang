@@ -343,12 +343,12 @@ labels:
 
 ```text
 › Listed workspaces
-✧ Loaded rules: repo:/src/AGENTS.md
+✧ Loaded rules: repo://src/AGENTS.md
 ✧ Loaded guidance: skill/python-testing
-› Wrote repo:/src/example.py
+› Wrote repo://src/example.py
 › Read steps from run_abc
 › Read more steps
-› Failed to read repo:/missing.txt
+› Failed to read repo://missing.txt
   File not found
 ```
 

@@ -1,6 +1,7 @@
 """Plain-text building blocks for tool-owned lifecycle descriptions."""
 
 from ..types.tool import ToolResult
+from .workspace_paths import workspace_uri
 
 
 def action_summary(
@@ -22,5 +23,4 @@ def action_summary(
 def workspace_label(name: str, path: str) -> str:
     """Display a logical workspace path, without resolving its host location."""
 
-    relative = path.lstrip("/")
-    return f"{name}:/" + (relative if relative != "." else "")
+    return workspace_uri(name, path)

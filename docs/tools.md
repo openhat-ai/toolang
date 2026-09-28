@@ -243,8 +243,9 @@ Tool traces show one summary line, plus
 an indented error line on failure, and no result blocks. Long lines are truncated.
 Run/execute retain their child and handoff hierarchy.
 
-Workspace display paths use `repo:/src/file.py`, independently of the URI tool
-protocol. Honor says `Loading rules...` / `Loaded rules: repo:/AGENTS.md`.
+Workspace paths in tool summaries use the canonical `name://path` syntax,
+for example `repo://src/file.py`. Honor says `Loading rules...` /
+`Loaded rules: repo://AGENTS.md`.
 Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
 capability identity rather than its source location.
 Reload continues to say `Reloaded agent state`.

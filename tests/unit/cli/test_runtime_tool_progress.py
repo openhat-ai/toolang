@@ -152,7 +152,8 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
             compact = "".join(rendered.split())
             if "Loaded" in rendered:
                 assert all(
-                    f"{workspace}:{path}" in compact for workspace, path in files
+                    f"{workspace}://{path.lstrip('/')}" in compact
+                    for workspace, path in files
                 )
             else:
                 assert "AGENTS.md" not in rendered
