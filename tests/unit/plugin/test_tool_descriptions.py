@@ -23,9 +23,9 @@ from toolang.plugin.toolsets.web import WebToolset
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Reading repo:/src/file.txt"),
-        ("succeeded", "Read repo:/src/file.txt"),
-        ("failed", "Failed to read repo:/src/file.txt"),
+        ("running", "Reading repo://src/file.txt"),
+        ("succeeded", "Read repo://src/file.txt"),
+        ("failed", "Failed to read repo://src/file.txt"),
     ],
 )
 def test_workspace_descriptions_do_not_resolve_paths(
@@ -54,8 +54,8 @@ def test_workspace_descriptions_do_not_resolve_paths(
 @pytest.mark.parametrize(
     "arguments,target",
     [
-        ({"path": "repo://"}, "repo:/"),
-        ({"path": "repo://a%20file"}, "repo:/a file"),
+        ({"path": "repo://"}, "repo://"),
+        ({"path": "repo://a%20file"}, "repo://a%20file"),
         ({"path": "."}, "“.”"),
     ],
 )
@@ -67,12 +67,12 @@ def test_workspace_root_and_catalog_descriptions(arguments, target):
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("write", "Wrote repo:/file"),
-        ("append", "Appended to repo:/file"),
-        ("glob", "Matched *.py in repo:/file"),
-        ("stat", "Inspected repo:/file"),
-        ("mkdir", "Created directory repo:/file"),
-        ("remove", "Removed repo:/file"),
+        ("write", "Wrote repo://file"),
+        ("append", "Appended to repo://file"),
+        ("glob", "Matched *.py in repo://file"),
+        ("stat", "Inspected repo://file"),
+        ("mkdir", "Created directory repo://file"),
+        ("remove", "Removed repo://file"),
     ],
 )
 def test_fs_verbs(name, expected):
@@ -192,7 +192,7 @@ def test_honor_only_describes_rule_files_when_result_supplies_them():
     }
     assert (
         tool.summary(arguments, ToolResult(output))
-        == "Loaded rules: repo:/src/AGENTS.md"
+        == "Loaded rules: repo://src/AGENTS.md"
     )
 
 
@@ -232,4 +232,4 @@ def test_pick_keeps_remote_resource_identity_in_its_label():
 
 def test_running_file_summary_preserves_authored_trailing_dots():
     tool = FilesystemToolset({}).tools()["read"]
-    assert tool.summary({"path": "repo://file..."}) == ("Reading repo:/file...")
+    assert tool.summary({"path": "repo://file..."}) == ("Reading repo://file...")

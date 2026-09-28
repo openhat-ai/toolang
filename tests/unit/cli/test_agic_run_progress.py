@@ -488,7 +488,9 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     if next_tool is not None:
         plugin = "fs" if next_tool == "read" else "_toolang"
         marker = "›" if next_tool == "read" else "✧"
-        summary = "Reading repo:/file..." if next_tool == "read" else "Loading rules..."
+        summary = (
+            "Reading repo://file..." if next_tool == "read" else "Loading rules..."
+        )
         target = StepRef.parse("run_worker.1")
         started = projector.handle(
             StepBegin(

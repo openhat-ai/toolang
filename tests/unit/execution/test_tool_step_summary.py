@@ -73,8 +73,8 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        ("running", "Reading repo:/file..."),
-        ("canceled", "Canceled: Reading repo:/file..."),
+        ("running", "Reading repo://file..."),
+        ("canceled", "Canceled: Reading repo://file..."),
     ],
 )
 def test_tool_summary_preserves_trailing_dots_in_target(status, expected) -> None:
