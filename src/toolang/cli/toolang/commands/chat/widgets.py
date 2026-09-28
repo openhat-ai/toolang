@@ -50,7 +50,7 @@ _INPUT_PLACEHOLDER = "Ask or describe a task"
 # The status bar insets its content on each side so its text lines up with the
 # other chat surfaces; the inset cells stay blank.
 _STATUS_INSET = "  "
-_STATUS_CENTER_GAP = 3
+_STATUS_CENTER_GAP = 1
 
 
 def _chat_ui_palette(
@@ -746,7 +746,7 @@ class StatusBar:
     def _center_label(self) -> str:
         workspace = self.run_workspace_label if self.running else self.workspace_label
         parts = [part for part in (self.agent_label, workspace) if part]
-        return " @ ".join(parts)
+        return "@".join(parts)
 
     def _elapsed_label(self) -> str:
         if not self.running:
