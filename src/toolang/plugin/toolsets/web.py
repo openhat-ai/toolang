@@ -16,6 +16,7 @@ from toolang.base.types.tool import ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.tool_descriptions import action_summary
 
+DEFAULT_BACKEND = "google"
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT = 15
 
@@ -29,11 +30,13 @@ class WebToolset:
     description: str | None = (
         "Search the public web and return concise result snippets."
     )
+    _backend: str = field(init=False, repr=False)
     _top_k: int = field(init=False, repr=False)
     _timeout: int = field(init=False, repr=False)
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self._backend = _backend_value(self.config.get("backend"))
         self._top_k = _int_value(self.config.get("top_k"), default=DEFAULT_TOP_K)
         self._timeout = _int_value(
             self.config.get("timeout"),
@@ -59,6 +62,7 @@ class WebToolset:
                         query,
                         max_results=max(limit * 3, limit),
                         timeout=min(self._timeout, 5),
+                        backend=self._backend,
                     )
             except TimeoutError as exc:
                 raise ToolangError(
@@ -114,12 +118,14 @@ async def _run_search(
     *,
     max_results: int,
     timeout: int,
+    backend: str,
 ) -> list[dict[str, Any]]:
     return await to_process.run_sync(
         _search_text,
         query,
         max_results,
         timeout,
+        backend,
         cancellable=True,
     )
 
@@ -128,6 +134,7 @@ def _search_text(
     query: str,
     max_results: int,
     timeout: int,
+    backend: str,
 ) -> list[dict[str, Any]]:
     try:
         from ddgs import DDGS
@@ -136,7 +143,15 @@ def _search_text(
             "The 'ddgs' package is not installed. Install Toolang dependencies to enable web."
         ) from exc
     with DDGS(timeout=timeout) as searcher:
-        return list(searcher.text(query, max_results=max_results))
+        return list(searcher.text(query, max_results=max_results, backend=backend))
+
+
+def _backend_value(value: object) -> str:
+    if value is None:
+        return DEFAULT_BACKEND
+    if not isinstance(value, str) or not value.strip():
+        raise ToolangError("web backend must be a non-empty string")
+    return value.strip()
 
 
 def _int_value(value: object, *, default: int) -> int:
