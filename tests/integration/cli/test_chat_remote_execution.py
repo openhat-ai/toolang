@@ -102,6 +102,12 @@ agic chat(_: Part[]) -> Part[]:
             assert session.list_runnables("runnable")["default"] == entry
             assert setting == entry
         thread_id = session.create_thread()
+        absolute_workspace = core.layout.home / ".tmp" / "absolute"
+        absolute_workspace.mkdir(parents=True)
+        assert session.resolve_workdir(None, None, thread_id) == "tmp://"
+        assert session.resolve_workdir(str(absolute_workspace), None, thread_id) == (
+            "tmp://absolute"
+        )
         request = session.build_request(
             thread_id,
             RunOverride(),
@@ -114,6 +120,7 @@ agic chat(_: Part[]) -> Part[]:
             errors.append,
             states.append,
         )
+        assert session.resolve_workdir(None, None, thread_id) == "tmp://"
         result = session.get_result(None, thread_id=thread_id)
 
         assert isinstance(events[0], RunBegin)

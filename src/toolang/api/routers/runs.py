@@ -27,6 +27,7 @@ from toolang.api.schemas import (
     RunRerunRequest,
     RunRetryRequest,
     RunSteerRequest,
+    WorkdirResolveRequest,
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
@@ -369,6 +370,26 @@ async def run_defaults(
             },
         },
     }
+
+
+@router.post("/workdir/resolve", summary="Resolve Run Workdir")
+def resolve_run_workdir(
+    core: AgentCoreDep,
+    payload: WorkdirResolveRequest,
+) -> dict[str, str]:
+    """Resolve a proposed location without accepting or mutating a Run."""
+
+    try:
+        workdir = core.executor.resolve_workdir(
+            core.setup.current(),
+            core.state.current(),
+            workdir=payload.workdir,
+            workdir_base=payload.workdir_base,
+            thread=payload.thread_id,
+        )
+    except (OSError, ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"workdir": workdir}
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)

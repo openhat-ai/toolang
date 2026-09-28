@@ -1331,6 +1331,7 @@ Delete is destructive and is available only through archived routes.
 - `POST /api/v1/runs/stream`
 - `POST /api/v1/runs/authored/stream`
 - `GET /api/v1/runs/defaults`
+- `POST /api/v1/runs/workdir/resolve`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
@@ -1448,9 +1449,14 @@ names must be unique. Unknown fields and invalid combinations return `422`; a
 missing thread returns `404`.
 
 `GET /api/v1/runs/defaults` returns one concrete `model` request, including its
-typed `parameters`, plus `runnable` and materialized `policy` for clients to
-adopt as session-owned defaults. Changing client session state does not call a
-validation endpoint; validation occurs on the next complete run submission.
+typed `parameters`, plus `runnable`, materialized `policy`, and the effective
+canonical `workdir` for clients to adopt as session-owned defaults. The optional
+`thread_id` selects the workdir inherited from that thread. The resolver endpoint
+`POST /api/v1/runs/workdir/resolve` accepts optional `thread_id`, `workdir`, and
+`workdir_base` fields and returns one canonical `workdir`. It applies the same
+workspace authorization and path rules as run submission, but does not accept a
+run or mutate client session settings. Run submissions still perform full
+validation of the complete request.
 
 `GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
 `RunDetail` with a nonempty resolved output. An unknown thread and a known

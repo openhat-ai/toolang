@@ -70,7 +70,7 @@ def _chat_ui_palette(
         "cursor": "reverse",
         "input.cursor": "reverse",
         "status": "",
-        "status.elapsed": "dim",
+        "status.context": "dim",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
         "dim": "dim",
@@ -647,10 +647,18 @@ class PromptBox:
 
 
 class StatusBar:
-    def __init__(self, runnable_label: str, model_label: str) -> None:
+    def __init__(
+        self,
+        runnable_label: str,
+        model_label: str,
+        agent_label: str = "",
+        workspace_label: str | None = None,
+    ) -> None:
         self.runnable_label = runnable_label
         self.model_label = model_label
-        self.active_runnable_label: str | None = None
+        self.agent_label = agent_label
+        self.workspace_label = workspace_label
+        self.run_workspace_label = workspace_label
         self._transient_error = ""
         self._persistent_error = ""
         self.running = False
@@ -666,12 +674,20 @@ class StatusBar:
             char=" ",
         )
 
-    def set_status(self, runnable_label: str, model_label: str) -> None:
+    def set_status(
+        self,
+        runnable_label: str,
+        model_label: str,
+        workspace_label: str | None = None,
+    ) -> None:
         self.runnable_label = runnable_label
         self.model_label = model_label
+        self.workspace_label = workspace_label
+        if not self.running:
+            self.run_workspace_label = workspace_label
 
-    def set_active_runnable(self, runnable_label: str | None) -> None:
-        self.active_runnable_label = runnable_label
+    def set_run_workspace(self, workspace_label: str | None) -> None:
+        self.run_workspace_label = workspace_label
 
     @property
     def error_message(self) -> str:
@@ -695,7 +711,7 @@ class StatusBar:
     def set_running(self, running: bool) -> None:
         self.running = running
         if not running:
-            self.active_runnable_label = None
+            self.run_workspace_label = self.workspace_label
         self._elapsed_seconds = 0
 
     @property
@@ -724,6 +740,17 @@ class StatusBar:
             return left_cell, _STATUS_INSET, terminal_width - inset_width
         return "", "", terminal_width
 
+    def _center_label(self) -> str:
+        workspace = self.run_workspace_label if self.running else self.workspace_label
+        parts = [part for part in (self.agent_label, workspace) if part]
+        if self.running:
+            parts.append(
+                _format_elapsed_seconds(self._elapsed_seconds)
+                if self._elapsed_seconds >= 1
+                else "running"
+            )
+        return " · ".join(parts)
+
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
             marker = "!"
@@ -750,89 +777,58 @@ class StatusBar:
             if right_cell:
                 cells.append(("class:status", right_cell))
             return cells
-        displayed_runnable = _chat_runnable_label(
-            self.active_runnable_label or self.runnable_label
-            if self.running
-            else self.runnable_label
-        )
-        default_runnable = _chat_runnable_label(self.runnable_label)
-        default_runnable = (
-            default_runnable
-            if self.running and displayed_runnable != default_runnable
-            else None
-        )
-        activity_label = (
-            f"running for {_format_elapsed_seconds(self._elapsed_seconds)}"
-            if self._elapsed_seconds >= 1
-            else "running"
-        )
+
         left_cell, right_cell, body_width = self._status_insets()
-        runnable_width = get_cwidth(displayed_runnable)
-        default_width = get_cwidth(default_runnable or "")
-        model_width = get_cwidth(self.model_label)
-        activity_text = f" {activity_label}" if self.running else ""
-        activity_width = get_cwidth(activity_text)
-        fixed_width = activity_width + 1 + (3 if default_runnable else 0)
-        overflow = max(
-            0,
-            fixed_width + runnable_width + default_width + model_width - body_width,
+        left_label = _chat_runnable_label(self.runnable_label)
+        model_label = self.model_label
+        left_width = min(get_cwidth(left_label), body_width)
+        model_width = min(get_cwidth(model_label), body_width)
+        anchor_gap = (
+            2 if left_width and model_width else int(bool(left_width or model_width))
         )
-        fitted_default_width, overflow = _reduce_status_width(default_width, overflow)
-        fitted_runnable_width, overflow = _reduce_status_width(runnable_width, overflow)
-        fitted_model_width, overflow = _reduce_status_width(model_width, overflow)
-        activity_reduction = min(activity_width, overflow)
-        fitted_activity_width = activity_width - activity_reduction
-        overflow -= activity_reduction
-        gap_width = 1
-        if overflow and default_runnable is not None:
-            overflow = max(0, overflow - fitted_default_width - 3)
-            fitted_default_width = 0
-            default_runnable = None
-        if overflow:
-            runnable_reduction = min(fitted_runnable_width, overflow)
-            fitted_runnable_width -= runnable_reduction
-            overflow -= runnable_reduction
-        if overflow:
-            model_reduction = min(fitted_model_width, overflow)
-            fitted_model_width -= model_reduction
-            overflow -= model_reduction
-        if overflow:
-            gap_reduction = min(gap_width, overflow)
-            gap_width -= gap_reduction
-        displayed_runnable = truncate(displayed_runnable, fitted_runnable_width)
-        default_runnable = (
-            truncate(default_runnable, fitted_default_width)
-            if default_runnable is not None
-            else None
-        )
-        model_label = _truncate_model_label(self.model_label, fitted_model_width)
-        activity_text = truncate(activity_text, fitted_activity_width)
-        segments = [("class:status", displayed_runnable)]
-        if activity_text:
-            segments.append(("class:status.elapsed", activity_text))
-        used = sum(get_cwidth(text) for _style, text in segments)
-        right_width = get_cwidth(model_label) + (
-            get_cwidth(default_runnable) + 3 if default_runnable is not None else 0
-        )
-        padding = max(
-            gap_width,
-            body_width - used - right_width,
-        )
-        result = [
-            ("class:status", left_cell),
-            *segments,
-            ("class:status", " " * padding),
-        ]
-        if default_runnable is not None:
-            result.extend(
-                [
-                    ("class:status", default_runnable),
-                    ("class:status", " · "),
-                ]
+        overflow = max(0, left_width + model_width + anchor_gap - body_width)
+        left_width, overflow = _reduce_status_width(left_width, overflow)
+        model_width = max(0, model_width - overflow)
+        left_label = truncate(left_label, left_width)
+        model_label = _truncate_model_label(model_label, model_width)
+
+        center_label = self._center_label()
+        center_full_width = get_cwidth(center_label)
+        center_start_min = left_width + (1 if left_width else 0)
+        center_end_max = body_width - model_width - (1 if model_width else 0)
+        center_available = max(0, center_end_max - center_start_min)
+        center_width = min(center_full_width, center_available)
+        center_start = (body_width - center_width) // 2
+        if center_width:
+            center_start = min(
+                max(center_start, center_start_min),
+                center_end_max - center_width,
             )
-        result.append(("class:status", model_label))
-        result.append(("class:status", right_cell))
-        return result
+        center_label = truncate(center_label, center_width)
+
+        cells: list[tuple[str, str]] = []
+        if left_cell:
+            cells.append(("class:status", left_cell))
+        cursor = 0
+        if left_label:
+            cells.append(("class:status", left_label))
+            cursor += get_cwidth(left_label)
+        if center_label:
+            if center_start > cursor:
+                cells.append(("class:status", " " * (center_start - cursor)))
+            cells.append(("class:status.context", center_label))
+            cursor = center_start + get_cwidth(center_label)
+        model_start = body_width - get_cwidth(model_label)
+        if model_label:
+            if model_start > cursor:
+                cells.append(("class:status", " " * (model_start - cursor)))
+            cells.append(("class:status", model_label))
+            cursor = model_start + get_cwidth(model_label)
+        if cursor < body_width:
+            cells.append(("class:status", " " * (body_width - cursor)))
+        if right_cell:
+            cells.append(("class:status", right_cell))
+        return cells
 
     @staticmethod
     def _terminal_width() -> int:

@@ -297,6 +297,14 @@ class RunCreateRequest(ApiRequest):
         return value
 
 
+class WorkdirResolveRequest(ApiRequest):
+    """Resolve one session or run workdir without creating a Run."""
+
+    thread_id: StrictText | None = None
+    workdir: StrictText | None = None
+    workdir_base: StrictText | None = None
+
+
 class RunOverridePayload(ApiRequest):
     """One retained low-level restart command on the stable HTTP wire."""
 

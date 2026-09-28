@@ -401,23 +401,43 @@ class RunExecutor:
             )
         return default
 
+    def resolve_workdir(
+        self,
+        setup: AgentSetup,
+        state: AgentState,
+        *,
+        workdir: str | None,
+        workdir_base: str | None = None,
+        thread: str | None = None,
+        inherit_thread_workdir: bool = True,
+    ) -> str:
+        """Resolve a requested workdir to its canonical workspace location."""
+        previous = (
+            self.initial_workdir(setup, state, thread)
+            if inherit_thread_workdir
+            else self._default_workdir(setup, state)
+        )
+        if workdir is None:
+            return previous
+        base = workdir_base or previous
+        context = self._workdir_context(setup, state, base)
+        target, name, relative = resolve_input_path(workdir, context)
+        if not target.is_dir():
+            raise ToolangError(f"workdir target is not a directory: {workdir}")
+        return workspace_uri(name, relative)
+
     def _initial_workdir(
         self, spec: RunSpec, *, inherit_thread_workdir: bool = True
     ) -> str:
         """Resolve one root Run's workdir from its explicit path or thread history."""
-        previous = (
-            self.initial_workdir(spec.setup, spec.state, spec.thread)
-            if inherit_thread_workdir
-            else self._default_workdir(spec.setup, spec.state)
+        return self.resolve_workdir(
+            spec.setup,
+            spec.state,
+            workdir=spec.workdir,
+            workdir_base=spec.workdir_base,
+            thread=spec.thread,
+            inherit_thread_workdir=inherit_thread_workdir,
         )
-        if spec.workdir is None:
-            return previous
-        base = spec.workdir_base or previous
-        context = self._workdir_context(spec.setup, spec.state, base)
-        target, name, relative = resolve_input_path(spec.workdir, context)
-        if not target.is_dir():
-            raise ToolangError(f"workdir target is not a directory: {spec.workdir}")
-        return workspace_uri(name, relative)
 
     def run(
         self,

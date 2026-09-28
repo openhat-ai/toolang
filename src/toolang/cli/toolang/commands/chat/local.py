@@ -317,6 +317,35 @@ class LocalChatSession:
             raise RuntimeError("local chat session settings are not initialized")
         return self._surface
 
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        """Resolve a status/session workdir using the active setup and state."""
+
+        return cast(
+            str,
+            self._submit(
+                self._resolve_workdir(workdir, workdir_base, thread_id)
+            ).result(),
+        )
+
+    async def _resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        return self.executor.resolve_workdir(
+            self.setup_watcher.current(),
+            self.state_watcher.current(),
+            workdir=workdir,
+            workdir_base=workdir_base,
+            thread=thread_id,
+        )
+
     def initial_workdir(self, thread_id: str | None) -> str:
         return cast(
             str,

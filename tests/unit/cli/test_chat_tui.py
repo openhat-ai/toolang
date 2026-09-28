@@ -3218,139 +3218,97 @@ def test_chat_model_label_preserves_explicit_reasoning_values(
 
 @pytest.mark.parametrize("module", ["", "agent::"])
 @pytest.mark.parametrize("runnable", ["agic:chat", "agic:main", "flow:main"])
-def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
+def test_chat_status_bar_keeps_session_settings_at_the_edges(
     monkeypatch: Any,
     module: str,
     runnable: str,
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
-    text = "".join(
-        fragment
-        for _style, fragment in widgets.StatusBar(
-            f"{module}{runnable}", "runtime model"
-        )._render()
-    )
-
-    assert "^d exit" not in text
-    assert "↑↓ history" not in text
-    assert text.startswith(f"{widgets._STATUS_INSET}{runnable}")
-    assert text.endswith(f"runtime model{widgets._STATUS_INSET}")
-    assert get_cwidth(text) == 80
-
-
-def test_chat_status_bar_shows_running_and_elapsed_time_without_a_marker() -> None:
-    status = widgets.StatusBar("agic:chat", "runtime model")
-    idle = status._render()
-    idle_text = "".join(fragment for _style, fragment in idle)
-
-    status.set_running(True)
-    running = status._render()
-    running_text = "".join(fragment for _style, fragment in running)
-    status.set_elapsed_seconds(1)
-    elapsed = status._render()
-
-    assert idle_text.startswith(f"{widgets._STATUS_INSET}agic:chat")
-    assert idle_text.endswith(f"runtime model{widgets._STATUS_INSET}")
-    assert running_text.startswith(f"{widgets._STATUS_INSET}agic:chat running")
-    assert "0s" not in running_text
-    assert running_text.endswith(f"runtime model{widgets._STATUS_INSET}")
-    assert idle[0] == ("class:status", widgets._STATUS_INSET)
-    assert idle[1] == ("class:status", "agic:chat")
-    assert running[:3] == [
-        ("class:status", widgets._STATUS_INSET),
-        ("class:status", "agic:chat"),
-        ("class:status.elapsed", " running"),
-    ]
-    assert elapsed[:3] == [
-        ("class:status", widgets._STATUS_INSET),
-        ("class:status", "agic:chat"),
-        ("class:status.elapsed", " running for 1s"),
-    ]
-    assert elapsed[-2] == ("class:status", "runtime model")
-    assert elapsed[-1] == ("class:status", widgets._STATUS_INSET)
-    assert status.elapsed_seconds == 1
-
-    status.set_running(False)
-    assert status._render() == idle
-
-
-@pytest.mark.parametrize("module", ["", "agent::"])
-def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
-    monkeypatch: Any,
-    module: str,
-) -> None:
-    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
-    status = widgets.StatusBar(f"{module}flow:research", "openai/gpt-5")
+    status = widgets.StatusBar(f"{module}{runnable}", "runtime model", "hak", "tq")
     idle = "".join(text for _style, text in status._render())
 
-    status.set_active_runnable(f"{module}agic:chat")
+    status.set_run_workspace("tmp")
     status.set_running(True)
-    status.set_elapsed_seconds(18)
+    status.set_elapsed_seconds(90)
     running = "".join(text for _style, text in status._render())
 
-    assert idle.startswith(f"{widgets._STATUS_INSET}flow:research")
-    assert running.startswith(f"{widgets._STATUS_INSET}agic:chat running for 18s")
-    assert running.endswith(f"flow:research · openai/gpt-5{widgets._STATUS_INSET}")
-    assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
+    assert "^d exit" not in idle
+    assert "↑↓ history" not in idle
+    assert idle.startswith(f"{widgets._STATUS_INSET}{runnable}")
+    assert "hak · tq" in idle
+    assert running.startswith(f"{widgets._STATUS_INSET}{runnable}")
+    assert "hak · tmp · 1m30s" in running
+    assert "running for" not in running
+    assert "agent::" not in idle + running
+    assert "tmp · runtime model" not in running
+    assert idle.endswith(f"runtime model{widgets._STATUS_INSET}")
+    assert running.endswith(f"runtime model{widgets._STATUS_INSET}")
+    assert idle.rindex("runtime model") == running.rindex("runtime model")
     assert get_cwidth(idle) == get_cwidth(running) == 80
-    assert status.runnable_label == f"{module}flow:research"
-    assert status.active_runnable_label == f"{module}agic:chat"
 
 
-@pytest.mark.parametrize(
-    ("default", "active"),
-    [
-        ("agic:chat", "agic:chat"),
-        ("agic:chat", "agic:chat"),
-        ("agic:chat", "agic:chat"),
-    ],
-)
-def test_chat_status_bar_omits_the_matching_default_runnable(
-    default: str, active: str
-) -> None:
-    status = widgets.StatusBar(default, "openai/gpt-5")
-    status.set_active_runnable(active)
+def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> None:
+    status = widgets.StatusBar("agic:chat", "runtime model", "hak", "tq")
+    idle = "".join(text for _style, text in status._render())
+
+    status.set_run_workspace("tmp")
     status.set_running(True)
+    running = "".join(text for _style, text in status._render())
+    status.set_elapsed_seconds(1)
+    elapsed = "".join(text for _style, text in status._render())
 
-    text = "".join(fragment for _style, fragment in status._render())
+    assert status._center_label() == "hak · tmp · 1s"
+    assert "hak · tq" in idle
+    assert "hak · tmp · running" in running
+    assert "hak · tmp · 1s" in elapsed
+    context_fragment = next(
+        style for style, value in status._render() if "hak · tmp · 1s" in value
+    )
+    assert context_fragment == "class:status.context"
 
-    assert text.count("agic:chat") == 1
-    assert "$" not in text
-    assert text.endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
+    status.set_running(False)
+    stopped = "".join(text for _style, text in status._render())
+    assert "hak · tq" in stopped
+    assert "running" not in stopped
+    assert "1s" not in stopped
 
 
-def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
+def test_chat_status_bar_updates_only_the_session_setting_edges_during_a_run(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 100))
+    status = widgets.StatusBar("agic:chat", "model · auto", "hak", "session")
+    status.set_run_workspace("run-space")
+    status.set_running(True)
+
+    status.set_status("flow:relay", "new-model · high", "new-session-space")
+    text = "".join(fragment for _style, fragment in status._render())
+
+    assert text.startswith(f"{widgets._STATUS_INSET}flow:relay")
+    assert "hak · run-space · running" in text
+    assert text.endswith(f"new-model · high{widgets._STATUS_INSET}")
+    assert "new-session-space" not in text
+    assert text.count("flow:relay") == 1
+
+
+def test_chat_status_bar_truncates_center_before_session_anchors(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 70))
     status = widgets.StatusBar(
         "flow:a_very_long_default_runnable",
-        "openai/gpt-5",
+        "openai/gpt-5 · high",
+        "very-long-agent-name",
+        "very-long-workspace-name",
     )
-    status.set_active_runnable("agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(18)
 
     text = "".join(fragment for _style, fragment in status._render())
 
-    assert get_cwidth(text) == 40
-    assert text.endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
-    assert "· openai/gpt-5" in text
-
-
-def test_chat_status_bar_truncates_model_before_effort_suffix(
-    monkeypatch: Any,
-) -> None:
-    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 28))
-    status = widgets.StatusBar(
-        "agic:chat",
-        "openai/a-very-long-model · high",
-    )
-
-    text = "".join(fragment for _style, fragment in status._render())
-
-    assert get_cwidth(text) == 28
-    assert text.endswith(f"… · high{widgets._STATUS_INSET}")
+    assert get_cwidth(text) == 70
+    assert text.endswith(f"openai/gpt-5 · high{widgets._STATUS_INSET}")
+    assert "very-long-a…" in text
 
 
 @pytest.mark.parametrize("terminal_width", [1, 2, 5, 10, 20])
@@ -3366,8 +3324,9 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
     status = widgets.StatusBar(
         "flow:a_very_long_default_runnable",
         "openai/a-very-long-model · high",
+        "hak",
+        "a-very-long-workspace",
     )
-    status.set_active_runnable("agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(3661)
 
@@ -3376,11 +3335,103 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
     assert get_cwidth(text) == terminal_width
 
 
+def test_chat_status_workspace_label_uses_workspace_uri_or_base() -> None:
+    assert tui._workspace_label("tq://src/ui") == "tq"
+    assert tui._workspace_label("src/ui", "tmp://") == "tmp"
+    assert tui._workspace_label("/absolute/path") is None
+
+
+def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
+    class WorkspaceClient(FakeClient):
+        def resolve_workdir(
+            self,
+            workdir: str | None,
+            workdir_base: str | None,
+            thread_id: str | None,
+        ) -> str:
+            del workdir_base, thread_id
+            return "repo://project" if workdir == "/private/project" else "tmp://"
+
+    client = WorkspaceClient()
+    app = tui.ChatTuiApp(
+        thread_id="term_workspace",
+        setting=replace(
+            client.initial_setting(),
+            workdir="/private/project",
+        ),
+        home="/tmp/agent",
+        input_history=None,
+        client=client,
+        agent_name="hak",
+    )
+
+    assert app.status_bar.workspace_label == "repo"
+    app.status_bar.set_run_workspace(app._workspace_label_for("/private/project", None))
+    app.status_bar.set_running(True)
+    assert app.status_bar._center_label() == "hak · repo · running"
+    app.status_bar.set_running(False)
+
+    app.setting = replace(app.setting, workdir=None, workdir_base=None)
+    app.app_context.refresh_status()
+    assert app.status_bar.workspace_label == "tmp"
+
+
+def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_status",
+        setting=SessionSetting(
+            model=ModelRequest("openai/gpt-5"),
+            runnable="agic:chat",
+            workdir="session://",
+        ),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+        agent_name="hak",
+    )
+    monkeypatch.setattr(tui.events, "handle_run_event", lambda _event, _app: None)
+    app.status_bar.set_run_workspace("session")
+    app.status_bar.set_running(True)
+    app.handle_run_event(_run_begin())
+
+    app.handle_run_event(
+        PartEnd(
+            step=StepRef.parse("run_1.0"),
+            part=0,
+            data=ToolResultPart(
+                tool_call_id="call_root",
+                tool_name="_toolang__chdir",
+                tool_family="_toolang",
+                output={"cwd": "other://nested/path"},
+            ),
+        )
+    )
+    assert app.status_bar.run_workspace_label == "other"
+    assert app.status_bar._center_label() == "hak · other · running"
+
+    app.handle_run_event(
+        PartEnd(
+            step=StepRef.parse("run_child.0"),
+            part=0,
+            data=ToolResultPart(
+                tool_call_id="call_child",
+                tool_name="_toolang__chdir",
+                tool_family="_toolang",
+                output={"cwd": "child-workspace://"},
+            ),
+        )
+    )
+    assert app.status_bar.run_workspace_label == "other"
+    assert "child-workspace" not in app.status_bar._center_label()
+
+
 def test_chat_status_palette_has_no_marker_or_spinner_styles() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.elapsed"] == "dim"
+    assert palette["status.context"] == "dim"
     assert palette["status.error.marker"] == "fg:ansired"
     assert palette["status.error"] == "fg:ansired"
     assert (
@@ -3391,6 +3442,7 @@ def test_chat_status_palette_has_no_marker_or_spinner_styles() -> None:
             "status.agic",
             "status.flow",
             "status.model",
+            "status.elapsed",
         }
         & palette.keys()
     )
@@ -3440,9 +3492,7 @@ def test_chat_tui_floors_status_elapsed_time() -> None:
     app._update_status_elapsed(168.9)
 
     assert app.status_bar.elapsed_seconds == 68
-    assert "running for 1m08s" in "".join(
-        text for _style, text in app.status_bar._render()
-    )
+    assert "1m08s" in "".join(text for _style, text in app.status_bar._render())
 
     app._update_status_elapsed(171.2)
 
@@ -3548,9 +3598,7 @@ def test_chat_tui_tracks_elapsed_without_invalidating_a_visible_error(
     assert app.status_bar.elapsed_seconds == 1
     assert invalidations == 0
     app.status_bar.clear_transient_error()
-    assert "running for 1s" in "".join(
-        text for _style, text in app.status_bar._render()
-    )
+    assert "1s" in "".join(text for _style, text in app.status_bar._render())
 
 
 def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
@@ -3643,13 +3691,14 @@ def test_chat_tui_stops_short_run_activity_immediately() -> None:
         input_history=None,
         client=FakeClient(),
     )
-    app.status_bar.set_active_runnable("agic:active")
+    app.status_bar.set_run_workspace("tmp")
     app._set_status_running(True)
 
     app._set_status_running(False)
 
     assert not app.status_bar.running
-    assert app.status_bar.active_runnable_label is None
+    assert app.status_bar.run_workspace_label == app.status_bar.workspace_label
+    assert app.status_bar._center_label() == ""
     assert app.status_bar._render()[:2] == [
         ("class:status", widgets._STATUS_INSET),
         ("class:status", "agic:chat"),
@@ -3906,20 +3955,23 @@ def test_chat_tui_treats_kind_specific_default_as_a_runnable_name() -> None:
     assert app._runnable_label() == "flow:research"
 
 
-def test_chat_tui_uses_the_root_run_runnable_as_active_status(
+def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id="term_status",
         setting=SessionSetting(
-            model=ModelRequest("openai/gpt-5"), runnable="flow:research"
+            model=ModelRequest("openai/gpt-5"),
+            runnable="flow:research",
+            workdir="tq://",
         ),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
+        agent_name="hak",
     )
     monkeypatch.setattr(tui.events, "handle_run_event", lambda _event, _app: None)
-    app.status_bar.set_active_runnable("flow:research")
+    app.status_bar.set_run_workspace("run-workspace")
     app.status_bar.set_running(True)
 
     app.handle_run_event(_run_begin(runnable_name="review"))
@@ -3932,7 +3984,11 @@ def test_chat_tui_uses_the_root_run_runnable_as_active_status(
         )
     )
 
-    assert app.status_bar.active_runnable_label == "agic:review"
+    assert app._status_run_id == "run_1"
+    assert app.status_bar.runnable_label == "flow:research"
+    assert app.status_bar._center_label() == "hak · run-workspace · running"
+    assert "review" not in app.status_bar._center_label()
+    assert "child" not in app.status_bar._center_label()
 
 
 def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
@@ -3942,35 +3998,55 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
+        agent_name="hak",
     )
     app.active_run_id = "run_active"
-    app.status_bar.set_active_runnable("agic:chat")
+    app._workdir_update_policies["run_active"] = (
+        app._session_workdir_revision,
+        True,
+    )
+    app.status_bar.set_run_workspace("active-space")
     app.status_bar.set_running(True)
 
     app.handle_submit("/flow research")
 
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
-    assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.runnable_label == "flow:research"
-    assert runnable_changed.endswith(
-        f"flow:research · openai/gpt-5{widgets._STATUS_INSET}"
-    )
+    assert runnable_changed.startswith(f"{widgets._STATUS_INSET}flow:research")
+    assert runnable_changed.count("flow:research") == 1
+    assert "active-space" in runnable_changed
+    assert "flow:research · openai/gpt-5" not in runnable_changed
     assert app.queue == []
 
     app.handle_submit("/model effort=high")
 
     model_changed = "".join(text for _style, text in app.status_bar._render())
-    assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.model_label == "openai/gpt-5 · high"
-    assert model_changed.endswith(
-        f"flow:research · openai/gpt-5 · high{widgets._STATUS_INSET}"
-    )
+    assert model_changed.endswith(f"openai/gpt-5 · high{widgets._STATUS_INSET}")
+    assert model_changed.count("flow:research") == 1
+    assert "active-space" in model_changed
+
+    app.handle_submit("/cd next://src")
+
+    cd_changed = "".join(text for _style, text in app.status_bar._render())
+    assert app.status_bar.workspace_label == "next"
+    assert app.status_bar.run_workspace_label == "active-space"
+    assert "active-space" in cd_changed
+    assert "next" not in cd_changed
+    app._handle_run_state(RunWorkdirUpdated("run_active", "run-final://"))
+    assert app.setting.workdir == "next://src"
 
     app.handle_submit("/agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
     assert restored.endswith(f"openai/gpt-5 · high{widgets._STATUS_INSET}")
+    assert "active-space" in restored
+
+    app._finish_active_run()
+    stopped = "".join(text for _style, text in app.status_bar._render())
+    assert "hak · next" in stopped
+    assert "active-space" not in stopped
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
@@ -5054,7 +5130,7 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
     assert app.unfinalized_blocks == []
 
 
-def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
+def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=SessionSetting(
@@ -5066,7 +5142,7 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
     )
     app.active_run_id = "run_busy"
     app.run_in_flight.set()
-    app.status_bar.set_active_runnable("agic:chat")
+    app.status_bar.set_run_workspace("current")
     app.status_bar.set_running(True)
     app.queue.append(
         QueuedCall(
@@ -5077,6 +5153,7 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
                 runnable=RunnableRequest("flow:research", CallInput({"_": "queued"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
+                workdir="tmp://queued",
             ),
         )
     )
@@ -5084,7 +5161,9 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
     app._finish_active_run()
 
     assert app.status_bar.running
-    assert app.status_bar.active_runnable_label == "flow:research"
+    assert app.status_bar.runnable_label == "agic:chat"
+    assert app.status_bar.run_workspace_label == "tmp"
+    assert app.status_bar._center_label() == "tmp · running"
     assert app.run_in_flight.is_set()
 
 
@@ -5736,6 +5815,18 @@ class FakeClient(ChatClient):
             model=ModelRequest("openai/gpt-5"),
             runnable="agic:chat",
         )
+
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        del thread_id
+        for value in (workdir, workdir_base):
+            if isinstance(value, str) and "://" in value:
+                return value
+        raise ToolangError("fake client cannot resolve this workdir")
 
     def apply_setting(
         self,
@@ -6616,6 +6707,10 @@ def test_chat_tui_seeds_and_updates_session_workdir() -> None:
     )
 
     assert app.setting.workdir == "repo://from-history"
+    app._workdir_update_policies["run_1"] = (
+        app._session_workdir_revision,
+        True,
+    )
     app._handle_run_state(RunWorkdirUpdated("run_1", "tmp://final"))
     assert app.setting.workdir == "tmp://final"
     assert app.setting.workdir_base is None

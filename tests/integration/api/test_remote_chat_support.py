@@ -351,6 +351,21 @@ agic chat(_: Part[]) -> Part[]:
             thread_defaults = client.get(
                 "/api/v1/runs/defaults", params={"thread_id": thread_id}
             )
+            absolute_workdir = client.post(
+                "/api/v1/runs/workdir/resolve",
+                json={
+                    "thread_id": thread_id,
+                    "workdir": str(core.layout.home / ".tmp" / "subdir"),
+                },
+            )
+            relative_workdir = client.post(
+                "/api/v1/runs/workdir/resolve",
+                json={
+                    "thread_id": thread_id,
+                    "workdir": "subdir",
+                    "workdir_base": "tmp://",
+                },
+            )
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
             unknown = client.get("/api/v1/threads/term_missing/result")
             wrong_namespace = client.get("/api/v1/threads/run_missing/result")
@@ -398,6 +413,10 @@ agic chat(_: Part[]) -> Part[]:
         assert defaults.json()["workdir"] == "tmp://"
         assert thread_defaults.status_code == 200
         assert thread_defaults.json()["workdir"] == "tmp://"
+        assert absolute_workdir.status_code == 200
+        assert absolute_workdir.json() == {"workdir": "tmp://subdir"}
+        assert relative_workdir.status_code == 200
+        assert relative_workdir.json() == {"workdir": "tmp://subdir"}
         assert final_thread_defaults.status_code == 200
         assert final_thread_defaults.json()["workdir"] == "tmp://subdir"
         assert new_session_defaults.status_code == 200

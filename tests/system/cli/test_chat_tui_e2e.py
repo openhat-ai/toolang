@@ -227,12 +227,12 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
     try:
         session.wait_for("agic:chat", "scripted")
         session.send(b"hold status\r")
-        session.wait_for("agic:chat running")
+        session.wait_for("agic:chat", " · tmp · running")
 
         session.send(b"/flow relay\r")
-        running = session.wait_for("flow:relay · test/scripted")
+        running = session.wait_for("flow:relay", "test/scripted")
 
-        assert "agic:chat" in running
+        assert "flow:relay · test/scripted" not in running
         assert "Traceback" not in running
 
         (tmp_path / "release-model").touch()
@@ -253,8 +253,9 @@ def test_chat_tui_status_shows_compact_elapsed_time(tmp_path: Path) -> None:
         session.wait_for("agic:chat", "scripted")
         session.send(b"hold elapsed status\r")
 
-        running = session.wait_for("agic:chat running", " for 1s")
+        running = session.wait_for("agic:chat", "1s")
 
+        assert "running for" not in running
         assert "■" not in running
         assert "◧" not in running
         (tmp_path / "release-model").touch()
@@ -276,7 +277,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
     try:
         session.wait_for("agic:chat", "scripted")
         session.send(b"hold queue\r")
-        session.wait_for("agic:chat running")
+        session.wait_for("agic:chat", " · tmp · running")
 
         session.send(b"queued follow-up\r")
         visible = session.wait_for(

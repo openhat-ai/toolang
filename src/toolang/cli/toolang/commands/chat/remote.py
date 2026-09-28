@@ -193,6 +193,43 @@ class RemoteChatSession:
     def initial_setting(self) -> SessionSetting:
         return self._session_defaults()
 
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        return cast(
+            str,
+            self._submit(
+                self._resolve_workdir(workdir, workdir_base, thread_id)
+            ).result(),
+        )
+
+    async def _resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        payload = await self._request_json(
+            "POST",
+            "/api/v1/runs/workdir/resolve",
+            operation="workdir resolution",
+            json={
+                "thread_id": thread_id,
+                "workdir": workdir,
+                "workdir_base": workdir_base,
+            },
+        )
+        body = _mapping(payload, operation="workdir resolution")
+        resolved = body.get("workdir")
+        if set(body) != {"workdir"} or not isinstance(resolved, str) or not resolved:
+            raise _RemoteChatProtocolError(
+                "remote chat workdir resolution returned invalid data"
+            )
+        return resolved
+
     def initial_workdir(self, thread_id: str | None) -> str:
         if thread_id is None:
             workdir = self._session_defaults().workdir
