@@ -411,6 +411,16 @@ session value, but the status bar is not their confirmation channel. Slash
 summary and detail rows align with other output using a two-space indent and no
 leading marker column.
 
+The status bar keeps the session runnable in its left corner and the session
+model plus effort in its right corner. The center always shows the Chat agent
+name; its workspace value comes from session settings while idle and from the
+active root run while running. The active runnable is never duplicated beside
+the model. Run duration appears in the center only while a run is active, and
+successful root `_toolang.chdir` changes update its workspace. `/cd` changes
+the session workspace for subsequent runs; after the current run ends, the
+center returns to the latest session workspace. The center shows only the
+workspace name, not the path, and does not show context-window usage.
+
 The status bar's right side shows the canonical session model ref without a
 field label. An empty effective model collection appears as
 `[no models available]`. An explicit

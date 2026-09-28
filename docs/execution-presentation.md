@@ -699,31 +699,41 @@ Incomplete transport evidence keeps corners empty and uses existing recovery
 or error diagnostics. Late callbacks cannot change a completed transcript.
 
 The status bar does not paint a base background and therefore inherits the
-terminal background. Its left side begins in column zero with a runnable
-rendered as `agic:name` or `flow:name` without the `module$` prefix, with no
-marker, spinner, or leading padding. While idle, this is the current default
-runnable. While running, it is
-the active root runnable. The dim label `running` follows the runnable below one
-elapsed second. At one second it becomes `running for DURATION`; `0s` is never
-shown. Durations are compact whole-second values such as `18s`, `1m20s`, and
-`1h01m01s`. If the current default runnable's display label differs, it appears
-on the right as `DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains
-only `MODEL`.
-`MODEL` is always the current default model, not an active model step. It is
-the canonical ref, `[no models available]` when the effective collection is
-empty, `MODEL · VALUE` for an
-explicit effort or token budget, and `MODEL · auto` when reasoning effort or
-budget applies without an explicit value. Models without applicable reasoning
-control omit the suffix. The segment remains right-aligned against the terminal
-edge as defaults change; constrained layouts elide the model ref before an
-applicable effort suffix. Setting
-commands remain available while running and update these default values
-immediately without changing the active run. Hotkey hints are omitted. Runnable
-and model text inherit the terminal's default foreground without dim styling;
-the activity label uses the terminal's dim attribute. The status redraws only
-when active state, active identity, defaults, errors, or the visible whole-
-second duration changes. Run completion returns immediately to the idle form,
-and status state is never committed to execution scrollback.
+terminal background. Its left corner always shows the current session runnable
+as `agic:name` or `flow:name`, without the `module$` prefix. The active root
+runnable is never shown there. A session runnable change updates only this left
+corner; it never adds a runnable beside the model.
+
+The center shows the Chat agent name, which stays constant for the session. It
+also shows the current workspace name: the session workspace while idle and the
+active root run's effective workspace while running. Successful
+`_toolang.chdir` calls in the root run update this workspace; child run changes
+do not. `/cd` updates the session setting for subsequent runs without changing
+the active run's workspace. When the run ends, the center returns to the latest
+session workspace. Directory paths within a workspace are not shown.
+
+The center group uses dim text and middle-dot separators. While running, it
+appends the dim label `running` below one elapsed second, then the compact
+whole-second duration, such as `18s`, `1m20s`, or `1h01m01s`. `0s` is never
+shown. The duration disappears when the run stops. Context-window size and
+usage are not displayed.
+
+The right corner contains only the current session model and its existing
+effort suffix. It is never replaced by an active model step. An empty effective
+model collection appears as `[no models available]`; an explicit effort or
+token budget appears as `MODEL · VALUE`; a model that advertises effort-level
+or token-budget control but has no explicit session value appears as
+`MODEL · auto`. Models without applicable reasoning control omit the suffix.
+The model remains right-aligned against the terminal edge. At narrow widths, the
+center group truncates before either session setting; the model ref is elided
+before an applicable effort suffix if the two session corners alone need more
+space. Runnable and model text inherit the terminal's default foreground; the
+center group and activity use the terminal's dim attribute. Setting commands
+remain available while running and update the session corners immediately
+without changing the active run's center context. Hotkey hints are omitted.
+The status redraws when a visible value, run state, error, or elapsed second
+changes. Run completion returns immediately to the idle form, and status state
+is never committed to execution scrollback.
 
 Submitted `/models`, `/caps`, and `/tools` results retain structured columns
 through scrollback rendering. Their headers use normal terminal text and a dim

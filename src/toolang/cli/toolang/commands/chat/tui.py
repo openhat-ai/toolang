@@ -30,6 +30,8 @@ from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
 from rich.text import Text
 from typer._click.exceptions import ClickException
+from toolang.base.types.message import ToolResultPart
+from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -127,6 +129,23 @@ def _selected_runnable(setting: SessionSetting) -> str | None:
     return setting.runnable
 
 
+def _workspace_label(
+    workdir: str | None, workdir_base: str | None = None
+) -> str | None:
+    """Return the workspace name encoded by one session or run workdir."""
+
+    for value in (workdir, workdir_base):
+        if not value:
+            continue
+        try:
+            name, _path = parse_cwd(value)
+        except (ToolangError, ValueError):
+            continue
+        if name is not None:
+            return name
+    return None
+
+
 def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
     try:
         name, kind = parse_runnable_ref(reference)
@@ -156,6 +175,12 @@ class ChatTuiAppContext:
         return self._app.setting
 
     def set_setting(self, setting: SessionSetting) -> None:
+        previous = self._app.setting
+        if (setting.workdir, setting.workdir_base) != (
+            previous.workdir,
+            previous.workdir_base,
+        ):
+            self._app._session_workdir_revision += 1
         self._app.setting = setting
 
     def get_client(self) -> ChatClient:
@@ -195,7 +220,8 @@ class ChatTuiAppContext:
         self._app._finish_active_run()
 
     def refresh_status(self) -> None:
-        self._app.status_bar.set_status(*self._app._status_labels())
+        runnable_label, model_label, workspace_label = self._app._status_labels()
+        self._app.status_bar.set_status(runnable_label, model_label, workspace_label)
         self._app._refresh_prompt_completions()
 
     def request_exit(self) -> None:
@@ -253,6 +279,7 @@ class ChatTuiApp:
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
+        agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
@@ -265,6 +292,7 @@ class ChatTuiApp:
                 home=home,
                 input_history=input_history,
                 client=client,
+                agent_name=agent_name,
                 progress_max_width=progress_max_width,
                 resource_paths=resource_paths,
                 surfaces=surfaces,
@@ -280,6 +308,7 @@ class ChatTuiApp:
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
+        agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
@@ -294,15 +323,22 @@ class ChatTuiApp:
         self.home = home
         self.input_history = input_history
         self.client = client
+        client_layout = getattr(client, "layout", None)
+        self.agent_name = agent_name or getattr(client_layout, "name", "")
         self.setting = setting
         resolve_workdir = getattr(client, "initial_workdir", None)
         if callable(resolve_workdir):
             workdir = resolve_workdir(thread_id)
             if isinstance(workdir, str) and workdir:
                 self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
+        self._session_workdir_revision = 0
+        self._active_run_workdir_revision = 0
+        self._active_run_workdir_matches_session = True
+        self._workdir_update_policies: dict[str, tuple[int, bool]] = {}
         self.ui_events: asyncio.Queue[ChatUIEvent] = asyncio.Queue()
         self.queue: list[QueuedCall] = []
         self.active_run_id: str | None = None
+        self._status_run_id: str | None = None
         self.cancel_sent_run_id: str | None = None
         self.submission_blocked: str | None = None
         self.interrupt_exit_pending = False
@@ -330,7 +366,13 @@ class ChatTuiApp:
             lambda: [item.source for item in self.queue],
             get_max_rows=self._available_queue_rows,
         )
-        self.status_bar = widgets.StatusBar(*self._status_labels())
+        runnable_label, model_label, workspace_label = self._status_labels()
+        self.status_bar = widgets.StatusBar(
+            runnable_label,
+            model_label,
+            self.agent_name,
+            workspace_label,
+        )
         self.prompt = widgets.PromptBox(
             self._handle_prompt_event,
             self._invalidate_ui,
@@ -597,8 +639,12 @@ class ChatTuiApp:
             return "none"
         return _qualified_runnable_label(reference, {})
 
-    def _status_labels(self) -> tuple[str, str]:
-        return self._runnable_label(), self._model_label()
+    def _status_labels(self) -> tuple[str, str, str | None]:
+        return (
+            self._runnable_label(),
+            self._model_label(),
+            _workspace_label(self.setting.workdir, self.setting.workdir_base),
+        )
 
     def _clear_status_error(self) -> None:
         self.interrupt_exit_pending = False
@@ -767,10 +813,11 @@ class ChatTuiApp:
     def _stop_status_activity(self) -> None:
         changed = (
             self.status_bar.running
-            or self.status_bar.active_runnable_label is not None
             or self.status_bar.elapsed_seconds != 0
+            or self.status_bar.run_workspace_label != self.status_bar.workspace_label
         )
         self._status_activity_started_at = None
+        self._status_run_id = None
         self.status_bar.set_running(False)
         self._status_elapsed_wake.set()
         if changed:
@@ -1119,17 +1166,38 @@ class ChatTuiApp:
         return True
 
     def handle_run_event(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin) and event.parent is None and event.runnable:
-            self.status_bar.set_active_runnable(event.runnable)
+        if isinstance(event, RunBegin) and event.parent is None:
+            self._status_run_id = event.run
+        if (
+            isinstance(event, PartEnd)
+            and event.step.run_id == self._status_run_id
+            and isinstance(event.data, ToolResultPart)
+            and event.data.tool_name == "_toolang__chdir"
+            and event.data.error is None
+        ):
+            cwd = event.data.output.get("cwd")
+            if isinstance(cwd, str):
+                self.status_bar.set_run_workspace(_workspace_label(cwd))
+                self._invalidate_ui()
         events.handle_run_event(event, self.app_context)
         if isinstance(event, RunEnd):
             self.title.refresh()
 
+    def _apply_run_workdir(self, run_id: str, workdir: str | None) -> None:
+        policy = self._workdir_update_policies.pop(run_id, None)
+        if workdir is None or policy is None:
+            return
+        revision, request_matched_session = policy
+        if not request_matched_session or revision != self._session_workdir_revision:
+            return
+        self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
+        runnable_label, model_label, workspace_label = self._status_labels()
+        self.status_bar.set_status(runnable_label, model_label, workspace_label)
+        self._invalidate_ui()
+
     def _handle_run_state(self, state: ChatRunState) -> None:
         if isinstance(state, RunWorkdirUpdated):
-            self.setting = replace(
-                self.setting, workdir=state.workdir, workdir_base=None
-            )
+            self._apply_run_workdir(state.run_id, state.workdir)
             return
         if isinstance(state, RunAccepted):
             if self.active_run_id not in {None, state.run_id}:
@@ -1142,6 +1210,10 @@ class ChatTuiApp:
                 )
                 return
             self.active_run_id = state.run_id
+            self._workdir_update_policies[state.run_id] = (
+                self._active_run_workdir_revision,
+                self._active_run_workdir_matches_session,
+            )
             # the run is durable now, so a thread's first title can be read back
             # without waiting for the run to finish; the end-of-run read stays
             self.title.refresh()
@@ -1164,14 +1236,21 @@ class ChatTuiApp:
             )
             return
         if isinstance(state, RunRecovered):
-            if (workdir := final_workdir(state.detail)) is not None:
-                self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
+            self._apply_run_workdir(state.detail.id, final_workdir(state.detail))
             if self.submission_blocked is None:
                 self.status_bar.clear_persistent_error()
             events.handle_run_state(state, self.app_context)
 
     def submit_run(self, call: QueuedCall) -> None:
-        self.status_bar.set_active_runnable(call.request.runnable.ref)
+        self._status_run_id = None
+        self._active_run_workdir_revision = self._session_workdir_revision
+        self._active_run_workdir_matches_session = (
+            call.request.workdir,
+            call.request.workdir_base,
+        ) == (self.setting.workdir, self.setting.workdir_base)
+        self.status_bar.set_run_workspace(
+            _workspace_label(call.request.workdir, call.request.workdir_base)
+        )
         self.unfinalized_blocks.append(
             blocks.RunControlBlock.create(
                 call.source,

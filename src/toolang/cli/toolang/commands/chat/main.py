@@ -426,6 +426,7 @@ def _chat_interactive_prompt_toolkit(
         thread_id=thread_id,
         setting=setting,
         home=_chat_home_label(ctx),
+        agent_name=context_layout(ctx).name,
         input_history=_chat_input_history_store(ctx),
         client=client,
         progress_max_width=user_call(
