@@ -292,3 +292,45 @@ def test_run_workdir_override_retains_base_after_relative_session_cd() -> None:
 
     assert request.workdir == "src/tests"
     assert request.workdir_base == "repo://"
+
+
+def test_session_runnable_follows_the_current_default_until_explicitly_selected() -> (
+    None
+):
+    defaulted = SessionSetting(
+        model=ModelRequest("openai/gpt-4.1"),
+        runnable="agic:chat",
+        runnable_follows_default=True,
+    )
+    updated_surface = replace(_surface(), runnable="agic:assistant")
+
+    request = build_run_request(
+        thread_id="term_test",
+        request_id="term_request",
+        input=CallInput({"_": "hello"}),
+        override=RunOverride(),
+        setting=defaulted,
+        surface=updated_surface,
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
+    )
+
+    assert request.runnable.ref == "agic:assistant"
+
+    explicitly_selected = update_session_setting(
+        surface=_surface(),
+        current=defaulted,
+        update=RunOverride(runnable="agic:chat"),
+    )
+    assert not explicitly_selected.runnable_follows_default
+    unchanged_request = build_run_request(
+        thread_id="term_test",
+        request_id="term_request_2",
+        input=CallInput({"_": "hello"}),
+        override=RunOverride(),
+        setting=explicitly_selected,
+        surface=updated_surface,
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
+    )
+    assert unchanged_request.runnable.ref == "agic:chat"

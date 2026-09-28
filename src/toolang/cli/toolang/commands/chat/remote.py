@@ -509,7 +509,7 @@ class RemoteChatSession:
                 operation=kind,
                 item_kind="runnable",
             )
-            default_ref = self._session_defaults().runnable
+            default_ref = await self._current_runnable_default()
             default_name, default_kind = (
                 parse_runnable_ref(default_ref)
                 if default_ref is not None
@@ -534,7 +534,7 @@ class RemoteChatSession:
             item_kind="runnable",
         )
         return {
-            "default": self._session_defaults().runnable,
+            "default": await self._current_runnable_default(),
             "items": [
                 *(
                     {"kind": "agic", **item}
@@ -548,7 +548,7 @@ class RemoteChatSession:
         }
 
     async def _list_prompts(self, runnable: str | None) -> dict[str, object]:
-        selected = runnable or self._session_defaults().runnable
+        selected = runnable or await self._current_runnable_default()
         payload = await self._request_json(
             "GET",
             "/api/v1/prompt-completions",
@@ -577,6 +577,35 @@ class RemoteChatSession:
             ) from exc
         return thread.id
 
+    async def _current_runnable_default(self) -> str | None:
+        """Read the runnable default from the executor's current State."""
+
+        payload = await self._request_json(
+            "GET",
+            "/api/v1/runs/defaults",
+            operation="run defaults",
+        )
+        runnable = _session_setting(payload).runnable
+        if runnable is not None or self._session_defaults().runnable is None:
+            return runnable
+        agics, flows = await asyncio.gather(
+            self._request_json("GET", "/api/v1/agics", operation="agics"),
+            self._request_json("GET", "/api/v1/flows", operation="flows"),
+        )
+        items = (
+            _catalog_payload(agics, operation="agics", item_kind="runnable")["items"],
+            _catalog_payload(flows, operation="flows", item_kind="runnable")["items"],
+        )
+        available = [
+            (kind, item["name"])
+            for kind, entries in zip(("agic", "flow"), items, strict=True)
+            for item in cast(list[dict[str, object]], entries)
+        ]
+        if len(available) != 1:
+            return None
+        kind, name = available[0]
+        return f"{kind}:{name}"
+
     def _session_defaults(self) -> SessionSetting:
         if self._surface is None:
             raise RuntimeError("remote chat run defaults are not initialized")
@@ -592,8 +621,11 @@ class RemoteChatSession:
     ) -> SessionSetting:
         if self._blocked_message is not None:
             raise RemoteChatError(self._blocked_message)
+        surface = self._session_defaults()
+        if update.runnable == "default":
+            surface = replace(surface, runnable=await self._current_runnable_default())
         candidate = update_session_setting(
-            surface=self._session_defaults(),
+            surface=surface,
             current=setting,
             update=update,
         )
@@ -664,13 +696,16 @@ class RemoteChatSession:
         input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
+        surface = self._session_defaults()
+        if setting.runnable_follows_default or override.runnable == "default":
+            surface = replace(surface, runnable=await self._current_runnable_default())
         request = build_run_request(
             thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
             input=input,
             override=override,
             setting=setting,
-            surface=self._session_defaults(),
+            surface=surface,
             resolve_model_ref=lambda selector: selector,
             resolve_runnable_ref=lambda selector: selector,
         )
@@ -1119,6 +1154,7 @@ def _session_setting(payload: object) -> SessionSetting:
         model=model_request,
         runnable=runnable,
         limits=policy.limits,
+        runnable_follows_default=True,
         workdir=workdir,
     )
 

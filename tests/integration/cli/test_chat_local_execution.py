@@ -700,3 +700,34 @@ def test_local_chat_thread_title_is_ready_when_the_run_is_accepted(
         assert asyncio.run(session._thread_title("term_missing")) is None
     finally:
         store.close()
+
+
+def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> None:
+    original = ExecutionHarness.create(
+        tmp_path / "original", source="agic chat:\n  hello\n", responses=()
+    )
+    revised = ExecutionHarness.create(
+        tmp_path / "revised", source="agic assistant:\n  hello\n", responses=()
+    )
+    session: Any = object.__new__(local.LocalChatSession)
+    session.setup_watcher = type(
+        "SetupWatcher", (), {"current": lambda _self: original.setup}
+    )()
+    session.state_watcher = type(
+        "StateWatcher", (), {"current": lambda _self: revised.state}
+    )()
+    session._surface = local.LocalChatSession._current_session_setting(
+        setup=original.setup, state=original.state
+    )
+
+    try:
+        request = session.build_request(
+            "term_test",
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            session.initial_setting(),
+        )
+        assert request.runnable.ref == "agic:assistant"
+    finally:
+        original.store.close()
+        revised.store.close()

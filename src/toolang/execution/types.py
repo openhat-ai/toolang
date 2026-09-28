@@ -164,7 +164,7 @@ class LimitOverride:
 
 @dataclass(frozen=True, slots=True)
 class SessionSetting:
-    """Concrete defaults for subsequent runs in one Chat session."""
+    """Defaults and selections for subsequent runs in one Chat session."""
 
     model: ModelRequest | None
     runnable: str | None
@@ -172,6 +172,7 @@ class SessionSetting:
     limits: RunLimits = RunLimits()
     workdir: str | None = None
     workdir_base: str | None = None
+    runnable_follows_default: bool = False
 
     def __post_init__(self) -> None:
         if self.model is not None and not isinstance(self.model, ModelRequest):
@@ -181,6 +182,8 @@ class SessionSetting:
                 raise TypeError("session runnable must be a string or none")
             if not self.runnable or self.runnable != self.runnable.strip():
                 raise ValueError("session runnable must be canonical")
+        if not isinstance(self.runnable_follows_default, bool):
+            raise TypeError("session runnable_follows_default must be a boolean")
         if not isinstance(self.allow, AgentCeiling):
             raise TypeError("session allow must be an AgentCeiling")
         if not isinstance(self.limits, RunLimits):

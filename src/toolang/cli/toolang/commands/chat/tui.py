@@ -126,7 +126,7 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
 
 
 def _selected_runnable(setting: SessionSetting) -> str | None:
-    return setting.runnable
+    return None if setting.runnable_follows_default else setting.runnable
 
 
 def _workspace_label(
@@ -1051,6 +1051,8 @@ class ChatTuiApp:
                 validate_model_reasoning_request(
                     self.client.list_models(), request.model
                 )
+            if self.setting.runnable_follows_default and override.runnable is None:
+                self.setting = replace(self.setting, runnable=request.runnable.ref)
         except ClickException as exc:
             self.status_bar.set_error(friendly_error(exc.message))
             return False

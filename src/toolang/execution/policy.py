@@ -267,13 +267,16 @@ def apply_session_setting(
 
     model = apply_model_override(current.model, surface.model, update.model)
     runnable = current.runnable
+    runnable_follows_default = current.runnable_follows_default
     if update.runnable is not None:
-        runnable = surface.runnable if update.runnable == "default" else update.runnable
+        runnable_follows_default = update.runnable == "default"
+        runnable = surface.runnable if runnable_follows_default else update.runnable
     allow = _replace_allow_fields(current.allow, update)
     limits = _apply_limit_overrides(current.limits, update.limits)
     return SessionSetting(
         model=model,
         runnable=runnable,
+        runnable_follows_default=runnable_follows_default,
         allow=allow,
         limits=limits,
         workdir=update.workdir if update.workdir is not None else current.workdir,
@@ -289,11 +292,11 @@ def materialize_run_setting(
     """Materialize one input-local override over concrete session settings."""
 
     model = apply_model_override(session.model, surface.model, override.model)
-    runnable = session.runnable
+    runnable_follows_default = session.runnable_follows_default
+    runnable = surface.runnable if runnable_follows_default else session.runnable
     if override.runnable is not None:
-        runnable = (
-            surface.runnable if override.runnable == "default" else override.runnable
-        )
+        runnable_follows_default = override.runnable == "default"
+        runnable = surface.runnable if runnable_follows_default else override.runnable
     limits = _apply_limit_overrides(session.limits, override.limits)
     run_ceiling = _allow_ceiling(override.allow)
     ceilings = tuple(
@@ -318,6 +321,7 @@ def materialize_run_setting(
     return ceilings, SessionSetting(
         model=model,
         runnable=runnable,
+        runnable_follows_default=runnable_follows_default,
         allow=session.allow,
         limits=limits,
         workdir=workdir,
