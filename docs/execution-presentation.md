@@ -719,8 +719,8 @@ time such as `18s`, `1m20s`, or `1h01m01s`. `0s` is never shown. The elapsed
 slot is blank while idle and its changing width never moves the center anchor.
 A context-usage slot is reserved immediately right of the anchor but currently
 renders no value, placeholder, separator, or visible padding. Agent/workspace
-and elapsed text use normal intensity; only the structural `@` is dim. If the
-full line overflows, the complete center stays fixed with a two-cell margin on
+text uses normal intensity; elapsed text and the structural `@` are dim. If the
+full line overflows, the complete center stays fixed with a three-cell margin on
 each side; session edge labels elide inward with one `…`. If the center plus
 margins cannot fit, elapsed and both edge labels are hidden, and the center is
 truncated only when it cannot fit alone.

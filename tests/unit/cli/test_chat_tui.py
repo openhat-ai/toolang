@@ -3238,7 +3238,7 @@ def test_chat_status_bar_keeps_session_settings_at_the_edges(
     assert idle.startswith(f"{widgets._STATUS_INSET}{runnable}")
     assert "hak @ tq" in idle
     assert running.startswith(f"{widgets._STATUS_INSET}{runnable}")
-    assert "1m30s  hak @ tmp" in running
+    assert "1m30s   hak @ tmp" in running
     assert "running for" not in running
     assert "agent::" not in idle + running
     assert "tmp @ runtime model" not in running
@@ -3268,8 +3268,8 @@ def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> Non
 
     assert status._center_label() == "hak @ tmp"
     assert "hak @ tq" in idle
-    assert "running  hak @ tmp" in running
-    assert "1s  hak @ tmp" in elapsed
+    assert "running   hak @ tmp" in running
+    assert "1s   hak @ tmp" in elapsed
     for line, center_label in (
         (idle, "hak @ tq"),
         (running, "hak @ tmp"),
@@ -3283,7 +3283,7 @@ def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> Non
     for seconds, expected in ((90, "1m30s"), (3661, "1h01m01s")):
         status.set_elapsed_seconds(seconds)
         line = "".join(text for _style, text in status._render())
-        assert f"{expected}  hak @ tmp" in line
+        assert f"{expected}   hak @ tmp" in line
         center_label = "hak @ tmp"
         center = (
             get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
@@ -3296,7 +3296,7 @@ def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> Non
     palette = widgets._chat_ui_palette()
     assert palette["status.context"] == ""
     assert palette["status.context.symbol"] == "dim"
-    assert palette["status.elapsed"] == ""
+    assert palette["status.elapsed"] == "dim"
     assert ("class:status.elapsed", "1s") in elapsed_fragments
     assert ("class:status.context.symbol", "@") in elapsed_fragments
 
@@ -3319,7 +3319,7 @@ def test_chat_status_bar_updates_only_the_session_setting_edges_during_a_run(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert text.startswith(f"{widgets._STATUS_INSET}flow:relay")
-    assert "running  hak @ run-space" in text
+    assert "running   hak @ run-space" in text
     assert text.endswith(f"new-model · high{widgets._STATUS_INSET}")
     assert "new-session-space" not in text
     assert text.count("flow:relay") == 1
@@ -3344,8 +3344,9 @@ def test_chat_status_bar_keeps_center_and_truncates_edges_inward(
     center_label = "very-long-agent-name @ very-long-workspace-name"
 
     assert get_cwidth(text) == 70
-    assert text.startswith(f"{widgets._STATUS_INSET}f…  18s  {center_label}  … · high")
-    assert text.endswith(f"… · high{widgets._STATUS_INSET}")
+    assert text.startswith(f"{widgets._STATUS_INSET}…  18s   {center_label}   …· high")
+    assert text.endswith(f"…· high{widgets._STATUS_INSET}")
+    assert f"{center_label}   …· high" in text
     assert text.count("…") == 2
     assert center_label in text
     center_start = text.index(center_label)
@@ -3364,7 +3365,7 @@ def test_chat_status_bar_reserves_no_visible_context_usage_content(
     running = "".join(text for _style, text in status._render())
 
     assert "hak @ toolang" in idle
-    assert "1m30s  hak @ toolang" in running
+    assert "1m30s   hak @ toolang" in running
     assert "300k/1M" not in idle + running
     assert " / " not in idle + running
     assert idle.count("hak @ toolang") == running.count("hak @ toolang") == 1
@@ -3500,7 +3501,7 @@ def test_chat_status_palette_has_no_marker_or_spinner_styles() -> None:
     assert palette["status"] == ""
     assert palette["status.context"] == ""
     assert palette["status.context.symbol"] == "dim"
-    assert palette["status.elapsed"] == ""
+    assert palette["status.elapsed"] == "dim"
     assert palette["status.error.marker"] == "fg:ansired"
     assert palette["status.error"] == "fg:ansired"
     assert (

@@ -421,7 +421,7 @@ the anchor; the slot is blank while idle. Successful root `_toolang.chdir`
 changes update the workspace. `/cd` changes the session workspace for subsequent
 runs; after the current run ends, the center returns to the latest session
 workspace. Only the workspace name is shown, not the path. If the full status
-line overflows, the centered identity stays intact, with two spaces on each
+line overflows, the centered identity stays intact, with three spaces on each
 side; the session runnable and model truncate toward the center with a single
 `…` when needed. On extremely narrow terminals, elapsed and both session edge
 labels are hidden to show the center alone; the center is truncated only if it

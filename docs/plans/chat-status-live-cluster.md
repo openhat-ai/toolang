@@ -30,16 +30,16 @@ cluster. The feature succeeds when:
 
 ## Presentation and State Rules
 
-Use two spaces between populated cluster parts:
+Use three spaces between populated cluster parts:
 
 ```text
-1m30s  hak @ toolang
+1m30s   hak @ toolang
 ```
 
 - Keep the left session runnable and right session model/effort unchanged.
 - Center `agent @ workspace` by its display-cell midpoint at the absolute
-  status-line center. Render the agent and workspace at normal intensity and
-  dim only the structural `@`.
+  status-line center. Render agent/workspace text at normal intensity; dim the
+  elapsed text and structural `@`.
 - Position elapsed as a right-aligned slot immediately left of the center
   anchor. While running, retain the existing `running` label below one second
   and show compact whole-second elapsed time thereafter. While idle, render no
@@ -53,15 +53,16 @@ Use two spaces between populated cluster parts:
   while idle and the active root's workspace while running. Do not show a
   workdir path or active runnable in the center.
 - Fit by display-cell width. If the full line overflows, keep the complete
-  center label fixed and maintain a two-cell margin on each side. Truncate the
+  center label fixed and maintain a three-cell margin on each side. Truncate the
   left session label from its inner (right) edge and the right session label
   from its inner (left) edge, using one `…` cell at each cut. The elapsed slot
-  remains two cells left of the center; omit elapsed before changing the center
-  or breaking margins when it cannot fit.
+  remains three cells left of the center; omit elapsed before changing the
+  center or breaking margins when it cannot fit.
 - If the available status width is narrower than the center label plus both
-  margins, hide elapsed and both session labels and render the center label
-  alone. If the center label itself is wider than the status area, truncate it
-  to that area with one trailing `…`. Existing error rendering is unchanged.
+  three-cell margins, hide elapsed and both session labels and render the
+  center label alone. If the center label itself is wider than the status area,
+  truncate it to that area with one trailing `…`. Existing error rendering is
+  unchanged.
 
 ## Scope and Touchpoints
 
@@ -98,12 +99,12 @@ Out of scope:
 4. The context-usage slot remains empty: no usage value, slash, placeholder,
    or visible padding is rendered, and its future position does not affect the
    center anchor.
-5. Agent and workspace text use normal intensity; only `@` is dim.
+5. Agent and workspace text use normal intensity; elapsed and `@` are dim.
 6. On an overflowing but otherwise usable layout, the full center label stays
-   fixed, two-cell margins remain, and edge labels truncate inward with one
-   `…` each. If the center plus margins cannot fit, elapsed and both edge
-   labels are hidden; if the center itself cannot fit, it is truncated with a
-   trailing `…`. No layout overflows or changes error status behavior.
+   fixed, three-cell margins remain, and edge labels truncate inward with one
+   `…` each. If the center plus three-cell margins cannot fit, elapsed and both
+   edge labels are hidden; if the center itself cannot fit, it is truncated with
+   a trailing `…`. No layout overflows or changes error status behavior.
 7. The default repository verification passes.
 
 ## Risks
