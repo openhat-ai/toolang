@@ -380,11 +380,14 @@ class RunExecutor:
         state: AgentState,
         thread: str | None = None,
     ) -> str:
-        """Resolve a new Chat session's latest root workdir or runtime default."""
+        """Resolve the latest finished root workdir or runtime default."""
         default = self._default_workdir(setup, state)
-        if thread is None:
-            return default
-        for run in self.store.list_runs(thread_id=thread, limit=None):
+        runs = (
+            self.store.list_runs(thread_id=thread, limit=None)
+            if thread is not None
+            else self.store.list_runs(limit=None)
+        )
+        for run in runs:
             if run.parent is not None or run.finished_at is None:
                 continue
             try:

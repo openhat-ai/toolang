@@ -303,6 +303,162 @@ def test_root_run_workdir_continues_from_previous_root_final_value(tmp_path):
     asyncio.run(scenario())
 
 
+def test_new_session_inherits_latest_finished_root_workdir_across_threads(tmp_path):
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+
+    repo = tmp_path / "repo"
+    for name in ("first", "second", "active"):
+        (repo / name).mkdir(parents=True)
+    _configured_home(tmp_path, {"repo": repo})
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
+        prepare_state=True,
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "first", "first", "_toolang__chdir", {"path": "repo://first"}
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("first done")),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "second", "second", "_toolang__chdir", {"path": "repo://second"}
+                    ),
+                )
+            ),
+            RuntimeError("terminal model failure"),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "active", "active", "_toolang__chdir", {"path": "repo://active"}
+                    ),
+                )
+            ),
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("active done")),
+                gate=gate,
+            ),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            first_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first = await harness.executor.run(
+                harness.run_spec(thread=first_thread, runnable="chat")
+            )
+            second_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            second = await harness.executor.run(
+                harness.run_spec(thread=second_thread, runnable="chat")
+            )
+            active_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            active = harness.executor.run(
+                harness.run_spec(thread=active_thread, runnable="chat")
+            )
+            await gate.wait_until_entered()
+            assert first.status == "succeeded"
+            assert second.status == "failed"
+            assert harness.store.current_cwd(active.run_id) == "repo://active"
+            assert (
+                harness.executor.initial_workdir(harness.setup, harness.state)
+                == "repo://second"
+            )
+            assert (
+                harness.executor.initial_workdir(
+                    harness.setup, harness.state, first_thread
+                )
+                == "repo://first"
+            )
+            gate.release()
+            completed = await active
+            assert completed.status == "succeeded", completed.error
+
+    asyncio.run(scenario())
+
+
+def test_new_session_ignores_child_run_workdir(tmp_path):
+    repo = tmp_path / "repo"
+    for name in ("parent", "child"):
+        (repo / name).mkdir(parents=True)
+    _configured_home(tmp_path, {"repo": repo})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  hands = agic:child
+  context = none
+  user: Start {{_}}.
+
+agic child(_: Text) -> Text:
+  context = none
+  user: Start {{_}}.
+""",
+        prepare_state=True,
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "parent", "parent", "_toolang__chdir", {"path": "repo://parent"}
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "run-child",
+                        "run-child",
+                        "_toolang__run",
+                        {
+                            "runnable": "agic:child",
+                            "input": {"_": "child"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "child", "child", "_toolang__chdir", {"path": "repo://child"}
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("child done")),
+            ModelCallResult(message=Message.assistant("parent done")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=(TextPart("start"),),
+                )
+            )
+            children = [
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            ]
+            assert root.status == "succeeded", root.error
+            assert len(children) == 1
+            assert harness.store.current_cwd(root.id) == "repo://parent"
+            assert harness.store.current_cwd(children[0].id) == "repo://child"
+            assert (
+                harness.executor.initial_workdir(harness.setup, harness.state)
+                == "repo://parent"
+            )
+
+    asyncio.run(scenario())
+
+
 def test_cd_mixed_batch_is_rejected_before_filesystem_mutation(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -612,7 +768,7 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
     asyncio.run(scenario())
 
 
-def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
+def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
     from toolang.base.types.message import ToolResultPart
 
     repo = tmp_path / "repo"
@@ -623,18 +779,32 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
         tmp_path,
         source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
         prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
         responses=[
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "first", "first", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "retry", "retry", "_toolang__chdir", {"path": "repo://src"}
+                        "write",
+                        "write",
+                        "fs__write",
+                        {"path": "repo://src/result", "text": "done"},
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "retry",
+                        "retry",
+                        "fs__write",
+                        {"path": "repo://src/result", "text": "done"},
                     ),
                 )
             ),
@@ -651,30 +821,28 @@ def test_cd_honors_rules_before_committing_a_new_location(tmp_path):
                 )
             )
             assert run.status == "succeeded", run.error
+            assert (repo / "src/result").read_text() == "done"
             assert harness.store.current_cwd(run.id) == "repo://src"
-            assert len(harness.store.list_run_controls(run_id=run.id, kind="cwd")) == 1
             tool_names = [
                 step.given.call.name
                 for step in harness.store.list_steps(run_id=run.id)
                 if isinstance(step.given, ToolStepGiven)
             ]
-            assert tool_names == [
-                "_toolang__honor",
-                "_toolang__chdir",
-            ]
+            assert tool_names == ["_toolang__chdir", "_toolang__honor", "fs__write"]
             results = [
                 part
-                for message in harness.adapter.invocations[1].call.messages
+                for message in harness.adapter.invocations[2].call.messages
                 for part in message.parts
                 if isinstance(part, ToolResultPart)
+                and "Workspace rules were just loaded" in (part.error or "")
             ]
             assert len(results) == 1
-            assert "Workspace rules were just loaded" in (results[0].error or "")
             assert [
                 _locations(inv.call)[-1] for inv in harness.adapter.invocations
             ] == [
                 '<toolang:workdir path="repo://"/>',
-                '<toolang:workdir path="repo://"/>',
+                '<toolang:workdir path="repo://src"/>',
+                '<toolang:workdir path="repo://src"/>',
                 '<toolang:workdir path="repo://src"/>',
             ]
 

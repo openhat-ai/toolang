@@ -102,6 +102,35 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
         store.close()
 
 
+def test_list_runs_uses_insertion_order_for_equal_timestamps(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        timestamp = "2026-01-01T00:00:00Z"
+        first = project_run_start(
+            store,
+            run_id="run_order_first",
+            thread_id="term_order_first",
+            origin="chat",
+            input=Message.user("first"),
+            created_at=timestamp,
+        )
+        second = project_run_start(
+            store,
+            run_id="run_order_second",
+            thread_id="term_order_second",
+            origin="chat",
+            input=Message.user("second"),
+            created_at=timestamp,
+        )
+
+        assert [run.id for run in store.list_runs(limit=None)] == [
+            second.id,
+            first.id,
+        ]
+    finally:
+        store.close()
+
+
 def test_list_controls_orders_mixed_scopes_without_status_reordering(
     tmp_path: Path,
 ) -> None:

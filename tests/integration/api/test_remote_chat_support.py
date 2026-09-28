@@ -374,6 +374,7 @@ agic chat(_: Part[]) -> Part[]:
             final_thread_defaults = client.get(
                 "/api/v1/runs/defaults", params={"thread_id": thread_id}
             )
+            new_session_defaults = client.get("/api/v1/runs/defaults")
 
         explicit = TypeAdapter(RunDetail).validate_python(explicit_response.json())
         latest = TypeAdapter(RunDetail).validate_python(latest_response.json())
@@ -399,6 +400,8 @@ agic chat(_: Part[]) -> Part[]:
         assert thread_defaults.json()["workdir"] == "tmp://"
         assert final_thread_defaults.status_code == 200
         assert final_thread_defaults.json()["workdir"] == "tmp://subdir"
+        assert new_session_defaults.status_code == 200
+        assert new_session_defaults.json()["workdir"] == "tmp://subdir"
         assert models.status_code == 200
         assert models.json()["default"] == TEST_MODEL_REF
         assert core.store.list_runs(limit=None) == [core.store.get_run(run_id=run_id)]

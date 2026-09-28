@@ -84,10 +84,12 @@ class ToolangTool(Tool):
         path = arguments.get("path")
         if not isinstance(path, str) or not path or set(arguments) != {"path"}:
             raise ToolangError("_toolang/chdir requires only a non-empty path")
-        target, name, relative = resolve_input_path(path, context)
+        target, _name, _relative = resolve_input_path(path, context)
         if not target.is_dir():
             raise ToolangError(f"chdir target is not a directory: {path}")
-        return {name: (relative,)}
+        # Changing the working location does not access the directory's contents.
+        # Load its rules before the first operation that reads or mutates a path.
+        return {}
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
