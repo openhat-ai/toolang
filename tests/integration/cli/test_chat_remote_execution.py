@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,60 @@ agic chat(_: Part[]) -> Part[]:
         assert result.run_id == root_id
         assert result.output == (TextPart("remote response"),)
         assert errors == []
+    finally:
+        session.close()
+        asyncio.run(core.close())
+
+
+def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> None:
+    original = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat:\n  hello\n",
+        responses=(),
+        prepare_state=True,
+    )
+    original.store.close()
+    configured_setup = replace(
+        original.setup,
+        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+    )
+    state_snapshot = _Snapshot(original.state)
+    core = AgentCore(original.setup.layout)
+    core.setup = _Snapshot(configured_setup)
+    core.state = state_snapshot
+    agents.write_runtime_state(
+        core.layout,
+        endpoint="http://runtime.test:7001",
+        started_at="2026-08-26T00:00:00Z",
+        pid=123,
+        sandbox_description=_HOST_DESCRIPTION,
+    )
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+    session = RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.ASGITransport(app=app),
+    )
+
+    try:
+        assert session.initial_setting().runnable == "agic:chat"
+        (original.setup.layout.home / "agent.too").write_text(
+            "agic assistant:\n  hello\n",
+            encoding="utf-8",
+        )
+        state_snapshot.value = prepare_agent_state(original.setup.layout)
+        request = session.build_request(
+            session.create_thread(),
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            session.initial_setting(),
+        )
+        assert request.runnable.ref == "agic:assistant"
     finally:
         session.close()
         asyncio.run(core.close())

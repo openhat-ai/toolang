@@ -369,5 +369,7 @@ def _runnable_defaults(
             binding,
             fallback_agic="chat",
         )
-    except (ToolangError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (ToolangError, ValueError):
+        # Catalogs remain useful after a configured default becomes stale. The
+        # defaults endpoint reports that invalid binding when a run is built.
+        return None, None

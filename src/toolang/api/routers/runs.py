@@ -348,7 +348,10 @@ async def run_defaults(
         elif default_flow is not None:
             runnable = f"flow:{default_flow}"
     if runnable is not None:
-        runnable = resolve_public_runnable_query(state, runnable).ref
+        try:
+            runnable = resolve_public_runnable_query(state, runnable).ref
+        except (ToolangError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         workdir = core.executor.initial_workdir(setup, state, thread_id)
     except (OSError, ToolangError, ValueError) as exc:

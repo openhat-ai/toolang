@@ -80,6 +80,7 @@ def run_chat_tui(
                 setting = replace(
                     setting,
                     runnable=f"{kind}:{selected_runnable}",
+                    runnable_follows_default=False,
                 )
                 break
         ChatTuiApp.run(

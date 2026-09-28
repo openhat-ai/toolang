@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 from typing import Any, cast
 from uuid import uuid4
 
+from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling
@@ -252,7 +253,7 @@ class LocalChatSession:
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
         state = self.state_watcher.current()
-        default_ref = self.initial_setting().runnable
+        default_ref = self._current_session_surface().runnable
         default_name, default_kind = (
             parse_runnable_ref(default_ref) if default_ref is not None else (None, None)
         )
@@ -279,7 +280,7 @@ class LocalChatSession:
 
     def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
         state = self.state_watcher.current()
-        selected = runnable or self.initial_setting().runnable
+        selected = runnable or self._current_session_surface().runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
         module = resolve_public_runnable_query(state, selected).module
@@ -368,7 +369,7 @@ class LocalChatSession:
         default_model_ref: str | None = None,
     ) -> SessionSetting:
         candidate = update_session_setting(
-            surface=self.initial_setting(),
+            surface=self._current_session_surface(),
             current=setting,
             update=update,
         )
@@ -406,7 +407,7 @@ class LocalChatSession:
             input=input,
             override=override,
             setting=setting,
-            surface=self.initial_setting(),
+            surface=self._current_session_surface(),
             resolve_model_ref=self._materialize_model_ref,
             resolve_runnable_ref=self._materialize_runnable_ref,
         )
@@ -541,6 +542,32 @@ class LocalChatSession:
         if on_state is not None and (workdir := final_workdir(detail)) is not None:
             on_state(RunWorkdirUpdated(handle.run_id, workdir))
 
+    def _current_session_surface(self) -> SessionSetting:
+        """Return session defaults with the runnable resolved from current State."""
+
+        initial = self.initial_setting()
+        watcher = getattr(self, "state_watcher", None)
+        if watcher is None:
+            return initial
+        setup = self.setup_watcher.current()
+        state = watcher.current()
+        try:
+            runnable = self._current_session_setting(setup=setup, state=state).runnable
+        except ToolangError:
+            if initial.runnable is None:
+                raise
+            runnable = None
+        if (
+            runnable is None
+            and initial.runnable is not None
+            and len(state.runnables) == 1
+        ):
+            name, declaration = next(iter(state.runnables.items()))
+            runnable = resolve_public_runnable_query(
+                state, f"{declaration.kind}:{name}"
+            ).ref
+        return replace(initial, runnable=runnable)
+
     def _materialize_model_ref(self, ref: str) -> str:
         return materialize_model_request(
             ModelRequest(ref),
@@ -576,6 +603,7 @@ class LocalChatSession:
             model=model,
             runnable=runnable,
             limits=setup.limits,
+            runnable_follows_default=True,
         )
 
     async def _thread_title(self, thread_id: str) -> str | None:

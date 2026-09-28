@@ -254,7 +254,7 @@ def _chat_interactive(
         if not initial_update.empty:
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
-            setting = replace(setting, runnable=None)
+            setting = replace(setting, runnable=None, runnable_follows_default=False)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             _chat_interactive_scripted_local(
                 client=client,

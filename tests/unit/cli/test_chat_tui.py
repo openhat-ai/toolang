@@ -4053,6 +4053,7 @@ def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
     surface = SessionSetting(
         model=ModelRequest("openai/gpt-5"),
         runnable="agic:chat",
+        runnable_follows_default=True,
     )
     updated = update_session_setting(
         surface=surface,

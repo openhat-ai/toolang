@@ -41,7 +41,7 @@ from toolang.execution.types import (
     RunRef,
 )
 from toolang.lang.input import CallInput
-from toolang.state.watcher import StateRefresh
+from toolang.state.watcher import StateRefresh, StateWatcher
 
 
 def test_latest_chat_output_keeps_one_snapshot_during_retry(
@@ -700,3 +700,42 @@ def test_local_chat_thread_title_is_ready_when_the_run_is_accepted(
         assert asyncio.run(session._thread_title("term_missing")) is None
     finally:
         store.close()
+
+
+def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> None:
+    source = "agic chat:\n  hello\n"
+    original = ExecutionHarness.create(
+        tmp_path, source=source, responses=(), prepare_state=True
+    )
+    watcher = StateWatcher(
+        original.setup.layout,
+        initial_state=original.state,
+    )
+    configured_setup = replace(
+        original.setup,
+        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+    )
+    session: Any = object.__new__(local.LocalChatSession)
+    session.setup_watcher = type(
+        "SetupWatcher", (), {"current": lambda _self: configured_setup}
+    )()
+    session.state_watcher = watcher
+    session._surface = local.LocalChatSession._current_session_setting(
+        setup=configured_setup, state=original.state
+    )
+
+    try:
+        (original.setup.layout.home / "agent.too").write_text(
+            "agic assistant:\n  hello\n",
+            encoding="utf-8",
+        )
+        asyncio.run(watcher.refresh())
+        request = session.build_request(
+            "term_test",
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            session.initial_setting(),
+        )
+        assert request.runnable.ref == "agic:assistant"
+    finally:
+        original.store.close()
