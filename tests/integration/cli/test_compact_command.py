@@ -143,7 +143,7 @@ def test_cli_executes_eight_of_ten_and_next_run_adopts_it(harness, monkeypatch, 
         "summary": "Facts zero through seven.",
     }
     assert result["horizon"] == result["run"]
-    assert "∎" in captured_output.err
+    assert "▪︎" in captured_output.err
     assert captured["sandbox"] == "host"
     assert captured["compact_override"].identity == "test/configured"
     assert captured["compact_override"].effort == "low"

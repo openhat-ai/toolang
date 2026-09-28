@@ -44,7 +44,7 @@ from toolang.lang.types import display_runnable_ref
 
 from .base import ChatExecutorMetadata, friendly_error
 from .rendering import (
-    ACCENT_CELL,
+    CONTROL_BAR_MARK,
     QUICK_COMMAND_CONTROL_ACCENT,
     RUN_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
@@ -113,7 +113,7 @@ def _control_bar_line(
     if not left:
         head: tuple[str, str] = ("", "")
     elif accent_head:
-        head = (ACCENT_CELL, f"not dim on {accent}")
+        head = (CONTROL_BAR_MARK, f"{accent} not dim on {input_background}")
     else:
         head = (" ", f"not dim on {input_background}")
     line = bar(

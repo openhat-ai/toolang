@@ -206,7 +206,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
             "succeeded",
         )
         assert "Window too small" not in output
-        assert "∎ run_" in output
+        assert "▪︎ run_" in output
 
         session.send(b"/output\r")
         result = session.wait_for("• run_", " output ", "hello from terminal e2e")
@@ -340,7 +340,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"second steer\x1b\rthird steer\x1b\r")
         steers = _wait_redrawn(session, "• 3 steers pending")
         assert "second steerthird steer" not in steers
-        assert "  third steer" in steers
+        assert "▮ third steer" in steers
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
