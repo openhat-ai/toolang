@@ -3236,16 +3236,22 @@ def test_chat_status_bar_keeps_session_settings_at_the_edges(
     assert "^d exit" not in idle
     assert "↑↓ history" not in idle
     assert idle.startswith(f"{widgets._STATUS_INSET}{runnable}")
-    assert "hak · tq" in idle
+    assert "hak @ tq" in idle
     assert running.startswith(f"{widgets._STATUS_INSET}{runnable}")
-    assert "hak · tmp · 1m30s" in running
+    assert "1m30s  hak @ tmp" in running
     assert "running for" not in running
     assert "agent::" not in idle + running
-    assert "tmp · runtime model" not in running
+    assert "tmp @ runtime model" not in running
     assert idle.endswith(f"runtime model{widgets._STATUS_INSET}")
     assert running.endswith(f"runtime model{widgets._STATUS_INSET}")
     assert idle.rindex("runtime model") == running.rindex("runtime model")
     assert get_cwidth(idle) == get_cwidth(running) == 80
+
+    for line, center_label in ((idle, "hak @ tq"), (running, "hak @ tmp")):
+        center = (
+            get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
+        )
+        assert center == pytest.approx(40, abs=0.5)
 
 
 def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> None:
@@ -3254,22 +3260,49 @@ def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> Non
 
     status.set_run_workspace("tmp")
     status.set_running(True)
-    running = "".join(text for _style, text in status._render())
+    running_fragments = status._render()
+    running = "".join(text for _style, text in running_fragments)
     status.set_elapsed_seconds(1)
-    elapsed = "".join(text for _style, text in status._render())
+    elapsed_fragments = status._render()
+    elapsed = "".join(text for _style, text in elapsed_fragments)
 
-    assert status._center_label() == "hak · tmp · 1s"
-    assert "hak · tq" in idle
-    assert "hak · tmp · running" in running
-    assert "hak · tmp · 1s" in elapsed
-    context_fragment = next(
-        style for style, value in status._render() if "hak · tmp · 1s" in value
-    )
-    assert context_fragment == "class:status.context"
+    assert status._center_label() == "hak @ tmp"
+    assert "hak @ tq" in idle
+    assert "running  hak @ tmp" in running
+    assert "1s  hak @ tmp" in elapsed
+    for line, center_label in (
+        (idle, "hak @ tq"),
+        (running, "hak @ tmp"),
+        (elapsed, "hak @ tmp"),
+    ):
+        center = (
+            get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
+        )
+        assert center == pytest.approx(40, abs=0.5)
+
+    for seconds, expected in ((90, "1m30s"), (3661, "1h01m01s")):
+        status.set_elapsed_seconds(seconds)
+        line = "".join(text for _style, text in status._render())
+        assert f"{expected}  hak @ tmp" in line
+        center_label = "hak @ tmp"
+        center = (
+            get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
+        )
+        assert center == pytest.approx(40, abs=0.5)
+
+    assert ("class:status.context", "hak ") in elapsed_fragments
+    assert ("class:status.context.symbol", "@") in elapsed_fragments
+    assert ("class:status.context", " tmp") in elapsed_fragments
+    palette = widgets._chat_ui_palette()
+    assert palette["status.context"] == ""
+    assert palette["status.context.symbol"] == "dim"
+    assert palette["status.elapsed"] == ""
+    assert ("class:status.elapsed", "1s") in elapsed_fragments
+    assert ("class:status.context.symbol", "@") in elapsed_fragments
 
     status.set_running(False)
     stopped = "".join(text for _style, text in status._render())
-    assert "hak · tq" in stopped
+    assert "hak @ tq" in stopped
     assert "running" not in stopped
     assert "1s" not in stopped
 
@@ -3286,13 +3319,15 @@ def test_chat_status_bar_updates_only_the_session_setting_edges_during_a_run(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert text.startswith(f"{widgets._STATUS_INSET}flow:relay")
-    assert "hak · run-space · running" in text
+    assert "running  hak @ run-space" in text
     assert text.endswith(f"new-model · high{widgets._STATUS_INSET}")
     assert "new-session-space" not in text
     assert text.count("flow:relay") == 1
+    assert "300k/1M" not in text
+    assert "/" not in text
 
 
-def test_chat_status_bar_truncates_center_before_session_anchors(
+def test_chat_status_bar_keeps_center_and_truncates_edges_inward(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 70))
@@ -3306,10 +3341,37 @@ def test_chat_status_bar_truncates_center_before_session_anchors(
     status.set_elapsed_seconds(18)
 
     text = "".join(fragment for _style, fragment in status._render())
+    center_label = "very-long-agent-name @ very-long-workspace-name"
 
     assert get_cwidth(text) == 70
-    assert text.endswith(f"openai/gpt-5 · high{widgets._STATUS_INSET}")
-    assert "very-long-a…" in text
+    assert text.startswith(f"{widgets._STATUS_INSET}f…  18s  {center_label}  … · high")
+    assert text.endswith(f"… · high{widgets._STATUS_INSET}")
+    assert text.count("…") == 2
+    assert center_label in text
+    center_start = text.index(center_label)
+    center = get_cwidth(text[:center_start]) + get_cwidth(center_label) / 2
+    assert center == pytest.approx(35, abs=0.5)
+
+
+def test_chat_status_bar_reserves_no_visible_context_usage_content(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
+    status = widgets.StatusBar("agic:chat", "runtime model", "hak", "toolang")
+    idle = "".join(text for _style, text in status._render())
+    status.set_running(True)
+    status.set_elapsed_seconds(90)
+    running = "".join(text for _style, text in status._render())
+
+    assert "hak @ toolang" in idle
+    assert "1m30s  hak @ toolang" in running
+    assert "300k/1M" not in idle + running
+    assert " / " not in idle + running
+    assert idle.count("hak @ toolang") == running.count("hak @ toolang") == 1
+    for line in (idle, running):
+        label = "hak @ toolang"
+        center = get_cwidth(line[: line.index(label)]) + get_cwidth(label) / 2
+        assert center == pytest.approx(40, abs=0.5)
 
 
 @pytest.mark.parametrize("terminal_width", [1, 2, 5, 10, 20])
@@ -3334,6 +3396,10 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert get_cwidth(text) == terminal_width
+    if terminal_width <= 20:
+        assert "flow:" not in text
+        assert "openai/" not in text
+        assert "1h" not in text
 
 
 def test_chat_status_workspace_label_uses_workspace_uri_or_base() -> None:
@@ -3369,7 +3435,7 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
     assert app.status_bar.workspace_label == "repo"
     app.status_bar.set_run_workspace(app._workspace_label_for("/private/project", None))
     app.status_bar.set_running(True)
-    assert app.status_bar._center_label() == "hak · repo · running"
+    assert app.status_bar._center_label() == "hak @ repo"
     app.status_bar.set_running(False)
 
     app.setting = replace(app.setting, workdir=None, workdir_base=None)
@@ -3410,7 +3476,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
         )
     )
     assert app.status_bar.run_workspace_label == "other"
-    assert app.status_bar._center_label() == "hak · other · running"
+    assert app.status_bar._center_label() == "hak @ other"
 
     app.handle_run_event(
         PartEnd(
@@ -3432,7 +3498,9 @@ def test_chat_status_palette_has_no_marker_or_spinner_styles() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.context"] == "dim"
+    assert palette["status.context"] == ""
+    assert palette["status.context.symbol"] == "dim"
+    assert palette["status.elapsed"] == ""
     assert palette["status.error.marker"] == "fg:ansired"
     assert palette["status.error"] == "fg:ansired"
     assert (
@@ -3443,7 +3511,6 @@ def test_chat_status_palette_has_no_marker_or_spinner_styles() -> None:
             "status.agic",
             "status.flow",
             "status.model",
-            "status.elapsed",
         }
         & palette.keys()
     )
@@ -3987,7 +4054,7 @@ def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
 
     assert app._status_run_id == "run_1"
     assert app.status_bar.runnable_label == "flow:research"
-    assert app.status_bar._center_label() == "hak · run-workspace · running"
+    assert app.status_bar._center_label() == "hak @ run-workspace"
     assert "review" not in app.status_bar._center_label()
     assert "child" not in app.status_bar._center_label()
 
@@ -4046,7 +4113,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
 
     app._finish_active_run()
     stopped = "".join(text for _style, text in app.status_bar._render())
-    assert "hak · next" in stopped
+    assert "hak @ next" in stopped
     assert "active-space" not in stopped
 
 
@@ -5165,7 +5232,7 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
     assert app.status_bar.running
     assert app.status_bar.runnable_label == "agic:chat"
     assert app.status_bar.run_workspace_label == "tmp"
-    assert app.status_bar._center_label() == "tmp · running"
+    assert app.status_bar._center_label() == "tmp"
     assert app.run_in_flight.is_set()
 
 

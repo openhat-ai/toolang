@@ -70,7 +70,9 @@ def _chat_ui_palette(
         "cursor": "reverse",
         "input.cursor": "reverse",
         "status": "",
-        "status.context": "dim",
+        "status.context": "",
+        "status.context.symbol": "dim",
+        "status.elapsed": "",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
         "dim": "dim",
@@ -743,13 +745,16 @@ class StatusBar:
     def _center_label(self) -> str:
         workspace = self.run_workspace_label if self.running else self.workspace_label
         parts = [part for part in (self.agent_label, workspace) if part]
-        if self.running:
-            parts.append(
-                _format_elapsed_seconds(self._elapsed_seconds)
-                if self._elapsed_seconds >= 1
-                else "running"
-            )
-        return " · ".join(parts)
+        return " @ ".join(parts)
+
+    def _elapsed_label(self) -> str:
+        if not self.running:
+            return ""
+        return (
+            _format_elapsed_seconds(self._elapsed_seconds)
+            if self._elapsed_seconds >= 1
+            else "running"
+        )
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
@@ -779,32 +784,47 @@ class StatusBar:
             return cells
 
         left_cell, right_cell, body_width = self._status_insets()
-        left_label = _chat_runnable_label(self.runnable_label)
-        model_label = self.model_label
-        left_width = min(get_cwidth(left_label), body_width)
-        model_width = min(get_cwidth(model_label), body_width)
-        anchor_gap = (
-            2 if left_width and model_width else int(bool(left_width or model_width))
-        )
-        overflow = max(0, left_width + model_width + anchor_gap - body_width)
-        left_width, overflow = _reduce_status_width(left_width, overflow)
-        model_width = max(0, model_width - overflow)
-        left_label = truncate(left_label, left_width)
-        model_label = _truncate_model_label(model_label, model_width)
-
+        full_left_label = _chat_runnable_label(self.runnable_label)
+        full_model_label = self.model_label
         center_label = self._center_label()
-        center_full_width = get_cwidth(center_label)
-        center_start_min = left_width + (1 if left_width else 0)
-        center_end_max = body_width - model_width - (1 if model_width else 0)
-        center_available = max(0, center_end_max - center_start_min)
-        center_width = min(center_full_width, center_available)
-        center_start = (body_width - center_width) // 2
-        if center_width:
-            center_start = min(
-                max(center_start, center_start_min),
-                center_end_max - center_width,
+        center_label_width = get_cwidth(center_label)
+
+        # If even the center plus its two margins cannot fit, show it alone.
+        # Only when it is wider than the whole status area do we truncate it.
+        if body_width < center_label_width + 4:
+            left_label = ""
+            model_label = ""
+            elapsed_label = ""
+            center_label = truncate(center_label, body_width)
+            center_label_width = get_cwidth(center_label)
+            center_start = (body_width - center_label_width) // 2
+            elapsed_label_width = 0
+            elapsed_start = center_start
+        else:
+            center_start = (body_width - center_label_width) // 2
+            center_end = center_start + center_label_width
+            elapsed_label = self._elapsed_label()
+            elapsed_width = get_cwidth(elapsed_label)
+            elapsed_start = center_start - 2 - elapsed_width
+            # Keep room for an inner-edge ellipsis and a two-cell gap before
+            # elapsed; if that cannot fit, omit elapsed rather than the center.
+            minimum_elapsed_start = 3 if full_left_label else 0
+            if elapsed_label and elapsed_start < minimum_elapsed_start:
+                elapsed_label = ""
+            if elapsed_label:
+                elapsed_width = get_cwidth(elapsed_label)
+                elapsed_start = center_start - 2 - elapsed_width
+                left_limit = elapsed_start - 2
+            else:
+                elapsed_start = center_start
+                left_limit = center_start - 2
+
+            right_limit = body_width - center_end - 2
+            left_label = _truncate_status_edge_left(full_left_label, max(0, left_limit))
+            model_label = _truncate_status_edge_right(
+                full_model_label, max(0, right_limit)
             )
-        center_label = truncate(center_label, center_width)
+            elapsed_label_width = get_cwidth(elapsed_label)
 
         cells: list[tuple[str, str]] = []
         if left_cell:
@@ -813,11 +833,26 @@ class StatusBar:
         if left_label:
             cells.append(("class:status", left_label))
             cursor += get_cwidth(left_label)
+        if elapsed_label:
+            if elapsed_start > cursor:
+                cells.append(("class:status", " " * (elapsed_start - cursor)))
+            cells.append(("class:status.elapsed", elapsed_label))
+            cursor = elapsed_start + elapsed_label_width
         if center_label:
             if center_start > cursor:
                 cells.append(("class:status", " " * (center_start - cursor)))
-            cells.append(("class:status.context", center_label))
-            cursor = center_start + get_cwidth(center_label)
+            if "@" in center_label:
+                agent, _, workspace = center_label.partition("@")
+                cells.extend(
+                    (
+                        ("class:status.context", agent),
+                        ("class:status.context.symbol", "@"),
+                        ("class:status.context", workspace),
+                    )
+                )
+            else:
+                cells.append(("class:status.context", center_label))
+            cursor = center_start + center_label_width
         model_start = body_width - get_cwidth(model_label)
         if model_label:
             if model_start > cursor:
@@ -835,17 +870,25 @@ class StatusBar:
         return get_app().output.get_size().columns
 
 
-def _reduce_status_width(width: int, overflow: int) -> tuple[int, int]:
-    reduction = min(max(width - 1, 0), overflow)
-    return width - reduction, overflow - reduction
+def _truncate_status_edge_left(label: str, width: int) -> str:
+    """Keep the outer (left) part of one edge label and elide inward."""
+
+    return truncate(label, width)
 
 
-def _truncate_model_label(label: str, width: int) -> str:
-    if get_cwidth(label) <= width or " · " not in label:
-        return truncate(label, width)
-    model, separator, effort = label.rpartition(" · ")
-    suffix = f"{separator}{effort}"
-    suffix_width = get_cwidth(suffix)
-    if suffix_width >= width:
-        return truncate(label, width)
-    return f"{truncate(model, width - suffix_width)}{suffix}"
+def _truncate_status_edge_right(label: str, width: int) -> str:
+    """Keep the outer (right) part of one edge label and elide inward."""
+
+    if get_cwidth(label) <= width:
+        return label
+    if width <= 0:
+        return ""
+    remaining = width - 1
+    suffix: list[str] = []
+    for char in reversed(label):
+        char_width = get_cwidth(char)
+        if char_width > remaining:
+            break
+        suffix.append(char)
+        remaining -= char_width
+    return "…" + "".join(reversed(suffix))
