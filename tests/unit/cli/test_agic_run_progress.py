@@ -1138,5 +1138,5 @@ def test_root_run_footer_grammar_is_unchanged() -> None:
     )
 
     assert stream.getvalue() == (
-        "∎ run_root123 succeeded     8.2s · 4 runs · 6 model calls · 2 tool calls\n"
+        "▪︎ run_root123 succeeded     8.2s · 4 runs · 6 model calls · 2 tool calls\n"
     )

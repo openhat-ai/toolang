@@ -345,7 +345,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "RunSummaryBlock",
     ]
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
-    assert "• drafting\n\n∎ run_1 succeeded" in transcript
+    assert "• drafting\n\n▪︎ run_1 succeeded" in transcript
 
 
 def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None:
@@ -411,8 +411,8 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     assert "[1] Map each item with summarize, up to 2 at once\n\n• Mapped" in (
         transcript
     )
-    assert "items\n\n∎ run_1 succeeded" in transcript
-    assert "items\n\n\n∎ run_1 succeeded" not in transcript
+    assert "items\n\n▪︎ run_1 succeeded" in transcript
+    assert "items\n\n\n▪︎ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -573,11 +573,9 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
     rendered = _render_text(block.render(), width=20)
 
-    assert "▌" not in rendered
-    assert "  hello" in rendered
-    assert ">" not in rendered
+    assert f"{rendering.CONTROL_BAR_MARK} hello" in rendered
     assert "starting" not in rendered
-    control_line = "  hello" + " " * 13
+    control_line = f"{rendering.CONTROL_BAR_MARK} hello" + " " * 13
     blank_control_line = " " * 20
     assert rendered.splitlines() == [
         blank_control_line,
@@ -636,7 +634,7 @@ def test_chat_run_summary_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("∎ run_1 canceled  ")
+    assert lines[1].startswith("▪︎ run_1 canceled  ")
     assert lines[1].endswith("3s")
     assert rendering.display_len(lines[1]) == 80
     assert lines[2] == ""
@@ -663,7 +661,7 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     assert "6 runs 8 models 2 tools" in rendered
     assert all(rendering.display_len(line) <= 72 for line in lines)
     assert all(not line.endswith("·") for line in lines)
-    assert lines[0].startswith("∎ run_1")
+    assert lines[0].startswith("▪︎ run_1")
     assert all(line.startswith("  ") for line in lines[1:])
 
 
@@ -859,7 +857,7 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
     assert len(lines) == 1
-    assert lines[0].startswith("∎ run_pmqv7gfc succeeded  ")
+    assert lines[0].startswith("▪︎ run_pmqv7gfc succeeded  ")
     assert lines[0].endswith("3s")
     assert "succeeded ·" not in lines[0]
     assert rendering.display_len(lines[0]) == 80
@@ -883,7 +881,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     ]
 
     assert all(len(line) <= 32 for line in lines)
-    assert lines[0] == "∎ run_1 failed"
+    assert lines[0] == "▪︎ run_1 failed"
     assert all(line.startswith("  ") for line in lines[1:])
     assert "3s" in lines[1]
     assert "6 runs" in "\n".join(lines)
@@ -1174,16 +1172,16 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "marker_color"),
+    ("status", "caption_color"),
     [
         ("succeeded", None),
         ("failed", "red"),
         ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_colors_marker_and_dims_caption(
+def test_chat_run_footer_dims_marker_and_colors_caption(
     status: Literal["succeeded", "failed", "canceled"],
-    marker_color: str | None,
+    caption_color: str | None,
 ) -> None:
     root_summary = blocks.RunSummaryBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -1193,21 +1191,21 @@ def test_chat_run_footer_colors_marker_and_dims_caption(
         if segment.text.strip()
     ]
 
-    assert _render_text(root_summary.render()).strip().startswith("∎ ")
-    marker = next(segment for segment in segments if "∎" in segment.text)
+    assert _render_text(root_summary.render()).strip().startswith("▪︎ ")
+    marker = next(segment for segment in segments if "▪︎" in segment.text)
     caption = next(segment for segment in segments if f"run_1 {status}" in segment.text)
     facts = next(segment for segment in segments if "3s" in segment.text)
     assert marker.style is not None
-    assert not marker.style.dim
-    if marker_color is None:
-        assert marker.style.color is None
-    else:
-        assert marker.style.color is not None
-        assert marker.style.color.name == marker_color
+    assert marker.style.dim
+    assert marker.style.color is None
     assert caption.style is not None
-    assert caption.style.dim
     assert not caption.style.bold
-    assert caption.style.color is None
+    if caption_color is None:
+        assert caption.style.dim
+        assert caption.style.color is None
+    else:
+        assert caption.style.color is not None
+        assert caption.style.color.name == caption_color
     assert facts.style is not None
     assert facts.style.dim
     assert facts.style.color is None
@@ -1218,8 +1216,7 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     run_control = blocks.RunControlBlock.create("hello")
     run_control.update(_run_begin())
     run_text = _render_text(run_control.render())
-    assert f"{rendering.ACCENT_CELL} hello" in run_text
-    assert ">" not in run_text
+    assert f"{rendering.CONTROL_BAR_MARK} hello" in run_text
     assert "run_1" not in run_text
 
     steer = blocks.RunSteerBlock.create(
@@ -1228,20 +1225,20 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
         max_width=40,
     )
     steer_text = _render_text(steer.render())
-    assert f"{rendering.ACCENT_CELL} adjust" in steer_text
+    assert f"{rendering.CONTROL_BAR_MARK} adjust" in steer_text
     assert "+" not in steer_text
     assert "pending for next step" not in steer_text
     assert "run_1" not in steer_text
     assert not steer_text.splitlines()[0].strip()
     assert run_text.splitlines() == [
         " " * 80,
-        f"{rendering.ACCENT_CELL} hello" + " " * 73,
+        f"{rendering.CONTROL_BAR_MARK} hello" + " " * 73,
         " " * 80,
     ]
     assert steer_text.splitlines() == [
         "",
         " " * 40,
-        f"{rendering.ACCENT_CELL} adjust" + " " * 32,
+        f"{rendering.CONTROL_BAR_MARK} adjust" + " " * 32,
         " " * 40,
     ]
 
@@ -1262,8 +1259,7 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     run_accent = next(
         fragment[0]
         for fragment in run_fragments
-        if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{run_prompt_accent}" in fragment[0]
+        if fragment[1] == rendering.CONTROL_BAR_MARK
     )
     steer_prompt_accent = rendering._prompt_toolkit_color(
         Color.parse(rendering.STEER_CONTROL_ACCENT)
@@ -1271,8 +1267,7 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     steer_accent = next(
         fragment[0]
         for fragment in steer_fragments
-        if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{steer_prompt_accent}" in fragment[0]
+        if fragment[1] == rendering.CONTROL_BAR_MARK
     )
     run_message = next(
         fragment[0] for fragment in run_fragments if "hello" in fragment[1]
@@ -1284,8 +1279,9 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     assert rendering.RUN_CONTROL_ACCENT == "bright_cyan"
     assert rendering.STEER_CONTROL_ACCENT == "bright_magenta"
     assert rendering.QUICK_COMMAND_CONTROL_ACCENT == "yellow"
-    assert run_accent == f"bg:{run_prompt_accent} nodim"
-    assert steer_accent == f"bg:{steer_prompt_accent} nodim"
+    input_background = DARK_TERMINAL_SURFACES.input_background
+    assert run_accent == f"{run_prompt_accent} bg:{input_background} nodim"
+    assert steer_accent == f"{steer_prompt_accent} bg:{input_background} nodim"
     assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in run_message
     assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in steer_message
     assert "nodim" in run_message.split()
@@ -1365,19 +1361,20 @@ def test_chat_two_line_control_bars_keep_both_padding_rows(
     accent_cells = [
         segment
         for segment in segments
-        if segment.text == rendering.ACCENT_CELL
+        if segment.text == rendering.CONTROL_BAR_MARK
         and segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.get_truecolor().hex
+        == Color.parse(accent).get_truecolor().hex
         and segment.style.bgcolor is not None
         and segment.style.bgcolor.get_truecolor().hex
-        == Color.parse(accent).get_truecolor().hex
+        == Color.parse(DARK_TERMINAL_SURFACES.input_background).get_truecolor().hex
     ]
 
     assert len(accent_cells) == expected_accent_cells
-    assert [
-        line.rstrip()
-        for line in _render_text(block.render(), width=20).splitlines()
-        if line.strip()
-    ] == ["  first", "  second"]
+    rendered_lines = _render_text(block.render(), width=20).splitlines()
+    body_lines = [line for line in rendered_lines if line[2:].strip()]
+    assert [line[2:].rstrip() for line in body_lines] == ["first", "second"]
 
 
 def test_chat_control_bar_keeps_padding_for_multiline_body() -> None:
@@ -1392,13 +1389,13 @@ def test_chat_control_bar_keeps_padding_for_multiline_body() -> None:
 
     assert two_lines == [
         " " * 20,
-        "  first" + " " * 13,
+        f"{rendering.CONTROL_BAR_MARK} first" + " " * 13,
         "  second" + " " * 12,
         " " * 20,
     ]
     assert three_lines == [
         " " * 20,
-        "  first" + " " * 13,
+        f"{rendering.CONTROL_BAR_MARK} first" + " " * 13,
         "  second" + " " * 12,
         "  third" + " " * 13,
         " " * 20,
@@ -1423,11 +1420,12 @@ def test_chat_control_bar_wraps_every_physical_row(
             blocks.RunControlBlock.create(message).render(),
             width=20,
         ).splitlines()
-        if line.strip()
+        if line[2:].strip()
     ]
 
     assert len(rendered_lines) == expected_rows
-    assert all(line.startswith("  ") for line in rendered_lines)
+    assert rendered_lines[0].startswith(f"{rendering.CONTROL_BAR_MARK} ")
+    assert all(line.startswith("  ") for line in rendered_lines[1:])
     assert all(rendering.display_len(line) == 20 for line in rendered_lines)
     assert "".join(line[2:].rstrip() for line in rendered_lines) == message
 
@@ -1449,11 +1447,12 @@ def test_chat_auxiliary_control_bars_wrap_wide_text_at_output_width(
     rendered_lines = [
         line
         for line in _render_text(block.render(), width=80).splitlines()
-        if line.strip()
+        if line[2:].strip()
     ]
 
     assert len(rendered_lines) == 5
-    assert all(line.startswith("  ") for line in rendered_lines)
+    assert rendered_lines[0].startswith(f"{rendering.CONTROL_BAR_MARK} ")
+    assert all(line.startswith("  ") for line in rendered_lines[1:])
     assert all(get_cwidth(line) == 20 for line in rendered_lines)
     assert "".join(line[2:].rstrip() for line in rendered_lines) == "中文" * 20
 
@@ -2703,10 +2702,8 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     all_segments = rendering.render_segments(block.render(), width=80)
     segments = [segment for segment in all_segments if segment.text.strip()]
 
-    assert "▌" not in rendered
     assert not rendered_lines[0].strip()
-    assert rendered_lines[1].startswith(f"{rendering.ACCENT_CELL} /?")
-    assert ">" not in rendered_lines[1]
+    assert rendered_lines[1].startswith(f"{rendering.CONTROL_BAR_MARK} /?")
     assert not rendered_lines[2].strip()
     assert "  Slash commands act immediately." in rendered
     assert "/model [MODEL]" in rendered
@@ -2717,21 +2714,25 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     quick_accent_hex = (
         Color.parse(rendering.QUICK_COMMAND_CONTROL_ACCENT).get_truecolor().hex
     )
+    input_background_hex = (
+        Color.parse(DARK_TERMINAL_SURFACES.input_background).get_truecolor().hex
+    )
     quick_accents = [
         segment
         for segment in all_segments
-        if segment.text == rendering.ACCENT_CELL
+        if segment.text == rendering.CONTROL_BAR_MARK
         and segment.style is not None
-        and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex == quick_accent_hex
+        and segment.style.color is not None
+        and segment.style.color.get_truecolor().hex == quick_accent_hex
     ]
 
     assert len(quick_accents) == 1
     assert all(
         segment.style is not None
-        and segment.style.color is None
+        and segment.style.color is not None
+        and segment.style.color.get_truecolor().hex == quick_accent_hex
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex == quick_accent_hex
+        and segment.style.bgcolor.get_truecolor().hex == input_background_hex
         for segment in quick_accents
     )
     assert rendering.QUICK_COMMAND_CONTROL_ACCENT not in {
@@ -6132,7 +6133,7 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     assert len(lines) == 3
     assert lines[-1].strip() == expected
     assert lines[-1].endswith(expected + "  ")
-    assert lines[1].strip() == "hello"
+    assert lines[1].removeprefix(rendering.CONTROL_BAR_MARK).strip() == "hello"
     segments = rendering.render_segments(block.render(), width=80)
     annotation = next(s for s in segments if expected in s.text)
     assert annotation.style is not None and annotation.style.dim
@@ -6169,10 +6170,10 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         return [
             s.style
             for s in segments
-            if s.text == rendering.ACCENT_CELL
+            if s.text == rendering.CONTROL_BAR_MARK
             and s.style
-            and s.style.bgcolor
-            and s.style.bgcolor.get_truecolor().hex
+            and s.style.color
+            and s.style.color.get_truecolor().hex
             == Color.parse(rendering.STEER_CONTROL_ACCENT).get_truecolor().hex
         ]
 
@@ -6409,7 +6410,18 @@ def test_chat_extremely_narrow_controls_retain_a_body_cell(
     ).splitlines()
     assert not lines[0].strip() and not lines[-1].strip()
     assert all(get_cwidth(line) == width for line in lines)
-    assert "".join(line.strip() for line in lines) == "abc"
+    body = lines[1:-1]
+    if width == 1:
+        content = "".join(body)
+    elif width == 2:
+        content = body[0].removeprefix(rendering.CONTROL_BAR_MARK) + "".join(
+            line[1:] for line in body[1:]
+        )
+    else:
+        content = "".join(line[2:].strip() for line in body)
+    assert content.strip() == "abc"
+    if width > 1:
+        assert body[0].startswith(rendering.CONTROL_BAR_MARK)
 
 
 def test_chat_burst_steers_keep_each_draft_independent() -> None:
@@ -6504,7 +6516,8 @@ def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
     lines = _render_text(block.render(), width=20).splitlines()
     body = [line for line in lines if line.strip()]
     assert len(body) == 2
-    assert all(line.startswith("  ") and line.endswith("  ") for line in body)
+    assert body[0].startswith(f"{rendering.CONTROL_BAR_MARK} ")
+    assert all(line.startswith("  ") and line.endswith("  ") for line in body[1:])
     assert all(get_cwidth(line) == 20 for line in body)
 
 

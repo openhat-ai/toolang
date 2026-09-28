@@ -106,6 +106,6 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         output = capsys.readouterr()
         assert output.out == ""
         assert "• remote result" in output.err
-        assert f"∎ {record.id}" in output.err
+        assert f"▪︎ {record.id}" in output.err
     finally:
         asyncio.run(core.close())

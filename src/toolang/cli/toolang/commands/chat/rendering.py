@@ -20,6 +20,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 )
 
 ACCENT_CELL = " "
+CONTROL_BAR_MARK = "▮"
 QUICK_COMMAND_CONTROL_ACCENT = "yellow"
 RUN_CONTROL_ACCENT = "bright_cyan"
 RUN_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"

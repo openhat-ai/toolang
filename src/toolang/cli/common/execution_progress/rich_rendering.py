@@ -332,9 +332,9 @@ class _RunFooter:
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        marker_style = _terminal_status_color(self.status) or "none"
-        title_style = "dim"
-        prefix = "∎ "
+        marker_style = "dim"
+        title_style = terminal_status_style(self.status)
+        prefix = "▪︎ "
         prefix_width = display_width(prefix)
         if width <= prefix_width:
             line = Text(no_wrap=True)

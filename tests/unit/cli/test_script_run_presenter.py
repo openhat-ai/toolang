@@ -10,6 +10,7 @@ from io import StringIO
 from os import terminal_size
 
 import pytest
+from rich.console import Console
 from rich.live import Live
 
 from toolang.base.types.message import (
@@ -153,15 +154,15 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
 
     assert "Thinking" not in output
     assert output.startswith("\n• Use a shared reducer.\n")
-    assert "• Use a shared reducer.\n\n∎ run_one succeeded" in output
+    assert "• Use a shared reducer.\n\n▪︎ run_one succeeded" in output
     assert "run_one.0" not in output
     assert "deepseek/deepseek-chat" not in output
     footer = next(
         line
         for line in output.splitlines()
-        if line.startswith("∎ ") and "run_one succeeded" in line
+        if line.startswith("▪︎ ") and "run_one succeeded" in line
     )
-    assert footer.startswith("∎ run_one succeeded  ")
+    assert footer.startswith("▪︎ run_one succeeded  ")
     assert footer.endswith("2s · 1 model · ↑3.4k ↓86 ≈$0.01")
     assert "succeeded ·" not in footer
     assert display_width(footer) == 120
@@ -190,7 +191,7 @@ def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
     wide_lines = wide_stream.getvalue().splitlines()
 
     assert len(wide_lines) == 1
-    assert wide_lines[0].startswith("∎ run_rm5pxy5e succeeded  ")
+    assert wide_lines[0].startswith("▪︎ run_rm5pxy5e succeeded  ")
     assert wide_lines[0].endswith(facts[-1])
     assert "succeeded ·" not in wide_lines[0]
     assert display_width(wide_lines[0]) == 120
@@ -208,10 +209,44 @@ def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
     narrow_lines = narrow_stream.getvalue().splitlines()
 
     assert narrow_lines == [
-        "∎ run_rm5pxy5e succeeded",
+        "▪︎ run_rm5pxy5e succeeded",
         "  1m25s · 26 runs 32 models 10 tools · ↑42.3k(17.5%) ↓14.7k(8.6k) ≈$0.01",
     ]
     assert all(display_width(line) <= 80 for line in narrow_lines)
+
+
+@pytest.mark.parametrize(
+    ("status", "caption_color"),
+    [("succeeded", None), ("failed", "red"), ("canceled", "yellow")],
+)
+def test_script_root_footer_dims_marker_and_colors_status(
+    status: str,
+    caption_color: str | None,
+) -> None:
+    console = Console(width=80)
+    footer = run_footer_renderable(
+        run_id="run_one",
+        status=status,
+        facts=(),
+        max_width=80,
+        gap_before=False,
+    )
+    segments = list(console.render(footer, console.options))
+    marker = next(segment for segment in segments if "▪︎" in segment.text)
+    caption = next(
+        segment for segment in segments if f"run_one {status}" in segment.text
+    )
+
+    assert marker.style is not None
+    assert marker.style.dim
+    assert marker.style.color is None
+    assert caption.style is not None
+    if caption_color is None:
+        assert caption.style.dim
+        assert caption.style.color is None
+    else:
+        assert caption.style.color is not None
+        assert caption.style.color.name == caption_color
 
 
 def test_script_root_footer_keeps_child_runs_in_the_activity_group() -> None:

@@ -2240,7 +2240,7 @@ agic reply(_: Part[]) -> Part[]:
                 for line in retry_output.splitlines()
                 if f"{source.id}: retry succeeded" in line
             )
-            assert retry_footer.startswith(f"∎ {source.id}: retry succeeded  ")
+            assert retry_footer.startswith(f"▪︎ {source.id}: retry succeeded  ")
             assert "succeeded ·" not in retry_footer
 
             assert rerun.stdout == ""
@@ -2251,7 +2251,7 @@ agic reply(_: Part[]) -> Part[]:
                 for line in rerun_output.splitlines()
                 if f"{rerun_id}: rerun succeeded" in line
             )
-            assert rerun_footer.startswith(f"∎ {rerun_id}: rerun succeeded  ")
+            assert rerun_footer.startswith(f"▪︎ {rerun_id}: rerun succeeded  ")
             assert "succeeded ·" not in rerun_footer
         else:
             assert retry.stdout.strip() == f"retried {source.id}: succeeded"
