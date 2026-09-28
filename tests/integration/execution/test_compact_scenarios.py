@@ -39,6 +39,17 @@ from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 from toolang.plugin.models.collections import ModelCollection
 
 
+@pytest.fixture(autouse=True)
+def offline_compact_estimate(monkeypatch):
+    from toolang.execution import batched_compaction
+
+    monkeypatch.setattr(
+        batched_compaction,
+        "estimate_model_input_tokens",
+        lambda request, model: InputEstimate().count(request, None),
+    )
+
+
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
   instruct = none
@@ -59,18 +70,20 @@ def reply(value: object) -> ModelCallResult:
 
 
 def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
+    normal = replace(
+        harness.setup.models_effective()[0],
+        limit={"context": context, "output": 512},
+        structured_output=True,
+    )
+    # Complete historical roots must fit the reducer, even when they no longer
+    # fit the smaller caller's assembled context.
+    reducer = replace(
+        normal, id="reducer", name="reducer", limit={"context": 200000, "output": 8192}
+    )
     harness.setup = replace_materialized_setup(
         harness.setup,
-        models=ModelCollection(
-            tuple(
-                replace(
-                    model,
-                    limit={**model.limit, "context": context, "output": 512},
-                    structured_output=True,
-                )
-                for model in harness.setup.models_effective()
-            )
-        ),
+        models=ModelCollection((normal, reducer)),
+        compact_model=parse_model_body("test/reducer"),
     )
 
 
@@ -100,6 +113,8 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                     models=ModelCollection(
                         tuple(
                             replace(model, limit={"context": 14000})
+                            if model.id == "scripted"
+                            else model
                             for model in harness.setup.models_effective()
                         )
                     ),
@@ -112,20 +127,6 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             }
             harness.adapter._responses.extend(
                 [
-                    ModelCallResult(
-                        tool_calls=(
-                            ToolCall(
-                                "history",
-                                "history",
-                                "history__read_runs",
-                                {
-                                    "thread": f"compact_{thread}",
-                                    "from_end": True,
-                                    "limit": 1,
-                                },
-                            ),
-                        )
-                    ),
                     ModelCallResult(message=Message.assistant(summary["summary"])),
                     reply("now"),
                     reply("later"),
@@ -134,7 +135,9 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             current = await harness.executor.run(
                 spec(harness, thread, "current input"), tracer=tracer
             )
-            assert current.status == "succeeded", current.error
+            assert current.status == "succeeded", (
+                harness.store.resolve_error(current.error) if current.error else None
+            )
             steps = harness.store.list_steps(run_id=current.id)
             assert [step.kind for step in steps] == ["tool", "model"]
             tool, model = steps
@@ -178,8 +181,8 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             ]
             assert any(
                 isinstance(s.given, ToolStepGiven)
-                and s.given.call.name == "history__read_runs"
-                and s.given.trigger == "model"
+                and s.given.call.name == "_toolang__compact_read"
+                and s.given.trigger == "runtime"
                 for s in compact_steps
             )
             assert [
@@ -192,8 +195,8 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             expected_output = 3500 if output_limit is None else output_limit
             assert request.max_output_tokens == expected_output
             assert all(
-                i.call.max_output_tokens == expected_output
-                for i in harness.adapter.invocations[3:]
+                i.call.max_output_tokens == 8192 and not i.call.tools
+                for i in harness.adapter.invocations[3:-1]
             )
             assert not any(t.name.startswith("history__") for t in request.tools)
             text = str([m.to_data() for m in request.messages])
@@ -589,6 +592,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
                     original,
                     id=name,
                     name=name,
+                    limit={"context": 200000, "output": 8192},
                     reasoning_options=reasoning_options,
                 )
                 for name in ("first", "second")
@@ -616,7 +620,9 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
                 else (),
             )
             current = await harness.executor.run(request)
-            assert current.status == "succeeded", current.error
+            assert current.status == "succeeded", (
+                harness.store.resolve_error(current.error) if current.error else None
+            )
             expected = "test/first" if selection == "auto" else "test/second"
             compact_calls = harness.adapter.invocations[3:-1]
             assert len(compact_calls) == 1
@@ -753,7 +759,9 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
                     ]
                 )
             current = await asyncio.wait_for(handle, 3)
-            assert current.status == "succeeded", current.error
+            assert current.status == "succeeded", (
+                harness.store.resolve_error(current.error) if current.error else None
+            )
             text = str(
                 [m.to_data() for m in harness.adapter.invocations[-1].call.messages]
             )
@@ -800,7 +808,11 @@ def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action
                 assert all(run.status == "canceled" for run in compact.members)
                 assert RunHistory(harness.store).get_compaction(thread) is None
             else:
-                assert current.status == "succeeded", current.error
+                assert current.status == "succeeded", (
+                    harness.store.resolve_error(current.error)
+                    if current.error
+                    else None
+                )
                 assert len(compact.roots) == 2
                 first, retried, model = harness.store.list_steps(run_id=current.id)
                 assert first.status == "canceled" and first.aborted_by == steer.ref
@@ -915,7 +927,9 @@ def test_cancel_before_oversized_first_call_still_has_a_canceled_step(tmp_path):
     asyncio.run(scenario())
 
 
-def test_automatic_publication_and_control_roll_back_together(tmp_path, monkeypatch):
+def test_automatic_publication_survives_interrupted_control_adoption(
+    tmp_path, monkeypatch
+):
     harness = seeded_harness(tmp_path)
 
     async def scenario():
@@ -938,22 +952,20 @@ def test_automatic_publication_and_control_roll_back_together(tmp_path, monkeypa
                 if isinstance(c.payload, CompactControlPayload)
             ]
             assert controls == []
-            assert harness.store.get_thread(thread_id=thread).horizon is None
+            assert harness.store.get_thread(thread_id=thread).horizon is not None
             history = RunHistory(harness.store)
-            assert history.get_compaction(thread) is None
+            assert history.get_compaction(thread) is not None
             producers = history.thread_view(f"compact_{thread}").roots
             assert len(producers) == 1 and producers[0].status == "succeeded"
             assert not [
                 s for s in harness.store.list_steps(run_id=root.id) if s.kind == "model"
             ]
-            # A fresh attempt publishes a new summary; the unpublished Run is not reused.
-            harness.adapter._responses.extend(
-                [*compact_responses(thread, end), reply("next")]
-            )
+            # The published producer survives; a fresh caller adopts it without reduction.
+            harness.adapter._responses.extend([reply("next")])
             later = await harness.executor.run(spec(harness, thread, "next input"))
             assert later.status == "succeeded", later.error
             assert history.get_compaction(thread) is not None
-            assert len(history.thread_view(f"compact_{thread}").roots) == 2
+            assert len(history.thread_view(f"compact_{thread}").roots) == 1
 
     asyncio.run(scenario())
 
@@ -1111,7 +1123,11 @@ def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
                 )
                 assert not controls
             else:
-                assert current.status == "succeeded", current.error
+                assert current.status == "succeeded", (
+                    harness.store.resolve_error(current.error)
+                    if current.error
+                    else None
+                )
                 assert len(controls) == 1 and controls[0].payload.horizon == latest.ref
                 call = harness.adapter.invocations[-1].call
                 assert latest.result.summary in str(call.messages)

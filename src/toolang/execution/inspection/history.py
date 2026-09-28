@@ -323,6 +323,10 @@ class RunHistory:
                 begin=RunRef.parse(cast(str, request["begin"])),
                 end=RunRef.parse(cast(str, request["end"])),
             )
+            if control.payload.runnable == "compact:batched":
+                from ..batched_compaction import validate_producer
+
+                validate_producer(self._store, run, roots, result.summary)
             start, stop = (
                 roots.index(RunRef(result.begin)),
                 roots.index(RunRef(result.end)),

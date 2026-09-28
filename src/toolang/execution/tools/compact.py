@@ -3,12 +3,12 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from toolang.base.errors import ToolangError
-from toolang.base.types.policy import RunBindings
-from toolang.common.time import utc_now
-from toolang.lang.input import RunnableInput
 from toolang.setup.models import select_compact_model
-from toolang.plugin.models.query import subset_models
-from ..compaction import compact_state, execute_algorithm, permit
+from toolang.plugin.models.query import resolve_model, subset_models
+from toolang.plugin.models.resolution import resolve_model_reasoning
+from toolang.base.types.model import ModelRequest, env_names
+from ..compaction import permit
+from ..executor.compact import CompactSpec, produce
 from ..inspection.history import RunHistory
 from ..records import CompactControlPayload
 from ..assembly.tool_replies import control_summary
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 async def execute(
     state: _AgicState, step: StepRef, thread: str, begin: str | None, end: str
 ) -> dict[str, Any]:
-    from ..executor.executor import RunSpec
+    from ..executor.executor import _setup_sandbox
     from ..executor.steps.model import compaction_boundary
 
     target = ThreadRef.parse(thread)
@@ -53,7 +53,6 @@ async def execute(
         if boundary != end_ref:
             raise ToolangError("compact range changed while waiting; retry required")
         reader = RunHistory(store)
-        store.require_idle_compactor(thread)
         output = reader.get_compaction(target)
         if output is not None and RunRef(output.result.end) not in history.roots:
             raise ToolangError(
@@ -62,44 +61,56 @@ async def execute(
         if output is None or history.roots.index(
             RunRef(output.result.end)
         ) < history.roots.index(end_ref):
-            resolved: dict[str, str] = {
-                "thread": str(target),
-                "start": str(history.roots[0]),
-                "summary": "",
-                "begin": str(history.roots[0]),
-                "end": end,
-            }
-            if output is not None:
-                resolved["begin"] = output.result.end
-                resolved["start"] = output.result.begin
-                resolved["summary"] = output.result.summary
             frame = state.frame_for_step(*execution.state_snapshot())
             resources = frame.run.agent_resources
             if resources is None:
                 raise RuntimeError(f"agent resources missing: {frame.run.run_id}")
             models = subset_models(frame.run.setup.models_effective(), resources.models)
             request = select_compact_model(models, frame.run.setup.compact_model)
-            compact_thread = f"compact_{target}"
-            if store.get_thread(thread_id=compact_thread) is None:
-                store.create_thread(
-                    thread_id=compact_thread, origin="script", created_at=utc_now()
-                )
-            # This isolated program has only read-only history tools. In particular
-            # it cannot reload into the human's State or transfer out of compact.
             setup = frame.run.setup
-            spec = RunSpec(
-                setup=setup,
-                state=compact_state(),
-                thread=compact_thread,
-                bindings=RunBindings(model=request.ref, runnable="agic:compact"),
+            model = resolve_model(models, request.ref)
+            request = ModelRequest(
+                request.ref,
+                resolve_model_reasoning(model, request.reasoning),
+                request.max_output,
+            )
+            route = model._toolang.route
+            if not route.ready or route.adapter is None or route.env is None:
+                raise ToolangError(f"compact model route is not ready: {model.ref}")
+            adapter = setup.adapters().get(route.adapter)
+            if adapter is None:
+                raise ToolangError(f"compact model adapter not found: {route.adapter}")
+            environ = {
+                key: setup.envs[key]
+                for key in env_names(route.env)
+                if key in setup.envs
+            }
+            spec = CompactSpec(
+                target=target,
+                roots=tuple(history.roots),
+                begin=RunRef(output.result.end) if output else history.roots[0],
+                end=end_ref,
+                summary=output.result.summary if output else "",
+                prior=output.ref if output else None,
+                model=model,
+                request=request,
+                adapter=adapter,
+                environ=environ,
+                setup=setup.revision,
+                state=frame.run.state.revision,
+                sandbox=_setup_sandbox(setup),
                 limits=frame.run.limits,
-                model_request=request,
-                input=RunnableInput(resolved),
-                all_tools=True,
+                size=4096,
+                versions=store.history_versions(
+                    [
+                        str(root)
+                        for root in history.roots[: history.roots.index(end_ref) + 1]
+                    ]
+                ),
             )
             try:
-                _producer, output = await execute_algorithm(
-                    execution.executor, spec, roots=history.roots
+                output = await produce(
+                    store, spec, issue_run=execution.executor.ids.issue_run
                 )
             except (ValueError, TypeError) as exc:
                 raise ToolangError(f"invalid compact summary: {exc}") from exc
