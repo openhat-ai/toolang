@@ -54,7 +54,11 @@ Once created, the agent is ready for a conversation:
 
 ```bash
 too NAME chat
+too NAME shell
 ```
+
+`too NAME shell` opens an interactive shell in the agent's home. Exit it to
+return to your previous shell; an interactive terminal is required.
 
 You can then configure the agent's capabilities and add tasks or recurring chores. Use the CLI help to see the available commands:
 
