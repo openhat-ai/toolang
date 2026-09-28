@@ -61,6 +61,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "remove",
     "list",
     "info",
+    "shell",
     "serve",
     "start",
     "stop",
@@ -342,6 +343,13 @@ _registered_command(
     help="Show agent information",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
+_registered_command(
+    "shell",
+    "toolang.cli.toolang.commands.shell:shell",
+    help="Open a shell in the agent's home",
+    cls=RequiredPrefixAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(

@@ -97,6 +97,7 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("new", {"none"}, set()),
         ("remove", {"after"}, {"resident"}),
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
+        ("shell", {"before"}, {"resident"}),
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("compact", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
@@ -315,6 +316,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "remove",
             "list",
             "info",
+            "shell",
             "serve",
             "start",
             "stop",
@@ -353,6 +355,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
         "inspect": "Inspect agent runs",
+        "shell": "Open a shell in the agent's home",
         "caps": "List available caps",
         "models": "List available models",
         "providers": "List available model providers",

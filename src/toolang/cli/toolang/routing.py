@@ -76,6 +76,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             placements=_ALL_PLACEMENTS,
             prepare="program",
         ),
+        _command("shell", "before", placements=_RESIDENT, prepare="layout"),
         _command(
             "serve",
             "before",
