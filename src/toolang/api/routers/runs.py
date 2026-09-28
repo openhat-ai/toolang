@@ -327,6 +327,8 @@ async def rerun_authored_run_stream(
 async def run_defaults(
     core: AgentCoreDep,
     thread_id: Annotated[str | None, Query()] = None,
+    workdir: Annotated[str | None, Query()] = None,
+    workdir_base: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
     """Return concrete defaults and workdir for a client-owned run session."""
 
@@ -349,7 +351,13 @@ async def run_defaults(
     if runnable is not None:
         runnable = resolve_public_runnable_query(state, runnable).ref
     try:
-        workdir = core.executor.initial_workdir(setup, state, thread_id)
+        workdir = core.executor.resolve_workdir(
+            setup,
+            state,
+            workdir=workdir,
+            workdir_base=workdir_base,
+            thread=thread_id,
+        )
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {

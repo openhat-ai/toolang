@@ -639,11 +639,27 @@ class ChatTuiApp:
             return "none"
         return _qualified_runnable_label(reference, {})
 
+    def _workspace_label_for(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+    ) -> str | None:
+        if (workspace := _workspace_label(workdir, workdir_base)) is not None:
+            return workspace
+        resolver = getattr(self.client, "resolve_workdir", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = resolver(workdir, workdir_base, self.thread_id)
+        except (OSError, RuntimeError, ToolangError, ValueError):
+            return None
+        return _workspace_label(resolved)
+
     def _status_labels(self) -> tuple[str, str, str | None]:
         return (
             self._runnable_label(),
             self._model_label(),
-            _workspace_label(self.setting.workdir, self.setting.workdir_base),
+            self._workspace_label_for(self.setting.workdir, self.setting.workdir_base),
         )
 
     def _clear_status_error(self) -> None:
@@ -1185,12 +1201,12 @@ class ChatTuiApp:
 
     def _apply_run_workdir(self, run_id: str, workdir: str | None) -> None:
         policy = self._workdir_update_policies.pop(run_id, None)
-        if workdir is None or policy is None:
+        if workdir is None:
             return
-        revision, request_matched_session = policy
-        if not request_matched_session or revision != self._session_workdir_revision:
-            return
-        self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
+        if policy is not None:
+            revision, request_matched_session = policy
+            if request_matched_session and revision == self._session_workdir_revision:
+                self.setting = replace(self.setting, workdir=workdir, workdir_base=None)
         runnable_label, model_label, workspace_label = self._status_labels()
         self.status_bar.set_status(runnable_label, model_label, workspace_label)
         self._invalidate_ui()
@@ -1249,7 +1265,10 @@ class ChatTuiApp:
             call.request.workdir_base,
         ) == (self.setting.workdir, self.setting.workdir_base)
         self.status_bar.set_run_workspace(
-            _workspace_label(call.request.workdir, call.request.workdir_base)
+            self._workspace_label_for(
+                call.request.workdir,
+                call.request.workdir_base,
+            )
         )
         self.unfinalized_blocks.append(
             blocks.RunControlBlock.create(

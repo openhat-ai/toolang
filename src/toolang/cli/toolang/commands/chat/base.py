@@ -183,6 +183,13 @@ class ChatClient(Protocol):
 
     def initial_setting(self) -> SessionSetting: ...
 
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str: ...
+
     def apply_setting(
         self,
         setting: SessionSetting,

@@ -3341,6 +3341,41 @@ def test_chat_status_workspace_label_uses_workspace_uri_or_base() -> None:
     assert tui._workspace_label("/absolute/path") is None
 
 
+def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
+    class WorkspaceClient(FakeClient):
+        def resolve_workdir(
+            self,
+            workdir: str | None,
+            workdir_base: str | None,
+            thread_id: str | None,
+        ) -> str:
+            del workdir_base, thread_id
+            return "repo://project" if workdir == "/private/project" else "tmp://"
+
+    client = WorkspaceClient()
+    app = tui.ChatTuiApp(
+        thread_id="term_workspace",
+        setting=replace(
+            client.initial_setting(),
+            workdir="/private/project",
+        ),
+        home="/tmp/agent",
+        input_history=None,
+        client=client,
+        agent_name="hak",
+    )
+
+    assert app.status_bar.workspace_label == "repo"
+    app.status_bar.set_run_workspace(app._workspace_label_for("/private/project", None))
+    app.status_bar.set_running(True)
+    assert app.status_bar._center_label() == "hak · repo · running"
+    app.status_bar.set_running(False)
+
+    app.setting = replace(app.setting, workdir=None, workdir_base=None)
+    app.app_context.refresh_status()
+    assert app.status_bar.workspace_label == "tmp"
+
+
 def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
     monkeypatch: Any,
 ) -> None:
@@ -5780,6 +5815,18 @@ class FakeClient(ChatClient):
             model=ModelRequest("openai/gpt-5"),
             runnable="agic:chat",
         )
+
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        del thread_id
+        for value in (workdir, workdir_base):
+            if isinstance(value, str) and "://" in value:
+                return value
+        raise ToolangError("fake client cannot resolve this workdir")
 
     def apply_setting(
         self,

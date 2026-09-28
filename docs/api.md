@@ -1448,9 +1448,13 @@ names must be unique. Unknown fields and invalid combinations return `422`; a
 missing thread returns `404`.
 
 `GET /api/v1/runs/defaults` returns one concrete `model` request, including its
-typed `parameters`, plus `runnable` and materialized `policy` for clients to
-adopt as session-owned defaults. Changing client session state does not call a
-validation endpoint; validation occurs on the next complete run submission.
+typed `parameters`, plus `runnable`, materialized `policy`, and the effective
+canonical `workdir` for clients to adopt as session-owned defaults. The optional
+`thread_id` selects the workdir inherited from that thread. Optional `workdir`
+and `workdir_base` query values resolve a proposed location using the same
+workspace authorization and path rules as run submission; resolution does not
+accept a run or mutate client session settings. Run submissions still perform
+full validation of the complete request.
 
 `GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
 `RunDetail` with a nonempty resolved output. An unknown thread and a known

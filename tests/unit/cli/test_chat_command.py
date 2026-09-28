@@ -325,6 +325,18 @@ class _Client:
             runnable="agic:chat",
         )
 
+    def resolve_workdir(
+        self,
+        workdir: str | None,
+        workdir_base: str | None,
+        thread_id: str | None,
+    ) -> str:
+        del thread_id
+        for value in (workdir, workdir_base):
+            if isinstance(value, str) and "://" in value:
+                return value
+        return "tmp://"
+
     def apply_setting(
         self,
         setting: SessionSetting,

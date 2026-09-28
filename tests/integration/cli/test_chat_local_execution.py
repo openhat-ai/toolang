@@ -484,6 +484,12 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_selector="host",
             sandbox_detail="macOS 27.0 arm64",
         )
+        absolute_workspace = harness.setup.layout.home / ".tmp" / "absolute"
+        absolute_workspace.mkdir(parents=True)
+        assert session.resolve_workdir(None, None, None) == "tmp://"
+        assert session.resolve_workdir(str(absolute_workspace), None, None) == (
+            "tmp://absolute"
+        )
         setting = session.initial_setting().runnable or ""
         if entry == "chat":
             assert setting == "agic:chat"
