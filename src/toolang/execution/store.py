@@ -2053,7 +2053,8 @@ class RunStore:
             clauses.append("status = ?")
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
+        # Run timestamps have second precision; row order resolves same-second runs.
+        query = f"SELECT * FROM runs {where} ORDER BY created_at DESC, rowid DESC"
         if limit is not None:
             query = f"{query} LIMIT ?"
             params.append(limit)
