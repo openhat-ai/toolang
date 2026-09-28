@@ -212,26 +212,23 @@ class RemoteChatSession:
         workdir_base: str | None,
         thread_id: str | None,
     ) -> str:
-        params: dict[str, str] = {}
-        if thread_id is not None:
-            params["thread_id"] = thread_id
-        if workdir is not None:
-            params["workdir"] = workdir
-        if workdir_base is not None:
-            params["workdir_base"] = workdir_base
-        setting = _session_setting(
-            await self._request_json(
-                "GET",
-                "/api/v1/runs/defaults",
-                operation="workdir resolution",
-                params=params,
-            )
+        payload = await self._request_json(
+            "POST",
+            "/api/v1/runs/workdir/resolve",
+            operation="workdir resolution",
+            json={
+                "thread_id": thread_id,
+                "workdir": workdir,
+                "workdir_base": workdir_base,
+            },
         )
-        if setting.workdir is None:
+        body = _mapping(payload, operation="workdir resolution")
+        resolved = body.get("workdir")
+        if set(body) != {"workdir"} or not isinstance(resolved, str) or not resolved:
             raise _RemoteChatProtocolError(
-                "remote chat workdir resolution omitted the effective workdir"
+                "remote chat workdir resolution returned invalid data"
             )
-        return setting.workdir
+        return resolved
 
     def initial_workdir(self, thread_id: str | None) -> str:
         if thread_id is None:
