@@ -704,19 +704,26 @@ as `agic:name` or `flow:name`, without the `module$` prefix. The active root
 runnable is never shown there. A session runnable change updates only this left
 corner; it never adds a runnable beside the model.
 
-The center shows the Chat agent name, which stays constant for the session. It
-also shows the current workspace name: the session workspace while idle and the
-active root run's effective workspace while running. Successful
-`_toolang.chdir` calls in the root run update this workspace; child run changes
-do not. `/cd` updates the session setting for subsequent runs without changing
-the active run's workspace. When the run ends, the center returns to the latest
-session workspace. Directory paths within a workspace are not shown.
+The absolute center anchor is the Chat agent and current workspace in
+`agent @ workspace` form. The agent stays constant for the session. The
+workspace is the session workspace while idle and the active root run's
+effective workspace while running. Successful `_toolang.chdir` calls in the
+root run update this workspace; child run changes do not. `/cd` updates the
+session setting for subsequent runs without changing the active run's
+workspace. When the run ends, the center returns to the latest session
+workspace. Directory paths within a workspace are not shown.
 
-The center group uses dim text and middle-dot separators. While running, it
-appends the dim label `running` below one elapsed second, then the compact
-whole-second duration, such as `18s`, `1m20s`, or `1h01m01s`. `0s` is never
-shown. The duration disappears when the run stops. Context-window size and
-usage are not displayed.
+While running, elapsed time occupies a right-aligned slot immediately left of
+the center anchor: `running` below one elapsed second, then compact whole-second
+time such as `18s`, `1m20s`, or `1h01m01s`. `0s` is never shown. The elapsed
+slot is blank while idle and its changing width never moves the center anchor.
+A context-usage slot is reserved immediately right of the anchor but currently
+renders no value, placeholder, separator, or visible padding. Agent/workspace
+and elapsed text use normal intensity; only the structural `@` is dim. If the
+full line overflows, the complete center stays fixed with a two-cell margin on
+each side; session edge labels elide inward with one `…`. If the center plus
+margins cannot fit, elapsed and both edge labels are hidden, and the center is
+truncated only when it cannot fit alone.
 
 The right corner contains only the current session model and its existing
 effort suffix. It is never replaced by an active model step. An empty effective
@@ -724,13 +731,13 @@ model collection appears as `[no models available]`; an explicit effort or
 token budget appears as `MODEL · VALUE`; a model that advertises effort-level
 or token-budget control but has no explicit session value appears as
 `MODEL · auto`. Models without applicable reasoning control omit the suffix.
-The model remains right-aligned against the terminal edge. At narrow widths, the
-center group truncates before either session setting; the model ref is elided
-before an applicable effort suffix if the two session corners alone need more
-space. Runnable and model text inherit the terminal's default foreground; the
-center group and activity use the terminal's dim attribute. Setting commands
-remain available while running and update the session corners immediately
-without changing the active run's center context. Hotkey hints are omitted.
+The model remains right-aligned against the terminal edge. At narrow widths,
+the model ref is elided before an applicable effort suffix if the session
+corners alone need more space. Runnable, model, center labels, and elapsed text
+inherit the terminal's default foreground; only the `@` separator is dim.
+Setting commands remain available while running and update the session
+corners immediately without changing the active run's center context. Hotkey
+hints are omitted.
 The status redraws when a visible value, run state, error, or elapsed second
 changes. Run completion returns immediately to the idle form, and status state
 is never committed to execution scrollback.

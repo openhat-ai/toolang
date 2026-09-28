@@ -412,14 +412,21 @@ summary and detail rows align with other output using a two-space indent and no
 leading marker column.
 
 The status bar keeps the session runnable in its left corner and the session
-model plus effort in its right corner. The center always shows the Chat agent
-name; its workspace value comes from session settings while idle and from the
-active root run while running. The active runnable is never duplicated beside
-the model. Run duration appears in the center only while a run is active, and
-successful root `_toolang.chdir` changes update its workspace. `/cd` changes
-the session workspace for subsequent runs; after the current run ends, the
-center returns to the latest session workspace. The center shows only the
-workspace name, not the path, and does not show context-window usage.
+model plus effort in its right corner. The center anchor is the Chat agent and
+workspace in `agent @ workspace` form; it is fixed at the status line's absolute
+center. The workspace comes from session settings while idle and from the active
+root run while running. The active runnable is never duplicated beside the
+model. While running, elapsed time occupies a compact slot immediately left of
+the anchor; the slot is blank while idle. Successful root `_toolang.chdir`
+changes update the workspace. `/cd` changes the session workspace for subsequent
+runs; after the current run ends, the center returns to the latest session
+workspace. Only the workspace name is shown, not the path. If the full status
+line overflows, the centered identity stays intact, with two spaces on each
+side; the session runnable and model truncate toward the center with a single
+`…` when needed. On extremely narrow terminals, elapsed and both session edge
+labels are hidden to show the center alone; the center is truncated only if it
+cannot fit by itself. A context-usage slot is reserved to the anchor's right
+but is currently empty; no context usage is displayed.
 
 The status bar's right side shows the canonical session model ref without a
 field label. An empty effective model collection appears as
