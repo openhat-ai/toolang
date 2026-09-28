@@ -50,6 +50,7 @@ _INPUT_PLACEHOLDER = "Ask or describe a task"
 # The status bar insets its content on each side so its text lines up with the
 # other chat surfaces; the inset cells stay blank.
 _STATUS_INSET = "  "
+_STATUS_CENTER_GAP = 3
 
 
 def _chat_ui_palette(
@@ -72,7 +73,7 @@ def _chat_ui_palette(
         "status": "",
         "status.context": "",
         "status.context.symbol": "dim",
-        "status.elapsed": "",
+        "status.elapsed": "dim",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
         "dim": "dim",
@@ -791,7 +792,7 @@ class StatusBar:
 
         # If even the center plus its two margins cannot fit, show it alone.
         # Only when it is wider than the whole status area do we truncate it.
-        if body_width < center_label_width + 4:
+        if body_width < center_label_width + 2 * _STATUS_CENTER_GAP:
             left_label = ""
             model_label = ""
             elapsed_label = ""
@@ -805,21 +806,21 @@ class StatusBar:
             center_end = center_start + center_label_width
             elapsed_label = self._elapsed_label()
             elapsed_width = get_cwidth(elapsed_label)
-            elapsed_start = center_start - 2 - elapsed_width
-            # Keep room for an inner-edge ellipsis and a two-cell gap before
-            # elapsed; if that cannot fit, omit elapsed rather than the center.
+            elapsed_start = center_start - _STATUS_CENTER_GAP - elapsed_width
+            # Keep room for an inner-edge ellipsis and a two-cell gap between
+            # the runnable and elapsed; otherwise omit elapsed, not the center.
             minimum_elapsed_start = 3 if full_left_label else 0
             if elapsed_label and elapsed_start < minimum_elapsed_start:
                 elapsed_label = ""
             if elapsed_label:
                 elapsed_width = get_cwidth(elapsed_label)
-                elapsed_start = center_start - 2 - elapsed_width
+                elapsed_start = center_start - _STATUS_CENTER_GAP - elapsed_width
                 left_limit = elapsed_start - 2
             else:
                 elapsed_start = center_start
-                left_limit = center_start - 2
+                left_limit = center_start - _STATUS_CENTER_GAP
 
-            right_limit = body_width - center_end - 2
+            right_limit = body_width - center_end - _STATUS_CENTER_GAP
             left_label = _truncate_status_edge_left(full_left_label, max(0, left_limit))
             model_label = _truncate_status_edge_right(
                 full_model_label, max(0, right_limit)
