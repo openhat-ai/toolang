@@ -217,8 +217,9 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
         *,
         max_results: int,
         timeout: int,
+        backend: str,
     ) -> list[dict[str, str]]:
-        del query, max_results, timeout
+        del query, max_results, timeout, backend
         return [
             {
                 "title": "Example",
@@ -271,12 +272,14 @@ def test_web_search_worker_is_process_isolated_and_cancellable(
 
     from toolang.plugin.toolsets.web import _run_search, _search_text
 
-    result = asyncio.run(_run_search("toolang", max_results=15, timeout=5))
+    result = asyncio.run(
+        _run_search("toolang", max_results=15, timeout=5, backend="google")
+    )
 
     assert result == []
     assert observed == {
         "func": _search_text,
-        "args": ("toolang", 15, 5),
+        "args": ("toolang", 15, 5, "google"),
         "cancellable": True,
     }
 
@@ -293,8 +296,9 @@ def test_web_search_enforces_an_outer_timeout(
         *,
         max_results: int,
         timeout: int,
+        backend: str,
     ) -> list[dict[str, Any]]:
-        del query, max_results, timeout
+        del query, max_results, timeout, backend
         await asyncio.sleep(30)
         return []
 
