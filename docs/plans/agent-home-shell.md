@@ -25,21 +25,24 @@ non-interactive invocation.
 1. Add `too AGENT shell` for resident agents only, using existing target routing
    and root selection. Require an explicit agent; do not infer a “current” agent
    or add another spelling in this change.
-2. Launch `SHELL -i` as an interactive child process, with inherited
+2. Show `shell` in the root `Agent Commands` panel after `info` and before
+   `serve`, with the help description `Open a shell in the agent's home`.
+3. Launch `SHELL -i` as an interactive child process, with inherited
    stdin/stdout/stderr and environment, and `cwd` set to the resolved agent
    home. If `SHELL` is unset, use `/bin/sh`; report an error if the selected
    executable cannot be launched. Do not load agent `.env` files or start the
    agent runtime.
-3. Require both stdin and stdout to be TTYs. Otherwise exit with a concise
+4. Require both stdin and stdout to be TTYs. Otherwise exit with a concise
    diagnostic before launching the shell. Do not allocate a PTY; inherit the
    caller's terminal and propagate the child shell's exit status.
-4. Keep this command interactive-only. A non-interactive `exec` mode or a
+5. Keep this command interactive-only. A non-interactive `exec` mode or a
    command that prints the home path is out of scope.
 
 ## Scope and Touchpoints
 
 - `src/toolang/cli/toolang/main.py` and `src/toolang/cli/toolang/routing.py`:
-  register `shell` in Agent Commands and the resident target-first route.
+  register `shell` after `info` in Agent Commands with the stated help
+  description and resident target-first route.
 - `src/toolang/cli/toolang/commands/shell.py`: resolve the selected layout,
   check TTYs, and launch the child shell; keep shell process handling in the
   CLI layer.
@@ -59,8 +62,9 @@ non-interactive invocation.
    message and does not invoke the shell.
 4. The child inherits standard streams and process environment, receives no
    agent `.env` values, and its exit status is returned by the CLI.
-5. Root help and README show the command under the Agent Commands vocabulary;
-   existing command routing and help remain unchanged.
+5. Root help shows `shell` in the stated position with the stated description;
+   README shows the command, and existing command routing and help remain
+   unchanged.
 
 ## Risks and Open Questions
 
