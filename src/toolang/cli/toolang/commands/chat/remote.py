@@ -580,13 +580,24 @@ class RemoteChatSession:
     async def _current_runnable_default(self) -> str | None:
         """Read the runnable default from the executor's current State."""
 
-        payload = await self._request_json(
-            "GET",
-            "/api/v1/runs/defaults",
-            operation="run defaults",
-        )
-        runnable = _session_setting(payload).runnable
-        if runnable is not None or self._session_defaults().runnable is None:
+        previous_default = self._session_defaults().runnable
+        try:
+            payload = await self._request_json(
+                "GET",
+                "/api/v1/runs/defaults",
+                operation="run defaults",
+            )
+        except RemoteChatError as exc:
+            if (
+                previous_default is None
+                or exc.status_code != 422
+                or exc.detail != "runnable query matched no items"
+            ):
+                raise
+            runnable = None
+        else:
+            runnable = _session_setting(payload).runnable
+        if runnable is not None or previous_default is None:
             return runnable
         agics, flows = await asyncio.gather(
             self._request_json("GET", "/api/v1/agics", operation="agics"),

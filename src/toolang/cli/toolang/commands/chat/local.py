@@ -554,12 +554,11 @@ class LocalChatSession:
         try:
             runnable = self._current_session_setting(setup=setup, state=state).runnable
         except ToolangError:
-            if setup.defaults.runnable is not None or initial.runnable is None:
+            if initial.runnable is None:
                 raise
             runnable = None
         if (
             runnable is None
-            and setup.defaults.runnable is None
             and initial.runnable is not None
             and len(state.runnables) == 1
         ):

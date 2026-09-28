@@ -710,14 +710,18 @@ def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> 
         tmp_path / "revised", source="agic assistant:\n  hello\n", responses=()
     )
     session: Any = object.__new__(local.LocalChatSession)
+    configured_setup = replace(
+        original.setup,
+        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+    )
     session.setup_watcher = type(
-        "SetupWatcher", (), {"current": lambda _self: original.setup}
+        "SetupWatcher", (), {"current": lambda _self: configured_setup}
     )()
     session.state_watcher = type(
         "StateWatcher", (), {"current": lambda _self: revised.state}
     )()
     session._surface = local.LocalChatSession._current_session_setting(
-        setup=original.setup, state=original.state
+        setup=configured_setup, state=original.state
     )
 
     try:

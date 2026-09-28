@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -150,9 +151,13 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
         responses=(),
     )
     original.store.close()
+    configured_setup = replace(
+        original.setup,
+        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+    )
     state_snapshot = _Snapshot(original.state)
     core = AgentCore(original.setup.layout)
-    core.setup = _Snapshot(original.setup)
+    core.setup = _Snapshot(configured_setup)
     core.state = state_snapshot
     agents.write_runtime_state(
         core.layout,
