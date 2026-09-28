@@ -141,14 +141,10 @@ agic chat(_: Part[]) -> Part[]:
 
 def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> None:
     original = ExecutionHarness.create(
-        tmp_path / "original",
+        tmp_path,
         source="agic chat:\n  hello\n",
         responses=(),
-    )
-    revised = ExecutionHarness.create(
-        tmp_path / "revised",
-        source="agic assistant:\n  hello\n",
-        responses=(),
+        prepare_state=True,
     )
     original.store.close()
     configured_setup = replace(
@@ -180,7 +176,11 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
 
     try:
         assert session.initial_setting().runnable == "agic:chat"
-        state_snapshot.value = revised.state
+        (original.setup.layout.home / "agent.too").write_text(
+            "agic assistant:\n  hello\n",
+            encoding="utf-8",
+        )
+        state_snapshot.value = prepare_agent_state(original.setup.layout)
         request = session.build_request(
             session.create_thread(),
             RunOverride(),
@@ -191,4 +191,3 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     finally:
         session.close()
         asyncio.run(core.close())
-        revised.store.close()
