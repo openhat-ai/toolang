@@ -413,7 +413,7 @@ leading marker column.
 
 The status bar keeps the session runnable in its left corner and the session
 model plus effort in its right corner. The center anchor is the Chat agent and
-workspace in `agent @ workspace` form; it is fixed at the status line's absolute
+workspace in `agent@workspace` form; it is fixed at the status line's absolute
 center. The workspace comes from session settings while idle and from the active
 root run while running. The active runnable is never duplicated beside the
 model. While running, elapsed time occupies a compact slot immediately left of
@@ -421,8 +421,8 @@ the anchor; the slot is blank while idle. Successful root `_toolang.chdir`
 changes update the workspace. `/cd` changes the session workspace for subsequent
 runs; after the current run ends, the center returns to the latest session
 workspace. Only the workspace name is shown, not the path. If the full status
-line overflows, the centered identity stays intact, with three spaces on each
-side; the session runnable and model truncate toward the center with a single
+line overflows, the centered identity stays intact, with one space between
+adjacent status items; the session runnable and model truncate toward the center with a single
 `…` when needed. On extremely narrow terminals, elapsed and both session edge
 labels are hidden to show the center alone; the center is truncated only if it
 cannot fit by itself. A context-usage slot is reserved to the anchor's right

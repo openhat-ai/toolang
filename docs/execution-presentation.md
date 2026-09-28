@@ -705,7 +705,7 @@ runnable is never shown there. A session runnable change updates only this left
 corner; it never adds a runnable beside the model.
 
 The absolute center anchor is the Chat agent and current workspace in
-`agent @ workspace` form. The agent stays constant for the session. The
+`agent@workspace` form. The agent stays constant for the session. The
 workspace is the session workspace while idle and the active root run's
 effective workspace while running. Successful `_toolang.chdir` calls in the
 root run update this workspace; child run changes do not. `/cd` updates the
@@ -720,7 +720,7 @@ slot is blank while idle and its changing width never moves the center anchor.
 A context-usage slot is reserved immediately right of the anchor but currently
 renders no value, placeholder, separator, or visible padding. Agent/workspace
 text uses normal intensity; elapsed text and the structural `@` are dim. If the
-full line overflows, the complete center stays fixed with a three-cell margin on
+full line overflows, the complete center stays fixed with a one-cell margin on
 each side; session edge labels elide inward with one `…`. If the center plus
 margins cannot fit, elapsed and both edge labels are hidden, and the center is
 truncated only when it cannot fit alone.
