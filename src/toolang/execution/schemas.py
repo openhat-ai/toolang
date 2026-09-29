@@ -188,17 +188,21 @@ def record_kind(record: Record) -> Literal["thread", "control", "run", "step"]:
     raise TypeError(f"unsupported record: {type(record).__name__}")
 
 
-def record_to_data(record: Record) -> dict[str, object]:
-    """Serialize one record to its canonical public JSON document."""
+def record_to_data(
+    record: Record, *, include: set[str] | None = None
+) -> dict[str, object]:
+    """Serialize a record, optionally restricting its top-level fields."""
 
     kind = record_kind(record)
     data = cast(
         dict[str, object],
-        _RECORD_ADAPTERS[kind].dump_python(record, mode="json"),
+        _RECORD_ADAPTERS[kind].dump_python(record, mode="json", include=include),
     )
     if isinstance(record, StepRecord):
-        data["given"] = stored_step_given_to_data(record.kind, record.given)
-        data["noted"] = step_noted_to_data(record.kind, record.noted)
+        if include is None or "given" in include:
+            data["given"] = stored_step_given_to_data(record.kind, record.given)
+        if include is None or "noted" in include:
+            data["noted"] = step_noted_to_data(record.kind, record.noted)
     return data
 
 
@@ -208,7 +212,10 @@ def select_record(record: Record, pointer: Pointer) -> RecordSelection:
     kind = record_kind(record)
     if pointer.kind != kind:
         raise ValueError(f"Pointer identifies {pointer.kind}, not {kind}: {pointer}")
-    data: object = record_to_data(record)
+    # History commonly selects only an output from a Step whose given field
+    # contains the entire preceding conversation. Do not serialize that field.
+    include = {pointer.tokens[0]} if pointer.tokens else None
+    data: object = record_to_data(record, include=include)
     runtime: object = record
     annotation: object = type(record)
     name = type(record).__name__

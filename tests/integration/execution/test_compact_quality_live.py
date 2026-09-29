@@ -12,6 +12,7 @@ uv run pytest -s tests/integration/execution/test_compact_quality_live.py -k dis
 import asyncio
 from dataclasses import replace
 import json
+import time
 
 import pytest
 
@@ -199,12 +200,17 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
             caller = replace(caller, limit={"context": 32000, "output": 8192})
             compact = replace(compact, limit={"context": 16000, "output": 8192})
             calls = []
+            intervals = []
+            callback_seconds = 0.0
+            observer_seconds = 0.0
 
             class RecordingAdapter:
                 def __init__(self, delegate):
                     self.delegate = delegate
 
                 def record(self, model, call, result):
+                    nonlocal observer_seconds
+                    started = time.perf_counter()
                     assert result.usage is not None
                     capacity = input_budget(model.limit, call.max_output_tokens)
                     assert capacity is not None
@@ -222,21 +228,34 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
                     )
                     assert result.usage.input_tokens <= capacity
                     calls.append((model.ref, call, result))
+                    observer_seconds += time.perf_counter() - started
                     return result
 
                 async def invoke(self, model, call, *, environ):
+                    started = time.perf_counter()
                     result = await asyncio.wait_for(
                         self.delegate.invoke(model, call, environ=environ), 180
                     )
+                    intervals.append((model.ref, started, time.perf_counter()))
                     return self.record(model, call, result)
 
                 async def stream(self, model, call, *, environ, on_event):
+                    async def observed_event(event):
+                        nonlocal callback_seconds
+                        started = time.perf_counter()
+                        try:
+                            await on_event(event)
+                        finally:
+                            callback_seconds += time.perf_counter() - started
+
+                    started = time.perf_counter()
                     result = await asyncio.wait_for(
                         self.delegate.stream(
-                            model, call, environ=environ, on_event=on_event
+                            model, call, environ=environ, on_event=observed_event
                         ),
                         180,
                     )
+                    intervals.append((model.ref, started, time.perf_counter()))
                     return self.record(model, call, result)
 
             h.setup = replace_materialized_setup(
@@ -259,6 +278,7 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
                 + ", ".join(EXPECTED)
                 + ". Booleans for permissions/completion/approval, integer for budget, YYYY-MM-DD for date, exact strings otherwise; unknown facts null."
             )
+            started = time.perf_counter()
             run = await asyncio.wait_for(
                 h.executor.run(
                     h.run_spec(
@@ -267,9 +287,50 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
                 ),
                 420,
             )
+            finished = time.perf_counter()
             assert run.status == "succeeded", (
                 h.store.resolve_error(run.error) if run.error else None
             )
+            assert intervals
+            adapter_seconds = sum(end - start for _, start, end in intervals)
+            gaps = (
+                [intervals[0][1] - started]
+                + [
+                    following[1] - previous[2]
+                    for previous, following in zip(intervals, intervals[1:])
+                ]
+                + [finished - intervals[-1][2]]
+            )
+            # Stream callbacks persist/render local events while the adapter is
+            # active. Count them as runtime work, and exclude test-only recounts.
+            timing = {
+                "end_to_end_ms": round((finished - started) * 1000, 2),
+                "adapter_ms": round(adapter_seconds * 1000, 2),
+                "stream_callback_ms": round(callback_seconds * 1000, 2),
+                "observer_ms": round(observer_seconds * 1000, 2),
+                "non_model_ms": round(
+                    (
+                        finished
+                        - started
+                        - adapter_seconds
+                        + callback_seconds
+                        - observer_seconds
+                    )
+                    * 1000,
+                    2,
+                ),
+                "before_first_ms": round(gaps[0] * 1000, 2),
+                "max_between_ms": round(max(gaps[1:-1], default=0) * 1000, 2),
+                "after_last_ms": round(gaps[-1] * 1000, 2),
+                "calls": [
+                    {"model": ref, "ms": round((end - start) * 1000, 2)}
+                    for ref, start, end in intervals
+                ],
+            }
+            (tmp_path / "cross-model-timing.json").write_text(
+                json.dumps(timing, indent=2)
+            )
+            print(json.dumps({"timing": timing}), flush=True)
             output = RunHistory(h.store).get_compaction(thread)
             assert output is not None
             assert sum(ref == compact.ref for ref, _, _ in calls) >= 2

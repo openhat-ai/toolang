@@ -204,6 +204,7 @@ async def execute(
     cursor, summary = compaction.read_checkpoint(store, run)
     steps = store.list_steps(run_id=run.id)
     calls = sum(s.kind == "model" for s in steps)
+    next_index = max((s.index for s in steps if s.parent is None), default=-1) + 1
     for step in steps:
         if step.status == "running":
             await execution.emit(
@@ -250,9 +251,9 @@ async def execute(
                 f"compact model call limit exceeded: {spec.limits.agic_model_calls}"
             )
         calls += 1
-        index = execution.next_step(run.id)
-        read = StepRef.from_local(run.id, (index,))
-        model = StepRef.from_local(run.id, (index + 1,))
+        read = StepRef.from_local(run.id, (next_index,))
+        model = StepRef.from_local(run.id, (next_index + 1,))
+        next_index += 2
         roots = [str(unit.run_id) for unit in reducer.batch]
         refs = [str(unit.ref) for unit in reducer.batch]
         tool = ToolCall(

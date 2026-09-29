@@ -1173,9 +1173,20 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
                 ),
             )
             harness.adapter._responses.extend([reply("Small cumulative summary.")] * 16)
+            step_reads = []
+            list_steps_before = harness.store.list_steps
+
+            def observed_steps(*, run_id):
+                step_reads.append(run_id)
+                return list_steps_before(run_id=run_id)
+
+            monkeypatch.setattr(harness.store, "list_steps", observed_steps)
             caller = await harness.executor.run(spec(harness, thread, "continue"))
             assert caller.status == "succeeded", caller.error
             (producer,) = compact_runs(harness, thread)
+            # Checkpoint/adoption validation may read the producer a fixed
+            # number of times; allocating each batch must not reread all steps.
+            assert step_reads.count(producer.id) <= 7
             history = RunHistory(harness.store)
             output = history.get_compaction(thread)
             assert output is not None and output.result.end == str(retained)
