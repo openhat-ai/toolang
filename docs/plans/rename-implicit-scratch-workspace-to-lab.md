@@ -1,6 +1,6 @@
 # Rename the Implicit Scratch Workspace to `lab`
 
-Status: Draft for approval.
+Status: Approved by PR #624 (merged 2026-09-29).
 
 ## Goal
 

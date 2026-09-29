@@ -329,7 +329,7 @@ class CwdControlPayload:
             raise ValueError("invalid working location cause")
         if self.cause == "invalidated":
             # Empty cwd is accepted when loading controls written before
-            # invalidations adopted the implicit tmp fallback.
+            # invalidations adopted an implicit workspace fallback.
             if self.cwd and parse_cwd(self.cwd)[0] is None:
                 raise ValueError("workspace invalidation requires a fallback workdir")
             if self.state is None:

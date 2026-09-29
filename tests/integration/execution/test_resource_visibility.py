@@ -83,7 +83,7 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
             for invocation in harness.adapter.invocations:
                 call = invocation.call
                 assert _workspace_messages(call)[-1:] == [
-                    '<toolang:workspace list="tmp,a"/>'
+                    '<toolang:workspace list="lab,a"/>'
                 ]
                 text = call.instructions + "".join(
                     message_text(m.parts) for m in call.messages
@@ -138,7 +138,7 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
             assert all(r.status == "succeeded" for r in (first, retained, current))
             assert not _declarations(harness, current, "workspace")
             assert _workspace_messages(harness.adapter.invocations[-1].call)[-1:] == [
-                '<toolang:workspace list="tmp,repo"/>',
+                '<toolang:workspace list="lab,repo"/>',
             ]
 
     asyncio.run(scenario())
@@ -423,12 +423,12 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
                 _workspace_messages(i.call) for i in harness.adapter.invocations
             ]
             assert [group[-1] for group in messages] == [
-                '<toolang:workspace list="tmp,repo"/>',
-                '<toolang:workspace list="tmp,repo"/>',
-                '<toolang:workspace list="tmp"/>',
-                '<toolang:workspace list="tmp"/>',
-                '<toolang:workspace list="tmp,repo"/>',
-                '<toolang:workspace list="tmp,repo"/>',
+                '<toolang:workspace list="lab,repo"/>',
+                '<toolang:workspace list="lab,repo"/>',
+                '<toolang:workspace list="lab"/>',
+                '<toolang:workspace list="lab"/>',
+                '<toolang:workspace list="lab,repo"/>',
+                '<toolang:workspace list="lab,repo"/>',
             ]
             assert all("revision=" not in text for group in messages for text in group)
 

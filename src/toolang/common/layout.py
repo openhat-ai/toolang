@@ -9,6 +9,8 @@ from typing import Literal
 
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
+IMPLICIT_WORKSPACE_NAME = "lab"
+
 
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
@@ -172,16 +174,16 @@ def _safe_log_label(value: str) -> str:
     return text.strip("._") or "default"
 
 
-def ensure_tmp_workspace(home: Path) -> Path:
+def ensure_scratch_workspace(home: Path) -> Path:
     """Create and validate one agent-owned implicit scratch workspace."""
 
     resolved_home = home.expanduser().resolve()
     if not resolved_home.is_dir():
         raise FileNotFoundError(f"agent home is not available: {resolved_home}")
-    root = resolved_home / ".tmp"
+    root = resolved_home / IMPLICIT_WORKSPACE_NAME
     if root.is_symlink():
-        raise ValueError(f"implicit tmp workspace must not be a symlink: {root}")
+        raise ValueError(f"implicit lab workspace must not be a symlink: {root}")
     root.mkdir(exist_ok=True)
     if not root.is_dir() or root.resolve().parent != resolved_home:
-        raise ValueError(f"implicit tmp workspace is not a directory: {root}")
+        raise ValueError(f"implicit lab workspace is not a directory: {root}")
     return root

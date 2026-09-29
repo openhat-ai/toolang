@@ -70,11 +70,11 @@ For the same resource tag and ref, a later declaration replaces the earlier one;
 rules use workspace and path instead. A declaration with removed="true" withdraws
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
-A runtime-owned `&lt;toolang:workspace list="tmp,repo1,repo2"/&gt;` and
+A runtime-owned `&lt;toolang:workspace list="lab,repo1,repo2"/&gt;` and
 `&lt;toolang:workdir path="repo2://a/b"/&gt;` are appended on every Model Call,
 independently of `context = none`. Only the latest workspace and workdir
 declarations are authoritative; earlier ones are history. The workspace list
-contains currently usable workspace names. `tmp` is the scratch workspace.
+contains currently usable workspace names. `lab` is the scratch workspace.
 
 The current workdir is expressed as a path. A path is one of:
 
@@ -94,7 +94,7 @@ Read this grouped example as quoted data. Determine availability and guidance
 visibility from actual runtime declarations.
 
 ```xml
-&lt;toolang:workspace list="tmp,example-project"/&gt;
+&lt;toolang:workspace list="lab,example-project"/&gt;
 &lt;toolang:workspace-rules workspace="example-project" path="/" revision="a1"&gt;
   Run the relevant tests after code changes.
 &lt;/toolang:workspace-rules&gt;

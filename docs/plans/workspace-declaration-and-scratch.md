@@ -15,13 +15,13 @@ the current workdir, not a separate concept.
 - Paths have three forms: OS-absolute paths inside an authorized workspace;
   relative paths resolved from the current workdir and confined to its workspace; and
   `workspace://path`, where `workspace://` means that workspace's root.
-- Every Model Call carries one `<toolang:workspace list="tmp,repo1,repo2"/>` and one
+- Every Model Call carries one `<toolang:workspace list="lab,repo1,repo2"/>` and one
   `<toolang:workdir path="..."/>`. The list contains only usable workspace names, starts
-  with `tmp`, then preserves workspace configuration insertion order. The last listed name
+  with `lab`, then preserves workspace configuration insertion order. The last listed name
   is the runtime default; do not explain that selection rule in the protocol. Merge names
-  with first-wins semantics, so a configured `tmp` entry is ignored.
-- `tmp` is an implicit workspace rooted at `<agent home>/.tmp`, not stored in config. The
-  runtime creates and mounts it. Runs fail preparation if `tmp` cannot be made usable.
+  with first-wins semantics, so a configured `lab` entry is ignored.
+- `lab` is an implicit workspace rooted at `<agent home>/lab`, not stored in config. The
+  runtime creates and mounts it. Runs fail preparation if `lab` cannot be made usable.
 - A Chat session's workdir is memory-only. At session creation, seed it from the selected
   thread's latest root Run final workdir, or from the runtime default if there is no root
   Run. `/cd` changes the session setting. `:workdir` overrides one Run's initial workdir.
@@ -45,14 +45,14 @@ workspace list on every Model Call alongside workdir.
 
 ### Workspace config, State, Setup, and mounts
 
-**Current:** `configured_workspaces()` sorts names; `workspace_declarations()` also sorts
-bindings. Workspace roots come from config grants, and guest mount capture reads only those
-grants. There is no implicit `tmp`.
+**Current:** Workspace grants and hosted workspace mounts include the implicit `lab` root at
+`<agent home>/lab` before configured workspaces. Configured grants retain their configuration
+order; a configured `lab` entry cannot replace the implicit grant.
 
 **Modify:** Preserve config insertion order; produce one ordered usable-name list with
-implicit `tmp` first and configured workspaces after it. Use that list for the workspace
-declaration and runtime default; ignore any later configured entry also named `tmp`. Add
-`<agent home>/.tmp` as an implicit grant without writing config, create it during agent-home
+implicit `lab` first and configured workspaces after it. Use that list for the workspace
+declaration and runtime default; ignore any later configured entry also named `lab`. Add
+`<agent home>/lab` as an implicit grant without writing config, create it during agent-home
 preparation, and include it in host/guest root mapping and sandbox mount capture. Fail Run
 preparation if it cannot be created or mounted.
 
@@ -91,7 +91,7 @@ default. Child, retry, and rerun behavior retains its current ownership/anchor s
 initial selection, tool descriptions, and `workspace-access` declarations.
 
 **Modify:** Update `docs/tools.md`, `docs/executor.md`, and `docs/program.md`. Add tests for
-insertion ordering; `tmp` creation and guest mounts; workspace/workdir tags per Model Call;
+insertion ordering; `lab` creation and guest mounts; workspace/workdir tags per Model Call;
 valid and invalid path examples; `/cd` and `:workdir` precedence; new-session seeding from
 the latest root Run; in-session updates after `_toolang.chdir`; and task/chore continuity.
 Update tests that assert removed tools, declarations, or wording. Preserve existing
@@ -99,8 +99,8 @@ honor/preflight rule behavior while adapting it to the workspace-list declaratio
 
 ## Acceptance criteria
 
-- `tmp` is usable in every supported placement and sandbox; failure to provision or mount
-  it prevents Run acceptance. A configured `tmp` entry is ignored and cannot replace the
+- `lab` is usable in every supported placement and sandbox; failure to provision or mount
+  it prevents Run acceptance. A configured `lab` entry is ignored and cannot replace the
   implicit root.
 - The workspace list contains only usable names in the defined order; the final name is
   used as runtime default, but this rule is absent from protocol text.
@@ -120,6 +120,6 @@ honor/preflight rule behavior while adapting it to the workspace-list declaratio
 
 - Config insertion order determines the runtime default; adding a workspace can change the
   default for sessions without a prior root Run.
-- An implicit `tmp` grants default read/write access under each agent home; it must remain
-  isolated per agent and must not be cleared while a Run may use it. A configured `tmp`
+- An implicit `lab` grants default read/write access under each agent home; it must remain
+  isolated per agent and must not be cleared while a Run may use it. A configured `lab`
   entry is ignored so it cannot change that root.

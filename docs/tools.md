@@ -62,10 +62,10 @@ relative to the current workdir, or workspace-qualified as `name://path`, where 
 `name://` denotes that workspace's root. Relative paths cannot leave their
 workspace.
 
-The runtime sends `<toolang:workspace list="tmp,repo1"/>` and the current
+The runtime sends `<toolang:workspace list="lab,repo1"/>` and the current
 `<toolang:workdir path="repo1://src"/>` on every Model Call. The list contains
-currently usable workspaces, with implicit `tmp` first and configured workspaces
-in configuration order. `tmp` is rooted at `<agent home>/.tmp` and is not a config
+currently usable workspaces, with implicit `lab` first and configured workspaces
+in configuration order. `lab` is rooted at `<agent home>/lab` and is not a config
 grant. The last listed name is the runtime default.
 
 ## Shell

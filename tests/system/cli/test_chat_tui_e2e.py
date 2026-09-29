@@ -227,7 +227,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
     try:
         session.wait_for("agic:chat", "scripted")
         session.send(b"hold status\r")
-        session.wait_for("• Thinking", "@tmp")
+        session.wait_for("• Thinking", "@lab")
 
         session.send(b"/flow relay\r")
         running = session.wait_for("flow:relay", "test/scripted")
@@ -277,7 +277,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
     try:
         session.wait_for("agic:chat", "scripted")
         session.send(b"hold queue\r")
-        session.wait_for("• Thinking", "@tmp")
+        session.wait_for("• Thinking", "@lab")
 
         session.send(b"queued follow-up\r")
         visible = session.wait_for(

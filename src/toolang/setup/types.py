@@ -17,7 +17,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import Toolset
 from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, IMPLICIT_WORKSPACE_NAME
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.types import LoadedPlugin
 
@@ -173,18 +173,20 @@ class AgentSetup:
     _lazy: _LazyValues = field(default_factory=_LazyValues, repr=False, compare=False)
 
     def workspace_grants(self, grants: Mapping[str, str]) -> dict[str, str]:
-        """Add the implicit tmp grant before configured workspaces; first name wins."""
-        tmp_source = str(self.layout.home / ".tmp")
+        """Add the implicit lab grant before configured workspaces; first name wins."""
+        scratch_source = str(self.layout.home / IMPLICIT_WORKSPACE_NAME)
         if (
             self.environment is not None
             and self.environment.workspace_location == "guest"
         ):
-            captured = self.environment.workspace_mounts.get("tmp")
+            captured = self.environment.workspace_mounts.get(IMPLICIT_WORKSPACE_NAME)
             if captured is not None:
-                tmp_source = str(captured[0])
-        result = {"tmp": tmp_source}
+                scratch_source = str(captured[0])
+        result = {IMPLICIT_WORKSPACE_NAME: scratch_source}
         result.update(
-            (name, source) for name, source in grants.items() if name != "tmp"
+            (name, source)
+            for name, source in grants.items()
+            if name != IMPLICIT_WORKSPACE_NAME
         )
         return result
 

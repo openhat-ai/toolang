@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from toolang.base.types.sandbox import SandboxMount
-from toolang.common.layout import ensure_tmp_workspace
+from toolang.common.layout import (
+    IMPLICIT_WORKSPACE_NAME,
+    ensure_scratch_workspace,
+)
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.source import observe_home_source, observe_root_source
 
@@ -77,11 +80,13 @@ def prepare_workspace_mounts(
     local_home: Path, hosted_home: Path
 ) -> tuple[tuple[SandboxMount, ...], dict[str, tuple[str, str]]]:
     """Capture mounted grants at sandbox startup; never mount later State additions."""
-    tmp_root = ensure_tmp_workspace(local_home)
+    scratch_root = ensure_scratch_workspace(local_home)
     configured = ConfiguredWorkspaces(local_home / "config.toml").list()
-    grants = {"tmp": str(tmp_root)}
+    grants = {IMPLICIT_WORKSPACE_NAME: str(scratch_root)}
     grants.update(
-        (name, source) for name, source in configured.items() if name != "tmp"
+        (name, source)
+        for name, source in configured.items()
+        if name != IMPLICIT_WORKSPACE_NAME
     )
     available = sorted(
         (
