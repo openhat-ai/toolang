@@ -244,7 +244,7 @@ The implementation is divided by semantic level:
   message joining, and delta generation/rendering without selecting history or
   loading prompts;
 - `prompts/` holds static text; `prompts/defaults/` contains the default
-  instruct, context, and compact program.
+  instruct and context.
 
 Tool-use conventions belong to the static `prompts/protocol.md`. Protocol stays
 first and unchanged across tool selection, `instruct = none`, and output repair.

@@ -143,6 +143,16 @@ class _LazyValues:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactConfig:
+    """Captured compaction settings; fractional sizes refer to thread context."""
+
+    model: ModelOverride | None = None
+    summary: int | float = 4096
+    recent: int | float = 0.30
+    trigger: int | float = 0.80
+
+
+@dataclass(frozen=True, slots=True)
 class AgentSetup:
     """One immutable setup generation with independently lazy resources."""
 
@@ -152,7 +162,7 @@ class AgentSetup:
     environment: AgentEnvironment | None = None
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
-    compact_model: ModelOverride | None = None
+    compact: CompactConfig = CompactConfig()
     catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     _load_models: Callable[[AgentSetup], _ModelData] = field(
         default=lambda _setup: _empty_model_data(), repr=False, compare=False

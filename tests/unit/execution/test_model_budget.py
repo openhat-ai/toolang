@@ -10,7 +10,7 @@ from toolang.base.types.message import Message, ImagePart, ReasoningPart
 from toolang.base.types.model import Model, ModelToolang, Reasoning
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.executor.budget import InputEstimate, message_tokens
+from toolang.execution.tokens import InputEstimate, message_tokens
 from toolang.execution.executor.frame import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState
 from toolang.execution.executor.steps.model import (
@@ -43,7 +43,7 @@ def test_reasoning_is_counted_once_when_extending_a_calibrated_conversation():
     estimate.observe(request, "binding", 500)
     added = Message("assistant", (part,))
     extended = replace(request, messages=[*request.messages, added])
-    assert estimate.count(extended, "binding") == 500 + message_tokens(added)
+    assert estimate.count(extended, "binding") == 500 + estimate.counter.message(added)
     assert message_tokens(added) > message_tokens(
         Message("assistant", (ReasoningPart(part.text),))
     )
@@ -193,7 +193,9 @@ def test_estimate_calibrates_only_an_unchanged_prefix() -> None:
     estimate.observe(request, "binding", 800)
     appended = Message.assistant("response")
     next_call = replace(request, messages=[*request.messages, appended])
-    assert estimate.count(next_call, "binding") == 800 + message_tokens(appended)
+    assert estimate.count(next_call, "binding") == 800 + estimate.counter.message(
+        appended
+    )
     for changed in (
         replace(next_call, reasoning=Reasoning(effort="high")),
         replace(next_call, instructions="new"),
@@ -202,11 +204,11 @@ def test_estimate_calibrates_only_an_unchanged_prefix() -> None:
         replace(next_call, messages=[appended]),
     ):
         assert estimate.reliable_count(changed, "binding") is None
-        assert estimate.count(changed, "binding") == InputEstimate().count(
-            changed, "binding"
+        assert estimate.count(changed, "binding") == estimate.counter.adjust(
+            InputEstimate().count(changed, "binding")
         )
-    assert estimate.count(next_call, "new horizon") == InputEstimate().count(
-        next_call, "new horizon"
+    assert estimate.count(next_call, "new horizon") == estimate.counter.adjust(
+        InputEstimate().count(next_call, "new horizon")
     )
     assert (
         message_tokens(
@@ -235,7 +237,7 @@ def test_exact_budget_fits_but_one_more_token_requires_action() -> None:
 
 
 def test_missing_provider_usage_reuses_estimated_prefix(monkeypatch) -> None:
-    from toolang.execution.executor import budget
+    from toolang.execution import tokens as budget
 
     request = ModelCall("instruct", [Message.user("first")])
     estimate = InputEstimate()
@@ -259,7 +261,7 @@ def test_adapter_overhead_participates_in_admission_and_calibration():
     assert estimate.count(request, "a", 3000) == 3500
     assert estimate.reliable_count(request, "a", 3000) == 3500
     assert estimate.reliable_count(request, "a", 4000) is None
-    assert estimate.count(request, "a", 4000) == base + 4000
+    assert estimate.count(request, "a", 4000) == estimate.counter.adjust(base + 4000)
 
 
 def test_schema_directive_and_continuation_are_counted():
@@ -316,7 +318,7 @@ def test_continuation_changes_count_new_content_without_recounting_retained_cont
     extended = replace(
         request, continuation={"reasoning": {"old": retained, "new": "new " * 1500}}
     )
-    assert 102000 < estimate.count(extended, "a") < 102100
+    assert 106600 < estimate.count(extended, "a") < 106700
     removed = replace(request, continuation=None)
     assert estimate.count(removed, "a") >= 100000
     changed = replace(request, continuation={"reasoning": {"old": "changed " * 1500}})
@@ -432,3 +434,55 @@ def test_impossible_input_reservation_reports_the_conflicting_values(
 def test_invalid_host_policy_values(name, value):
     with pytest.raises(ValueError, match="policy values must be positive integers"):
         output_budget({}, **{name: value})
+
+
+def test_history_replacement_preserves_model_calibration():
+    request = ModelCall("", [Message.user("history " * 100)])
+    replacement = ModelCall("", [Message.user("summary " * 30)])
+    estimate = InputEstimate()
+    raw = estimate.count(request, "old horizon")
+    estimate.observe(request, "old horizon", raw * 2)
+    assert estimate.count(replacement, "new horizon") == (
+        InputEstimate().count(replacement, "new horizon") * 2
+    )
+
+
+def test_model_counters_and_usage_calibration_are_isolated(monkeypatch):
+    from toolang.execution import tokens
+
+    monkeypatch.setattr(tokens, "_MODEL_TOKEN_SCALES", {"test/a": 1.0, "test/b": 2.0})
+    request = ModelCall("", [Message.user("shared payload")])
+    a, b = InputEstimate(), InputEstimate()
+    a.bind_model(replace(MODEL, id="a"))
+    b.bind_model(replace(MODEL, id="b"))
+    baseline = a.count(request, "a")
+    assert b.count(request, "b") == baseline * 2
+    a.observe(request, "a", baseline * 3)
+    b.observe(request, "b", baseline * 4)
+    replacement = replace(request, instructions="new horizon")
+    assert a.count(replacement, "changed") == tokens.input_tokens(replacement) * 3
+    assert b.count(replacement, "changed") == tokens.input_tokens(replacement) * 4
+    assert a.counter.scale == 3
+    assert b.counter.scale == 2
+    a.bind_model(replace(MODEL, id="b"))
+    assert a.counter.scale == 1
+    assert a.reliable_count(request, "a") is None
+    assert a.count(request, "b") == baseline * 2
+
+
+def test_usage_observation_reuses_the_counted_prefix(monkeypatch):
+    from toolang.execution import tokens
+
+    request = ModelCall("", [Message.user("prefix")])
+    estimate = InputEstimate()
+    estimate.observe(request, "same", 500)
+    original = tokens.message_tokens
+
+    def count(message):
+        assert message != request.messages[0], "prefix counted again"
+        return original(message)
+
+    monkeypatch.setattr(tokens, "message_tokens", count)
+    extended = replace(request, messages=[*request.messages, Message.assistant("new")])
+    estimate.observe(extended, "same", 600)
+    assert estimate.count(extended, "same") == 600

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -12,7 +13,7 @@ from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.setup.types import AgentEnvironment, AgentSetup, _ModelData
+from toolang.setup.types import AgentEnvironment, AgentSetup, CompactConfig, _ModelData
 
 
 def materialized_setup(
@@ -27,7 +28,7 @@ def materialized_setup(
     environment: AgentEnvironment | None = None,
     defaults: RunDefaults | None = None,
     limits: RunLimits | None = None,
-    compact_model: ModelOverride | None = None,
+    compact: CompactConfig = CompactConfig(),
 ) -> AgentSetup:
     """Wrap fixture resources in the lazy AgentSetup public contract."""
 
@@ -62,7 +63,7 @@ def materialized_setup(
         environment=environment,
         defaults=defaults if defaults is not None else RunDefaults(),
         limits=limits if limits is not None else RunLimits(),
-        compact_model=compact_model,
+        compact=compact,
         _load_models=lambda _setup: data,
         _load_tools=lambda _plugins: frozen_tools,
         _load_adapters=lambda: frozen_adapters,
@@ -106,9 +107,9 @@ def replace_materialized_setup(
             setup.defaults if defaults is _UNSET else cast(RunDefaults, defaults)
         ),
         limits=setup.limits,
-        compact_model=(
-            setup.compact_model
+        compact=(
+            setup.compact
             if compact_model is _UNSET
-            else cast(ModelOverride | None, compact_model)
+            else replace(setup.compact, model=cast(ModelOverride | None, compact_model))
         ),
     )

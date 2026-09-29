@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from functools import wraps
 from importlib import import_module
 from pathlib import Path
@@ -99,7 +98,6 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
         ("shell", {"before"}, {"resident"}),
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
-        ("compact", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
         ("workspace", {"before"}, {"resident"}),
         ("skill", {"none", "before"}, {"resident"}),
@@ -245,66 +243,6 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
 
     assert order == tuple(expected)
     assert {name: group.commands[name].help for name in expected} == expected
-
-
-@pytest.mark.parametrize("extended", [False, True])
-def test_compact_help_lists_the_public_runnable_signature(
-    monkeypatch, capsys, extended
-):
-    from toolang.cli.toolang.commands import compact
-    from toolang.cli.common.runnable_parameters import RunnableArgument
-
-    runnable = compact.compact_runnable()
-    if extended:
-        runnable = replace(
-            runnable,
-            params=(
-                *runnable.params,
-                replace(
-                    runnable.params[0],
-                    name="page_size",
-                    type_name="Number",
-                    optional=True,
-                    doc="History page size.",
-                ),
-            ),
-        )
-        monkeypatch.setattr(compact, "compact_runnable", lambda: runnable)
-    monkeypatch.setattr(
-        compact, "SetupWatcher", lambda *a, **kw: pytest.fail("help must not prepare")
-    )
-    assert _call_main(["compact", "--help"]) == 0
-    captured = capsys.readouterr()
-    assert not captured.err
-    output = strip_ansi(captured.out)
-    assert "Compact a thread" in output
-    assert "previous" not in output
-    assert (
-        "Usage: toolang <AGENT> compact [OPTIONS] [NAME=VALUE...]"
-        in output.splitlines()
-    )
-    options = [
-        output.index(name) for name in ("--limit", "--model", "--catalog", "--help")
-    ]
-    assert options == sorted(options)
-    positions = [
-        output.index(f"{param.name}=<{param.name.upper()}>")
-        for param in runnable.params
-    ]
-    assert positions == sorted(positions)
-    if extended:
-        assert "History page size." in output
-
-    group = typer.main.get_command(cli.app)
-    assert isinstance(group, TyperGroup)
-    command = group.commands["compact"]
-    assert isinstance(command, LazyCommand)
-    arguments = [
-        param for param in command.load().params if isinstance(param, RunnableArgument)
-    ]
-    assert [(param.name, param.required) for param in arguments] == [
-        (param.name, not param.optional) for param in runnable.params
-    ]
 
 
 def test_cli_visible_commands_follow_the_public_panel_order() -> None:

@@ -34,9 +34,11 @@ from toolang.state.state import (
     StateCap,
 )
 
+from ..compaction import bound_latest_step, resolve_target
+from ..assembly.history import HistorySelection
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
-from .budget import text_tokens
+from ..tokens import InputEstimate, TokenCounter, text_tokens
 from .common import BoundRun
 from .resources import (
     available_workspaces,
@@ -82,6 +84,10 @@ class _AgicFrame:
     input_budget: int | None = None
     context_capacity: int | None = None
     input_overhead: int = 0
+    thread_model: Model | None = None
+    compact_recent: int | None = None
+    compact_summary: int | None = None
+    history: HistorySelection | None = None
 
 
 def build_agic_frame(
@@ -92,6 +98,8 @@ def build_agic_frame(
     variables: Mapping[str, object],
     far: str = "",
     near: Sequence[Message] = (),
+    history: HistorySelection | None = None,
+    estimate: InputEstimate | None = None,
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
@@ -199,10 +207,31 @@ def build_agic_frame(
             reasoning=reasoning,
         )
         admitted_input = input_budget(resolved_model.limit, output)
+        thread_ref = context.thread_model_ref() if run.parent is not None else ref
+        thread_model = (
+            resolve_model(selection, thread_ref) if thread_ref else resolved_model
+        )
+        window = context_capacity(thread_model.limit)
+        compact = run.setup.compact
+        trigger = resolve_target(compact.trigger, window)
+        recent = resolve_target(compact.recent, window)
+        summary = resolve_target(compact.summary, window)
+        if trigger is not None:
+            if recent is not None and recent >= trigger:
+                raise ValueError("compact.recent must be less than compact.trigger")
+            admitted_input = (
+                min(admitted_input, trigger) if admitted_input is not None else trigger
+            )
     except ValueError as exc:
         raise ToolangError(
             f"model {resolved_model.ref} (output source: {output_source}): {exc}"
         ) from exc
+
+    if estimate is not None:
+        estimate.bind_model(resolved_model)
+    counter = (
+        estimate.counter if estimate is not None else TokenCounter(resolved_model.ref)
+    )
 
     inputs = prompting.PromptInputs(
         run.state,
@@ -223,6 +252,37 @@ def build_agic_frame(
         instruct=run.settings.instruct,
         context=run.settings.context,
     )
+    if (
+        history is not None
+        and history.near
+        and admitted_input is not None
+        and "near" in recall_sources(run.settings.recall)
+    ):
+        without_near = replace(
+            inputs,
+            facts={
+                **inputs.facts,
+                **history_variables(far, (), run.settings.recall),
+            },
+        )
+        uses_near = run.parent is None or (
+            inputs.rendered_input[:2] != without_near.rendered_input[:2]
+            or prompting.instructions(inputs)[0]
+            != prompting.instructions(without_near)[0]
+        )
+        if uses_near:
+            history = bound_latest_step(
+                history,
+                max(1, admitted_input // 2),
+                counter.message,
+            )
+            inputs = replace(
+                inputs,
+                facts={
+                    **inputs.facts,
+                    **history_variables(history.far, history.near, run.settings.recall),
+                },
+            )
     instructions, declarations = prompting.instructions(inputs)
     _, _, prompt_invocations = inputs.rendered_input
     if prompt_invocations:
@@ -247,6 +307,10 @@ def build_agic_frame(
         reasoning=reasoning,
         output_budget=output,
         input_budget=admitted_input,
+        thread_model=thread_model,
+        compact_recent=recent,
+        compact_summary=summary,
+        history=history,
         context_capacity=context_capacity(resolved_model.limit),
         input_overhead=text_tokens(dumps(route.options, indent=None))
         if route.options

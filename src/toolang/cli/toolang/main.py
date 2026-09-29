@@ -152,21 +152,6 @@ class _ChatCommand(_ThreadRunCommand):
     }
 
 
-class _CompactCommand(_TargetAgentCommand):
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        from ..common.runnable_parameters import runnable_parameters
-        from .commands.compact import compact_runnable
-
-        self.params[:0] = runnable_parameters(compact_runnable(), help_only=True)
-
-    def collect_usage_pieces(self, ctx: Context) -> list[str]:
-        from ..common.runnable_parameters import runnable_usage
-
-        pieces = [self.options_metavar] if self.options_metavar else []
-        return [*pieces, *runnable_usage(self.params)]
-
-
 class _ToolangHelpFormatter(HelpFormatter):
     def write_description(self, ctx: Context) -> None:
         description = Text(f"{ctx.command.help}.")
@@ -439,14 +424,6 @@ _registered_command(
     cls=_ThreadRunCommand,
     hidden=True,
     rich_help_panel=RUN_COMMAND_PANEL,
-)
-_registered_command(
-    "compact",
-    "toolang.cli.toolang.commands.compact:compact_command",
-    help="Compact a thread",
-    no_args_is_help=True,
-    cls=_CompactCommand,
-    hidden=True,
 )
 _registered_command(
     "rerun",

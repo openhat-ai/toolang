@@ -41,7 +41,7 @@ def test_agent_setup_fields_are_a_lazy_revision_facade() -> None:
         "environment",
         "defaults",
         "limits",
-        "compact_model",
+        "compact",
         "catalog_sources",
         "_load_models",
         "_load_tools",

@@ -39,7 +39,6 @@ Top-level commands are:
 - `rerun`
 - `rewind`
 - `fork`
-- `compact`
 - `inspect`
 - `caps`
 - `models`
@@ -177,46 +176,22 @@ invocation. Fork retains the anchor run, while rewind removes it and the
 following visible suffix.
 
 
-### Compact Local History
+### Automatic History Compaction
 
-```sh
-toolang alice compact thread=THREAD [before=RUN]
-toolang alice compact --algorithm ./compact.too thread=THREAD [before=RUN]
-toolang alice compact --algorithm FORGET thread=THREAD before=RUN
-```
+ModelCall preflight can initiate a runtime `_toolang.compact()` Step when the
+assembled input exceeds its budget. The Step owns a same-thread child Run with
+the reserved identity `_:compact`. It records Step-level read/model batches and
+a cumulative text summary. A historical root can span batches and retain a suffix
+starting at a Step. Only model preflight can initiate this internal operation.
 
-`--algorithm DEFAULT` is the default and runs the bundled `compact.too`.
-`before` is exclusive: that Run and later history remain uncompressed. Script
-modes default to retaining the latest terminal root and automatically reuse a
-valid previous summary. The public inputs are only `thread` and `before`;
-`begin`, `end`, `bare`, and `previous` are not public CLI inputs.
-
-An external UTF-8 `.too` file must declare:
-
-```text
-agic compact(thread: Text, summary: Text, start: Text, begin: Text, end: Text) -> Text
-```
-
-All inputs are required. `summary` is previous summary text or `""`. The algorithm
-reads `[begin, end)` and returns nonempty summary text. `start` records the full
-coverage start; the algorithm does not use it. The framework reconstructs
-`{thread, begin: start, end, summary: output}` from the summary Run's input/output.
-It runs with selected model settings and isolated history tools; native structured
-output is not required. `--model`, `--catalog`, and `--limit` retain their usual
-selection semantics for both script modes.
-
-`FORGET` requires an explicit boundary, rejects `--model`, and creates one
-model-free summary Run returning `Earlier history was intentionally forgotten.`
-Original records remain inspectable. All modes return `{run, horizon, output}`;
-`horizon` is the summary Run ID. Progress goes to stderr and JSON to stdout.
-
-The CLI rejects a busy compaction lock or pending/running Runs in
-`compact_<thread>`. Active target Runs are allowed outside the covered range;
-at least one terminal root must remain. Success updates only the target
-thread's horizon. New Runs snapshot that reference; existing Runs retain their
-recorded horizon. Automatic compaction also writes the calling Run's compact
-control for subsequent adoption. Replay uses recorded controls, not the latest
-thread horizon. Failed or unpublished summary Runs do not replace it.
+After the child succeeds, the executor publishes its reference as the thread's
+horizon and records the calling Run's compact control in one transaction. The
+next Model Step adopts that summary plus retained history. Horizons also accept
+the completed producer's final successful summary Model Step. Original records and
+past ModelCalls remain inspectable. Failure stops the caller without dispatching
+the oversized call. See [model configuration](models.md#automatic-compaction-configuration) for
+`compact.model`, `summary`, `recent`, `trigger`, and runtime `--compact-model`
+settings.
 
 
 ## Agent Selectors

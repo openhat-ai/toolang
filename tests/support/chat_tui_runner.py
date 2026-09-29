@@ -23,6 +23,7 @@ def run_chat_tui(
     *,
     selects: Mapping[str, object],
     models: Sequence[str] = (),
+    thread_id: str | None = None,
 ) -> None:
     """Run a local chat TUI with fixed setup and state snapshots."""
 
@@ -84,7 +85,7 @@ def run_chat_tui(
                 )
                 break
         ChatTuiApp.run(
-            thread_id=None,
+            thread_id=thread_id,
             setting=setting,
             home=str(setup.layout.home),
             input_history=None,

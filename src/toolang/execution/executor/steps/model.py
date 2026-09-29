@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import (
+    Message,
     Part,
     PartType,
     ReasoningPart,
@@ -36,8 +37,9 @@ from toolang.state.state import AgentState
 
 from ...assembly import prompting
 from ...assembly.message_buffer import MessageBuffer
+from ...assembly.utils import literal_delta
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...recall import required_declarations, history_variables
+from ...recall import required_declarations, history_variables, recall_revisions
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     ModelAccounting,
@@ -57,7 +59,6 @@ from ...types import (
     RulesRecallTarget,
     WorkspaceRecallTarget,
 )
-from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from . import tool as tool_step
@@ -74,18 +75,61 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _NeedsCompact(Exception):
-    def __init__(self, end: RunRef) -> None:
-        self.end = end
+    """Request runtime compaction; admission resolves its current boundary."""
 
 
 def _candidate(
     state: _AgicState,
     agent_state: AgentState,
     state_ref: ControlRef,
+    *,
+    compacted: tuple[RunRef | StepRef, str] | None = None,
 ) -> tuple[
     _AgicFrame, MessageBuffer, tuple[ControlRecord, ...], ModelCall, ModelMessages
 ]:
     prepared = state.frame_for_step(agent_state, state_ref)
+    state.estimate.bind_model(prepared.model)
+    if (
+        state.context_budget is not None
+        and state.context_budget[0] == prepared.model.ref
+    ):
+        prepared = replace(
+            prepared,
+            input_budget=min(
+                prepared.input_budget or state.context_budget[1],
+                state.context_budget[1],
+            ),
+        )
+    if compacted is not None:
+        end, summary = compacted
+        source = prepared.history
+        assert source is not None
+        index = next(i for i, (ref, _) in enumerate(source.units) if ref == end)
+        units = source.units[index:]
+        offset = sum(len(messages) for _, messages in source.units[:index])
+        near = tuple(m for _, messages in units for m in messages)
+        selected = replace(
+            source,
+            far=summary,
+            far_template=literal_delta((Message.user(summary),))[0]
+            if summary
+            else None,
+            near=near,
+            templates=source.templates[offset:],
+            recalls=recall_revisions(source.templates[offset:]),
+            units=units,
+        )
+        inputs = replace(
+            prepared.inputs,
+            facts={
+                **prepared.inputs.facts,
+                **history_variables(summary, near, prepared.recall),
+            },
+        )
+        instructions, _ = prompting.instructions(inputs)
+        prepared = replace(
+            prepared, history=selected, inputs=inputs, instructions=instructions
+        )
     state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
     recalled = (
         state.execution.runtime_controls(prepared.run.run_id, refresh=False)
@@ -97,7 +141,10 @@ def _candidate(
     )
     messages = state.messages.copy()
     history = (
-        state.execution.message_history().select(prepared.run.horizon)
+        (
+            prepared.history
+            or state.execution.message_history().select(prepared.run.horizon)
+        )
         if state.execution is not None and prepared.run.parent is None
         else None
     )
@@ -224,7 +271,7 @@ def _boundary(
     prepared: _AgicFrame,
     request: ModelCall,
     controls: Sequence[ControlRecord],
-) -> RunRef | None:
+) -> RunRef | StepRef | None:
     budget = prepared.input_budget
     if (
         budget is None
@@ -235,16 +282,14 @@ def _boundary(
     ):
         return None
     execution = state.execution
-    if (
-        execution is None
-        or prepared.run.thread.startswith("compact_")
-        or "near" not in prepared.recall
-    ):
+    if execution is None or "near" not in prepared.recall:
         raise ToolangError(
             "model input exceeds its budget; no compactable near history"
         )
-    history = execution.message_history().select(prepared.run.horizon)
-    roots = history.roots
+    history = prepared.history or execution.message_history().select(
+        prepared.run.horizon
+    )
+    roots = history.units or history.roots
     if len(roots) < 2:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
@@ -276,25 +321,53 @@ def _boundary(
         else messages,
     )
     # This lower bound excludes the summary.
-    if InputEstimate().count(required, None, prepared.input_overhead) > budget:
+    if (
+        state.estimate.count(
+            required, _estimate_binding(prepared), prepared.input_overhead
+        )
+        > budget
+    ):
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
+    recent = prepared.compact_recent
+    if recent is None or prepared.compact_summary is None:
+        raise ToolangError(
+            "compaction percentages require thread model limit.context; "
+            "configure absolute compact.recent and compact.summary values"
+        )
     retained = 0
     end = roots[-1][0]
-    # Reserve at most half of the input budget for near; always retain its last
-    # historical root. Advance at least one root when compaction is necessary.
+    # Keep the latest complete Step and an optional suffix within the soft target.
     for index in range(len(roots) - 1, 0, -1):
         root, messages = roots[index]
-        size = sum(message_tokens(message) for message in messages)
-        if index != len(roots) - 1 and retained + size > budget // 2:
+        size = sum(state.estimate.counter.message(message) for message in messages)
+        if index != len(roots) - 1 and retained + size > recent:
             break
         retained += size
         end = root
-    return end
+    # A retained tool result needs the Step containing its assistant call.
+    index = next(i for i, (ref, _) in enumerate(roots) if ref == end)
+    while index > 0 and roots[index][1] and roots[index][1][0].role == "tool":
+        index -= 1
+    if index == 0:
+        raise ToolangError(
+            "model input exceeds its budget; required near cannot be compacted"
+        )
+    # Recent is a soft target. Fixed/current content can leave less room than
+    # that target, even though the mandatory latest unit still fits. Check the
+    # actual rebuilt request before asking a reducer to summarize this prefix.
+    for boundary, messages in roots[index:]:
+        if messages and messages[0].role == "tool":
+            continue
+        if compaction_summary_fits(state, boundary, ""):
+            return boundary
+    raise ToolangError(
+        "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
+    )
 
 
-def compaction_boundary(state: _AgicState) -> RunRef | None:
+def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
     """Reprepare after admission without committing a Step or consuming deltas."""
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
@@ -302,6 +375,44 @@ def compaction_boundary(state: _AgicState) -> RunRef | None:
         state, *state.execution.state_snapshot()
     )
     return _boundary(state, prepared, request, controls)
+
+
+def compaction_summary_fits(
+    state: _AgicState, end: RunRef | StepRef, summary: str
+) -> bool:
+    assert state.execution is not None
+    prepared, _, _, request, _ = _candidate(
+        state, *state.execution.state_snapshot(), compacted=(end, summary)
+    )
+    return (
+        prepared.input_budget is not None
+        and state.estimate.count(
+            request, _estimate_binding(prepared), prepared.input_overhead
+        )
+        <= prepared.input_budget
+    )
+
+
+def recover_context_overflow(state: _AgicState, error: ModelResponseError) -> bool:
+    from ...compaction import is_context_overflow
+
+    if state.execution is None or not is_context_overflow(error):
+        return False
+    prepared, _, _, request, _ = _candidate(state, *state.execution.state_snapshot())
+    if (
+        prepared.history is None
+        or len(prepared.history.units) < 2
+        or "near" not in prepared.recall
+    ):
+        return False
+    estimate = state.estimate.count(
+        request, _estimate_binding(prepared), prepared.input_overhead
+    )
+    state.context_budget = (
+        prepared.model.ref,
+        max(1, min(prepared.input_budget or estimate, estimate * 3 // 4)),
+    )
+    return True
 
 
 @dataclass(slots=True)
@@ -340,7 +451,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         if interruption is None and not canceling:
             boundary = _boundary(state, prepared, request, preceding)
             if boundary is not None:
-                raise _NeedsCompact(boundary)
+                raise _NeedsCompact()
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
@@ -391,7 +502,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     while True:
         try:
             await state.start_step(begin_step)
-        except _NeedsCompact as needed:
+        except _NeedsCompact:
             identity = f"compact_{run.run_id}_{state.next_step}"
             result = await tool_step.execute(
                 state,
@@ -399,7 +510,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                     tool_call_id=identity,
                     call_id=identity,
                     name="_toolang__compact",
-                    input={"thread": run.thread, "begin": None, "end": str(needed.end)},
+                    input={},
                 ),
                 trigger="runtime",
             )

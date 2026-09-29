@@ -32,6 +32,8 @@ from .views import RunView, ThreadView
 from ..store import RunStore
 from ..types import (
     ControlRef,
+    history_ref,
+    history_root,
     ErrorMessage,
     ErrorRef,
     Local,
@@ -42,6 +44,7 @@ from ..types import (
     StepRef,
     ThreadRef,
 )
+from ..errors import HistoryChangedError
 from ..values import parts_from_local
 
 _CURSOR = TypeAdapter(HistoryCursor)
@@ -280,7 +283,7 @@ class RunHistory:
             return self._store.rebuild_model_calls((record,))[ref]
 
     def read_compaction(
-        self, ref: RunRef, thread: ThreadRef, roots: Sequence[RunRef]
+        self, ref: RunRef | StepRef, thread: ThreadRef, roots: Sequence[RunRef]
     ) -> CompactionOutput:
         """Reconstruct a summary Run against the current visible history."""
         with self._store.read_transaction():
@@ -292,19 +295,18 @@ class RunHistory:
                 )
             from ..compaction import assemble_compaction
 
-            run = self._require_run(str(ref))
+            run = self._require_run(str(history_root(ref)))
             control = self._store.get_run_control(run_id=run.id, index=0)
             raw = self.get_output(run.id)
             if (
-                run.parent is not None
-                or run.status != "succeeded"
+                run.status != "succeeded"
                 or control is None
                 or not isinstance(control.payload, RunControlPayload)
                 or raw is None
             ):
-                raise ValueError(
-                    "compact horizon requires a successful root summary Run"
-                )
+                raise ValueError("compact horizon requires a successful summary Run")
+            if run.parent is not None and control.payload.runnable != "_:compact":
+                raise ValueError("compact child must be an internal compaction Run")
             request = control.payload.input
             if any(
                 not isinstance(request.get(key), str)
@@ -315,21 +317,79 @@ class RunHistory:
                 )
             if request["thread"] != str(thread):
                 raise ValueError("compact output targets another Thread")
+            if isinstance(ref, StepRef):
+                from ..compaction import summary_text
+                from toolang.base.types.message import Message
+                from toolang.base.types.run import ModelCallResult
+
+                successful = [
+                    s
+                    for s in self._store.list_steps(run_id=run.id)
+                    if s.kind == "model" and s.status == "succeeded"
+                ]
+                if (
+                    control.payload.runnable != "_:compact"
+                    or not successful
+                    or successful[-1].ref != ref
+                    or successful[-1].output is None
+                ):
+                    raise ValueError(
+                        "compact Step horizon must be the completed producer's final successful Model Step"
+                    )
+                output = self._store.resolve_output(successful[-1].output)
+                if (
+                    output.local.type != "Part[]"
+                    or summary_text(
+                        ModelCallResult(
+                            message=Message(
+                                "assistant", cast(tuple[Part, ...], output.local.value)
+                            )
+                        )
+                    )
+                    != raw.local.value
+                ):
+                    raise ValueError(
+                        "compact Step summary differs from producer output"
+                    )
             result = assemble_compaction(
                 raw.local.value,
                 thread=thread,
                 roots=roots,
                 start=RunRef.parse(cast(str, request["start"])),
-                begin=RunRef.parse(cast(str, request["begin"])),
-                end=RunRef.parse(cast(str, request["end"])),
+                begin=history_ref(cast(str, request["begin"])),
+                end=history_ref(cast(str, request["end"])),
             )
+            if isinstance(history_ref(result.end), StepRef):
+                from ..assembly.history import history_units
+
+                boundary = history_ref(result.end)
+                original = self._require_run(str(history_root(boundary)))
+                if boundary not in {
+                    u.ref
+                    for u in history_units(
+                        original,
+                        steps=self._store.list_steps(run_id=original.id),
+                        controls=self._store.list_run_controls(run_id=original.id),
+                        resolve=self._store.resolve_value,
+                        completion=self._store.run_completion,
+                        render=False,
+                    )
+                }:
+                    raise ValueError("compact Step boundary is not visible")
+            if control.payload.runnable == "_:compact":
+                from ..compaction import validate_producer
+
+                validate_producer(self._store, run, roots, result.summary)
             start, stop = (
                 roots.index(RunRef(result.begin)),
-                roots.index(RunRef(result.end)),
+                roots.index(history_root(result.end)),
             )
             records = [self._require_run(str(root)) for root in roots]
             if any(
-                r.status in {"pending", "running"} for r in records[start:stop]
+                r.status in {"pending", "running"}
+                for r in records[
+                    start : stop + isinstance(history_ref(result.end), StepRef)
+                ]
             ) or not any(
                 r.status not in {"pending", "running"} for r in records[stop:]
             ):
@@ -351,7 +411,7 @@ class RunHistory:
             roots = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
             try:
                 return self.read_compaction(record.horizon, target, roots)
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError, HistoryChangedError):
                 return None
 
     def thread_view(

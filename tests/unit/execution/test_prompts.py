@@ -8,10 +8,8 @@ from xml.etree import ElementTree
 import pytest
 
 from toolang.execution.assembly import prompts
-from toolang.execution.compaction import compact_state
 from toolang.execution.recall import recall_revisions
 from toolang.execution.types import MessageTemplate
-from toolang.lang.input import coerce_output
 
 
 @pytest.mark.parametrize(
@@ -20,7 +18,6 @@ from toolang.lang.input import coerce_output
         "protocol.md",
         "defaults/instruct.md",
         "defaults/context.md",
-        "defaults/compact.too",
     ],
 )
 def test_bundled_prompt_resources_are_loadable(name: str) -> None:
@@ -213,27 +210,3 @@ def test_protocol_authoring_is_conditional_and_points_to_details() -> None:
     assert "[program syntax]" not in authoring
     assert "flow-syntax.md" not in authoring
     assert "```" not in authoring
-
-
-@pytest.mark.parametrize("field", ["thread", "summary", "start", "begin", "end"])
-def test_compact_requires_concrete_inputs_and_returns_only_text(field: str) -> None:
-    from toolang.lang.input import resolve_runnable_input
-
-    program = compact_state().modules["agent"]
-    assert not program.flows and not program.structs
-    assert len(program.agics) == 1
-    agic = program.find_agic("compact")
-    assert agic is not None and agic.output == "Text"
-    assert agic.instruct is None
-    assert all(message.role == "user" for message in agic.messages)
-    assert coerce_output("Notes.", agic.output) == "Notes."
-    values = {
-        "thread": "term_a",
-        "start": "run_a",
-        "begin": "run_a",
-        "end": "run_b",
-        "summary": "",
-    }
-    del values[field]
-    with pytest.raises(ValueError, match=field):
-        resolve_runnable_input(agic, values)

@@ -229,7 +229,6 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
         "Thread Commands": {
             "fork": "Fork a thread from an earlier run",
             "rewind": "Rewind a thread to an earlier run",
-            "compact": "Compact a thread",
         },
         "Runtime Commands": {
             "catalogs": "List installed model catalogs",
@@ -466,7 +465,6 @@ def test_real_and_virtual_agent_arguments_share_usage(
         "rerun",
         "fork",
         "rewind",
-        "compact",
         "workspace",
         "workspace list",
         "task",

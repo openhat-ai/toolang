@@ -381,7 +381,9 @@ def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> 
         store.close()
 
 
-def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
+def test_record_selection_matches_rfc6901_traversal(
+    tmp_path: Path, monkeypatch
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -404,6 +406,18 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
         )
 
         whole = store.select_pointer(Pointer.parse(str(step.ref)))
+
+        # Resolving a history output must not serialize its potentially huge
+        # model request or accounting metadata along with the selected field.
+        def unused_field(*args, **kwargs):
+            pytest.fail("selection serialized an unrelated Step field")
+
+        monkeypatch.setattr(
+            "toolang.execution.schemas.stored_step_given_to_data", unused_field
+        )
+        monkeypatch.setattr(
+            "toolang.execution.schemas.step_noted_to_data", unused_field
+        )
         output = store.select_pointer(
             Pointer(FieldRef.from_path(step.ref, "output", "local", "value", 1))
         )

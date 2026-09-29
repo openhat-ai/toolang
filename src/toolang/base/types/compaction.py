@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 
 @dataclass(frozen=True, slots=True)
 class CompactionResult:
-    """A summary covering the half-open root range [begin, end)."""
+    """A summary covering [begin, end), with Run or Step source boundaries."""
 
     thread: str
     begin: str

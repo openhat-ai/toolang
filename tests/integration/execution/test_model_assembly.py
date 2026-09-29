@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import replace
 from pathlib import Path
 
+from toolang.execution.assembly.history import summary_message
+
 import pytest
 
 from tests.support.execution_assertions import (
@@ -268,7 +270,7 @@ flow job(_: Part[]) -> Part[]:
             assert run.status == "succeeded", run.error
             expected = [
                 *(
-                    [Message.user("Earlier facts.")]
+                    [summary_message("Earlier facts.")]
                     if compact
                     else [Message.user("seed"), Message.assistant("reply 0")]
                 ),
@@ -392,7 +394,7 @@ agic next() -> Part[]:
             else:
                 assert harness.store.run_horizon(run.id) == horizon
                 expected = [
-                    Message.user("Earlier facts."),
+                    summary_message("Earlier facts."),
                     Message.user("second"),
                     Message.assistant("second reply"),
                     Message.user("Next task."),
@@ -477,7 +479,7 @@ def test_compact_preparation_survives_failed_begin(
             assert compact.ref in step.preceded_by
             assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
-            )[0] == Message.user("Earlier facts.")
+            )[0] == summary_message("Earlier facts.")
             assert harness.store.run_horizon(target) == horizon
 
     asyncio.run(scenario())
@@ -902,15 +904,15 @@ agic child() -> Text:
             assert horizons == [old, new]
             calls = [item.call for item in harness.adapter.invocations[2:]]
             messages = [without_runtime_snapshots(call.messages) for call in calls]
-            assert messages[0][0] == Message.user("Old far.")
+            assert messages[0][0] == summary_message("Old far.")
             assert "Snapshot: Old far." in message_text(messages[1][0].parts)
             assert "Snapshot: New far." in message_text(messages[2][-1].parts)
-            assert messages[3][0] == Message.user("New far.")
+            assert messages[3][0] == summary_message("New far.")
             assert "Snapshot: New far." in message_text(messages[4][0].parts)
-            assert messages[5][0] == Message.user("New far.")
+            assert messages[5][0] == summary_message("New far.")
             for index in (1, 2, 4):
-                assert Message.user("Old far.") not in messages[index]
-                assert Message.user("New far.") not in messages[index]
+                assert summary_message("Old far.") not in messages[index]
+                assert summary_message("New far.") not in messages[index]
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -970,7 +972,7 @@ def test_initial_horizon_and_recall_selection(
             assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [
-                *([Message.user("Earlier facts.")] if "far" in selected else []),
+                *([summary_message("Earlier facts.")] if "far" in selected else []),
                 *(
                     [
                         Message.user("second"),
@@ -1046,7 +1048,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
                 for item in harness.adapter.invocations[-2:]
             ]
             assert before[0] == Message.user("first")
-            assert after[:4] == [Message.user("Earlier facts."), *before[2:]]
+            assert after[:4] == [summary_message("Earlier facts."), *before[2:]]
             assert [message.role for message in after[4:]] == ["assistant", "tool"]
             models = [
                 s
@@ -1075,7 +1077,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             assert entry.payload.horizon == horizon
             assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
-            )[0] == Message.user("Earlier facts.")
+            )[0] == summary_message("Earlier facts.")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -1175,7 +1177,7 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             assert [
                 item["id"] for item in payload["input"] if item["type"] == "reasoning"
             ] == ["rs_0"]
-            assert request.messages[0] == Message.user("Earlier facts.")
+            assert request.messages[0] == summary_message("Earlier facts.")
             assert "old input" not in str(request.messages)
             assert len(tool.calls) == 2
             step = harness.store.list_steps(run_id=run.id)[-1]
@@ -1214,7 +1216,7 @@ def test_compaction_excludes_the_covered_roots_terminal_reply(tmp_path, summary)
             assert without_runtime_snapshots(
                 harness.adapter.invocations[-1].call.messages
             ) == [
-                Message.user(summary),
+                summary_message(summary),
                 Message.user("retained input"),
                 Message.assistant("retained reply"),
                 Message.user("current input"),
@@ -1275,7 +1277,7 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
                 "user",
             ]
             assert messages[:2] == [
-                Message.user("Earlier facts."),
+                summary_message("Earlier facts."),
                 Message.user("retained"),
             ]
             parts = [

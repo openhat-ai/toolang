@@ -103,26 +103,9 @@ class ToolangTool(Tool):
                 raise ToolangError("_toolang/chdir requires only a non-empty path")
             return await runtime.chdir(path, context)
         if self.name == "compact":
-            if not {"thread", "end"} <= set(arguments) or set(arguments) - {
-                "thread",
-                "begin",
-                "end",
-            }:
-                raise ToolangError("compact requires thread, optional begin, and end")
-            thread, begin, end = (
-                arguments["thread"],
-                arguments.get("begin"),
-                arguments["end"],
-            )
-            if (
-                not isinstance(thread, str)
-                or not isinstance(end, str)
-                or (begin is not None and not isinstance(begin, str))
-            ):
-                raise ToolangError(
-                    "compact requires string references and a nullable begin"
-                )
-            return await runtime.compact(thread, begin, end)
+            if arguments:
+                raise ToolangError("compact does not accept arguments")
+            return await runtime.compact()
         if self.name == "honor":
             if (
                 set(arguments) != {"paths"}
@@ -229,15 +212,11 @@ _TOOLS = (
     ),
     ToolangTool(
         "compact",
-        "Compact a complete history prefix before the next model call.",
+        "Compact the calling Run's thread history before the next model call.",
         {
             "type": "object",
-            "properties": {
-                "thread": {"type": "string"},
-                "begin": {"type": ["string", "null"]},
-                "end": {"type": "string"},
-            },
-            "required": ["thread", "end"],
+            "properties": {},
+            "required": [],
             "additionalProperties": False,
         },
     ),

@@ -242,11 +242,17 @@ class ProgressProjector:
                 )
             else:
                 lane_owner = owner.lane_owner
+        internal = event.runnable == "_:compact" or (
+            event.parent is not None and self._runs[event.parent.run_id].internal
+        )
         self._runs[event.run] = RunState(
             event,
-            lane_owner,
+            None if internal else lane_owner,
+            internal=internal,
             agic=event.runnable.rsplit("::", 1)[-1].startswith("agic:"),
         )
+        if internal:
+            return None
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)
             if lane_owner is not None:
@@ -312,6 +318,10 @@ class ProgressProjector:
                     lane.status = event.status
                 if event.status == "failed":
                     self._start_canceling(owner)
+
+        if run.internal:
+            self._runs.pop(event.run, None)
+            return None
 
         block: ProgressBlock | None = None
         if run.lane_owner is not None:
@@ -418,6 +428,8 @@ class ProgressProjector:
             ),
         )
         self._steps[event.step] = state
+        if run.internal:
+            return None
         self._begin_execute(run, state)
         self._note_iteration(event.step, event.occurrence)
 
@@ -484,6 +496,9 @@ class ProgressProjector:
                 )
         run = self._runs[event.step.run_id]
         run.metrics.record_step(event)
+        if run.internal:
+            self._steps.pop(event.step)
+            return None
         execute = self._complete_execute(run, state.begin, event)
         if state.is_dynamic_run and event.kind == "tool":
             receipt = next(
@@ -669,6 +684,8 @@ class ProgressProjector:
             )
             state.model.streamed += event.delta.text
             state.model.pending += event.delta.text
+            if self._runs[event.step.run_id].internal:
+                return None
             if state.lane_owner is not None:
                 self._set_lane_activity(
                     state.lane_owner,
@@ -717,6 +734,8 @@ class ProgressProjector:
         state.model.pending += suffix
         state.model.streamed += suffix
         state.model.text_parts[event.part] = event.data.text
+        if self._runs[event.step.run_id].internal:
+            return None
         if state.lane_owner is not None:
             return None
         pending = state.model.pending
@@ -918,6 +937,8 @@ class ProgressProjector:
                     state.lane_owner, lane_live_text(state.begin, "", now=now)
                 )
         for state in self._steps.values():
+            if self._runs[state.begin.step.run_id].internal:
+                continue
             if state.lane_owner is not None:
                 continue
             if state.is_dynamic_run:

@@ -47,7 +47,7 @@ from ..common import (
 )
 
 from ...assembly.message_buffer import MessageBuffer
-from ..budget import InputEstimate
+from ...tokens import InputEstimate
 from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
@@ -113,6 +113,7 @@ class _AgicState:
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
     estimate: InputEstimate = field(default_factory=InputEstimate)
+    context_budget: tuple[str, int] | None = None
     begin_step: (
         Callable[
             [Callable[[AgentState, ControlRef], StepBegin]],
@@ -203,12 +204,13 @@ async def execute(
     variables = {
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
-    frames: dict[tuple[str, RunRef | None], _AgicFrame] = {}
+    estimate = InputEstimate()
+    frames: dict[tuple[str, RunRef | StepRef | None, float], _AgicFrame] = {}
 
     def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
-        key = (state.revision, horizon)
+        key = (state.revision, horizon, estimate.counter.scale)
         cached = frames.get(key)
         if cached is not None:
             return replace(
@@ -244,6 +246,8 @@ async def execute(
             variables={**variables, **iteration_values()},
             far=selected.far,
             near=selected.near,
+            history=selected,
+            estimate=estimate,
         )
         execution.require_model_pricing(prepared.model)
         frames[key] = prepared
@@ -262,6 +266,7 @@ async def execute(
     )
     state = _AgicState(
         prepared,
+        estimate=estimate,
         layout=execution.layout,
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
@@ -345,6 +350,13 @@ def _recover_model_response(state: _AgicState, error: ModelResponseError) -> Non
 
     step = StepRef.from_local(state.prepared.run.run_id, (state.next_step - 1,))
     limit = state.limits.agic_model_calls
+    if (
+        state.model_recoveries < 2
+        and (limit is None or state.model_calls < limit)
+        and model_step.recover_context_overflow(state, error)
+    ):
+        state.model_recoveries += 1
+        return
     if (
         not error.recoverable
         or state.model_recoveries >= 2

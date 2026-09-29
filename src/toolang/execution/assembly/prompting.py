@@ -37,7 +37,7 @@ from toolang.state.state import (
 )
 
 from . import prompts
-from .history import HistorySelection
+from .history import HistorySelection, summary_message, SUMMARY_PREFIX, SUMMARY_SUFFIX
 from .message_buffer import MessageBuffer
 from .utils import join_parts, resource_text, strip_parts, text_block
 from ..types import PromptSetting
@@ -159,10 +159,19 @@ def messages(
     templates = []
     if history is not None:
         if history.far and "far" in recall:
-            prefix.append(Message.user(history.far))
+            prefix.append(summary_message(history.far))
             if recorded.head == step:
                 assert history.far_template is not None
-                templates.append(history.far_template)
+                templates.append(
+                    replace(
+                        history.far_template,
+                        content=(
+                            SUMMARY_PREFIX,
+                            *history.far_template.content,
+                            SUMMARY_SUFFIX,
+                        ),
+                    )
+                )
         if "near" in recall:
             prefix.extend(history.near)
             if recorded.head == step:

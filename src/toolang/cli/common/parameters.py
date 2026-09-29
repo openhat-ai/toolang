@@ -66,8 +66,6 @@ CompactModelOption = Annotated[
     typer.Option(
         "--compact-model",
         metavar="MODEL_SPEC",
-        help=(
-            "Set an exact model (optional effort=LEVEL), or unset, for a new runtime"
-        ),
+        help="Set an exact compact model (optional effort=LEVEL) for a new runtime",
     ),
 ]

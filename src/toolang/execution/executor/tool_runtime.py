@@ -70,10 +70,10 @@ class _ToolRuntime(ToolRuntime):
             run_id=self.step.run_id, triggered_by=self.step
         )
 
-    async def compact(self, thread: str, begin: str | None, end: str) -> ToolResult:
-        from ..tools.compact import execute
+    async def compact(self) -> ToolResult:
+        from .runs.compact import invoke
 
-        return ToolResult(await execute(self.state, self.step, thread, begin, end))
+        return ToolResult(await invoke(self.state, self.step))
 
     async def pick(self, kind: Literal["skill", "service"], ref: str) -> ToolResult:
         execution = self.state.execution

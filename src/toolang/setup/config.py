@@ -8,6 +8,7 @@ import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -25,6 +26,8 @@ from toolang.common.query import (
 )
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
+
+from .types import CompactConfig
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -199,25 +202,50 @@ def resolve_setup_allow(
     return ceiling
 
 
-def resolve_compact_model(
+def resolve_compact_config(
     configs: Sequence[Mapping[str, object]],
     *,
     override: ModelOverride | None = None,
-) -> ModelOverride | None:
-    """Resolve an independent compact model, or None for automatic selection."""
-    selected = None
+) -> CompactConfig:
+    """Resolve compact fields independently; model overrides replace identity."""
+    result = CompactConfig()
     for config in configs:
         table = _table(config, "compact")
         if table is None:
             continue
-        _reject_unknown(table, frozenset({"model"}), "compact field")
+        _reject_unknown(
+            table, frozenset({"model", "summary", "recent", "trigger"}), "compact field"
+        )
         if "model" in table:
             selected = parse_model_body(_default_text("model", table["model"]))
+            _validate_compact_model(selected)
+            result = replace(result, model=selected)
+        for name in ("summary", "recent", "trigger"):
+            if name in table:
+                result = replace(result, **{name: _compact_size(name, table[name])})
     if override is not None:
-        selected = override
-    if selected is not None and selected.identity in (None, "default"):
-        raise ValueError("compact.model requires an exact model or unset")
-    return selected
+        _validate_compact_model(override)
+        result = replace(result, model=override)
+    if type(result.recent) is type(result.trigger) and result.recent >= result.trigger:
+        raise ValueError("compact.recent must be less than compact.trigger")
+    return result
+
+
+def _validate_compact_model(model: ModelOverride) -> None:
+    if model.identity in (None, "default", "unset"):
+        raise ValueError("compact.model requires an exact model")
+
+
+def _compact_size(name: str, value: object) -> int | float:
+    if type(value) is int and value > 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?%", value):
+        fraction = float(Decimal(value[:-1]) / 100)
+        if 0 < fraction <= 1:
+            return fraction
+    raise ValueError(
+        f"compact.{name} requires a positive integer or percentage in (0%, 100%]"
+    )
 
 
 def resolve_run_defaults(

@@ -24,29 +24,32 @@ def order_models(
 
 
 def select_compact_model(
-    models: Sequence[Model], override: ModelOverride | None
+    models: Sequence[Model],
+    override: ModelOverride | None,
+    *,
+    default: str | None = None,
 ) -> ModelRequest:
     """Select one allowed, ready tool-call model without building a collection."""
 
-    if override is not None and override.identity == "unset":
-        raise ToolangError("automatic compaction is disabled by compact.model")
+    if override is not None and override.identity in (None, "default", "unset"):
+        raise ToolangError("compact.model requires an exact model")
     eligible = tuple(
         model
         for model in filter_models(models, ("*[tool_call]",))
         if model._toolang.effective_ready
     )
     if override is None:
-        if not eligible:
-            raise ToolangError("compaction requires an allowed model with tool calls")
-        request = ModelRequest(eligible[0].ref)
+        if default is None:
+            raise ToolangError("compaction requires a thread model or compact.model")
+        request = ModelRequest(default)
     else:
         request = apply_model_override(None, None, override)
         assert request is not None
-        if not any(model.ref == request.ref for model in eligible):
-            raise ToolangError(
-                f"compact model {request.ref!r} must be available, allowed, and support "
-                "tool calls"
-            )
+    if not any(model.ref == request.ref for model in eligible):
+        raise ToolangError(
+            f"compact model {request.ref!r} must be available, allowed, and support "
+            "tool calls"
+        )
     model = resolve_model(eligible, request.ref)
     resolve_model_reasoning(model, request.reasoning)
     return request

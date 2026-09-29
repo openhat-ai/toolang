@@ -214,7 +214,7 @@ declarations or wake idle runs.
 ## Implementation boundaries
 
 - `assembly/prompts/`: static `protocol.md` and
-  `defaults/{instruct.md,context.md,compact.too}`. Format skill/service triggers
+  `defaults/{instruct.md,context.md}`. Format skill/service triggers
   directly from descriptions and metadata; no separate resource or tools templates.
 - `assembly/prompting.py`: assemble instructions, messages, and structured tool
   definitions; reuse the language's output-schema function. The model step constructs

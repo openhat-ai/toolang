@@ -408,3 +408,38 @@ agic chat(_: Part[]) -> Part[]:
 
 if __name__ == "__main__":
     _run_steer_fixture()
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel"])
+def test_chat_tui_displays_real_compaction_lifecycle(tmp_path, outcome):
+    mode = "compact-failure" if outcome == "failure" else "compact"
+    session = ChatTuiPtySession.start(
+        "tests.support.chat_tui_e2e", tmp_path, mode, columns=80
+    )
+    try:
+        session.wait_for("agic:chat", "scripted")
+        session.send(b"continue\r")
+        running = session.wait_for("Compacting thread history", "1s")
+        assert "HIDDEN_COMPACT_SUMMARY" not in running
+        assert "compact_read" not in running
+        if outcome == "cancel":
+            session.send(b"\x03")
+            done = session.wait_for("Canceled", "canceled")
+        else:
+            (tmp_path / "release-compact").touch()
+            done = (
+                session.wait_for(
+                    "Compacted thread history", "VISIBLE_FINAL_ANSWER", "succeeded"
+                )
+                if outcome == "success"
+                else session.wait_for("Failed", "Provider unavailable", "failed")
+            )
+        assert "HIDDEN_COMPACT_SUMMARY" not in done and "compact_read" not in done
+        assert "Traceback" not in done
+        if outcome != "success":
+            assert "VISIBLE_FINAL_ANSWER" not in done
+        (tmp_path / "compact-terminal.txt").write_text(done)
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()

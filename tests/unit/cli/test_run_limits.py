@@ -58,7 +58,8 @@ def test_compact_override_replaces_environment_without_inheriting_effort():
     assert resolve_compact_override(environ, "test/new effort=low") == ModelOverride(
         identity="test/new", effort="low"
     )
-    assert resolve_compact_override(environ, "unset") == ModelOverride(identity="unset")
+    with pytest.raises(ValueError, match="exact model"):
+        resolve_compact_override(environ, "unset")
 
 
 @pytest.mark.parametrize(
@@ -66,8 +67,9 @@ def test_compact_override_replaces_environment_without_inheriting_effort():
     [
         ("models=test/*", "unknown model parameter"),
         ("", "model requires"),
-        ("effort=low", "exact model or unset"),
-        ("default", "exact model or unset"),
+        ("effort=low", "exact model"),
+        ("default", "exact model"),
+        ("unset", "exact model"),
         ("model=test/a", "unknown model parameter"),
     ],
 )

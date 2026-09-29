@@ -17,7 +17,7 @@ and compact outputs directly.
 ## Terms
 
 - **binding:** the effective state, runnable, and input for execution.
-- **horizon:** a reference to the adopted compact Run, or `None`.
+- **horizon:** the adopted summary Run/Step reference, or `None`.
 - **far:** the summary of the compacted historical prefix.
 - **near:** role-preserving history after that prefix, before the current root Run.
 - **now:** messages in the current Run's active execution sequence.
@@ -28,19 +28,17 @@ and compact outputs directly.
 Add horizon to run payloads and introduce a run-scoped compact control:
 
 ```python
-RunControlPayload.horizon: RunRef | None = None
-CompactControlPayload.horizon: RunRef
+RunControlPayload.horizon: RunRef | StepRef | None = None
+CompactControlPayload.horizon: RunRef | StepRef
 ```
 
-Horizon references a successful summary Run. Reconstruct the concrete result
-from its required `{thread, summary, start, begin, end}` entry input and Text
-output as `{thread, begin: start, end, summary: output}`. See
-[Text-only algorithms](compact-summary-algorithm.md) for publication rules.
-
-The summary covers `[begin, end)` and targets the same Thread. Assembly supports
-complete-prefix summaries and root Run boundaries: `begin` is the first logical
-root and `end` retains at least one terminal historical root in near.
-Partial-summary merging and Step-level boundaries remain out of scope.
+Horizon references a completed summary Run or its final successful summary Model
+Step. Reconstruct the result from the producer's entry and Text output as
+`{thread, begin: start, end, summary: output}`. The summary covers a complete
+prefix `[begin, end)` of the same Thread. `begin` is its first logical root;
+`end` is the first retained history unit and may identify a Step inside a root.
+Retain at least the latest complete unit and paired tool messages. Publication
+and validation follow [automatic history compaction](persist-batched-compaction-run.md).
 
 A run control establishes the initial horizon. A compact control replaces its
 effective value; neither changes earlier payloads nor copies summary content.
@@ -176,11 +174,11 @@ An actual user cancellation still follows the existing begin-to-canceled-end
 boundary, including before the first call. Discarded preparation is not a
 canceled Model Step.
 
-Future compaction fits between preparation and Model Step begin: a real runtime
+Compaction runs between preparation and Model Step begin: a real runtime
 Tool Step performs the work, persists its output, and creates a compact control.
 After the wait, prepare again using all applicable controls, including any
-reload, steer, or cancel received meanwhile. This PR consumes such controls but
-does not implement that tool or fabricate model-emitted ToolCalls/results.
+reload, steer, or cancel received meanwhile. Record the compact Tool Step with
+its runtime trigger and preserve the existing model-originated exchange.
 
 ## Persistence, recovery, and replay
 
@@ -227,7 +225,7 @@ timing, commit boundaries, cross-Run terminal messages, and live/replay divergen
   selection, and messages must reconstruct entirely from execution records and
   `contents`, including calls made before and after reload.
 - Cover empty horizon, initial compact output, later compact adoption, wrong
-  target Thread, incomplete coverage, at least one retained historical root,
+  target Thread, incomplete coverage, at least one retained historical Step unit,
   every recall selection, and unchanged recall with changed far.
 - Cover run/retry/execute resets, reload/compact continuation, mixed steer/recall,
   cancellation, complete tool exchanges, child isolation, and fork/rewind views.

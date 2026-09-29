@@ -124,6 +124,7 @@ class RunState:
     begin: RunBegin
     lane_owner: LaneOwner | None
     agic: bool = False
+    internal: bool = False
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
     end: RunEnd | None = None
     cancellation_reported: bool = False

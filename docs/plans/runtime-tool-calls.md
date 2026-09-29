@@ -37,8 +37,7 @@ Tool calls
 ```
 
 Honor is not a model command; pick is. Both use the existing `recall` control,
-not separate honor/pick control kinds. History remains a user tool when called
-by a compact Run.
+not separate honor/pick control kinds. History tools expose read-only execution inspection to model callers.
 
 ## Shared execution boundary
 
@@ -102,7 +101,7 @@ effects, and do not themselves mean that a Model Step adopted them.
 | Reload state | Reload control payload |
 | Execute state, runnable, input | Execute control payload |
 | Horizon | Compact control payload |
-| Compacted range and summary | Compact Run output referenced by horizon |
+| Compacted range and summary | Validated producer entry and summary output referenced by horizon |
 
 Remove reload's from_state/state/applied and execute's executed-runnable echoes.
 Run still delivers `{run_id: RunRef, output_type: str, output: JSONValue}`, without
@@ -291,132 +290,35 @@ read_output  → {run: RunRef, status: RunStatus, output: Local | null}
   Preserve status/partial data; missing targets or unresolved values fail.
 
 Reads stay inside the current agent's Store and create no controls or injected
-user messages. Compact Runs use these tools for target records and earlier compact
-outputs; add no special recall directive, latest-compact tool, or hidden read path.
+user messages.
 
 ## Compaction and model call preflight
 
-```text
-_toolang/compact({thread: ThreadRef, begin: RunRef | null = null, end: RunRef})
-  → {controls: ControlRef[]}
-compact.too input:  {thread, begin, end}
-compact.too output: {thread, begin, end, summary: Text}
-```
-
-Model call preflight prepares a candidate and checks its input budget before
-allocating a Model Step. At compaction, choose the boundary using the near retention
-budget and select a complete prefix of the calling Run's Thread: begin is null or
-its first logical root; exclusive end retains at least one historical root before
-the active root. Between compactions, keep the history boundary fixed while new
-messages append; do not slide or trim near on each ModelCall. Never drop now to
-make history fit.
-Pass the range unchanged to compact.too; callers cannot supply summary.
-Validate that output echoes thread/begin/end and contains a complete-prefix
-summary before creating a compact control.
+The [automatic history compaction design](persist-batched-compaction-run.md)
+defines execution, source boundaries, batching, checkpoint recovery, publication,
+and client presentation. The runtime tool has this interface:
 
 ```text
-prepare candidate → budget check → compact Tool Step
-  → compact.too root Run in compact_<thread> → validated output
-  → compact control {horizon: compact Run output reference}
-  → prepare again → commit Model Step → dispatch
+_toolang/compact() → {controls: ControlRef[]}
 ```
 
-The discarded candidate is not a Model Step. The compact Run is a root in its
-own Thread, not a cross-Thread child. Its internal Steps stay outside target
-conversation/progress. Its explicit authorized tools include history; bounded
-reads and reduction belong to compact.too. Compact Runs do not recursively compact.
+Model preflight checks the complete candidate before committing its Model Step.
+On overflow, a runtime Tool Step owns a same-thread `_:compact` child Run. The
+child records Step-level read/model batches and returns a cumulative Text summary.
+The executor publishes the validated horizon and caller compact control, adopts
+the result, and checks the rebuilt candidate. Failed compaction stops the caller.
 
-At new root creation, reuse an applicable validated result located by
-RunHistory.get_compaction and fix its output reference in the run payload's
-horizon; otherwise start with no horizon. Children retain existing parent-horizon
-inheritance. Later changes use compact controls, never a replay-time latest lookup.
-Rerun also prefers the latest applicable result, falling back to the source Run's
-explicit horizon when no newer result is available.
+The source boundary can identify a Step inside a historical root. Horizons can
+reference a completed summary Run or its final successful summary Model Step.
+Control receipts identify committed adoption records. Execution and replay use
+the captured horizon and Step/control relationships.
 
-Use one cross-process permit per target Thread, not a ban on requests while a
-root Run is active. Waiters recheck budget/range after admission and reuse valid
-same-range output. Each calling Run needs its own compact control unless adoption
-is already satisfied. Return no control when no work/adoption is needed; reject
-invalidated arguments rather than silently changing the recorded range.
-
-Wait outside Store transactions and Model Step begin locks. Reprepare with any
-intervening reload/steer/cancel. Canceling a waiter does not cancel another caller's
-work. Only validated durable outputs produce compact controls; failure does not
-invent a horizon. Committed facts survive interrupted delivery, and horizon
-changes only through existing recorded adoption.
-
-### Budget policy
-
-Resolve the output budget first from the request configuration or default, within
-the model's output limit. Pass this same budget to the adapter as the actual output
-limit and reserve it when calculating input capacity. Do not automatically reserve
-the model's maximum supported output. Account for reasoning according to adapter
-semantics, without counting it twice.
-
-```python
-input_budget = min(context_window - output_budget, input_limit) - safety_margin
-```
-
-Omit the `input_limit` term when no independent input limit exists. Normalize model
-metadata: `context_window` is the combined input/output capacity, not an input-only
-limit. Reserving the full output budget is runtime policy, even if the provider
-accepts a request that could run out of context during generation.
-
-- Estimate the complete candidate: instructions, selected far/near/now, tools,
-  output contract, and newly included honor/pick content. Proceed when the estimate
-  is at most `input_budget`; otherwise compact before committing the Model Step.
-- Use the near retention budget only to choose a compaction boundary. Root-only
-  boundaries and the mandatory retained historical root take precedence over that
-  target; Step-level splitting is deferred. No fixed post-compaction percentage
-  is required. Reject already-oversized mandatory content before starting compact.
-  This lower-bound check excludes newly staged historical tails, which may shrink
-  when the horizon advances; committed now never shrinks.
-- Give compact's model calls their own output budgets. After adopting the result,
-  reprepare and recheck the complete candidate, not just the summary. If it still
-  exceeds budget and no valid boundary can advance, fail explicitly. This includes
-  oversized fixed content, mandatory near, or now; never silently truncate or
-  repeat compaction of an ineffective range.
-- Maintain estimates in memory using recent valid provider usage plus estimates
-  of appended content while the request prefix is unchanged. Rebuild the baseline
-  after compaction or relevant binding changes. Never use cumulative Run usage as
-  context size or reread stable records on every call.
-
-PR5 policy:
-
-- Default output: 4096 tokens, capped at the known model output limit. Honor
-  native adapter configuration; Messages thinking must fit inside this budget.
-  Persist `ModelCall.max_output_tokens` (Store schema 42) and replay it unchanged.
-  OpenAI's output limit includes reasoning tokens; see its
-  [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting).
-- Responses continuation retains a fingerprint of the request prefix. A changed
-  prefix starts a fresh provider context and resends the selected tool exchanges;
-  unchanged prefixes continue using the previous response. Other adapters keep
-  their own continuation semantics. Preserve the Responses reasoning items that
-  precede retained tool calls, following its
-  [context-management guidance](https://developers.openai.com/api/docs/guides/reasoning#keeping-reasoning-items-in-context).
-- Safety margin: 5% of the limiting input capacity, at least 1024 tokens. Near
-  target: half the input budget, rounded down; retain the last historical root
-  regardless of its size. Each compact advances at least one root.
-- Initial estimate: UTF-8 bytes / 3, rounded up, with serialized roles, tools and
-  output schema, 8 tokens per message and 32 request overhead. Add 4096 per image,
-  audio or document part. This is conservative accounting, not a tokenizer or a
-  guarantee for arbitrary media. Positive inclusive provider input usage replaces
-  the estimate for an unchanged prefix; otherwise reuse the estimated prefix.
-  Horizon, State, model or recall changes invalidate calibration.
-- Unknown limits disable automatic capacity checks, not output limits. A known
-  independent input limit still applies. Never infer a missing context window.
-- `compact.too` is one agic: read the previous summary and the requested Runs/Steps
-  with history tools, then return a structured summary and its coverage. There is
-  no child-Run loop or intermediate summary; incomplete coverage produces no
-  usable summary. Input beyond the compact model's capacity fails explicitly;
-  field slicing and recursive compact are not implemented. Only read-only history
-  tools are available to this program,
-  loaded through the normal factory/registration path independently of the human
-  Run's tool selectors. Loading compact does not initialize unrelated plugins.
-  Compact model selection is independent of the normal Run (see below).
-- Admission uses a cancellable OS file lock beside the Store, one per target
-  Thread. No Store transaction or Step-begin lock spans the wait. Canceling an
-  admitted caller cancels its own compact Run; canceling a waiter affects no owner.
+[Compaction configuration](compact-configuration.md) defines model selection and
+the summary, recent-history, and trigger targets. [Model output budgeting](model-output-budget.md)
+defines caller output reservation and safety capacity. Cache normal input
+estimates while binding and prefix remain reusable; history or relevant binding
+changes rebuild the baseline. Provider cumulative Run usage is accounting data,
+not the size of the next request.
 
 ## Implementation PRs and acceptance
 
@@ -431,11 +333,10 @@ adopted and retry-required from a completed filesystem operation.
 | 2 — Pick and recall visibility | Runtime plugin, executor recall handling, existing delta selection, protocol catalogs | Allowed refs; exact text and canonical revision, including short/zero forms; last-visible/pending reuse and revision reversions; batches, changed/excluded history, State-free replay. No context deduplication. |
 | 3 — Honor and tool preflight | Shared path preparation, fs/shell, executor recall handling | Scoped/nested rules; deletion versus empty files and failed reads; restoration; overlapping workspace anchors unchanged across host/sandbox, no physical deduplication; reads/writes, batch reuse, zero side effects before retry, no orphan runtime tool messages. |
 | 4 — History toolset | execution/tools/history, RunHistory/cursors, record serialization | Four contracts; cursor-only/wrong-tool checks, fixed ranges, dependencies/unused controls, resolved/partial output, fork/rewind, children, restart; no ModelCall rebuild. |
-| 5 — Compact and model preflight | Budget policy, model metadata/adapter limits, executor coordinator, bundled compact.too | Matching output limit/reservation, independent input limits, exact-budget threshold, estimator reset; full-prefix output, stable retained near, concurrent waiters, no recursive compact, cancel/failure/restart, intervening controls, unchanged prior calls, irreducible input/no-progress errors. |
+| 5 — Compact and model preflight | Model preflight, execution/compaction.py, executor/runs/compact.py, Store/history adoption | Matching output limit/reservation, independent input limits, exact-budget threshold, estimator reset; full-prefix output, stable retained near, concurrent waiters, no recursive compact, cancel/failure/restart, intervening controls, unchanged prior calls, irreducible input/no-progress errors. |
 
-Prioritize PRs 1–3 for honor/pick. PR4 is independent after PR1 and must precede
-PR5. Register each new tool with
-its implementation, not a placeholder operation in PR1.
+Prioritize PRs 1–3 for honor/pick. PR4 and PR5 integrate through the shared
+execution boundary. Register each new tool with its implementation.
 
 Across all PRs verify durable Step/control order, no duplicate adoption or child
 results, commit-before-delivery failures, and equality of online requests and
@@ -444,48 +345,14 @@ before every commit. Validate links and keep changes within the PR's scope.
 
 ## Independent compact model selection
 
-```toml
-[allow]
-models = ["provider-a/*", "provider-b/*", "*"]
-# Equivalent collection query: models = "provider-a/*, provider-b/*, *"
-[default]
-model = "provider-a/model effort=medium"
-[compact]
-model = "provider-b/model effort=low"
-```
-
-- `allow.models` defines authorization and ordering. Without a query (including
-  `all`), rank exact provider IDs: alibaba, anthropic, deepseek, google, meta,
-  minimax, mistral, moonshotai, openai, openrouter, xai, zai, zhipuai. Append other
-  providers in catalog order; retain catalog order within each provider. This
-  default excludes no models. Explicit `*` retains catalog order.
-- Omitted `compact.model` selects the first available, allowed model supporting
-  both tool calls and structured output. Apply session/request model ceilings too,
-  but not the normal runnable's model directive. Unknown capabilities do not
-  qualify. No eligible model produces a clear error when compaction is needed.
-- Explicit `compact.model` requires an exact model plus supported parameters,
-  using the existing model-body syntax. It must pass the same authorization and
-  capability checks. `unset` disables compaction. Never inherit the normal model
-  or parameters; never silently fall back to another model after failure.
-- Precedence: CLI `--compact-model 'MODEL effort=high'`, environment
-  `TOOLANG_COMPACT_MODEL`, agent config, root config, automatic selection. These
-  are runtime startup settings, not per-run model overrides. Existing runtimes
-  must be configured at their own startup. `allow` and `default` keep their
-  existing environment/CLI options. There is no `compact.models` setting.
-- Setup parses configuration once; the executor selects from the effective
-  authorized collection when compact starts. Persist the selected request using
-  existing Run records, without another schema or replay dependency on Setup.
-
-Touchpoints: setup configuration/publication and model-cache invalidation,
-CLI/runtime startup forwarding, executor compact selection, and offline tests.
-Acceptance: default/explicit ordering, string/list queries, unavailable or
-unauthorized models, unknown capabilities, independent effort, disabled compact,
-layer precedence, host/guest CLI propagation, and online/replay equivalence.
+[Compaction configuration](compact-configuration.md) defines the model and budget
+contract. Compaction uses the thread model identity by default, with independently
+configurable model, summary, recent-history, and trigger settings.
 
 ## Risks and exclusions
 
 Main risks are stale visibility after removal, loss of workspace identity across
 environments, side effects before honor succeeds, stale token estimates, runtime
 results leaking into model exchanges, and lost/duplicated effects at commit
-boundaries. External workspace permissions, general shell interception, and
-Step-level compaction remain separate definitions.
+boundaries. External workspace permissions and general shell interception remain separate
+definitions.
