@@ -1,4 +1,4 @@
-"""Durable batch checkpoints and publication survive process interruption."""
+"""Internal compaction runs share ownership, events and durable recovery."""
 
 import asyncio
 from contextlib import closing
@@ -6,23 +6,30 @@ from dataclasses import replace
 
 import pytest
 
-from tests.support.execution_harness import ExecutionHarness
-from toolang.base.errors import ModelResponseError, ToolangError
-from toolang.base.types.message import Message, TextPart
-from toolang.base.types.model import ModelRequest
-from toolang.base.types.run import ModelCallResult, ModelUsage
-from toolang.execution import batched_compaction as reducer
-from toolang.execution.executor.compact import CompactSpec, produce
-from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import StoredModelStepGiven
-from toolang.execution.store import RunStore
-from toolang.execution.types import (
-    ModelStepNoted,
-    RunRef,
-    ThreadPrefix,
-    ThreadRef,
-    ToolStepGiven,
+from tests.support.execution_assertions import assert_replayed
+from tests.support.execution_harness import (
+    ExecutionHarness,
+    RecordingRunTracer,
+    AsyncGate,
+    ScriptedModelTurn,
 )
+from tests.support.setup import replace_materialized_setup
+from toolang.base.errors import ModelResponseError
+from toolang.base.types.message import Message, TextPart
+from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
+from toolang.cli.common.execution_progress import ProgressProjector
+from toolang.execution import compaction
+from toolang.execution.events import RunBegin
+from toolang.execution.executor import RunExecutor
+from toolang.execution.executor._persist import _PersistSink
+from toolang.execution.executor.executor import _Execution
+from toolang.execution.executor.runs import compact as compact_run
+from toolang.execution.executor.steps import model as model_step
+from toolang.execution.inspection.history import RunHistory
+from toolang.execution.records import CompactControlPayload, StoredModelStepGiven
+from toolang.execution.store import RunStore
+from toolang.execution.types import ModelStepNoted, RunRef, ThreadPrefix
+from toolang.plugin.models.collections import ModelCollection
 
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
@@ -38,108 +45,147 @@ def reply(text="cumulative summary"):
     )
 
 
-@pytest.fixture(autouse=True)
-def offline_estimate(monkeypatch):
-    # Admit exactly one complete exchange per batch, independent of BPE assets.
-    monkeypatch.setattr(
-        reducer,
-        "estimate_model_input_tokens",
-        lambda call, model: (
-            100
-            + 4000
-            * sum(
-                isinstance(part, TextPart)
-                and part.text.startswith("[Begin historical Run")
-                for message in call.messages
-                for part in message.parts
-            )
-        ),
-    )
-
-
-async def seed(harness):
-    thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-    roots = []
-    for index in range(4):
-        root = await harness.executor.run(
-            harness.run_spec(
-                thread=thread, runnable="chat", primary=(TextPart(f"input {index}"),)
-            )
-        )
-        assert root.status == "succeeded"
-        roots.append(RunRef(root.id))
-    model = replace(
-        harness.setup.models_effective()[0], limit={"context": 10000, "output": 512}
-    )
-    return CompactSpec(
-        target=ThreadRef.parse(thread),
-        roots=tuple(roots),
-        begin=roots[0],
-        end=roots[-1],
-        summary="",
-        prior=None,
-        model=model,
-        request=ModelRequest(model.ref),
-        adapter=harness.adapter,
-        environ={},
-        setup=harness.setup.revision,
-        state=harness.state.revision,
-        sandbox="host",
-        limits=harness.setup.limits,
-        size=100,
-        versions=harness.store.history_versions([str(root) for root in roots]),
-    )
-
-
 def harness_at(path):
     return ExecutionHarness.create(
         path, source=SOURCE, responses=[reply(f"output {i}") for i in range(4)]
     )
 
 
-def test_batches_are_reconstructable_without_accumulating_previous_requests(tmp_path):
-    harness = harness_at(tmp_path)
+async def seed(h, monkeypatch):
+    thread = h.threads.create(prefix=ThreadPrefix.TERM)
+    roots = []
+    for index in range(4):
+        run = await h.executor.run(
+            h.run_spec(
+                thread=thread, runnable="chat", primary=(TextPart(f"input {index}"),)
+            )
+        )
+        assert run.status == "succeeded"
+        roots.append(RunRef(run.id))
+    model = replace(
+        h.setup.models_effective()[0], limit={"context": 10000, "output": 512}
+    )
+    h.setup = replace_materialized_setup(h.setup, models=ModelCollection((model,)))
+    # Exercise the automatic path with a deterministic, explicit retained boundary.
+    monkeypatch.setattr(
+        model_step,
+        "_boundary",
+        lambda state, *args: (
+            roots[-1]
+            if state.execution.horizon_for(state.prepared.run.run_id) is None
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        compaction,
+        "estimate_model_input_tokens",
+        lambda call, model: (
+            100
+            + 4000
+            * sum(
+                isinstance(p, TextPart) and p.text.startswith("[Begin historical Run")
+                for m in call.messages
+                for p in m.parts
+            )
+        ),
+    )
+    return thread, tuple(roots)
+
+
+def current(h, thread, *, tracer=None):
+    return h.executor.run(
+        h.run_spec(
+            thread=thread, runnable="chat", primary=(TextPart("current input"),)
+        ),
+        tracer=tracer,
+    )
+
+
+def producers(h, thread):
+    return [
+        r
+        for r in h.store.list_thread_runs_chronological(thread_id=thread)
+        if r.parent is not None
+        and h.store.get_run_control(run_id=r.id, index=0).payload.runnable
+        == compaction.RUNNABLE
+    ]
+
+
+def test_batches_and_client_projection_share_the_normal_event_tree(
+    tmp_path, monkeypatch
+):
+    h = harness_at(tmp_path)
+    tracer = RecordingRunTracer()
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.extend([reply(f"summary {i}") for i in range(3)])
-            output = await produce(
-                harness.store, spec, issue_run=harness.executor.ids.issue_run
+        async with h:
+            thread, roots = await seed(h, monkeypatch)
+            h.adapter._responses.extend(
+                [reply(f"internal summary {i}") for i in range(3)]
+                + [reply("visible answer")]
             )
-            with closing(RunStore(harness.store.db_path)) as store:
+            caller = await current(h, thread, tracer=tracer)
+            assert caller.status == "succeeded", caller.error
+            (child,) = producers(h, thread)
+            outer, following = h.store.list_steps(run_id=caller.id)
+            assert child.parent == outer.ref and str(child.thread) == thread
+            assert h.store.get_thread(thread_id=f"compact_{thread}") is None
+            with closing(RunStore(h.store.db_path)) as store:
                 history = RunHistory(store)
-                steps = store.list_steps(run_id=str(output.ref))
-                assert [step.kind for step in steps] == ["tool", "model"] * 3
-                assert history.get_compaction(spec.target) == output
-                assert output.result.end == str(spec.end)
-                assert output.result.summary == "summary 2"
-                for index in range(3):
-                    read, model = steps[index * 2 : index * 2 + 2]
-                    assert (
-                        isinstance(read.given, ToolStepGiven)
-                        and read.given.trigger == "runtime"
-                    )
-                    assert read.given.call.input["roots"] == [str(spec.roots[index])]
+                output = history.get_compaction(thread)
+                assert output is not None
+                assert output.ref == RunRef(child.id)
+                assert output.result.end == str(roots[-1])
+                steps = store.list_steps(run_id=child.id)
+                assert [s.kind for s in steps] == ["tool", "model"] * 3
+                for index, (read, model) in enumerate(zip(steps[::2], steps[1::2])):
+                    assert read.given.call.input["roots"] == [str(roots[index])]
                     assert isinstance(model.given, StoredModelStepGiven)
                     assert model.given.call.messages.head == model.ref
                     call = history.get_model_call(model.ref)
-                    assert call == harness.adapter.invocations[4 + index].call
+                    assert call == h.adapter.invocations[4 + index].call
                     assert not call.tools
                     assert f"input {index}" in str(call.messages)
-                    if index:
-                        assert f"summary {index - 1}" in str(call.messages)
-                        assert f"input {index - 1}" not in str(call.messages)
                     assert "input 3" not in str(call.messages)
+                    if index:
+                        assert f"internal summary {index - 1}" in str(call.messages)
+                        assert f"input {index - 1}" not in str(call.messages)
                     assert isinstance(model.noted, ModelStepNoted)
-                    assert model.noted.accounting is not None
                     assert model.noted.accounting.input_tokens == 42
-                # Retrying an already published request is a no-op.
-                assert (
-                    await produce(store, spec, issue_run=harness.executor.ids.issue_run)
-                    == output
+                (control,) = [
+                    c
+                    for c in store.list_run_controls(run_id=caller.id)
+                    if isinstance(c.payload, CompactControlPayload)
+                ]
+                assert control.triggered_by == outer.ref
+                assert control.ref in following.preceded_by
+                assert child.id not in [
+                    r.id
+                    for r in history.thread_view(thread, include_children=False).roots
+                ]
+            begin = next(
+                e
+                for e in tracer.events
+                if isinstance(e, RunBegin) and e.run == child.id
+            )
+            assert begin.runnable == "_:compact" and begin.parent == outer.ref
+            assert_replayed(h.store.db_path, tracer.events)
+            projector = ProgressProjector()
+            text = []
+            for event in tracer.events:
+                update = projector.handle(event)
+                text.extend(
+                    row.text
+                    for b in (*update.committed, *update.live)
+                    for row in b.rows
                 )
-                assert len(harness.adapter.invocations) == 7
+            rendered = "\n".join(text)
+            assert (
+                "visible answer" in rendered and "Compacted thread history" in rendered
+            )
+            assert "internal summary" not in rendered and "compact_read" not in rendered
+            assert not projector._broken
+            assert projector.root_metrics.runs == 2
 
     asyncio.run(scenario())
 
@@ -166,135 +212,204 @@ class ProcessCrash(BaseException):
         ("finish_run", None, True),
         ("publish_compaction", None, False),
         ("publish_compaction", None, True),
+        ("accept_compact_control", None, False),
+        ("accept_compact_control", None, True),
     ],
 )
-def test_restart_at_every_durable_boundary(tmp_path, monkeypatch, method, kind, after):
-    harness = harness_at(tmp_path)
+def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
+    tmp_path, monkeypatch, method, kind, after
+):
+    h = harness_at(tmp_path)
+    captured = []
+    original_invoke = compact_run.invoke
+
+    async def capture(state, step):
+        captured.append((state, step, state.execution._active))
+        return await original_invoke(state, step)
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.extend([reply()] * 4)
-            original = getattr(harness.store, method)
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 6)
+            original = getattr(h.store, method)
+            committed = False
+            emit = h.executor._emit_event_locked
+            adopt = _Execution.compact
+
+            async def crash_after_event(*args, **kwargs):
+                result = await emit(*args, **kwargs)
+                if committed:
+                    raise ProcessCrash()
+                return result
+
+            def crash_after_adoption(*args, **kwargs):
+                result = adopt(*args, **kwargs)
+                if committed:
+                    raise ProcessCrash()
+                return result
 
             def crash(*args, **kwargs):
-                if kind is not None and kwargs.get("kind") != kind:
+                nonlocal committed
+                run_id = kwargs.get("run_id") or getattr(
+                    kwargs.get("ref"), "run_id", None
+                )
+                is_child = kwargs.get("runnable") == compaction.RUNNABLE or any(
+                    r.id == run_id for r in producers(h, thread)
+                )
+                if (
+                    method not in {"publish_compaction", "accept_compact_control"}
+                    and not is_child
+                ) or (kind is not None and kwargs.get("kind") != kind):
                     return original(*args, **kwargs)
                 if after:
-                    original(*args, **kwargs)
+                    result = original(*args, **kwargs)
+                    if method == "accept_run":
+                        raise ProcessCrash()
+                    # Run/Step projection and publication each have an outer transaction.
+                    committed = True
+                    return result
                 raise ProcessCrash()
 
             with monkeypatch.context() as patch:
-                patch.setattr(harness.store, method, crash)
+                patch.setattr(compact_run, "invoke", capture)
+                patch.setattr(h.store, method, crash)
+                patch.setattr(h.executor, "_emit_event_locked", crash_after_event)
+                patch.setattr(_Execution, "compact", crash_after_adoption)
                 with pytest.raises(ProcessCrash):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-            producers = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )
-            assert len(producers) == 1
-            with closing(RunStore(harness.store.db_path)) as store:
-                output = await produce(
-                    store, spec, issue_run=harness.executor.ids.issue_run
+                    await current(h, thread)
+            (child,) = producers(h, thread)
+            state, step, old_active = captured[0]
+            parent = state.prepared.run
+            # Restart at the same durable owner, with a new connection and execution state.
+            with closing(RunStore(h.store.db_path)) as store:
+                executor = RunExecutor(store, h.executor.ids)
+                executor._persist = _PersistSink(store)
+                active = replace(
+                    old_active, task=asyncio.current_task(), controls={}, ended=set()
                 )
-                assert str(output.ref) == producers[0].id
+                execution = _Execution(executor, root=parent, active=active)
+                active.execution = execution
+                executor._active[parent.run_id] = active
+                state.execution = execution
+                state.refresh_frame = None
+                receipt = await original_invoke(state, step)
+                output = RunHistory(store).get_compaction(thread)
+                assert output is not None
+                assert output.ref == RunRef(child.id)
+                completed = store.get_run(run_id=child.id)
+                assert completed is not None and completed.status == "succeeded"
                 assert (
                     len(
-                        store.list_thread_runs_chronological(
-                            thread_id=f"compact_{spec.target}"
-                        )
+                        [
+                            r
+                            for r in store.list_thread_runs_chronological(
+                                thread_id=thread
+                            )
+                            if r.parent
+                        ]
                     )
                     == 1
                 )
-                # Only a provider response lost before the Step commit can repeat.
-                lost_response = (
-                    method == "finish_step" and kind == "model" and not after
-                )
-                assert len(harness.adapter.invocations) == 7 + lost_response
-                saved = store.get_run(run_id=str(output.ref))
-                assert saved is not None and saved.status == "succeeded"
-                assert RunHistory(store).get_compaction(spec.target) == output
+                assert receipt["controls"]
+            lost = method == "finish_step" and kind == "model" and not after
+            assert len(h.adapter.invocations) == 7 + lost
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["provider", "empty", "cancel", "oversized"])
-def test_failed_canceled_and_oversized_producers_never_publish(tmp_path, failure):
-    harness = harness_at(tmp_path)
+@pytest.mark.parametrize("failure", ["provider", "empty", "oversized"])
+def test_terminal_failure_never_publishes_or_calls_normal_model(
+    tmp_path, monkeypatch, failure
+):
+    h = harness_at(tmp_path)
+    tracer = RecordingRunTracer()
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
             if failure == "oversized":
-                spec = replace(
-                    spec,
-                    model=replace(spec.model, limit={"context": 1000, "output": 512}),
+                monkeypatch.setattr(
+                    compaction, "estimate_model_input_tokens", lambda *args: 100000
                 )
             else:
-                error = (
+                h.adapter._responses.append(
                     RuntimeError("provider offline")
                     if failure == "provider"
-                    else asyncio.CancelledError()
-                    if failure == "cancel"
                     else reply("")
                 )
-                # ScriptedModelAdapter accepts ordinary exceptions; cancellation
-                # is raised directly to model task interruption.
-                if failure == "cancel":
-
-                    async def cancel(*args, **kwargs):
-                        raise asyncio.CancelledError()
-
-                    spec = replace(
-                        spec,
-                        adapter=type("Adapter", (), {"invoke": staticmethod(cancel)})(),
-                    )
-                else:
-                    harness.adapter._responses.append(error)
-            with pytest.raises((RuntimeError, ValueError, asyncio.CancelledError)):
-                await produce(
-                    harness.store, spec, issue_run=harness.executor.ids.issue_run
+            caller = await current(h, thread, tracer=tracer)
+            (child,) = producers(h, thread)
+            assert caller.status == child.status == "failed"
+            assert RunHistory(h.store).get_compaction(thread) is None
+            assert [s.kind for s in h.store.list_steps(run_id=caller.id)] == ["tool"]
+            assert len(h.adapter.invocations) == (4 if failure == "oversized" else 5)
+            projector = ProgressProjector()
+            rendered = []
+            for event in tracer.events:
+                rendered.extend(
+                    row.text
+                    for b in projector.handle(event).committed
+                    for row in b.rows
                 )
-            run = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )[0]
-            assert run.status == ("canceled" if failure == "cancel" else "failed")
-            assert RunHistory(harness.store).get_compaction(spec.target) is None
-            with pytest.raises(ValueError, match="successful root"):
-                harness.store.publish_compaction(RunRef(run.id), roots=spec.roots)
-            assert len(harness.adapter.invocations) == (
-                4 if failure in {"cancel", "oversized"} else 5
-            )
+            assert not projector._broken
+            if failure == "provider":
+                assert "\n".join(rendered).count("provider offline") == 1
 
     asyncio.run(scenario())
 
 
-def test_context_rejection_records_attempt_and_retries_complete_roots(
-    tmp_path, monkeypatch
-):
-    harness = harness_at(tmp_path)
-    monkeypatch.setattr(reducer, "estimate_model_input_tokens", lambda call, model: 100)
+def test_direct_child_cancel_is_consumed_and_stops_parent(tmp_path, monkeypatch):
+    h = harness_at(tmp_path)
+    gate = AsyncGate()
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.extend(
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.append(ScriptedModelTurn(reply(), gate=gate))
+            handle = current(h, thread)
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            (child,) = producers(h, thread)
+            control = h.executor.cancel(run_id=child.id)
+            parent = await asyncio.wait_for(handle, 2)
+            assert parent.status == "canceled"
+            assert h.store.get_run(run_id=child.id).status == "canceled"
+            assert (
+                h.store.get_run_control(run_id=child.id, index=control.index).status
+                == "applied"
+            )
+            assert RunHistory(h.store).get_compaction(thread) is None
+
+    asyncio.run(scenario())
+
+
+def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
+    tmp_path, monkeypatch
+):
+    h = harness_at(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, roots = await seed(h, monkeypatch)
+            monkeypatch.setattr(
+                compaction, "estimate_model_input_tokens", lambda *args: 100
+            )
+            h.adapter._responses.extend(
                 [
                     ModelResponseError(
                         "context_length_exceeded",
                         kind="provider_rejection",
                         usage=ModelUsage(input_tokens=100, output_tokens=0),
                     ),
-                    reply("first"),
-                    reply("final"),
+                    reply("first summary"),
+                    reply("final summary"),
+                    reply("done"),
                 ]
             )
-            output = await produce(
-                harness.store, spec, issue_run=harness.executor.ids.issue_run
-            )
-            steps = harness.store.list_steps(run_id=str(output.ref))
-            assert [step.status for step in steps] == [
+            parent = await current(h, thread)
+            assert parent.status == "succeeded", parent.error
+            (child,) = producers(h, thread)
+            steps = h.store.list_steps(run_id=child.id)
+            assert [s.status for s in steps] == [
                 "succeeded",
                 "failed",
                 "succeeded",
@@ -302,295 +417,155 @@ def test_context_rejection_records_attempt_and_retries_complete_roots(
                 "succeeded",
                 "succeeded",
             ]
-            assert steps[0].given.call.input["roots"] == [
-                str(root) for root in spec.roots[:-1]
-            ]
-            assert steps[2].given.call.input["roots"] == [str(spec.roots[0])]
-            assert steps[4].given.call.input["roots"] == [
-                str(root) for root in spec.roots[1:-1]
-            ]
+            assert steps[0].given.call.input["roots"] == [str(r) for r in roots[:-1]]
+            assert steps[2].given.call.input["roots"] == [str(roots[0])]
+            assert steps[4].given.call.input["roots"] == [str(r) for r in roots[1:-1]]
             assert steps[1].noted.accounting.input_tokens == 100
-            assert "first" in str(harness.adapter.invocations[-1].call.messages)
-            assert output.result.summary == "final"
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("change", ["append", "policy", "rewind", "prior"])
-def test_unpublished_success_reuse_validates_history_and_prior(
-    tmp_path, monkeypatch, change
-):
-    harness = harness_at(tmp_path)
+@pytest.mark.parametrize("name", ["_:compact", "<inner>:compact", "inner:compact"])
+def test_internal_run_cannot_be_started_publicly(tmp_path, name):
+    h = harness_at(tmp_path)
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.extend([reply()] * 3)
-            with monkeypatch.context() as patch:
-
-                def crash(*args, **kwargs):
-                    raise ProcessCrash()
-
-                patch.setattr(harness.store, "publish_compaction", crash)
-                with pytest.raises(ProcessCrash):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-            original = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )[0]
-            assert original.status == "succeeded"
-            if change == "append":
-                harness.adapter._responses.append(reply("appended"))
-                later = await harness.executor.run(
-                    harness.run_spec(
-                        thread=str(spec.target),
-                        runnable="chat",
-                        primary=(TextPart("appended input"),),
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            with pytest.raises(ValueError, match="runnable"):
+                h.executor.run(
+                    h.run_spec(
+                        thread=thread, runnable=name, primary=(TextPart("input"),)
                     )
                 )
-                # Even a later requested end must first reuse the completed producer.
-                spec = replace(
-                    spec,
-                    roots=(*spec.roots, RunRef(later.id)),
-                    end=RunRef(later.id),
-                    versions=harness.store.history_versions(
-                        [str(r) for r in (*spec.roots, RunRef(later.id))]
-                    ),
-                )
-            elif change == "policy":
-                spec = replace(spec, size=200)
-            elif change == "rewind":
-                harness.store.rewind_thread(
-                    thread_id=str(spec.target),
-                    anchor=str(spec.roots[2]),
-                    request_id=None,
-                    expected_head=harness.store.thread_view(str(spec.target)).head,
-                    created_at="2026-01-01T00:00:00Z",
-                )
-            else:
-                # Publish a different, shorter producer to change the prior horizon.
-                harness.adapter._responses.append(reply("different prior"))
-                shorter = replace(
-                    spec,
-                    end=spec.roots[1],
-                    versions=harness.store.history_versions(
-                        [str(r) for r in spec.roots[:2]]
-                    ),
-                )
-                # The previous success can cover more than requested; make it stale
-                # for this artificial branch by bypassing only candidate discovery.
-                import toolang.execution.executor.compact as driver
-
-                with monkeypatch.context() as patch:
-                    patch.setattr(driver, "_candidate", lambda store, spec: None)
-                    await produce(
-                        harness.store, shorter, issue_run=harness.executor.ids.issue_run
-                    )
-            calls = len(harness.adapter.invocations)
-            if change in {"append", "policy"}:
-                output = await produce(
-                    harness.store, spec, issue_run=harness.executor.ids.issue_run
-                )
-                assert str(output.ref) == original.id
-            else:
-                with pytest.raises((ValueError, KeyError)):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-                assert harness.store.get_thread(
-                    thread_id=str(spec.target)
-                ).horizon != RunRef(original.id)
-            assert len(harness.adapter.invocations) == calls
-            if change in {"rewind", "prior"}:
-                history = RunHistory(harness.store)
-                roots = tuple(
-                    RunRef(run.id)
-                    for run in history.thread_view(
-                        str(spec.target), include_children=False
-                    ).roots
-                )
-                prior = history.get_compaction(spec.target)
-                fresh = replace(
-                    spec,
-                    roots=roots,
-                    begin=RunRef(prior.result.end) if prior else roots[0],
-                    end=roots[-1],
-                    summary=prior.result.summary if prior else "",
-                    prior=prior.ref if prior else None,
-                    versions=harness.store.history_versions(
-                        [str(root) for root in roots]
-                    ),
-                )
-                harness.adapter._responses.extend([reply("new valid summary")] * 3)
-                output = await produce(
-                    harness.store, fresh, issue_run=harness.executor.ids.issue_run
-                )
-                assert str(output.ref) != original.id
-                assert output.result.summary == "new valid summary"
+            assert not h.store.list_thread_runs_chronological(thread_id=thread)
 
     asyncio.run(scenario())
 
 
-def test_successful_looking_partial_producer_is_rejected_and_does_not_block(
-    tmp_path, monkeypatch
-):
-    from toolang.execution.types import Local, Output
-
-    harness = harness_at(tmp_path)
-
-    async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.append(reply())
-            original = harness.store.finish_step
-
-            def stop_after_checkpoint(**kwargs):
-                result = original(**kwargs)
-                if kwargs["kind"] == "model":
-                    raise ProcessCrash()
-                return result
-
-            with monkeypatch.context() as patch:
-                patch.setattr(harness.store, "finish_step", stop_after_checkpoint)
-                with pytest.raises(ProcessCrash):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-            run = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )[0]
-            # A valid terminal record alone is insufficient to claim full coverage.
-            harness.store.finish_run(
-                run_id=run.id,
-                status="succeeded",
-                output=Output(Local.typed("Text", "cumulative summary"), "_"),
-            )
-            with pytest.raises(ValueError, match="incomplete checkpoint"):
-                harness.store.publish_compaction(RunRef(run.id), roots=spec.roots)
-            assert RunHistory(harness.store).get_compaction(spec.target) is None
-            harness.adapter._responses.extend([reply("new valid summary")] * 3)
-            output = await produce(
-                harness.store, spec, issue_run=harness.executor.ids.issue_run
-            )
-            assert str(output.ref) != run.id
-            assert output.result.summary == "new valid summary"
-
-    asyncio.run(scenario())
-
-
-def test_stale_running_producer_becomes_terminal_before_new_attempt(
-    tmp_path, monkeypatch
-):
-    harness = harness_at(tmp_path)
-
-    async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            with monkeypatch.context() as patch:
-
-                def crash(**kwargs):
-                    raise ProcessCrash()
-
-                patch.setattr(harness.store, "begin_run", crash)
-                with pytest.raises(ProcessCrash):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-            old = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )[0]
-            assert old.status == "pending"
-            harness.adapter._responses.extend([reply()] * 3)
-            output = await produce(
-                harness.store,
-                replace(spec, size=200),
-                issue_run=harness.executor.ids.issue_run,
-            )
-            assert str(output.ref) != old.id
-            abandoned = harness.store.get_run(run_id=old.id)
-            assert abandoned is not None and abandoned.status == "failed"
-            control = harness.store.get_run_control(run_id=old.id, index=0)
-            assert control is not None and control.status == "wontapply"
-            harness.store.require_idle_compactor(str(spec.target))
-
-    asyncio.run(scenario())
-
-
-def test_resume_restores_provider_accounting_and_enforces_run_limits(
-    tmp_path, monkeypatch
-):
-    harness = harness_at(tmp_path)
-
-    async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            spec = replace(spec, limits=replace(spec.limits, tokens=46))
-            harness.adapter._responses.append(reply())  # 42 + 5 exceeds the limit.
-            original = harness.store.finish_step
-
-            def crash_before_accounting(**kwargs):
-                result = original(**kwargs)
-                if kwargs["kind"] == "model":
-                    raise ProcessCrash()
-                return result
-
-            with monkeypatch.context() as patch:
-                patch.setattr(harness.store, "finish_step", crash_before_accounting)
-                with pytest.raises(ProcessCrash):
-                    await produce(
-                        harness.store, spec, issue_run=harness.executor.ids.issue_run
-                    )
-            with pytest.raises(ToolangError, match="Run token limit exceeded"):
-                await produce(
-                    harness.store, spec, issue_run=harness.executor.ids.issue_run
-                )
-            assert len(harness.adapter.invocations) == 5
-            run = harness.store.list_thread_runs_chronological(
-                thread_id=f"compact_{spec.target}"
-            )[0]
-            assert run.status == "failed"
-            assert RunHistory(harness.store).get_compaction(spec.target) is None
-
-    asyncio.run(scenario())
-
-
-def test_reader_preserves_recorded_tool_exchange_once(tmp_path):
-    from tests.support.execution_harness import RecordingTool
-    from toolang.base.types.message import ToolCallPart, ToolResultPart
-    from toolang.base.types.run import ToolCall
-
-    tool = RecordingTool("lookup__read", output={"fact": "verified"})
-    harness = ExecutionHarness.create(
+def test_model_cannot_invoke_compaction_tool(tmp_path):
+    h = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
-        tools={tool.name: tool},
         responses=[
-            ModelCallResult(tool_calls=(ToolCall("lookup", "lookup", tool.name, {}),)),
-            reply("tool completed"),
-            reply("middle"),
-            reply("later"),
-            reply("retained"),
+            ModelCallResult(
+                tool_calls=(ToolCall("compact", "compact", "_toolang__compact", {}),)
+            ),
+            reply("done"),
         ],
     )
 
     async def scenario():
-        async with harness:
-            spec = await seed(harness)
-            harness.adapter._responses.extend([reply()] * 3)
-            await produce(harness.store, spec, issue_run=harness.executor.ids.issue_run)
-            call = harness.adapter.invocations[5].call
-            exchange = [
-                part
-                for message in call.messages
-                for part in message.parts
-                if isinstance(part, (ToolCallPart, ToolResultPart))
-            ]
-            assert [type(part) for part in exchange] == [ToolCallPart, ToolResultPart]
-            assert [part.call_id for part in exchange] == ["lookup", "lookup"]
-            assert "verified" in str(exchange)
-            assert "input 0" in str(call.messages)
-            assert "input 0" not in str(harness.adapter.invocations[6].call.messages)
-            assert len(tool.calls) == 1
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            parent = await current(h, thread)
+            steps = h.store.list_steps(run_id=parent.id)
+            failed = next(s for s in steps if s.kind == "tool")
+            assert failed.status == "failed"
+            assert "preflight" in str(failed.output)
+            assert not producers(h, thread)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("covered", [False, True])
+def test_retry_only_invalidates_summarized_root_versions(
+    tmp_path, monkeypatch, covered
+):
+    h = harness_at(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, roots = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            parent = await current(h, thread)
+            assert parent.status == "succeeded", parent.error
+            history = RunHistory(h.store)
+            before = history.get_compaction(thread)
+            assert before is not None
+            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
+            h.adapter._responses.append(reply("retried root"))
+            retried = await h.executor.retry(
+                str(roots[0] if covered else roots[-1]), setup=h.setup, state=h.state
+            )
+            assert retried.status == "succeeded", retried.error
+            if covered:
+                assert history.get_compaction(thread) is None
+            else:
+                assert history.get_compaction(thread) == before
+            h.adapter._responses.append(reply("next answer"))
+            next_run = await current(h, thread)
+            assert next_run.status == "succeeded", next_run.error
+
+    asyncio.run(scenario())
+
+
+def test_rewind_does_not_leave_a_permanently_blocking_raw_horizon(
+    tmp_path, monkeypatch
+):
+    from toolang.common.time import utc_now
+
+    h = harness_at(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, roots = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            assert (await current(h, thread)).status == "succeeded"
+            history = RunHistory(h.store)
+            old = history.get_compaction(thread)
+            assert old is not None
+            record, head, _ = h.store.history_thread_members(thread)
+            h.store.rewind_thread(
+                thread_id=thread,
+                anchor=str(roots[-1]),
+                request_id=None,
+                expected_head=head,
+                created_at=utc_now(),
+            )
+            assert history.get_compaction(thread) is None
+            assert h.store.get_thread(thread_id=thread).horizon == old.ref
+            monkeypatch.setattr(
+                model_step,
+                "_boundary",
+                lambda state, *args: (
+                    roots[-2]
+                    if state.execution.horizon_for(state.prepared.run.run_id) is None
+                    else None
+                ),
+            )
+            h.adapter._responses.extend([reply()] * 3)
+            parent = await current(h, thread)
+            assert parent.status == "succeeded", parent.error
+            latest = history.get_compaction(thread)
+            assert latest is not None and latest.ref != old.ref
+            assert latest.result.end == str(roots[-2])
+
+    asyncio.run(scenario())
+
+
+def test_compaction_usage_is_charged_to_parent_tree_limit(tmp_path, monkeypatch):
+    from toolang.base.types.policy import RunLimits
+
+    h = harness_at(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            parent = await h.executor.run(
+                h.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=(TextPart("current input"),),
+                    limits=RunLimits(tokens=60),
+                )
+            )
+            assert parent.status == "failed"
+            assert "token limit" in h.store.resolve_error(parent.error)
+            (child,) = producers(h, thread)
+            assert child.status == "failed"
+            assert len(h.adapter.invocations) == 6
+            assert RunHistory(h.store).get_compaction(thread) is None
 
     asyncio.run(scenario())

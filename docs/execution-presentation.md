@@ -136,6 +136,13 @@ retains standard labels and aliases such as `d (Del)`.
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.
 
+Automatic compaction emits a normal `_:compact` child Run beneath the runtime
+`_toolang.compact` Tool Step. The projector tracks its Steps, errors, and usage,
+but the default view shows only the outer operation's elapsed time and outcome.
+Internal summary text is available through execution inspection and does not
+appear as an assistant reply. Child success does not finish the outer item until
+publication and adoption complete.
+
 ## Markers and Style
 
 `•` marks Model and Flow Steps; `›` marks ordinary tools; `✧` marks the `pick`,

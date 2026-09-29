@@ -232,16 +232,6 @@ class RunStore:
                 (str(horizon), utc_now(), str(target)),
             )
 
-    def require_idle_compactor(self, thread: str) -> None:
-        """Check persisted unfinished producers while holding the compaction permit."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT id FROM runs WHERE thread = ? AND status IN ('pending', 'running') LIMIT 1",
-                (f"compact_{thread}",),
-            ).fetchone()
-        if row is not None:
-            raise ValueError(f"compaction already running: {row['id']}")
-
     def put_content(self, value: bytes) -> ContentRef:
         """Store raw content once and return its verified content reference."""
 

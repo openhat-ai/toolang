@@ -130,7 +130,8 @@ from .common import (
     value_parts,
     value_text,
 )
-from ..compaction import available_horizon
+from ..inspection.history import RunHistory
+from ..compaction import CompactSpec, RUNNABLE as COMPACT_RUNNABLE
 from ..settings import resolve_settings
 from ..recall import history_variables
 from .iteration import iteration_values
@@ -468,7 +469,14 @@ class RunExecutor:
             )
         loop = asyncio.get_running_loop()
         if spec.horizon is None:
-            spec = replace(spec, horizon=available_horizon(self.store, spec.thread))
+            spec = replace(
+                spec,
+                horizon=(
+                    output.ref
+                    if (output := RunHistory(self.store).get_compaction(spec.thread))
+                    else None
+                ),
+            )
         spec = replace(spec, workdir=self._initial_workdir(spec), workdir_base=None)
         sandbox = _setup_sandbox(spec.setup)
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -567,7 +575,11 @@ class RunExecutor:
         )
         spec = replace(
             spec,
-            horizon=available_horizon(self.store, spec.thread)
+            horizon=(
+                output.ref
+                if (output := RunHistory(self.store).get_compaction(spec.thread))
+                else None
+            )
             or self.store.run_horizon(source),
         )
         spec = replace(
@@ -1885,11 +1897,27 @@ class _Execution:
         steps_by_run = self.store.list_steps_for_runs(
             run_ids=tuple(run.id for run in runs)
         )
+        internal = {
+            run.id
+            for run in runs
+            if (entry := self.store.get_run_control(run_id=run.id, index=0)) is not None
+            and isinstance(entry.payload, RunControlPayload)
+            and entry.payload.runnable == COMPACT_RUNNABLE
+        }
         for step in (
             step
             for steps in steps_by_run.values()
             for step in steps
-            if step.kind == "model" and step.status == "succeeded"
+            if step.kind == "model"
+            and (
+                step.status == "succeeded"
+                or (
+                    step.run_id in internal
+                    and step.status in {"failed", "canceled"}
+                    and isinstance(step.noted, ModelStepNoted)
+                    and step.noted.accounting is not None
+                )
+            )
         ):
             noted = step.noted if isinstance(step.noted, ModelStepNoted) else None
             accounting = noted.accounting if noted is not None else None
@@ -2249,7 +2277,7 @@ class _Execution:
     async def execute(
         self,
         binding: BoundRun,
-        runnable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl | CompactSpec,
         *,
         locals: Mapping[str, Local] | None = None,
         output_binding: str | None = "_",
@@ -2259,13 +2287,20 @@ class _Execution:
 
         from .runs import agic as agic_run
         from .runs import flow as flow_run
+        from .runs import compact as compact_run
 
         if binding.resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
         entry_binding = binding
         entry_runnable = runnable
         transferred = False
-        current = dict(locals) if locals is not None else initial_locals(binding)
+        current = (
+            dict(locals)
+            if locals is not None
+            else {}
+            if isinstance(runnable, CompactSpec)
+            else initial_locals(binding)
+        )
         statement_start = 0
         step_start = self.next_step(binding.run_id)
         self._preceding_controls.append(
@@ -2297,7 +2332,10 @@ class _Execution:
                 self._limits.check_restored()
             while True:
                 try:
-                    if isinstance(runnable, AgicDecl):
+                    if isinstance(runnable, CompactSpec):
+                        self._limits.check_restored()
+                        result = await compact_run.execute(self, binding, runnable)
+                    elif isinstance(runnable, AgicDecl):
                         result = await agic_run.execute(
                             self,
                             binding,
@@ -2323,6 +2361,7 @@ class _Execution:
                     step_start = self.next_step(binding.run_id)
                     transferred = True
             if transferred:
+                assert not isinstance(entry_runnable, CompactSpec)
                 result = _coerce_execute_output(
                     entry_binding,
                     entry_runnable,
@@ -2612,9 +2651,11 @@ class _Execution:
             )
             return _prepare_child_run(binding, runnable), runnable
 
-        return await self._begin_child(
+        binding, runnable = await self._begin_child(
             prepare, state_snapshot=state_snapshot, begin=begin
         )
+        assert not isinstance(runnable, CompactSpec)
+        return binding, runnable
 
     def _prepare_public_child(
         self,
@@ -2705,19 +2746,24 @@ class _Execution:
         self,
         prepare: Callable[
             [AgentState, ControlRef],
-            tuple[BoundRun, AgicDecl | FlowDecl],
+            tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec],
         ],
         *,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
         begin: bool = True,
-    ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
+        resume: RunRecord | None = None,
+    ) -> tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec]:
         """Resolve, accept, and begin one child at the latest State boundary."""
+
+        if resume is not None:
+            self._limits = _RunLimitState(self._limits.limits)
+            self._restore_model_limits(self._history_root)
 
         async def accept(
             state: AgentState, state_ref: ControlRef
         ) -> tuple[
             BoundRun,
-            AgicDecl | FlowDecl,
+            AgicDecl | FlowDecl | CompactSpec,
         ]:
             try:
                 binding, runnable = prepare(state, state_ref)
@@ -2735,25 +2781,26 @@ class _Execution:
             try:
                 self._active_bindings[binding.run_id] = binding
                 self._run_lineages[binding.run_id] = (_qualified_identity(binding),)
-                self.store.accept_run(
-                    run_id=binding.run_id,
-                    parent=binding.parent,
-                    thread=binding.thread,
-                    resources=resources,
-                    limits=binding.limits,
-                    state=None,
-                    runnable=_bound_runnable(binding),
-                    model_request=binding.model_request,
-                    input=binding.control_input,
-                    sandbox=None,
-                    cwd=binding.cwd,
-                    occurrence=binding.occurrence,
-                    request_id=None,
-                    created_at=binding.created_at,
-                    state_ref=binding.state_ref,
-                    horizon=binding.horizon,
-                    schedule_receipt=not begin,
-                )
+                if resume is None:
+                    self.store.accept_run(
+                        run_id=binding.run_id,
+                        parent=binding.parent,
+                        thread=binding.thread,
+                        resources=resources,
+                        limits=binding.limits,
+                        state=None,
+                        runnable=_bound_runnable(binding),
+                        model_request=binding.model_request,
+                        input=binding.control_input,
+                        sandbox=None,
+                        cwd=binding.cwd,
+                        occurrence=binding.occurrence,
+                        request_id=None,
+                        created_at=binding.created_at,
+                        state_ref=binding.state_ref,
+                        horizon=binding.horizon,
+                        schedule_receipt=not begin,
+                    )
                 self._cwd_cache[binding.run_id] = binding.cwd
                 self.executor._register_child_run(
                     run_id=binding.run_id,
@@ -2767,7 +2814,9 @@ class _Execution:
                     runnable=_bound_runnable(binding),
                     parent=binding.parent,
                     occurrence=binding.occurrence,
-                    started_at=utc_now(),
+                    started_at=resume.started_at
+                    if resume and resume.started_at
+                    else utc_now(),
                 )
                 if self._active is None:
                     emit = self._emit_trace
@@ -3166,6 +3215,16 @@ class _Execution:
     def _step_relations(self, event: StepBegin) -> StepBegin:
         """Prepare associations without consuming their live state."""
 
+        binding = self._active_bindings.get(event.step.run_id)
+        if binding is not None and binding.bindings.runnable == COMPACT_RUNNABLE:
+            return replace(
+                event,
+                preceded_by=tuple(
+                    ref
+                    for ref in self._preceding_controls
+                    if ref.target == event.step.run
+                ),
+            )
         if event.kind != "model":
             self.horizon_for(event.step.run_id, pending=True)
         targets = {RunRef(event.step.run_id)}

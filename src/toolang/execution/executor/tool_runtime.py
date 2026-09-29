@@ -71,9 +71,9 @@ class _ToolRuntime(ToolRuntime):
         )
 
     async def compact(self) -> ToolResult:
-        from ..tools.compact import execute
+        from .runs.compact import invoke
 
-        return ToolResult(await execute(self.state, self.step))
+        return ToolResult(await invoke(self.state, self.step))
 
     async def pick(self, kind: Literal["skill", "service"], ref: str) -> ToolResult:
         execution = self.state.execution

@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from toolang.execution import batched_compaction as experiment
+from toolang.execution import compaction as experiment
 from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
 from toolang.base.types.model import Model
@@ -97,26 +97,39 @@ def run_compact(
     model_ref="vercel/google/unknown",
     context=20000,
 ):
-    return asyncio.run(
-        experiment.compact(
-            RunRef(from_),
-            RunRef(to),
-            size,
-            history=cast(RunHistory, history),
-            thread=ThreadRef.parse("term_test"),
-            load_unit=_unit_loader(history),
-            model=cast(
-                Model,
-                SimpleNamespace(
-                    ref=model_ref,
-                    limit={"context": context, "output": 4096},
-                ),
-            ),
-            max_output_tokens=max_output_tokens,
-            adapter=adapter,
-            environ={},
+    async def execute():
+        model = cast(
+            Model,
+            SimpleNamespace(ref=model_ref, limit={"context": context, "output": 4096}),
         )
-    )
+        roots = experiment._select_runs(
+            cast(RunHistory, history), ThreadRef("term_test"), RunRef(from_), RunRef(to)
+        )
+        reducer = experiment.Compaction(
+            [RunRef(r.id) for r in roots],
+            _unit_loader(history),
+            model,
+            size=size,
+            max_output_tokens=max_output_tokens,
+        )
+        metrics = []
+        while (call := reducer.next_call()) is not None:
+            try:
+                result = await adapter.invoke(model, call, environ={})
+            except ModelResponseError as error:
+                reducer.reject(error)
+                continue
+            metrics.append(
+                {
+                    "from": str(reducer.batch[0].run_id),
+                    "to": str(reducer.batch[-1].run_id),
+                    "usage_input_tokens": result.usage.input_tokens,
+                }
+            )
+            reducer.accept(result)
+        return reducer.summary, metrics
+
+    return asyncio.run(execute())
 
 
 def test_inclusive_range_and_lazy_full_exchange_read() -> None:

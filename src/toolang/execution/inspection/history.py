@@ -42,6 +42,7 @@ from ..types import (
     StepRef,
     ThreadRef,
 )
+from ..errors import HistoryChangedError
 from ..values import parts_from_local
 
 _CURSOR = TypeAdapter(HistoryCursor)
@@ -296,15 +297,14 @@ class RunHistory:
             control = self._store.get_run_control(run_id=run.id, index=0)
             raw = self.get_output(run.id)
             if (
-                run.parent is not None
-                or run.status != "succeeded"
+                run.status != "succeeded"
                 or control is None
                 or not isinstance(control.payload, RunControlPayload)
                 or raw is None
             ):
-                raise ValueError(
-                    "compact horizon requires a successful root summary Run"
-                )
+                raise ValueError("compact horizon requires a successful summary Run")
+            if run.parent is not None and control.payload.runnable != "_:compact":
+                raise ValueError("compact child must be an internal compaction Run")
             request = control.payload.input
             if any(
                 not isinstance(request.get(key), str)
@@ -323,8 +323,8 @@ class RunHistory:
                 begin=RunRef.parse(cast(str, request["begin"])),
                 end=RunRef.parse(cast(str, request["end"])),
             )
-            if control.payload.runnable == "compact:batched":
-                from ..batched_compaction import validate_producer
+            if control.payload.runnable == "_:compact":
+                from ..compaction import validate_producer
 
                 validate_producer(self._store, run, roots, result.summary)
             start, stop = (
@@ -355,7 +355,7 @@ class RunHistory:
             roots = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
             try:
                 return self.read_compaction(record.horizon, target, roots)
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError, HistoryChangedError):
                 return None
 
     def thread_view(

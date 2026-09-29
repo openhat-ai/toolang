@@ -269,6 +269,8 @@ async def _execute(
             else None
         )
         try:
+            if trigger == "model" and call.name == "_toolang__compact":
+                raise ToolangError("compact can only be initiated by model preflight")
             if tool is None:
                 raise ToolangError(f"unknown tool call: {call.name}")
             context = _tool_context(

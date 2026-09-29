@@ -234,11 +234,7 @@ def _boundary(
     ):
         return None
     execution = state.execution
-    if (
-        execution is None
-        or prepared.run.thread.startswith("compact_")
-        or "near" not in prepared.recall
-    ):
+    if execution is None or "near" not in prepared.recall:
         raise ToolangError(
             "model input exceeds its budget; no compactable near history"
         )
