@@ -23,7 +23,7 @@ class UnsafeAuthoringPathError(ValueError):
 def validate_job_storage(home: Path, *, allocator: bool) -> None:
     """Reject unsafe job, lock, and optional allocator storage."""
 
-    require_regular_file(home / ".authored-jobs.lock", "job lock")
+    require_regular_file(home / ".jobs.lock", "job lock")
     for relative in _JOB_DIRECTORIES:
         directory = require_directory(home, relative, "job storage")
         if directory is None:
@@ -45,7 +45,7 @@ def validate_cap_storage(
 ) -> None:
     """Reject unsafe cap storage before an authored catalog can follow it."""
 
-    require_regular_file(home / ".authored-caps.lock", "cap lock")
+    require_regular_file(home / ".caps.lock", "cap lock")
     relative = Path(CAP_DIR_BY_KIND[kind])
     directory = require_directory(home, relative, f"{kind} storage")
     if directory is None:

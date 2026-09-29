@@ -315,3 +315,42 @@ def test_job_file_rejects_empty_optional_title() -> None:
             meta={"id": "task-1", "title": " "},
             body="Body.",
         )
+
+
+def test_authored_jobs_use_short_lock_filename(tmp_path: Path) -> None:
+    jobs = AuthoredJobs(tmp_path)
+
+    assert jobs.lock_path == tmp_path / ".jobs.lock"
+    with jobs.write_lock():
+        assert jobs.lock_path.is_file()
+    assert not (tmp_path / ".authored-jobs.lock").exists()
+
+
+def test_empty_read_queries_do_not_create_lock(tmp_path: Path) -> None:
+    for relative in (
+        "tasks",
+        "chores",
+        "drafts/tasks",
+        "drafts/chores",
+        "archive/tasks",
+        "archive/chores",
+    ):
+        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
+    jobs = AuthoredJobs(tmp_path)
+
+    assert jobs.list() == ()
+    assert not jobs.lock_path.exists()
+    assert jobs.get("task", "missing") is None
+    assert not jobs.lock_path.exists()
+    assert not jobs.contains_id("missing")
+    assert not jobs.lock_path.exists()
+
+
+def test_reading_existing_jobs_does_not_create_lock(tmp_path: Path) -> None:
+    _write_job(tmp_path, "tasks/review.md", job_id="review")
+    jobs = AuthoredJobs(tmp_path)
+
+    assert [job.id for job in jobs.list()] == ["review"]
+    assert jobs.get("task", "review") is not None
+    assert jobs.contains_id("review")
+    assert not jobs.lock_path.exists()

@@ -78,7 +78,7 @@ class AuthoredCaps:
 
     @property
     def lock_path(self) -> Path:
-        return self.directory / ".authored-caps.lock"
+        return self.directory / ".caps.lock"
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the shared lock used by all authored-cap mutations."""

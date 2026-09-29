@@ -7,6 +7,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 from dateutil.rrule import rrulestr
 import frontmatter
@@ -22,6 +23,9 @@ from .types import (
     JobStage,
 )
 from .errors import CatalogConflictError, CatalogNotFoundError, DuplicateJobIdError
+
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +134,7 @@ class AuthoredJobs:
 
     @property
     def lock_path(self) -> Path:
-        return self.directory / ".authored-jobs.lock"
+        return self.directory / ".jobs.lock"
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the shared lock used by all authored-job mutations."""
@@ -143,9 +147,12 @@ class AuthoredJobs:
         kind: JobKind | None = None,
         stage: JobStage = "ready",
     ) -> tuple[JobFile, ...]:
-        with self.write_lock():
-            _validate_stage(stage)
-            kinds = JOB_KINDS if kind is None else (kind,)
+        _validate_stage(stage)
+        kinds = JOB_KINDS if kind is None else (kind,)
+        for current_kind in kinds:
+            _validate_kind(current_kind)
+
+        def read() -> tuple[JobFile, ...]:
             jobs = tuple(
                 job
                 for current_kind in kinds
@@ -154,6 +161,8 @@ class AuthoredJobs:
             _ensure_unique_ids(jobs)
             return tuple(sorted(jobs, key=_job_sort_key))
 
+        return self._read_consistently(read)
+
     def get(
         self,
         kind: JobKind,
@@ -161,9 +170,10 @@ class AuthoredJobs:
         *,
         stage: JobStage | None = "ready",
     ) -> JobFile | None:
-        with self.write_lock():
-            _validate_kind(kind)
-            _validate_id(job_id)
+        _validate_kind(kind)
+        _validate_id(job_id)
+
+        def read() -> JobFile | None:
             jobs = self._list_all()
             _ensure_unique_ids(jobs)
             return next(
@@ -177,14 +187,19 @@ class AuthoredJobs:
                 None,
             )
 
+        return self._read_consistently(read)
+
     def contains_id(self, job_id: str) -> bool:
         """Return whether any task or chore in any stage owns an id."""
 
-        with self.write_lock():
-            _validate_id(job_id)
+        _validate_id(job_id)
+
+        def read() -> bool:
             jobs = self._list_all()
             _ensure_unique_ids(jobs)
             return any(job.optional_id == job_id for job in jobs)
+
+        return self._read_consistently(read)
 
     def create(self, job: JobFile) -> JobFile:
         _validate_job(job, require_id=True)
@@ -312,6 +327,28 @@ class AuthoredJobs:
             job_id=job.id,
             path=path,
         )
+
+    def _read_consistently(self, read: Callable[[], _T]) -> _T:
+        """Read under an existing lock, without creating one for a query."""
+
+        if self._lock_file_exists():
+            with self.write_lock():
+                return read()
+        try:
+            result = read()
+        except OSError:
+            if not self._lock_file_exists():
+                raise
+        else:
+            if not self._lock_file_exists():
+                return result
+        # Writers create the lock before changing files. If one appeared while
+        # we read, retry under it to avoid returning a partial catalog snapshot.
+        with self.write_lock():
+            return read()
+
+    def _lock_file_exists(self) -> bool:
+        return self.lock_path.exists() or self.lock_path.is_symlink()
 
     def _list_all(self) -> tuple[JobFile, ...]:
         return tuple(
