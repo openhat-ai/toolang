@@ -21,9 +21,10 @@ trigger = "80%"
   or output settings. Explicit choices must be ready, allowed, and support tool
   calls; never silently switch models. No disabling sentinel or enabled switch.
 - `summary`: soft summary length target, default 4096 tokens.
-- `recent`: soft budget for recent original historical roots, default 30%.
-  Excludes summary, fixed instructions, and the current Run. Preserve whole roots,
-  always retain the latest, and advance at least one root per compaction.
+- `recent`: soft budget for recent historical Steps, default 30%. Excludes
+  summary, fixed instructions, and the current Run. Always retain the latest
+  complete Step and required tool-call/result pairs; advance at least one unit.
+  A retained suffix may start inside a root.
 - `trigger`: input admission budget, default 80%. Preflight compacts when the
   estimated complete request exceeds this budget.
 
@@ -82,13 +83,15 @@ clamped to the compact model's output limit. Default allowance is 8192 tokens.
 - Different context windows produce proportional targets; explicit token values
   stay fixed. A different compact model does not affect the denominator. Nested
   Runs use the root model; safety limits of the actual caller still apply.
-- Trigger changes actual admission; recent changes the retained whole-root
+- Trigger changes actual admission; recent changes the retained Step
   boundary; summary reaches the prompt, output allowance, and persisted policy.
 - Default compact selection follows the thread model, independent of catalog
   ordering and thread reasoning/output parameters; unavailable choices fail.
 - Setup changes get new revisions; accepted Runs retain captured configuration.
   Incremental estimation, cancellation, events, and checkpoint reuse stay intact.
-- Oversized indivisible roots may require an explicitly configured larger compact
-  model. Large summaries and the mandatory latest root can exceed soft targets.
+- Roots can span reducer batches. Oversized Step payloads are shortened with
+  explicit omission markers while original records remain intact. The mandatory
+  latest Step is bounded to half the caller input budget before prompt assembly;
+  fixed/current content and unusually large summaries can still exceed capacity.
 
 Run all default repository checks. No open design questions remain.

@@ -29,6 +29,9 @@ from ..records import (
 )
 from ..types import (
     ThreadRef,
+    StepRef,
+    history_ref,
+    history_root,
     FieldRef,
     validate_compaction_coverage,
     Local,
@@ -56,6 +59,7 @@ class HistorySelection:
     templates: tuple[MessageTemplate, ...]
     recalls: Mapping[RecallTarget, str]
     roots: tuple[tuple[RunRef, tuple[Message, ...]], ...]
+    units: tuple[tuple[RunRef | StepRef, tuple[Message, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,20 +83,29 @@ class MessageHistory:
         roots: Sequence[RunRef],
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageTemplate]]],
         resolve: Callable[[TypedRef | ContentRef], object],
-        compaction: Callable[[RunRef], CompactionResult],
+        compaction: Callable[[RunRef | StepRef], CompactionResult],
+        units: Callable[
+            [RunRef], Sequence[tuple[RunRef | StepRef, Sequence[MessageTemplate]]]
+        ]
+        | None = None,
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
         self._load = load
         self._resolve = resolve
         self._compaction = compaction
+        self._units = units
+        self._unit_templates: dict[
+            RunRef, tuple[tuple[RunRef | StepRef, tuple[MessageTemplate, ...]], ...]
+        ] = {}
         self._roots: dict[RunRef, _RootMessages] = {}
-        self._selections: dict[RunRef | None, HistorySelection] = {}
+        self._selections: dict[RunRef | StepRef | None, HistorySelection] = {}
 
-    def select(self, horizon: RunRef | None) -> HistorySelection:
+    def select(self, horizon: RunRef | StepRef | None) -> HistorySelection:
         if horizon not in self._selections:
             summary = ""
             begin = 0
+            boundary: RunRef | StepRef | None = None
             if horizon is not None:
                 result = self._compaction(horizon)
                 validate_compaction_coverage(
@@ -100,18 +113,54 @@ class MessageHistory:
                 )
                 if result.begin != str(self.roots[0]):
                     raise ValueError("compact output must cover the complete prefix")
-                begin = self.roots.index(RunRef(result.end))
+                boundary = history_ref(result.end)
+                begin = self.roots.index(history_root(boundary))
                 summary = result.summary
             selected = self.roots[begin:]
             missing = tuple(root for root in selected if root not in self._roots)
             if missing:
-                for root, deltas in self._load(missing).items():
-                    self._roots[root] = _RootMessages(
-                        tuple(replace(item, source=root) for item in deltas),
-                        render_delta(deltas, self._resolve),
-                        recall_revisions(deltas),
+                for ref, deltas in self._load(missing).items():
+                    groups = (
+                        tuple((key, tuple(group)) for key, group in self._units(ref))
+                        if self._units is not None
+                        else ((ref, tuple(deltas)),)
                     )
-            roots = tuple((ref, self._roots[ref]) for ref in selected)
+                    self._unit_templates[ref] = groups
+                    templates = tuple(
+                        replace(item, source=ref)
+                        for _, group in groups
+                        for item in group
+                    )
+                    self._roots[ref] = _RootMessages(
+                        templates,
+                        render_delta(templates, self._resolve),
+                        recall_revisions(templates),
+                    )
+            units = []
+            roots = []
+            for ref in selected:
+                groups = self._unit_templates[ref]
+                root = self._roots[ref]
+                offset = 0
+                skipping = isinstance(boundary, StepRef) and boundary.run == ref
+                for key, group in groups:
+                    if key == boundary:
+                        skipping = False
+                    if not skipping:
+                        units.append((key, root.messages[offset : offset + len(group)]))
+                    offset += len(group)
+                if isinstance(boundary, StepRef) and boundary.run == ref:
+                    keys = [key for key, _ in groups]
+                    if boundary not in keys:
+                        raise ValueError("compact Step boundary is no longer visible")
+                    offset = sum(
+                        len(group) for _, group in groups[: keys.index(boundary)]
+                    )
+                    templates = root.templates[offset:]
+                    root = _RootMessages(
+                        templates, root.messages[offset:], recall_revisions(templates)
+                    )
+                roots.append((ref, root))
             revisions: dict[RecallTarget, str] = {}
             for _ref, root in roots:
                 revisions.update(root.recalls)
@@ -123,11 +172,13 @@ class MessageHistory:
                     "user",
                     (
                         TypedRef(
-                            FieldRef.from_path(horizon, "output", "local", "value"),
+                            FieldRef.from_path(
+                                history_root(horizon), "output", "local", "value"
+                            ),
                             "Text",
                         ),
                     ),
-                    source=horizon,
+                    source=history_root(horizon),
                 )
             self._selections[horizon] = HistorySelection(
                 far=summary,
@@ -140,13 +191,14 @@ class MessageHistory:
                 ),
                 recalls=revisions,
                 roots=tuple((ref, root.messages) for ref, root in roots),
+                units=tuple(units),
             )
         return self._selections[horizon]
 
 
 def adopted_horizon(
-    horizon: RunRef | None, controls: Sequence[ControlRecord], run: RunRef
-) -> RunRef | None:
+    horizon: RunRef | StepRef | None, controls: Sequence[ControlRecord], run: RunRef
+) -> RunRef | StepRef | None:
     """Only controls targeting this Run can replace its horizon."""
 
     for control in controls:

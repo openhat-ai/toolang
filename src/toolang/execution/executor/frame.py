@@ -34,10 +34,11 @@ from toolang.state.state import (
     StateCap,
 )
 
-from ..compaction import resolve_target
+from ..compaction import bound_latest_step, resolve_target
+from ..assembly.history import HistorySelection
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
-from .budget import text_tokens
+from .budget import message_tokens, text_tokens
 from .common import BoundRun
 from .resources import (
     available_workspaces,
@@ -86,6 +87,7 @@ class _AgicFrame:
     thread_model: Model | None = None
     compact_recent: int | None = None
     compact_summary: int | None = None
+    history: HistorySelection | None = None
 
 
 def build_agic_frame(
@@ -96,6 +98,7 @@ def build_agic_frame(
     variables: Mapping[str, object],
     far: str = "",
     near: Sequence[Message] = (),
+    history: HistorySelection | None = None,
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
@@ -223,6 +226,11 @@ def build_agic_frame(
             f"model {resolved_model.ref} (output source: {output_source}): {exc}"
         ) from exc
 
+    if history is not None and admitted_input is not None:
+        history = bound_latest_step(
+            history, max(1, admitted_input // 2), message_tokens
+        )
+        far, near = history.far, history.near
     inputs = prompting.PromptInputs(
         run.state,
         run.setup,
@@ -269,6 +277,7 @@ def build_agic_frame(
         thread_model=thread_model,
         compact_recent=recent,
         compact_summary=summary,
+        history=history,
         context_capacity=context_capacity(resolved_model.limit),
         input_overhead=text_tokens(dumps(route.options, indent=None))
         if route.options

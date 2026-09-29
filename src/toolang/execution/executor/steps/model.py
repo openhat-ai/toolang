@@ -96,7 +96,10 @@ def _candidate(
     )
     messages = state.messages.copy()
     history = (
-        state.execution.message_history().select(prepared.run.horizon)
+        (
+            prepared.history
+            or state.execution.message_history().select(prepared.run.horizon)
+        )
         if state.execution is not None and prepared.run.parent is None
         else None
     )
@@ -223,7 +226,7 @@ def _boundary(
     prepared: _AgicFrame,
     request: ModelCall,
     controls: Sequence[ControlRecord],
-) -> RunRef | None:
+) -> RunRef | StepRef | None:
     budget = prepared.input_budget
     if (
         budget is None
@@ -238,8 +241,10 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; no compactable near history"
         )
-    history = execution.message_history().select(prepared.run.horizon)
-    roots = history.roots
+    history = prepared.history or execution.message_history().select(
+        prepared.run.horizon
+    )
+    roots = history.units or history.roots
     if len(roots) < 2:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
@@ -283,9 +288,7 @@ def _boundary(
         )
     retained = 0
     end = roots[-1][0]
-    # The recent target is soft: always preserve the latest complete root,
-    # even when it exceeds the target. Earlier roots must fit as a whole.
-    # Advance at least one root when compaction is necessary.
+    # Keep the latest complete Step and an optional suffix within the soft target.
     for index in range(len(roots) - 1, 0, -1):
         root, messages = roots[index]
         size = sum(message_tokens(message) for message in messages)
@@ -293,10 +296,18 @@ def _boundary(
             break
         retained += size
         end = root
-    return end
+    # A retained tool result needs the Step containing its assistant call.
+    index = next(i for i, (ref, _) in enumerate(roots) if ref == end)
+    while index > 0 and roots[index][1] and roots[index][1][0].role == "tool":
+        index -= 1
+    if index == 0:
+        raise ToolangError(
+            "model input exceeds its budget; required near cannot be compacted"
+        )
+    return roots[index][0]
 
 
-def compaction_boundary(state: _AgicState) -> RunRef | None:
+def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
     """Reprepare after admission without committing a Step or consuming deltas."""
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")

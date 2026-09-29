@@ -135,7 +135,7 @@ class HistoryToolCursor:
 class CompactionOutput:
     """A summary Run and its framework-assembled result."""
 
-    ref: RunRef
+    ref: RunRef | StepRef
     result: CompactionResult
 
 

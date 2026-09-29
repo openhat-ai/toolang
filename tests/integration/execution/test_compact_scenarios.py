@@ -431,7 +431,9 @@ def test_irreducible_current_input_does_not_start_compact(tmp_path):
 
 
 @pytest.mark.parametrize("oversized", ["now", "required_near"])
-def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversized):
+def test_large_current_input_fails_but_oversized_retained_step_is_bounded(
+    tmp_path, oversized
+):
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
@@ -447,6 +449,7 @@ def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversiz
     async def scenario():
         async with harness:
             thread, _end = await seed(harness)
+            harness.adapter._responses.append(reply("continued"))
             root = await harness.executor.run(
                 spec(
                     harness,
@@ -454,6 +457,12 @@ def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversiz
                     "large " * 15000 if oversized == "now" else "current",
                 )
             )
+            if oversized == "required_near":
+                assert root.status == "succeeded", root.error
+                assert "omitted oversized Step content" in str(
+                    harness.adapter.invocations[-1].call.messages
+                )
+                return
             assert root.status == "failed"
             assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
             assert not harness.store.list_steps(run_id=root.id)
@@ -1124,5 +1133,198 @@ def test_unknown_thread_context_never_substitutes_an_input_limit(
                     in harness.store.resolve_error(current.error)
                 )
                 assert len(harness.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("step_horizon", [False, True])
+def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
+    tmp_path, step_horizon, monkeypatch
+):
+    from toolang.execution import compaction
+    from toolang.execution.types import RunRef, StepRef
+    from toolang.setup.config import resolve_compact_config
+
+    tool = RecordingTool("lookup__read", output={"text": "large tool body " * 5000})
+    calls = [ToolCall(f"lookup-{i}", f"lookup-{i}", tool.name, {}) for i in range(3)]
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            *[ModelCallResult(tool_calls=(call,)) for call in calls],
+            reply("latest complete step"),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            original = await harness.executor.run(
+                spec(harness, thread, "original goal")
+            )
+            assert original.status == "succeeded", original.error
+            units = compaction._history_units(harness.store, original)
+            assert len(units) == 7
+            assert len({u.ref for u in units}) == 7
+            for unit in units:
+                tool_results = [
+                    p
+                    for m in unit.messages
+                    for p in m.parts
+                    if isinstance(p, ToolResultPart)
+                ]
+                if tool_results:
+                    tool_calls = [
+                        p
+                        for m in unit.messages
+                        for p in m.parts
+                        if isinstance(p, ToolCallPart)
+                    ]
+                    assert [p.tool_call_id for p in tool_calls] == [
+                        p.tool_call_id for p in tool_results
+                    ]
+            retained = units[-1].ref
+            assert isinstance(retained, StepRef)
+            constrain(harness, context=14000)
+            models = harness.setup.models_effective()
+            harness.setup = replace_materialized_setup(
+                harness.setup,
+                models=ModelCollection(
+                    tuple(
+                        replace(m, limit={"context": 8000, "output": 1024})
+                        if m.id == "reducer"
+                        else m
+                        for m in models
+                    )
+                ),
+            )
+            harness.setup = replace(
+                harness.setup,
+                compact=resolve_compact_config(
+                    (
+                        {
+                            "compact": {
+                                "model": "test/reducer",
+                                "summary": 128,
+                                "recent": 1,
+                            }
+                        },
+                    )
+                ),
+            )
+            harness.adapter._responses.extend([reply("Small cumulative summary.")] * 16)
+            caller = await harness.executor.run(spec(harness, thread, "continue"))
+            assert caller.status == "succeeded", caller.error
+            (producer,) = compact_runs(harness, thread)
+            history = RunHistory(harness.store)
+            output = history.get_compaction(thread)
+            assert output is not None and output.result.end == str(retained)
+            steps = harness.store.list_steps(run_id=producer.id)
+            reads = [s for s in steps if s.kind == "tool"]
+            assert len(reads) > 1
+            read_inputs = []
+            for step in reads:
+                assert isinstance(step.given, ToolStepGiven)
+                read_inputs.append(step.given.call.input)
+            covered = [ref for value in read_inputs for ref in value["units"]]
+            assert covered == [str(u.ref) for u in units[:-1]]
+            assert all(
+                value["roots"] == [original.id] * len(value["units"])
+                for value in read_inputs
+            )
+            model_steps = [s for s in steps if s.kind == "model"]
+            requests = [history.get_model_call(s.ref) for s in model_steps]
+            assert any(
+                "omitted oversized Step content" in (request.messages[1].content or "")
+                for request in requests
+            )
+            for request in requests:
+                assert len(request.messages) == 2
+                assert request.messages[0].content is not None
+                assert request.messages[1].content is not None
+                assert request.messages[0].content.startswith("<previous_summary>")
+                body = (
+                    request.messages[1]
+                    .content.removeprefix("<following_messages>")
+                    .removesuffix("</following_messages>")
+                )
+                data = json.loads(body)
+                assert all(u["run_id"] == original.id and u["step_id"] for u in data)
+            selected = harness.store.message_history(caller.id).select(output.ref)
+            assert without_runtime_snapshots(selected.near) == [
+                Message.assistant("latest complete step")
+            ]
+            assert selected.units[0][0] == retained
+            assert "large tool body" not in str(
+                harness.adapter.invocations[-1].call.messages
+            )
+            assert "latest complete step" in str(
+                harness.adapter.invocations[-1].call.messages
+            )
+            assert (
+                compaction.read_checkpoint(harness.store, producer)[0] == len(units) - 1
+            )
+            # Recover after the first accepted pair, while still inside this root.
+            list_steps = harness.store.list_steps
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    harness.store,
+                    "list_steps",
+                    lambda *, run_id: (
+                        steps[:2]
+                        if run_id == producer.id
+                        else list_steps(run_id=run_id)
+                    ),
+                )
+                cursor, summary = compaction.read_checkpoint(harness.store, producer)
+            assert 0 < cursor < len(units) - 1
+            remaining = {u.ref: u for u in units[cursor:-1]}
+            reducer_model = next(
+                m for m in harness.setup.models_effective() if m.id == "reducer"
+            )
+            resumed = compaction.Compaction(
+                tuple(remaining),
+                remaining.__getitem__,
+                reducer_model,
+                size=128,
+                summary=summary,
+            )
+            resume_call = resumed.next_call()
+            assert resume_call is not None
+            assert resumed.batch[0].ref == units[cursor].ref
+            assert (
+                resume_call.messages[0].content
+                == f"<previous_summary>{summary}</previous_summary>"
+            )
+            assert [str(u.ref) for u in resumed.batch] == covered[
+                cursor : cursor + len(resumed.batch)
+            ]
+            original_output = harness.store.list_steps(run_id=original.id)[1].output
+            assert original_output is not None
+            assert "large tool body " * 5000 in str(
+                harness.store.resolve_output(original_output)
+            )
+            if step_horizon:
+                final = model_steps[-1].ref
+                harness.store.publish_compaction(final, roots=(RunRef(original.id),))
+                with pytest.raises(ValueError, match="referenced horizon"):
+                    with harness.store.write_transaction():
+                        harness.store._delete_retry_suffix(
+                            tree_runs=(producer.id,), steps=(final,)
+                        )
+                assert harness.store.get_step(ref=final) is not None
+                thread_record = harness.store.get_thread(thread_id=thread)
+                assert thread_record is not None and thread_record.horizon == final
+                next_run = await harness.executor.run(spec(harness, thread, "next"))
+                assert next_run.status == "succeeded", next_run.error
+                entry = harness.store.get_run_control(run_id=next_run.id, index=0)
+                assert entry is not None and isinstance(
+                    entry.payload, RunControlPayload
+                )
+                assert entry.payload.horizon == final
+                restored = RunHistory(harness.store).get_compaction(thread)
+                assert restored is not None and restored.ref == final
+                assert restored.result == output.result
 
     asyncio.run(scenario())

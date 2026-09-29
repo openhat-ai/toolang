@@ -1,4 +1,4 @@
-"""Executor-owned compaction: admission and a recorded whole-exchange loop."""
+"""Executor-owned compaction: admission and a recorded Step-level loop."""
 
 from __future__ import annotations
 
@@ -24,6 +24,9 @@ from ...types import (
     AgentResources,
     ErrorMessage,
     FieldRef,
+    history_ref,
+    history_root,
+    history_position,
     Local as StoredLocal,
     ModelStepGiven,
     ModelStepNoted,
@@ -66,13 +69,13 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
             return {"controls": []}
         reader = RunHistory(store)
         output = reader.get_compaction(target)
-        if output is not None and RunRef(output.result.end) not in history.roots:
+        if output is not None and history_root(output.result.end) not in history.roots:
             raise ToolangError(
                 "published compact horizon is outside the calling Run's history"
             )
-        if output is None or history.roots.index(
-            RunRef(output.result.end)
-        ) < history.roots.index(end):
+        if output is None or history_position(
+            output.result.end, history.roots
+        ) < history_position(end, history.roots):
             frame = state.frame_for_step(*execution.state_snapshot())
             parent = frame.run
             resources = parent.agent_resources
@@ -101,10 +104,13 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
             adapter = setup.adapters().get(route.adapter)
             if adapter is None:
                 raise ToolangError(f"compact model adapter not found: {route.adapter}")
+            all_units = tuple(ref for ref, _ in history.select(None).units)
+            selected_units = all_units[: all_units.index(end) + 1]
             spec = compaction.CompactSpec(
                 target=target,
                 roots=tuple(history.roots),
-                begin=RunRef(output.result.end) if output else history.roots[0],
+                begin=history_ref(output.result.end) if output else history.roots[0],
+                units=selected_units,
                 end=end,
                 summary=output.result.summary if output else "",
                 prior=output.ref if output else None,
@@ -118,7 +124,13 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                 limits=parent.limits,
                 size=frame.compact_summary,
                 versions=store.history_versions(
-                    [str(r) for r in history.roots[: history.roots.index(end)]]
+                    [
+                        str(r)
+                        for r in history.roots[
+                            : history.roots.index(history_root(end))
+                            + isinstance(end, StepRef)
+                        ]
+                    ]
                 ),
             )
             saved = compaction.candidate(store, spec, step)
@@ -188,9 +200,14 @@ async def execute(
         .thread_view(str(spec.target), include_children=False)
         .roots
     }
+    units = {
+        unit.ref: unit
+        for ref in spec.roots
+        for unit in compaction._history_units(store, records[ref])
+    }
     reducer = compaction.Compaction(
-        spec.roots[cursor : spec.roots.index(spec.end)],
-        lambda ref: compaction._history_unit(store, records[ref]),
+        spec.units[cursor : spec.units.index(spec.end)],
+        lambda ref: units[ref],
         spec.model,
         size=spec.size,
         summary=summary,
@@ -211,7 +228,10 @@ async def execute(
         read = StepRef.from_local(run.id, (index,))
         model = StepRef.from_local(run.id, (index + 1,))
         roots = [str(unit.run_id) for unit in reducer.batch]
-        tool = ToolCall(str(read), str(read), compaction.READ_TOOL, {"roots": roots})
+        refs = [str(unit.ref) for unit in reducer.batch]
+        tool = ToolCall(
+            str(read), str(read), compaction.READ_TOOL, {"roots": roots, "units": refs}
+        )
         result = ToolResultPart(
             tool_call_id=tool.tool_call_id,
             call_id=tool.call_id,
@@ -219,6 +239,7 @@ async def execute(
             tool_family=compaction.READ_TOOL,
             output={
                 "roots": roots,
+                "units": refs,
                 "content": str(FieldRef.from_path(model, "given", "call", "messages")),
             },
         )

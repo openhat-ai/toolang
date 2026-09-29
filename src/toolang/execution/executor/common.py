@@ -134,7 +134,7 @@ class BoundRun:
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
-    horizon: RunRef | None = None
+    horizon: RunRef | StepRef | None = None
     cwd: str = ""
 
 

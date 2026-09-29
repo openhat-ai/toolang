@@ -37,9 +37,7 @@ from .assembly.utils import control_message, literal_delta, render_delta
 from .inspection.views import RunView, ThreadView, _ThreadProjection
 from .assembly.history import (
     MessageHistory,
-    active_steps,
     adopted_horizon,
-    tail_delta,
 )
 from .assembly.tool_replies import workspace_reply_from_step
 from .inspection import (
@@ -95,6 +93,8 @@ from .types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    history_ref,
+    history_root,
     ControlTiming,
     RunStatus,
     StepKind,
@@ -202,13 +202,15 @@ class RunStore:
 
         return self.db_path.with_name(f"{self.db_path.name}.threads.lock")
 
-    def publish_compaction(self, horizon: RunRef, *, roots: Sequence[RunRef]) -> None:
+    def publish_compaction(
+        self, horizon: RunRef | StepRef, *, roots: Sequence[RunRef]
+    ) -> None:
         """Publish a validated summary Run without modifying any active Run."""
         from .inspection.history import RunHistory
 
         with self.write_transaction():
-            run = self.get_run(run_id=str(horizon))
-            control = self.get_run_control(run_id=str(horizon), index=0)
+            run = self.get_run(run_id=str(history_root(horizon)))
+            control = self.get_run_control(run_id=str(history_root(horizon)), index=0)
             if (
                 run is None
                 or control is None
@@ -220,7 +222,7 @@ class RunStore:
             # Appended roots are harmless, but the captured prefix must survive.
             _, _, members = self.history_thread_members(str(target))
             current = tuple(RunRef(ref) for ref, root in members.items() if ref == root)
-            end = RunRef.parse(cast(str, control.payload.input["end"]))
+            end = history_root(cast(str, control.payload.input["end"]))
             stop = roots.index(end) + 1
             if current[:stop] != tuple(roots[:stop]):
                 raise ValueError("compact range changed; submit a new request")
@@ -327,7 +329,7 @@ class RunStore:
         request_id: str | None,
         created_at: str,
         state_ref: ControlRef | None = None,
-        horizon: RunRef | None = None,
+        horizon: RunRef | StepRef | None = None,
         authored_input: CallInput[str] | None = None,
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
@@ -703,7 +705,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        horizon: RunRef,
+        horizon: RunRef | StepRef,
         triggered_by: StepRef | None,
         created_at: str,
     ) -> ControlRecord:
@@ -767,7 +769,7 @@ class RunStore:
             ).fetchone()
         return _control_from_row(row)
 
-    def _validate_horizon(self, horizon: RunRef, *, thread: str) -> None:
+    def _validate_horizon(self, horizon: RunRef | StepRef, *, thread: str) -> None:
         """Check a new reference inside its write transaction, never on record reads."""
 
         from .inspection.history import RunHistory
@@ -2713,27 +2715,35 @@ class RunStore:
                 ):
                     removed_runs.add(run.id)
                     changed = True
-        if removed_runs:
-            # A published producer can outlive its owning Step: thread horizons
-            # and later Run controls retain its output. Reject the entire retry
-            # transaction rather than leave those durable references dangling.
-            horizons = {
-                str(row["horizon"])
-                for row in self._conn.execute(
-                    "SELECT horizon FROM threads WHERE horizon IS NOT NULL"
-                )
-            }
+        # A published producer can outlive its owning Step: thread horizons
+        # and later Run controls retain its output. Reject the entire retry
+        # transaction rather than leave those durable references dangling.
+        horizons = {
+            str(row["horizon"])
             for row in self._conn.execute(
-                "SELECT * FROM controls WHERE kind IN ('run', 'compact')"
-            ):
-                payload = _control_from_row(row).payload
-                if isinstance(payload, RunControlPayload | CompactControlPayload):
-                    if payload.horizon is not None:
-                        horizons.add(str(payload.horizon))
-            if referenced := sorted(removed_runs & horizons):
-                raise ValueError(
-                    f"retry would delete referenced horizon {referenced[0]}; use rerun"
-                )
+                "SELECT horizon FROM threads WHERE horizon IS NOT NULL"
+            )
+        }
+        for row in self._conn.execute(
+            "SELECT * FROM controls WHERE kind IN ('run', 'compact')"
+        ):
+            payload = _control_from_row(row).payload
+            if isinstance(payload, RunControlPayload | CompactControlPayload):
+                if payload.horizon is not None:
+                    horizons.add(str(payload.horizon))
+        changed_runs = {step.run_id for step in steps}
+        if referenced := sorted(
+            (removed_runs & {str(history_root(ref)) for ref in horizons})
+            | (step_keys & horizons)
+            | (
+                changed_runs
+                & {ref for ref in horizons if isinstance(history_ref(ref), RunRef)}
+            )
+        ):
+            raise ValueError(
+                f"retry would delete referenced horizon {referenced[0]}; use rerun"
+            )
+        if removed_runs:
             removed_placeholders = ", ".join("?" for _ in removed_runs)
             removed_params = tuple(removed_runs)
             self._conn.execute(
@@ -3150,6 +3160,7 @@ class RunStore:
                 raise ValueError(f"run not found: {run_id}")
             roots = self._thread_projection().before(root)
         by_ref = {RunRef(run.id): run for run in roots}
+        unit_cache = {}
 
         def load(
             selected_roots: Sequence[RunRef],
@@ -3158,32 +3169,29 @@ class RunStore:
                 ids = tuple(str(ref) for ref in selected_roots)
                 steps = self.list_steps_for_runs(run_ids=ids)
                 controls = self.list_run_controls_for_runs(run_ids=ids)
+                from .compaction import _history_units
+
                 deltas = {}
                 for ref in selected_roots:
-                    related = {control.ref: control for control in controls[str(ref)]}
-                    selected = active_steps(steps[str(ref)], related)
-                    models = [
-                        (step.ref, step.given.call.messages)
-                        for step in selected
-                        if isinstance(step.given, StoredModelStepGiven)
-                    ]
-                    head = models[-1][1].head if models else None
+                    unit_cache[ref] = tuple(
+                        (u.ref, u.templates)
+                        for u in _history_units(
+                            self,
+                            by_ref[ref],
+                            steps=steps[str(ref)],
+                            controls=controls[str(ref)],
+                            render=False,
+                        )
+                    )
                     deltas[ref] = tuple(
-                        message
-                        for step_ref, messages in models
-                        if head is not None and step_ref.indices >= head.indices
-                        for message in messages.delta
-                        if message.source is None
-                    ) + tail_delta(
-                        by_ref[ref],
-                        selected,
-                        related,
-                        self.resolve_value,
-                        self.run_completion,
+                        m for _, templates in unit_cache[ref] for m in templates
                     )
                 return deltas
 
         from .inspection.history import RunHistory
+
+        def units(ref: RunRef):
+            return unit_cache[ref]
 
         return MessageHistory(
             str(root.thread),
@@ -3195,9 +3203,10 @@ class RunStore:
                 .read_compaction(ref, ThreadRef.parse(str(root.thread)), tuple(by_ref))
                 .result
             ),
+            units=units,
         )
 
-    def run_horizon(self, run_id: str) -> RunRef | None:
+    def run_horizon(self, run_id: str) -> RunRef | StepRef | None:
         """Recover only the horizon actually adopted by this Run's Steps."""
 
         controls = {c.ref: c for c in self.list_run_controls(run_id=run_id)}
@@ -4032,7 +4041,7 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
         peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
-        horizon=RunRef.parse(str(raw["horizon"]))
+        horizon=history_ref(str(raw["horizon"]))
         if raw["horizon"] is not None
         else None,
     )

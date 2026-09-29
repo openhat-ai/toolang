@@ -60,7 +60,11 @@ class Adapter:
         assert request.max_output_tokens is not None
         assert environ == {}
         self.calls.append(request)
-        roots = [json.loads(message.content) for message in request.messages]
+        roots = json.loads(
+            request.messages[1]
+            .content.removeprefix("<following_messages>")
+            .removesuffix("</following_messages>")
+        )
         if self.reject_combined and sum("messages" in root for root in roots) > 1:
             self.reject_combined = False
             raise ModelResponseError(
@@ -176,8 +180,13 @@ def test_failed_terminal_run_is_selectable_and_kept_in_history() -> None:
     assert metrics[0]["from"] == "run_a"
     assert metrics[-1]["to"] == "run_c"
     assert any(
-        json.loads(message.content).get("status") == "failed"
-        for message in adapter.calls[0].messages
+        unit.get("status") == "failed"
+        for unit in json.loads(
+            adapter.calls[0]
+            .messages[1]
+            .content.removeprefix("<following_messages>")
+            .removesuffix("</following_messages>")
+        )
     )
 
 
@@ -220,10 +229,14 @@ def test_complete_exchange_preserves_role_and_parts_in_json() -> None:
         ),
     )
     call = experiment._call("", (unit,), 128, 256)
-    assert len(call.messages) == 1 and call.messages[0].role == "user"
-    content = call.messages[0].content
+    assert len(call.messages) == 2 and all(m.role == "user" for m in call.messages)
+    content = call.messages[1].content
     assert content is not None
-    historical = json.loads(content)["messages"]
+    historical = json.loads(
+        content.removeprefix("<following_messages>").removesuffix(
+            "</following_messages>"
+        )
+    )[0]["messages"]
     assert historical == [message.to_data() for message in unit.messages]
     assert [message["role"] for message in historical] == [
         "user",
@@ -248,12 +261,14 @@ def test_context_overflow_retries_only_rejected_batch() -> None:
     assert len(adapter.calls) == 3
 
 
-def test_single_root_exchange_over_budget_does_not_invoke_model() -> None:
+def test_single_oversized_step_is_truncated_and_progresses() -> None:
     history = History({"run_a": "x" * 150000, "run_b": "short"})
     adapter = Adapter()
-    with pytest.raises(ValueError, match="one root Run exchange exceeds"):
-        run_compact(history, adapter, to="run_b")
-    assert not adapter.calls
+    summary, metrics = run_compact(history, adapter, to="run_b")
+    assert summary == "updated summary"
+    assert metrics[-1]["to"] == "run_b"
+    assert "omitted oversized Step content" in adapter.calls[0].messages[1].content
+    assert len(adapter.calls[0].messages[1].content) < 20000
 
 
 def test_non_context_rejection_is_not_retried() -> None:
@@ -454,24 +469,20 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
         ModelResponseError("context_length_exceeded", kind="provider_rejection")
     )
     assert reducer.next_call() is not None
-    assert encoded == before
+    # A changed batch receives one full wire estimate after reusing unit counts.
     result = ModelCallResult(message=Message.assistant("same cumulative summary"))
     reducer.accept(result)
     assert reducer.next_call() is not None
     reducer.accept(result)
     assert reducer.next_call() is None
-    for payload in history.values.values():
-        assert sum(n for text, n in encoded.items() if payload in text) == 1
-    assert (
-        sum(n for text, n in encoded.items() if "same cumulative summary" in text) == 1
-    )
-    # Fixed components and each serialized root are counted once across retries.
-    assert set(encoded.values()) == {1}
+    for ref in roots:
+        serialized = reducer._serialized[ref]
+        assert encoded[serialized] == 1
     # Counts belong to this compaction only, not to a process-wide cache.
     fresh = experiment.Compaction(roots, _unit_loader(history), model, size=128)
     assert fresh.next_call() is not None
-    for payload in history.values.values():
-        assert sum(n for text, n in encoded.items() if payload in text) == 2
+    for ref in roots:
+        assert encoded[fresh._serialized[ref]] == 2
 
 
 @pytest.mark.parametrize(

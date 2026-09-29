@@ -48,6 +48,7 @@ from .types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    history_ref,
     IterationOccurrence,
     Local,
     LoopStepNoted,
@@ -296,7 +297,7 @@ class RunControlPayload:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
-    horizon: RunRef | None = None
+    horizon: RunRef | StepRef | None = None
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
@@ -364,7 +365,7 @@ class ReloadControlPayload:
 class CompactControlPayload:
     """One published compaction made available for adoption."""
 
-    horizon: RunRef
+    horizon: RunRef | StepRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,7 +559,7 @@ class ThreadRecord:
     peer: ThreadPeer
     created_at: str
     updated_at: str
-    horizon: RunRef | None = None
+    horizon: RunRef | StepRef | None = None
 
     def __post_init__(self) -> None:
         if not valid_thread_id(self.id):
@@ -999,7 +1000,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             state=state,
             runnable=runnable,
             input=input_value,
-            horizon=RunRef.parse(cast(str, payload["horizon"]))
+            horizon=history_ref(cast(str, payload["horizon"]))
             if payload.get("horizon") is not None
             else None,
             model_request=model_request,
@@ -1028,7 +1029,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         )
     if kind == "compact":
         return CompactControlPayload(
-            horizon=RunRef.parse(_required_payload_text(payload, "horizon")),
+            horizon=history_ref(_required_payload_text(payload, "horizon")),
         )
     if kind == "execute":
         return ExecuteControlPayload(

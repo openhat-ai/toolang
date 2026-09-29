@@ -203,7 +203,7 @@ async def execute(
     variables = {
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
-    frames: dict[tuple[str, RunRef | None], _AgicFrame] = {}
+    frames: dict[tuple[str, RunRef | StepRef | None], _AgicFrame] = {}
 
     def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
@@ -244,6 +244,7 @@ async def execute(
             variables={**variables, **iteration_values()},
             far=selected.far,
             near=selected.near,
+            history=selected,
         )
         execution.require_model_pricing(prepared.model)
         frames[key] = prepared

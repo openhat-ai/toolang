@@ -142,10 +142,10 @@ trigger = "80%"
 ```
 
 - `summary`: soft target for summary length; default 4096 tokens.
-- `recent`: soft target for retained original historical roots; default 30%.
-  It excludes the summary, fixed instructions, and the current Run. Always keep
-  the latest complete historical root, even if it exceeds this target. Add earlier
-  roots only while their combined size fits. Compaction advances at least one root.
+- `recent`: soft target for retained historical Steps; default 30%. It excludes
+  the summary, fixed instructions, and the current Run. Keep the latest complete
+  Step and paired tool calls/results; add earlier Steps while they fit. Compaction
+  advances at least one unit and may stop inside a root.
 - `trigger`: complete-request input budget; default 80%. Preflight compacts when
   the estimated input exceeds the smaller of this value and the calling model's
   safe input allowance (input limit, output reservation, and estimation margin).
@@ -170,8 +170,11 @@ require context metadata or replacement with absolute token counts.
 Compact batches use the compact model's own input capacity. Unless its model
 specification explicitly sets `max_output`, the output allowance is
 `max(2 * summary, summary + 1024)`, clamped to the model output limit. The default
-allowance is 8192 tokens, including reasoning. Oversized indivisible historical
-roots may require an explicitly selected compact model with a larger window.
+allowance is 8192 tokens, including reasoning. A root can span multiple batches.
+Oversized Step input/output is shortened with explicit omission markers, keeping
+original stored records intact. The mandatory latest Step is bounded to half the
+calling model's input budget so a single large historical reply does not block
+progress. Fixed instructions and current execution input must still fit.
 
 Fields inherit independently: agent config, root config, built-in defaults.
 Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`

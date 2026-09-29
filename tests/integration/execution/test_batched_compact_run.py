@@ -86,8 +86,18 @@ async def seed(h, monkeypatch):
     )
 
     def text_tokens(text):
-        parts = json.loads(text).get("parts", [])
-        return 4000 if parts and "messages" in json.loads(parts[0]["text"]) else 0
+        value = json.loads(text)
+        if "messages" in value:
+            return 4000
+        parts = value.get("parts", [])
+        if parts and parts[0]["text"].startswith("<following_messages>"):
+            units = json.loads(
+                parts[0]["text"]
+                .removeprefix("<following_messages>")
+                .removesuffix("</following_messages>")
+            )
+            return 4000 * len(units)
+        return 0
 
     monkeypatch.setattr(compaction, "_text_tokens", text_tokens)
     return thread, tuple(roots)

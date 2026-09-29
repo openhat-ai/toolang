@@ -222,7 +222,7 @@ class RunSpec:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
-    horizon: RunRef | None = None
+    horizon: RunRef | StepRef | None = None
     all_tools: bool = False
 
 
@@ -1739,7 +1739,7 @@ class _Execution:
         self._history_horizon = root.horizon
         self._history_versions = {root.horizon}
         self._history_root = root.root_run_id
-        self._step_horizons: dict[StepRef, RunRef | None] = {}
+        self._step_horizons: dict[StepRef, RunRef | StepRef | None] = {}
         self._runtime_controls: dict[str, dict[int, ControlRecord]] = {}
         self._runtime_cursors: dict[str, int] = {}
 
@@ -1768,7 +1768,9 @@ class _Execution:
         """Read the live binding before an uncommitted ModelCall preparation."""
         return self._current_state
 
-    def compact(self, step: StepRef, horizon: RunRef) -> tuple[ControlRef, ...]:
+    def compact(
+        self, step: StepRef, horizon: RunRef | StepRef
+    ) -> tuple[ControlRef, ...]:
         """Record the result for adoption, retaining its online receipt facts."""
         pending = self.runtime_controls(step.run_id)
         if self.horizon_for(step.run_id) == horizon:
@@ -1804,7 +1806,9 @@ class _Execution:
             available.update((control.index, control) for control in additions)
         return tuple(available.values())
 
-    def horizon_for(self, run_id: str, *, pending: bool = False) -> RunRef | None:
+    def horizon_for(
+        self, run_id: str, *, pending: bool = False
+    ) -> RunRef | StepRef | None:
         if pending:
             controls = self.runtime_controls(run_id)
             root_controls = (
@@ -1835,7 +1839,7 @@ class _Execution:
                 self._runtime_controls[run_id][control.index] = control
         return self._history_horizon
 
-    def _adopt_history(self, horizon: RunRef) -> None:
+    def _adopt_history(self, horizon: RunRef | StepRef) -> None:
         if horizon not in self._history_versions:
             self.message_history().select(horizon)
             self._history_versions.add(horizon)

@@ -547,6 +547,27 @@ class StepRef:
         return _text_ref_schema(cls)
 
 
+def history_ref(value: RunRef | StepRef | str) -> RunRef | StepRef:
+    """Parse a whole-Run or Step boundary without losing its granularity."""
+    if isinstance(value, RunRef | StepRef):
+        return value
+    return StepRef.parse(value) if "." in value else RunRef.parse(value)
+
+
+def history_root(value: RunRef | StepRef | str) -> RunRef:
+    ref = history_ref(value)
+    return ref.run if isinstance(ref, StepRef) else ref
+
+
+def history_position(
+    value: RunRef | StepRef | str, roots: Sequence[RunRef]
+) -> tuple[int, tuple[int, ...]]:
+    ref = history_ref(value)
+    return roots.index(history_root(ref)), ref.indices if isinstance(
+        ref, StepRef
+    ) else ()
+
+
 @dataclass(frozen=True, slots=True)
 class ControlRef:
     """Reference one durable Control record."""
@@ -2072,11 +2093,11 @@ def validate_compaction_coverage(
 ) -> None:
     if result.thread != str(thread):
         raise ValueError("compact output targets another Thread")
-    begin, end = RunRef.parse(result.begin), RunRef.parse(result.end)
-    if begin not in roots or end not in roots:
+    begin, end = history_ref(result.begin), history_ref(result.end)
+    if history_root(begin) not in roots or history_root(end) not in roots:
         raise ValueError("compact bounds must be visible historical roots")
-    if roots.index(begin) >= roots.index(end):
-        raise ValueError("compact must cover a nonempty range and retain a root")
+    if history_position(begin, roots) >= history_position(end, roots):
+        raise ValueError("compact must cover a nonempty range and retain history")
 
 
 @dataclass(frozen=True, slots=True)
