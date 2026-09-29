@@ -8,6 +8,7 @@ import asyncio
 import fcntl
 from pathlib import Path
 from dataclasses import dataclass, replace
+from decimal import Decimal
 import json
 import math
 import re
@@ -61,6 +62,13 @@ _MODEL_TOKEN_SCALES = {
     "vercel/anthropic/claude-sonnet-5": 1.55,
     "deepseek/deepseek-flash": 1.0,
 }
+
+
+def resolve_target(value: int | float, context: int | None) -> int | None:
+    """Resolve a captured token count/fraction against thread context only."""
+    if isinstance(value, int):
+        return value
+    return max(1, int(context * Decimal(str(value)))) if context is not None else None
 
 
 def estimate_model_input_tokens(request: ModelCall, model: Model) -> int:

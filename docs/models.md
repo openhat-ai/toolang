@@ -122,17 +122,65 @@ records from the all view. The effective view contains models that are both
 routable and allowed. `providers` likewise retain catalog-file order.
 
 Omit `default.model` to use the first model in the routable-and-allowed view.
-Omit `compact.model` to use the first model in that view with tool calls.
-Session/request model restrictions still apply.
-Compact never inherits the normal model or its effort. An explicit compact model
-must meet the same requirements; invalid choices or parameters fail without
-fallback. Set `model = "unset"` to disable automatic compaction.
+Omit `compact.model` to follow the current thread model identity, without inheriting
+its `effort` or `max_output`. The thread model is the current root Run's model
+binding, including for nested Runs; a model-free root uses the calling child's
+model as the reference. Session/request restrictions still apply. Both default
+and explicit compact models must be ready, allowed, and support tool calls.
+Invalid choices or parameters fail without silently selecting another model.
 
-Override compact selection with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
-or `too alice run --compact-model 'openai/gpt-5 effort=low'`. Precedence is CLI,
-environment, agent config, root config, then automatic selection.
+### Automatic compaction configuration
+
+All `[compact]` fields are optional in root and agent `config.toml`:
+
+```toml
+[compact]
+# model omitted: use the current thread model
+summary = 4096
+recent = "30%"
+trigger = "80%"
+```
+
+- `summary`: soft target for summary length; default 4096 tokens.
+- `recent`: soft target for retained original historical roots; default 30%.
+  It excludes the summary, fixed instructions, and the current Run. Always keep
+  the latest complete historical root, even if it exceeds this target. Add earlier
+  roots only while their combined size fits. Compaction advances at least one root.
+- `trigger`: complete-request input budget; default 80%. Preflight compacts when
+  the estimated input exceeds the smaller of this value and the calling model's
+  safe input allowance (input limit, output reservation, and estimation margin).
+
+Each size accepts a positive integer token count or a percentage string in
+`(0%, 100%]`, including decimals such as `"2.5%"`. All percentages refer to the
+**current thread model's context window**, not the compact model or current
+history size. For a 200,000-token window, `summary = "2%"`, `recent = 60000`, and
+`trigger = "80%"` mean 4,000, 60,000, and 160,000 tokens respectively. Conversion
+rounds down, with a minimum of one token. Recent must be less than trigger.
+
+Retained history and summary are soft targets, not a guarantee that the resulting
+request fits. The complete request is checked again after compaction; required
+content that cannot fit fails the Run. The 30%/80% defaults leave room for fixed
+content, a summary, and subsequent conversation, but do not guarantee 50% free.
+
+If the thread model has no declared context window, a percentage trigger leaves
+admission to the known safety budget. No input limit is substituted as the
+percentage base. When compaction is needed, percentage summary/recent settings
+require context metadata or replacement with absolute token counts.
+
+Compact batches use the compact model's own input capacity. Unless its model
+specification explicitly sets `max_output`, the output allowance is
+`max(2 * summary, summary + 1024)`, clamped to the model output limit. The default
+allowance is 8192 tokens, including reasoning. Oversized indivisible historical
+roots may require an explicitly selected compact model with a larger window.
+
+Fields inherit independently: agent config, root config, built-in defaults.
+Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
+or `too alice run --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
+CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `start` and `chat` when starting a runtime;
-it cannot reconfigure an already running agent. There is no `compact.models` setting.
+it cannot reconfigure an already running agent. Accepted Runs retain their
+captured configuration. There is no disabling switch, `model = "unset"`,
+`compact.models`, `:compact` override, or `/compact` command.
 
 ## Catalog Plugins
 
@@ -476,9 +524,10 @@ ref must be present in the Setup collection, and its parameters are validated
 when the model accessor first materializes a setup's model data. An agent config
 may use a parameter-only body such as `effort=high` to modify the inherited root
 default. Without `default.model`, runtime uses the first ready model in the
-policy-adjusted order. Without `compact.model`, compaction uses the first ready
-model in that order with `tool_call=true`. `unset` explicitly selects no
-model at the session or one-run layer for model-free execution.
+policy-adjusted order. Without `compact.model`, compaction follows the thread
+model identity with independent reasoning and output settings. The normal
+`:model unset` form supports model-free execution; compact configuration does
+not accept `unset`.
 
 The same body is accepted by `TOOLANG_DEFAULT_MODEL`, Agent and Chat startup
 `--default model=BODY`, Script/rerun `--model BODY`, `/model BODY`, and

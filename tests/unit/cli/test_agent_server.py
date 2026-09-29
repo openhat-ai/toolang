@@ -113,7 +113,7 @@ def test_compact_override_cannot_silently_change_an_existing_runtime(
             layout,
             sandbox=None,
             ui_base_url="https://ui.test",
-            compact_override=ModelOverride(identity="unset"),
+            compact_override=ModelOverride(identity="test/compact"),
         ):
             pytest.fail("existing runtime must not ignore startup overrides")
 

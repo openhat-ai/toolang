@@ -366,3 +366,23 @@ def test_full_routes_are_resolved_before_effective_adapter_policy(
     ) == ("test/two",)
     assert tuple(model.ref for model in setup.models_effective()) == ("test/one",)
     assert {provider.id for provider in setup.providers_effective()} == {"test"}
+
+
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [("summary", "2048", 2048), ("recent", '"20%"', 0.2), ("trigger", '"70%"', 0.7)],
+)
+def test_compact_changes_publish_new_setup_and_preserve_captured_values(
+    tmp_path, monkeypatch, field, value, expected
+):
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    first = asyncio.run(watcher.refresh())
+    captured = first.compact
+    watcher.layout.root_config.write_text(f"[compact]\n{field} = {value}\n")
+    second = asyncio.run(watcher.refresh())
+    assert second.revision != first.revision
+    assert getattr(second.compact, field) == expected
+    assert first.compact == captured
+    watcher.layout.root_config.write_text('[compact]\nmodel = "unset"\n')
+    assert asyncio.run(watcher.refresh()) is second
+    assert watcher.diagnostics

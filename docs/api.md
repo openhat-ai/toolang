@@ -188,8 +188,9 @@ After the child succeeds, the executor publishes its reference as the thread's
 horizon and records the calling Run's compact control in one transaction. The
 next Model Step adopts that summary plus retained history. Original records and
 past ModelCalls remain inspectable. Failure stops the caller without dispatching
-the oversized call. See [model configuration](models.md) for `compact.model` and
-runtime `--compact-model` settings.
+the oversized call. See [model configuration](models.md#automatic-compaction-configuration) for
+`compact.model`, `summary`, `recent`, `trigger`, and runtime `--compact-model`
+settings.
 
 
 ## Agent Selectors

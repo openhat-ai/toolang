@@ -45,7 +45,7 @@ from .config import (
     load_setup_envs,
     project_model_setup_config,
     project_setup_config,
-    resolve_compact_model,
+    resolve_compact_config,
     resolve_run_defaults,
     resolve_run_limits,
     resolve_setup_allow,
@@ -53,7 +53,7 @@ from .config import (
 from .errors import SetupDiagnostic
 from .models import order_models, select_compact_model
 from toolang.plugin.models.query import resolve_model
-from .types import AgentEnvironment, AgentSetup, _ModelData
+from .types import AgentEnvironment, AgentSetup, CompactConfig, _ModelData
 
 DEFAULT_INTERVAL_MS = 5_000.0
 logger = logging.getLogger(__name__)
@@ -187,7 +187,7 @@ class SetupWatcher:
         )
         allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
         defaults = resolve_run_defaults(configs, overrides=self._default_overrides)
-        compact_model = resolve_compact_model(configs, override=self._compact_override)
+        compact = resolve_compact_config(configs, override=self._compact_override)
         limits = resolve_run_limits(configs, overrides=self._limit_overrides)
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
@@ -241,7 +241,7 @@ class SetupWatcher:
                 "allow": allow,
                 "defaults": defaults,
                 "limits": limits,
-                "compact_model": compact_model,
+                "compact": compact,
             },
             allow_models=allow.models,
             plugin_provenance=self._setup_plugin_provenance,
@@ -273,7 +273,7 @@ class SetupWatcher:
             envs=inputs.envs,
             allow=allow,
             defaults=defaults,
-            compact_model=compact_model,
+            compact=compact,
             limits=limits,
             validate_defaults=self._validate_defaults,
         )
@@ -435,7 +435,7 @@ def _build_setup(
     allow: AgentCeiling,
     defaults: RunDefaults,
     limits: RunLimits,
-    compact_model: ModelOverride | None,
+    compact: CompactConfig,
     validate_defaults: bool,
 ) -> AgentSetup:
     """Publish captured revisions with per-setup synchronous lazy loaders."""
@@ -475,12 +475,8 @@ def _build_setup(
         providers_effective = [
             provider for provider in providers if provider.id in effective_provider_ids
         ]
-        if (
-            validate_defaults
-            and compact_model is not None
-            and compact_model.identity != "unset"
-        ):
-            select_compact_model(models_effective, compact_model)
+        if validate_defaults and compact.model is not None:
+            select_compact_model(models_effective, compact.model)
         if validate_defaults and defaults.model is not None:
             model = resolve_model(models_effective, defaults.model.ref)
             resolve_model_reasoning(model, defaults.model.reasoning)
@@ -503,7 +499,7 @@ def _build_setup(
         environment=AgentEnvironment.capture(layout, sandbox=sandbox),
         defaults=defaults,
         limits=limits,
-        compact_model=compact_model,
+        compact=compact,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,
         _load_tools=load_tool_collection,

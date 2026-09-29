@@ -34,6 +34,7 @@ from toolang.state.state import (
     StateCap,
 )
 
+from ..compaction import resolve_target
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
 from .budget import text_tokens
@@ -82,6 +83,9 @@ class _AgicFrame:
     input_budget: int | None = None
     context_capacity: int | None = None
     input_overhead: int = 0
+    thread_model: Model | None = None
+    compact_recent: int | None = None
+    compact_summary: int | None = None
 
 
 def build_agic_frame(
@@ -199,6 +203,21 @@ def build_agic_frame(
             reasoning=reasoning,
         )
         admitted_input = input_budget(resolved_model.limit, output)
+        thread_ref = context.thread_model_ref() if run.parent is not None else ref
+        thread_model = (
+            resolve_model(selection, thread_ref) if thread_ref else resolved_model
+        )
+        window = context_capacity(thread_model.limit)
+        compact = run.setup.compact
+        trigger = resolve_target(compact.trigger, window)
+        recent = resolve_target(compact.recent, window)
+        summary = resolve_target(compact.summary, window)
+        if trigger is not None:
+            if recent is not None and recent >= trigger:
+                raise ValueError("compact.recent must be less than compact.trigger")
+            admitted_input = (
+                min(admitted_input, trigger) if admitted_input is not None else trigger
+            )
     except ValueError as exc:
         raise ToolangError(
             f"model {resolved_model.ref} (output source: {output_source}): {exc}"
@@ -247,6 +266,9 @@ def build_agic_frame(
         reasoning=reasoning,
         output_budget=output,
         input_budget=admitted_input,
+        thread_model=thread_model,
+        compact_recent=recent,
+        compact_summary=summary,
         context_capacity=context_capacity(resolved_model.limit),
         input_overhead=text_tokens(dumps(route.options, indent=None))
         if route.options

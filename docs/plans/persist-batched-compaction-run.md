@@ -80,3 +80,9 @@ Before every implementation commit, run `uv run ruff check .`, `uv run ruff form
 ## Risks and deferred scope
 
 Model-specific token factors are provisional; retain the safety margin and provider rejection handling. Child ownership, restart recovery, and replay must stay consistent when a process stops between durable boundaries. Removing the CLI is an intentional behavior change. Root-internal splitting, additional public compaction entry points, semantic quality evaluation, and a generic internal-runnable registry are out of scope. No design questions remain open for this implementation.
+
+## Configuration
+
+[Automatic compaction configuration](compact-configuration.md) defines the
+thread-relative `summary`, `recent`, and `trigger` targets and compact-model
+selection. It supersedes fixed summary length and half-input-budget retention.

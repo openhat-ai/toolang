@@ -6,8 +6,9 @@ from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import Model, ModelToolang
 from toolang.common.errors import ToolangError
 from toolang.plugin.models.query import apply_model_operations, filter_models
-from toolang.setup.config import resolve_compact_model, resolve_setup_allow
+from toolang.setup.config import resolve_compact_config, resolve_setup_allow
 from toolang.setup.models import order_models, select_compact_model
+from toolang.setup.types import CompactConfig
 
 
 def model(
@@ -105,17 +106,17 @@ def test_compact_config_layers_are_independent_complete_model_requests():
         "compact": {"model": "other/a effort=low"},
     }
     agent = {"compact": {"model": "other/b"}}
-    assert resolve_compact_model(({},)) is None
-    assert resolve_compact_model((root, agent)) == parse_model_body("other/b")
-    assert resolve_compact_model(
-        (root, agent), override=parse_model_body("unset")
-    ) == parse_model_body("unset")
+    assert resolve_compact_config(({},)) == CompactConfig()
+    assert resolve_compact_config((root, agent)).model == parse_model_body("other/b")
+    assert resolve_compact_config(
+        (root, agent), override=parse_model_body("other/c")
+    ).model == parse_model_body("other/c")
 
 
-@pytest.mark.parametrize("value", ["default", "effort=low"])
-def test_compact_config_requires_a_model_or_unset(value):
-    with pytest.raises(ValueError, match="exact model or unset"):
-        resolve_compact_model(({"compact": {"model": value}},))
+@pytest.mark.parametrize("value", ["default", "effort=low", "unset"])
+def test_compact_config_requires_an_exact_model(value):
+    with pytest.raises(ValueError, match="exact model"):
+        resolve_compact_config(({"compact": {"model": value}},))
 
 
 def test_compact_selection_filters_capabilities_and_preserves_order():
@@ -126,10 +127,14 @@ def test_compact_selection_filters_capabilities_and_preserves_order():
         model("test/second"),
         model("test/first"),
     )
-    assert select_compact_model(models, None).ref == "test/unknown"
     assert (
-        select_compact_model(filter_models(models, ("test/first", "*")), None).ref
-        == "test/first"
+        select_compact_model(models, None, default="test/second").ref == "test/second"
+    )
+    assert (
+        select_compact_model(
+            filter_models(models, ("test/first", "*")), None, default="test/second"
+        ).ref
+        == "test/second"
     )
     assert (
         select_compact_model(models, parse_model_body("test/first")).ref == "test/first"
@@ -139,16 +144,18 @@ def test_compact_selection_filters_capabilities_and_preserves_order():
     for ref in ("test/missing", "test/no-tools"):
         with pytest.raises(ToolangError, match="available, allowed"):
             select_compact_model(models, parse_model_body(ref))
-    with pytest.raises(ToolangError, match="disabled"):
+        with pytest.raises(ToolangError, match="available, allowed"):
+            select_compact_model(models, None, default=ref)
+    with pytest.raises(ToolangError, match="exact model"):
         select_compact_model(models, parse_model_body("unset"))
-    with pytest.raises(ToolangError, match="requires an allowed model"):
+    with pytest.raises(ToolangError, match="requires a thread model"):
         select_compact_model((), None)
 
 
 def test_unknown_catalog_tool_capability_does_not_qualify():
     models = (model("test/unknown", tools=None),)
-    with pytest.raises(ToolangError, match="requires an allowed model"):
-        select_compact_model(models, None)
+    with pytest.raises(ToolangError, match="available, allowed"):
+        select_compact_model(models, None, default="test/unknown")
 
 
 def test_model_directives_apply_tq_set_operations_in_catalog_order():
@@ -292,3 +299,37 @@ def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields
             (("=", ("gpt-*",)), ("-=", ("local/*",)), ("+=", ("local/*",)))
         ).entries
     )
+
+
+def test_compact_fields_layer_independently():
+    root = {
+        "compact": {"model": "test/one effort=low", "summary": "2.5%", "recent": 6000}
+    }
+    agent = {"compact": {"trigger": "75%"}}
+    result = resolve_compact_config(
+        (root, agent), override=parse_model_body("test/two")
+    )
+    assert result == CompactConfig(
+        model=parse_model_body("test/two"), summary=0.025, recent=6000, trigger=0.75
+    )
+
+
+@pytest.mark.parametrize("field", ["summary", "recent", "trigger"])
+@pytest.mark.parametrize(
+    "value", [True, False, 0, -1, 0.3, "4096", "0%", "101%", "nan%", "-1%", "", None]
+)
+def test_compact_sizes_reject_invalid_values(field, value):
+    with pytest.raises(ValueError, match=f"compact.{field} requires"):
+        resolve_compact_config(({"compact": {field: value}},))
+
+
+@pytest.mark.parametrize("field", ["summary_tokens", "enabled", "batch", "models"])
+def test_compact_rejects_unknown_fields(field):
+    with pytest.raises(ValueError, match="compact field"):
+        resolve_compact_config(({"compact": {field: 1}},))
+
+
+@pytest.mark.parametrize("recent,trigger", [(5000, 4000), ("80%", "80%")])
+def test_compact_recent_must_be_below_trigger(recent, trigger):
+    with pytest.raises(ValueError, match="recent must be less"):
+        resolve_compact_config(({"compact": {"recent": recent, "trigger": trigger}},))

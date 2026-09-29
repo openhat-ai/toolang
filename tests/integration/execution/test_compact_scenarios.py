@@ -477,7 +477,8 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             reasoning_options = ({"type": "effort", "values": ["low", "high"]},)
             normal = replace(
                 original,
-                tool_call=False,
+                tool_call=True,
+                limit={"context": 80000, "output": 8192},
                 structured_output=False,
                 reasoning_options=reasoning_options,
             )
@@ -493,7 +494,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             )
             configured = (
                 parse_model_body("test/second effort=low")
-                if selection == "explicit"
+                if selection in {"explicit", "ceiling"}
                 else None
             )
             harness.setup = replace_materialized_setup(
@@ -501,13 +502,19 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
                 models=ModelCollection((normal, *candidates)),
                 compact_model=configured,
             )
+            harness.setup = replace(
+                harness.setup,
+                compact=replace(harness.setup.compact, trigger=12000, recent=4200),
+            )
             harness.adapter._responses.extend(
                 [*compact_responses(thread, end), reply("done")]
             )
             request = replace(
                 spec(harness, thread, "current"),
                 model_request=apply_model_override(
-                    None, None, parse_model_body("test/scripted effort=high")
+                    None,
+                    None,
+                    parse_model_body("test/scripted effort=high max_output=512"),
                 ),
                 ceilings=(AgentCeiling(models=("test/second", "test/scripted")),)
                 if selection == "ceiling"
@@ -517,13 +524,15 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             assert current.status == "succeeded", (
                 harness.store.resolve_error(current.error) if current.error else None
             )
-            expected = "test/first" if selection == "auto" else "test/second"
+            expected = "test/scripted" if selection == "auto" else "test/second"
             compact_calls = harness.adapter.invocations[3:-1]
             assert len(compact_calls) == 1
             assert all(call.model.ref == expected for call in compact_calls)
+            assert compact_calls[0].call.max_output_tokens == 8192
+            assert harness.adapter.invocations[-1].call.max_output_tokens == 512
             assert all(
                 call.call.reasoning
-                == (Reasoning("low") if selection == "explicit" else None)
+                == (Reasoning("low") if selection in {"explicit", "ceiling"} else None)
                 for call in compact_calls
             )
             assert harness.adapter.invocations[-1].call.reasoning == Reasoning("high")
@@ -551,14 +560,15 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
 
 
 @pytest.mark.parametrize("setting", ["unset", "test/outside"])
-def test_compact_disabled_or_unauthorized_does_not_start_a_run(tmp_path, setting):
+def test_compact_invalid_or_unauthorized_does_not_start_a_run(tmp_path, setting):
     harness = seeded_harness(tmp_path)
 
     async def scenario():
         async with harness:
             thread, _end = await seed(harness)
             harness.setup = replace(
-                harness.setup, compact_model=parse_model_body(setting)
+                harness.setup,
+                compact=replace(harness.setup.compact, model=parse_model_body(setting)),
             )
             current = await harness.executor.run(spec(harness, thread, "current"))
             assert current.status == "failed"
@@ -1004,5 +1014,115 @@ def test_runtime_compact_resolves_its_boundary_at_admission(tmp_path, monkeypatc
             assert isinstance(steps[0].given, ToolStepGiven)
             assert steps[0].given.call.input == {}
             assert [step.kind for step in steps] == ["tool", "model"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("recent,keep_middle", [("1%", False), ("50%", True)])
+@pytest.mark.parametrize("summary,target", [(400, 400), ("2%", 200)])
+def test_compact_config_controls_summary_and_recent_whole_roots(
+    tmp_path, recent, keep_middle, summary, target
+):
+    from toolang.setup.config import resolve_compact_config
+
+    latest_text = "latest fact " * 100
+    middle_text = "middle fact " * 100
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[reply("old " * 18000), reply(middle_text), reply(latest_text)],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, latest = await seed(harness)
+            roots = harness.store.list_thread_runs_chronological(thread_id=thread)
+            constrain(harness, context=10000)
+            harness.setup = replace(
+                harness.setup,
+                compact=resolve_compact_config(
+                    (
+                        {
+                            "compact": {
+                                "model": "test/reducer",
+                                "summary": summary,
+                                "recent": recent,
+                                "trigger": "80%",
+                            }
+                        },
+                    )
+                ),
+            )
+            harness.adapter._responses.extend([reply("Earlier facts."), reply("done")])
+            current = await harness.executor.run(spec(harness, thread, "current"))
+            assert current.status == "succeeded", (
+                harness.store.resolve_error(current.error) if current.error else None
+            )
+            (child,) = compact_runs(harness, thread)
+            control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert control is not None and isinstance(
+                control.payload, RunControlPayload
+            )
+            entry = control.payload
+            assert entry.input["end"] == (roots[-2].id if keep_middle else latest)
+            assert json.loads(str(entry.input["policy"]))["size"] == target
+            compact_call = harness.adapter.invocations[-2].call
+            assert f"approximately {target} tokens" in str(compact_call.messages)
+            assert compact_call.max_output_tokens == max(target * 2, target + 1024)
+            final = str(harness.adapter.invocations[-1].call.messages)
+            assert latest_text in final
+            assert (middle_text in final) == keep_middle
+            assert "Earlier facts." in final
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("recent,success", [(500, True), ("30%", False)])
+def test_unknown_thread_context_never_substitutes_an_input_limit(
+    tmp_path, recent, success
+):
+    from toolang.setup.config import resolve_compact_config
+
+    harness = seeded_harness(tmp_path)
+
+    async def scenario():
+        async with harness:
+            thread, _end = await seed(harness)
+            models = tuple(
+                replace(m, limit={"input": 14000, "output": 512})
+                if m.id == "scripted"
+                else m
+                for m in harness.setup.models_effective()
+            )
+            harness.setup = replace_materialized_setup(harness.setup, models=models)
+            harness.setup = replace(
+                harness.setup,
+                compact=resolve_compact_config(
+                    (
+                        {
+                            "compact": {
+                                "model": "test/reducer",
+                                "summary": 400,
+                                "recent": recent,
+                                "trigger": 8000,
+                            }
+                        },
+                    )
+                ),
+            )
+            harness.adapter._responses.extend([reply("Earlier facts."), reply("done")])
+            current = await harness.executor.run(spec(harness, thread, "current"))
+            if success:
+                assert current.status == "succeeded", harness.store.resolve_error(
+                    current.error
+                )
+                assert len(compact_runs(harness, thread)) == 1
+            else:
+                assert current.status == "failed"
+                assert (
+                    "percentages require thread model limit.context"
+                    in harness.store.resolve_error(current.error)
+                )
+                assert len(harness.adapter.invocations) == 3
 
     asyncio.run(scenario())

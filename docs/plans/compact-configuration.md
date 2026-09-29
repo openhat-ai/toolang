@@ -1,71 +1,94 @@
 # Configure automatic compaction
 
-Status: Proposed. Simplified to model selection and summary length; implementation
-awaits approval. Extends [internal compaction runs](persist-batched-compaction-run.md).
+Status: Approved for implementation. Extends
+[internal compaction runs](persist-batched-compaction-run.md).
 
-## Goal and user-facing configuration
+## Goal and configuration
 
-Automatic compaction works without configuration. Expose only two optional fields
-in root and agent `config.toml` files:
+Automatic compaction works without configuration. Root and agent `config.toml`
+accept four optional fields:
 
 ```toml
 [compact]
-model = "deepseek/deepseek-flash"
-summary_tokens = 4096
+# model omitted: use the current thread model
+summary = 4096
+recent = "30%"
+trigger = "80%"
 ```
 
-- `model`: existing model specification. Omitted means the first allowed, ready
-  model supporting tool calls; no provider is required by default. Preserve
-  `model = "unset"` to disable automatic compaction.
-- `summary_tokens`: positive integer soft summary target, default `4096`.
-  Larger values retain more detail at the cost of more context and output tokens.
-  It is not a guaranteed length or a hard response limit.
+- `model`: an exact model specification with optional `effort` and `max_output`.
+  Omission follows the thread model identity, without inheriting its reasoning
+  or output settings. Explicit choices must be ready, allowed, and support tool
+  calls; never silently switch models. No disabling sentinel or enabled switch.
+- `summary`: soft summary length target, default 4096 tokens.
+- `recent`: soft budget for recent original historical roots, default 30%.
+  Excludes summary, fixed instructions, and the current Run. Preserve whole roots,
+  always retain the latest, and advance at least one root per compaction.
+- `trigger`: input admission budget, default 80%. Preflight compacts when the
+  estimated complete request exceeds this budget.
 
-Normal usage needs only `model`; the summary target can usually be omitted.
-Existing model-string `effort` and `max_output` options remain available for
-advanced use, without separate compact fields. Derive the output allowance as
-`max(2 * summary_tokens, summary_tokens + 1024)` unless explicitly overridden,
-and clamp it to the model output limit. The default allowance remains `8192`.
+Each size accepts a positive integer token count or a percentage string in
+`(0%, 100%]`, including decimal percentages. Reject booleans, floats, numeric
+strings, unknown fields, and invalid model sentinels. Percentages all use the
+current thread model's declared context window, never the compact model's window,
+current history length, or another configured target. Resolve by flooring to an
+integer with a minimum of one token.
 
-## Internal policy and resolution
+The thread model is the current root Run's model binding; nested Runs use this
+same reference. If a model-free root delegates to a model-bound child, that
+child's model provides the reference. Resolve against the captured Setup.
 
-Keep the current tested internal policy: trigger above the caller's usable input
-budget, retain recent whole roots up to half that budget while always retaining
-the latest root, and admit compact batches up to 80% of the compact model's usable
-input budget. Do not expose trigger, retention, batching, retry, tokenizer, or
-safety-margin knobs. No new CLI flags or environment variables are needed.
+## Budget and inheritance
 
-Resolve `summary_tokens` per field: agent config, root config, then default.
-Preserve model precedence: CLI, environment, agent config, root config, automatic
-selection. A model override must not reset the resolved summary target. Reject
-unknown fields and invalid summary targets, including booleans, during Setup load.
+Resolve each field independently: agent config, root config, built-in default.
+Existing CLI/environment compact-model overrides take precedence over config for
+`model` only. No new CLI flags, environment variables, colon overrides, or slash
+commands. Reject `unset` in existing compact-model override surfaces as well.
 
-Carry the validated target in the immutable Setup snapshot and its revision.
-Pass its concrete value to the existing compact driver and reducer; record it
-through the existing compact `policy.size` field. Accepted Runs retain captured
-settings; pending checkpoints require compatible settings. Already successful,
-valid summaries remain reusable. No new persistence format is needed.
+The effective input budget is the smaller of the resolved trigger and the actual
+calling model's safety budget (input limit, output reservation, estimation margin).
+Use it directly in normal preflight. Resolve recent and summary independently
+against the same thread context window. Require recent < trigger when both are
+resolvable. Soft targets do not guarantee the final complete request fits;
+recheck after adoption and fail when required content cannot fit.
 
-## Implementation touchpoints
+When context metadata is unknown, percentage trigger cannot impose a numeric
+ceiling: retain the known safety budget, if any. Never substitute an input limit
+for context size. If compaction is needed and a percentage summary/recent remains
+unresolvable, fail with an actionable request for context metadata or absolute
+values. Integer settings still work without context metadata.
 
-- `src/toolang/setup/config.py`, `types.py`, `watcher.py`: configuration resolution,
-  validation, immutable Setup value, and revision identity.
-- `src/toolang/execution/executor/runs/compact.py`: replace the hard-coded summary
-  target with the resolved Setup value. Reuse existing reducer and checkpoint code.
-- `docs/models.md` and existing Setup/compaction tests: document and verify the
-  two-field interface. No changes to model-preflight trigger logic are required.
+Keep compact batching at 80% of the compact model's own safety budget. Derive its
+output allowance as `max(2 * summary, summary + 1024)` unless explicitly overridden,
+clamped to the compact model's output limit. Default allowance is 8192 tokens.
 
-## Acceptance checks and risks
+## Implementation and durability
 
-- Empty configuration preserves existing behavior: target 4096, allowance 8192,
-  unchanged thresholds and batches. Existing model-only configurations work.
-- Root/agent partial overrides and CLI model overrides preserve field independence;
-  invalid targets and unknown fields fail early.
-- A non-default target reaches the actual prompt, derived output allowance, and
-  persisted policy. An explicit model output allowance remains independent.
-- Setup revision changes with the target; captured Runs and legacy checkpoints
-  retain their existing semantics. Incremental token-count caching remains intact.
-- Larger targets can reduce batch capacity; explicit output limits and reasoning
-  can prevent reaching the soft target. Explain this without adding more knobs.
+- `setup/types.py`, `config.py`, `models.py`, `watcher.py`: one immutable compact
+  configuration, parsing, layering, model selection, and Setup revision identity.
+- Executor frame/model preflight: resolve thread-relative targets and apply the
+  effective input budget and recent-history target. Compact run driver: pass
+  resolved summary size and thread model identity into the existing core.
+- Existing compact policy persists the concrete summary size, model, and output
+  budget; compatible pending checkpoints and valid successful results retain
+  existing reuse semantics. No new persistence format or tokenizer pass.
+- `cli/common/policy.py`: reject disabling compact-model sentinels.
+- Focused model/config docs and Setup/executor tests cover the public contract.
 
-Run the repository's default verification for implementation.
+## Acceptance and risks
+
+- Empty config supplies all defaults; root/agent partial overrides and CLI model
+  overrides preserve other fields. Invalid fields/values fail during Setup load.
+- Different context windows produce proportional targets; explicit token values
+  stay fixed. A different compact model does not affect the denominator. Nested
+  Runs use the root model; safety limits of the actual caller still apply.
+- Trigger changes actual admission; recent changes the retained whole-root
+  boundary; summary reaches the prompt, output allowance, and persisted policy.
+- Default compact selection follows the thread model, independent of catalog
+  ordering and thread reasoning/output parameters; unavailable choices fail.
+- Setup changes get new revisions; accepted Runs retain captured configuration.
+  Incremental estimation, cancellation, events, and checkpoint reuse stay intact.
+- Oversized indivisible roots may require an explicitly configured larger compact
+  model. Large summaries and the mandatory latest root can exceed soft targets.
+
+Run all default repository checks. No open design questions remain.

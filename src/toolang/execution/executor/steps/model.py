@@ -275,14 +275,21 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
+    recent = prepared.compact_recent
+    if recent is None or prepared.compact_summary is None:
+        raise ToolangError(
+            "compaction percentages require thread model limit.context; "
+            "configure absolute compact.recent and compact.summary values"
+        )
     retained = 0
     end = roots[-1][0]
-    # Reserve at most half of the input budget for near; always retain its last
-    # historical root. Advance at least one root when compaction is necessary.
+    # The recent target is soft: always preserve the latest complete root,
+    # even when it exceeds the target. Earlier roots must fit as a whole.
+    # Advance at least one root when compaction is necessary.
     for index in range(len(roots) - 1, 0, -1):
         root, messages = roots[index]
         size = sum(message_tokens(message) for message in messages)
-        if index != len(roots) - 1 and retained + size > budget // 2:
+        if index != len(roots) - 1 and retained + size > recent:
             break
         retained += size
         end = root

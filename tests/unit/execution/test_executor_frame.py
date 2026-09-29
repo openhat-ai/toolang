@@ -3,6 +3,8 @@ from __future__ import annotations
 from tests.support.setup import materialized_setup
 
 import asyncio
+from dataclasses import replace
+import pytest
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +38,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.frame import build_agic_frame
+from toolang.setup.config import resolve_compact_config
 from toolang.execution.recall import recall_sources
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
@@ -50,6 +53,7 @@ from toolang.execution.types import (
     AgentResources,
     AgentToolResource,
     ControlRef,
+    StepRef,
     FieldRef,
     Local as RecordLocal,
     ModelStepGiven,
@@ -214,19 +218,75 @@ def test_recall_values_map_to_current_history_only_when_near_is_selected() -> No
         assert ("near" in recall_sources(values)) is expected
 
 
-def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "limits,settings,thread_window,expected",
+    [
+        ({"context": 100000, "output": 1000}, {}, None, (80000, 30000, 4096)),
+        (
+            {"context": 100000, "output": 1000},
+            {"recent": 90000},
+            None,
+            "compact.recent must be less",
+        ),
+        (
+            {"context": 200000, "output": 1000},
+            {"summary": "2%"},
+            None,
+            (160000, 60000, 4000),
+        ),
+        (
+            {"context": 100000, "output": 1000},
+            {"summary": 2048, "recent": 10000, "trigger": 50000},
+            None,
+            (50000, 10000, 2048),
+        ),
+        (
+            {"context": 100000, "input": 20000, "output": 1000},
+            {},
+            None,
+            (18976, 30000, 4096),
+        ),
+        ({"input": 20000, "output": 1000}, {}, None, (18976, None, 4096)),
+        (
+            {"output": 1000},
+            {"summary": 2048, "recent": 10000, "trigger": 50000},
+            None,
+            (50000, 10000, 2048),
+        ),
+        (
+            {"context": 100000, "output": 1000},
+            {"summary": "2%"},
+            200000,
+            (94000, 60000, 4000),
+        ),
+    ],
+)
+def test_build_agic_frame_builds_one_complete_model_input(
+    tmp_path: Path, limits, settings, thread_window, expected
+) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
     provider = _provider()
     adapter = _Adapter()
     tool = _Tool()
+    model_records = (replace(_models().entries[0], limit=limits),)
+    if thread_window is not None:
+        model_records += (
+            replace(
+                model_records[0],
+                id="thread",
+                name="thread",
+                limit={"context": thread_window},
+            ),
+        )
     setup = materialized_setup(
         revision="test-setup",
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
         adapters={adapter.name: adapter},
-        models=_models(),
+        models=model_records,
+        compact=resolve_compact_config(({"compact": settings},)),
         tools=ToolCollection.from_tools({tool.name: tool}),
         envs={},
         environment=AgentEnvironment(
@@ -268,6 +328,7 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
     run = BoundRun(
         run_id="run_1",
         root_run_id="run_1",
+        parent=StepRef.from_local("run_parent", (0,)) if thread_window else None,
         thread="term_1",
         bindings=RunBindings(model="test/model", runnable="agic:chat"),
         input=resolve_runnable_input(
@@ -299,8 +360,19 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
             date="2026-01-01",
             timezone="UTC",
             has_state_refresh=False,
+            thread_model_ref=lambda: "test/thread",
         ),
     )
+
+    if isinstance(expected, str):
+        with pytest.raises(Exception, match=expected):
+            build_agic_frame(
+                context,
+                run,
+                agic,
+                variables={"_": run.input.get("_"), "focus": "events"},
+            )
+        return
 
     prepared = build_agic_frame(
         context,
@@ -312,6 +384,11 @@ def test_build_agic_frame_builds_one_complete_model_input(tmp_path: Path) -> Non
         },
     )
 
+    assert (
+        prepared.input_budget,
+        prepared.compact_recent,
+        prepared.compact_summary,
+    ) == expected
     assert prepared.run is run
     assert prepared.agic is agic
     assert prepared.model.ref == "test/model"

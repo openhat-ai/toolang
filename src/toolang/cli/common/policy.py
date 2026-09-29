@@ -96,8 +96,8 @@ def resolve_compact_override(
     if body is None:
         return None
     override = parse_model_body(body)
-    if override.identity in (None, "default"):
-        raise ValueError("compact.model requires an exact model or unset")
+    if override.identity in (None, "default", "unset"):
+        raise ValueError("compact.model requires an exact model")
     return override
 
 

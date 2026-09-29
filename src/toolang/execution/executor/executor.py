@@ -1749,6 +1749,15 @@ class _Execution:
             self._history = self.store.message_history(root.root_run_id)
         return self._history
 
+    def thread_model_ref(self) -> str | None:
+        """Use the current root binding as the thread's compaction reference."""
+        root = self._active_bindings[self._history_root]
+        return (
+            root.model_request.ref
+            if root.model_request is not None
+            else root.bindings.model
+        )
+
     def cwd_for_run(self, run_id: str) -> str:
         """Read the Run's committed location, caching only while it is active."""
         if run_id not in self._cwd_cache:

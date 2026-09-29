@@ -473,3 +473,19 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
     assert fresh.next_call() is not None
     for payload in history.values.values():
         assert sum(n for text, n in encoded.items() if payload in text) == 2
+
+
+@pytest.mark.parametrize(
+    "value,window,expected",
+    [
+        (0.29, 100, 29),
+        (0.3, 101, 30),
+        (0.001, 100, 1),
+        (0.3, None, None),
+        (4096, None, 4096),
+    ],
+)
+def test_context_relative_target_rounds_decimal_percentages_down(
+    value, window, expected
+):
+    assert experiment.resolve_target(value, window) == expected

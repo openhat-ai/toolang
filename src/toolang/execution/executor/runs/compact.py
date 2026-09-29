@@ -80,7 +80,15 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                 raise RuntimeError(f"agent resources missing: {parent.run_id}")
             setup = parent.setup
             models = subset_models(setup.models_effective(), resources.models)
-            request = select_compact_model(models, setup.compact_model)
+            request = select_compact_model(
+                models,
+                setup.compact.model,
+                default=(frame.thread_model or frame.model).ref,
+            )
+            if frame.compact_summary is None:
+                raise ToolangError(
+                    "compact.summary percentage requires thread model limit.context"
+                )
             model = resolve_model(models, request.ref)
             request = ModelRequest(
                 request.ref,
@@ -108,7 +116,7 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                 },
                 setup=setup.revision,
                 limits=parent.limits,
-                size=4096,
+                size=frame.compact_summary,
                 versions=store.history_versions(
                     [str(r) for r in history.roots[: history.roots.index(end)]]
                 ),
