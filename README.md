@@ -57,8 +57,11 @@ too NAME chat
 too NAME shell
 ```
 
-`too NAME shell` opens an interactive shell in the agent's home. Exit it to
-return to your previous shell; an interactive terminal is required.
+`too NAME shell` opens an interactive shell in the agent's home. Use `too shell`
+to open one in the Toolang root (`TOOLANG_ROOT`, or `~/.toolang` by default), or
+`too --root /path/to/toolang-root shell` to select another root. The destination
+must already exist. Exit to return to your previous shell; an interactive
+terminal is required.
 
 You can then configure the agent's capabilities and add tasks or recurring chores. Use the CLI help to see the available commands:
 

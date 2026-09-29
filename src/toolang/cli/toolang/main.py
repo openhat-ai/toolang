@@ -29,6 +29,7 @@ from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
     LocalRuntimeAgentCommand,
+    OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentSetupCommand,
     RequiredPrefixAgentCommand,
@@ -139,6 +140,10 @@ class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
 
 class _TargetAgentCommand(RequiredPrefixAgentCommand):
     argument_help = "Agent name, .too file, reference, or URL"
+
+
+class _ShellCommand(OptionalPrefixAgentCommand):
+    argument_help = "Local agent name; omit for Toolang root"
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
@@ -333,8 +338,8 @@ _registered_command(
 _registered_command(
     "shell",
     "toolang.cli.toolang.commands.shell:shell",
-    help="Open a shell in the agent's home",
-    cls=RequiredPrefixAgentCommand,
+    help="Open a shell in Toolang root or agent home",
+    cls=_ShellCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(
