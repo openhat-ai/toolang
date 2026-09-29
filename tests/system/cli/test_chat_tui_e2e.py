@@ -446,7 +446,10 @@ def test_chat_tui_displays_real_compaction_lifecycle(tmp_path, outcome):
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
-def test_chat_queue_drains_without_moving_input_up_in_terminal(tmp_path: Path) -> None:
+@pytest.mark.parametrize("action", ["delete", "edit", "fifo"])
+def test_chat_queue_removal_preserves_input_position_in_terminal(
+    tmp_path: Path, action: str
+) -> None:
     server = Server(
         socket_name=f"toolang-queue-drain-{uuid4().hex}", config_file=os.devnull
     )
@@ -470,14 +473,14 @@ def test_chat_queue_drains_without_moving_input_up_in_terminal(tmp_path: Path) -
         pane = session.active_window.active_pane
         assert pane is not None
 
-        def wait_for_layout(count: int, *, completed: int = -1) -> int:
+        def wait_for_layout(
+            count: int, *, completed: int = -1, draft: str = "Ask or describe a task"
+        ) -> int:
             deadline = time.monotonic() + 10
             lines: list[str] = []
             while time.monotonic() < deadline:
                 lines = pane.capture_pane() or []
-                inputs = [
-                    i for i, line in enumerate(lines) if "Ask or describe" in line
-                ]
+                inputs = [i for i, line in enumerate(lines) if line.strip() == draft]
                 summaries = [
                     line.strip() for line in lines if re.search(r"\d+ queued", line)
                 ]
@@ -505,11 +508,32 @@ def test_chat_queue_drains_without_moving_input_up_in_terminal(tmp_path: Path) -
             pane.send_keys(f"queued request {count}", enter=True)
             wait_for_layout(count)
         previous_row = wait_for_layout(3)
-        for completed in range(4):
-            (tmp_path / f"release-model-{completed}").touch()
-            row = wait_for_layout(max(0, 2 - completed), completed=completed)
-            assert row >= previous_row
-            previous_row = row
+        if action == "fifo":
+            for completed in range(4):
+                (tmp_path / f"release-model-{completed}").touch()
+                row = wait_for_layout(max(0, 2 - completed), completed=completed)
+                assert row >= previous_row
+                previous_row = row
+        else:
+            history = pane.cmd("capture-pane", "-p", "-S", "-", "-E", "-1").stdout
+            pane.send_keys("Tab", enter=False)
+            for remaining in (2, 1, 0):
+                pane.send_keys("e" if action == "edit" else "d", enter=False)
+                draft = (
+                    f"queued request {3 - remaining}"
+                    if action == "edit"
+                    else "Ask or describe a task"
+                )
+                assert wait_for_layout(remaining, draft=draft) == previous_row
+                assert (
+                    pane.cmd("capture-pane", "-p", "-S", "-", "-E", "-1").stdout
+                    == history
+                )
+                if action == "edit":
+                    pane.send_keys("C-u", enter=False)
+                    assert wait_for_layout(remaining) == previous_row
+                    if remaining:
+                        pane.send_keys("Tab", enter=False)
     finally:
         server.kill()
 
