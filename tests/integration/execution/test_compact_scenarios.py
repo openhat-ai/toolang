@@ -45,8 +45,8 @@ def offline_compact_estimate(monkeypatch):
 
     monkeypatch.setattr(
         compaction,
-        "estimate_model_input_tokens",
-        lambda request, model: InputEstimate().count(request, None),
+        "_text_tokens",
+        lambda text: (len(text.encode("utf-8")) + 2) // 3,
     )
 
 

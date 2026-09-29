@@ -9,7 +9,7 @@ import pytest
 from toolang.execution import compaction as experiment
 from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
-from toolang.base.types.model import Model
+from toolang.base.types.model import Model, Reasoning
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.types import RunRef, ThreadRef
@@ -377,3 +377,99 @@ def test_o200k_input_estimate_uses_exact_model_corrections() -> None:
         )
         > 0
     )
+
+
+@pytest.mark.parametrize(
+    "model_ref",
+    [
+        "deepseek/deepseek-flash",
+        "vercel/openai/gpt-6-luna-fast",
+        "vercel/anthropic/claude-sonnet-5",
+        "unknown/model",
+    ],
+)
+def test_incremental_counts_match_full_requests_after_rejection_and_calibration(
+    model_ref,
+):
+    history = History({f"run_{i}": f"历史 {i}: " + "body " * 220 for i in range(6)})
+    model = cast(
+        Model, SimpleNamespace(ref=model_ref, limit={"context": 10000, "output": 512})
+    )
+    reducer = experiment.Compaction(
+        [RunRef(r) for r in history.values],
+        _unit_loader(history),
+        model,
+        size=128,
+        summary='Earlier "decision"\n约束',
+        reasoning=Reasoning(effort="high"),
+    )
+    call = reducer.next_call()
+    assert call is not None and len(reducer.batch) > 1
+    assert reducer.estimate == experiment.estimate_model_input_tokens(call, model)
+    reducer.reject(
+        ModelResponseError("context_length_exceeded", kind="provider_rejection")
+    )
+    covered = []
+    while (call := reducer.next_call()) is not None:
+        assert reducer.estimate == experiment.estimate_model_input_tokens(call, model)
+        covered.extend(str(unit.run_id) for unit in reducer.batch)
+        reducer.accept(
+            ModelCallResult(
+                message=Message.assistant(
+                    f"Summary after {len(covered)} roots: 保留约束"
+                ),
+                usage=ModelUsage(input_tokens=reducer.estimate + 100, output_tokens=30),
+            )
+        )
+    assert covered == list(history.values)
+    assert reducer.scale > 1
+
+
+def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
+    from collections import Counter
+
+    encoded = Counter()
+
+    class Encoding:
+        def encode_ordinary(self, text):
+            encoded[text] += 1
+            return list(text.encode("utf-8"))
+
+    monkeypatch.setattr(experiment.tiktoken, "get_encoding", lambda name: Encoding())
+    history = History({f"run_{i}": f"payload-{i} " + "x" * 2000 for i in range(5)})
+    model = cast(
+        Model,
+        SimpleNamespace(
+            ref="deepseek/deepseek-flash", limit={"context": 30000, "output": 512}
+        ),
+    )
+    roots = [RunRef(r) for r in history.values]
+    reducer = experiment.Compaction(roots, _unit_loader(history), model, size=128)
+    assert reducer.next_call() is not None
+    assert len(reducer.batch) == len(roots)
+    before = encoded.copy()
+    assert reducer.next_call() is not None
+    assert encoded == before
+    reducer.reject(
+        ModelResponseError("context_length_exceeded", kind="provider_rejection")
+    )
+    assert reducer.next_call() is not None
+    assert encoded == before
+    result = ModelCallResult(message=Message.assistant("same cumulative summary"))
+    reducer.accept(result)
+    assert reducer.next_call() is not None
+    reducer.accept(result)
+    assert reducer.next_call() is None
+    for payload in history.values.values():
+        assert sum(n for text, n in encoded.items() if payload in text) == 1
+    assert (
+        sum(n for text, n in encoded.items() if "Previous cumulative summary" in text)
+        == 1
+    )
+    # Every fixed request component and root boundary is also counted just once.
+    assert set(encoded.values()) == {1}
+    # Counts belong to this compaction only, not to a process-wide cache.
+    fresh = experiment.Compaction(roots, _unit_loader(history), model, size=128)
+    assert fresh.next_call() is not None
+    for payload in history.values.values():
+        assert sum(n for text, n in encoded.items() if payload in text) == 2

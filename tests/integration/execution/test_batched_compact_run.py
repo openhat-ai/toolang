@@ -85,16 +85,8 @@ async def seed(h, monkeypatch):
     )
     monkeypatch.setattr(
         compaction,
-        "estimate_model_input_tokens",
-        lambda call, model: (
-            100
-            + 4000
-            * sum(
-                isinstance(p, TextPart) and p.text.startswith("[Begin historical Run")
-                for m in call.messages
-                for p in m.parts
-            )
-        ),
+        "_text_tokens",
+        lambda text: 4000 if "[Begin historical Run" in text else 0,
     )
     return thread, tuple(roots)
 
@@ -335,9 +327,7 @@ def test_terminal_failure_never_publishes_or_calls_normal_model(
         async with h:
             thread, _ = await seed(h, monkeypatch)
             if failure == "oversized":
-                monkeypatch.setattr(
-                    compaction, "estimate_model_input_tokens", lambda *args: 100000
-                )
+                monkeypatch.setattr(compaction, "_text_tokens", lambda text: 100000)
             else:
                 h.adapter._responses.append(
                     RuntimeError("provider offline")
@@ -540,9 +530,7 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
     async def scenario():
         async with h:
             thread, roots = await seed(h, monkeypatch)
-            monkeypatch.setattr(
-                compaction, "estimate_model_input_tokens", lambda *args: 100
-            )
+            monkeypatch.setattr(compaction, "_text_tokens", lambda text: 0)
             h.adapter._responses.extend(
                 [
                     ModelResponseError(

@@ -70,11 +70,24 @@ def estimate_model_input_tokens(request: ModelCall, model: Model) -> int:
     media allowance. Corrections are provisional, not model-native tokenizers.
     This function does not choose batch boundaries or handle provider errors.
     """
-    encoding = tiktoken.get_encoding("o200k_base")
+    return math.ceil(_input_tokens(request) * _MODEL_TOKEN_SCALES.get(model.ref, 1.0))
 
-    def count(text: str) -> int:
-        return len(encoding.encode_ordinary(text))
 
+def _text_tokens(text: str) -> int:
+    return len(tiktoken.get_encoding("o200k_base").encode_ordinary(text))
+
+
+def _message_tokens(message: Message) -> int:
+    return (
+        8
+        + _text_tokens(json.dumps(message.to_data(), ensure_ascii=False))
+        + 4096
+        * sum(part.type in {"image", "audio", "document"} for part in message.parts)
+    )
+
+
+def _input_tokens(request: ModelCall) -> int:
+    """Count unscaled components; apply the model correction only to their sum."""
     fixed = json.dumps(
         {
             "instructions": request.instructions,
@@ -86,19 +99,16 @@ def estimate_model_input_tokens(request: ModelCall, model: Model) -> int:
         ensure_ascii=False,
     )
     schema_overhead = (
-        256 + count(json.dumps(request.output_schema, ensure_ascii=False))
+        256 + _text_tokens(json.dumps(request.output_schema, ensure_ascii=False))
         if request.output_schema is not None
         else 0
     )
-    messages = sum(
-        8
-        + count(json.dumps(message.to_data(), ensure_ascii=False))
-        + 4096
-        * sum(part.type in {"image", "audio", "document"} for part in message.parts)
-        for message in request.messages
+    return (
+        32
+        + _text_tokens(fixed)
+        + schema_overhead
+        + sum(_message_tokens(message) for message in request.messages)
     )
-    base = 32 + count(fixed) + schema_overhead + messages
-    return math.ceil(base * _MODEL_TOKEN_SCALES.get(model.ref, 1.0))
 
 
 @dataclass(frozen=True)
@@ -241,6 +251,21 @@ def _history_unit(store: RunStore, run: RunRecord) -> HistoryUnit:
     )
 
 
+def _summary_message(summary: str) -> Message:
+    return Message.user(f"Previous cumulative summary:\n{summary}")
+
+
+def _unit_messages(unit: HistoryUnit) -> tuple[Message, ...]:
+    return (
+        Message.user(
+            f"[Begin historical Run {unit.run_id}; created_at={unit.created_at}; "
+            f"status={unit.status}]"
+        ),
+        *unit.messages,
+        Message.user(f"[End historical Run {unit.run_id}]"),
+    )
+
+
 def _call(
     summary: str, units: Sequence[HistoryUnit], size: int, output: int
 ) -> ModelCall:
@@ -255,16 +280,9 @@ def _call(
         )
     ]
     if summary:
-        messages.append(Message.user(f"Previous cumulative summary:\n{summary}"))
+        messages.append(_summary_message(summary))
     for unit in units:
-        messages.append(
-            Message.user(
-                f"[Begin historical Run {unit.run_id}; created_at={unit.created_at}; "
-                f"status={unit.status}]"
-            )
-        )
-        messages.extend(unit.messages)
-        messages.append(Message.user(f"[End historical Run {unit.run_id}]"))
+        messages.extend(_unit_messages(unit))
     messages.append(
         Message.user(
             "Update the cumulative continuation summary with the complete history "
@@ -356,6 +374,12 @@ class Compaction:
         self.scale = 1.0
         self.batch: list[HistoryUnit] = []
         self.estimate = 0
+        self._fixed_tokens = _input_tokens(
+            replace(_call("", (), size, self.output), reasoning=reasoning)
+        )
+        self._summary_tokens: int | None = None if summary else 0
+        self._unit_tokens: dict[RunRef, int] = {}
+        self._batch_tokens = 0
 
     def request(self, units: Sequence[HistoryUnit]) -> ModelCall:
         return replace(
@@ -365,10 +389,12 @@ class Compaction:
     def next_call(self) -> ModelCall | None:
         if not self.batch:
             while (unit := self.reader.peek()) is not None:
-                candidate = [*self.batch, unit]
-                estimate = estimate_model_input_tokens(
-                    self.request(candidate), self.model
-                )
+                if unit.run_id not in self._unit_tokens:
+                    self._unit_tokens[unit.run_id] = sum(
+                        _message_tokens(message) for message in _unit_messages(unit)
+                    )
+                tokens = self._batch_tokens + self._unit_tokens[unit.run_id]
+                estimate = self._estimate(tokens)
                 if not _estimate_fits(estimate, self.scale, self.capacity):
                     if not self.batch:
                         raise ValueError(
@@ -377,17 +403,29 @@ class Compaction:
                         )
                     break
                 self.batch.append(unit)
+                self._batch_tokens = tokens
                 self.reader.advance()
         if not self.batch:
             return None
-        call = self.request(self.batch)
-        self.estimate = estimate_model_input_tokens(call, self.model)
-        return call
+        self.estimate = self._estimate(self._batch_tokens)
+        return self.request(self.batch)
+
+    def _estimate(self, batch_tokens: int) -> int:
+        if self._summary_tokens is None:
+            self._summary_tokens = _message_tokens(_summary_message(self.summary))
+        return math.ceil(
+            (self._fixed_tokens + self._summary_tokens + batch_tokens)
+            * _MODEL_TOKEN_SCALES.get(self.model.ref, 1.0)
+        )
 
     def accept(self, result: ModelCallResult) -> None:
-        self.summary = summary_text(result)
+        summary = summary_text(result)
+        if summary != self.summary:
+            self._summary_tokens = None
+        self.summary = summary
         self.scale = _update_estimate_scale(self.scale, self.estimate, result.usage)
         self.batch = []
+        self._batch_tokens = 0
 
     def reject(self, error: ModelResponseError) -> None:
         if not _context_overflow(error):
@@ -400,6 +438,7 @@ class Compaction:
         midpoint = max(1, len(self.batch) // 2)
         self.reader.rewind(len(self.batch) - midpoint)
         self.batch = self.batch[:midpoint]
+        self._batch_tokens = sum(self._unit_tokens[u.run_id] for u in self.batch)
 
 
 RUNNABLE = "_:compact"
