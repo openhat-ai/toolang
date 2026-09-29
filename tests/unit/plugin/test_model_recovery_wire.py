@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import httpx
 from openai import AsyncOpenAI
+from openai.lib.streaming.responses import AsyncResponseStream
 import pytest
 
 from toolang.base.errors import ModelResponseError
@@ -437,6 +438,120 @@ def test_responses_sdk_preserves_terminal_failure_usage(wire_call, status):
     assert caught.value.usage is not None
     assert caught.value.usage.input_tokens == 2
     assert caught.value.usage.output_tokens == 3
+
+
+@pytest.mark.parametrize(
+    "ending", ["completed", "incomplete", "failed", "observer_error", "cancelled"]
+)
+def test_responses_closes_event_iterator_before_http_response(
+    wire_call, monkeypatch, ending
+):
+    iterators = []
+    closed_before_response = []
+    original_aiter = AsyncResponseStream.__aiter__
+    original_close = AsyncResponseStream.close
+
+    def track_iterator(self):
+        iterator = original_aiter(self)
+        # Retain the real SDK generator so GC and loop shutdown cannot hide
+        # whether the adapter explicitly closes it before releasing HTTP.
+        iterators.append(iterator)
+        return iterator
+
+    async def track_close(self):
+        closed_before_response.append(
+            bool(iterators) and all(iterator.ag_frame is None for iterator in iterators)
+        )
+        await original_close(self)
+
+    monkeypatch.setattr(AsyncResponseStream, "__aiter__", track_iterator)
+    monkeypatch.setattr(AsyncResponseStream, "close", track_close)
+    response = {
+        "id": "resp",
+        "object": "response",
+        "status": "in_progress",
+        "output": [],
+        "created_at": 1,
+    }
+    item = {
+        "type": "message",
+        "id": "msg",
+        "role": "assistant",
+        "status": "in_progress",
+        "content": [],
+    }
+    content = {"type": "output_text", "text": "", "annotations": []}
+    events: list[dict[str, object]] = [
+        {"type": "response.created", "response": response, "sequence_number": 0},
+        {
+            "type": "response.output_item.added",
+            "item": item,
+            "output_index": 0,
+            "sequence_number": 1,
+        },
+        {
+            "type": "response.content_part.added",
+            "item_id": "msg",
+            "output_index": 0,
+            "content_index": 0,
+            "part": content,
+            "sequence_number": 2,
+        },
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "done",
+            "sequence_number": 3,
+        },
+    ]
+    if ending in {"observer_error", "cancelled"}:
+        error = (
+            httpx.ReadError("observer failed")
+            if ending == "observer_error"
+            else asyncio.CancelledError()
+        )
+        with pytest.raises(type(error)) as caught:
+            wire_call("responses", events, observer_error=error)
+        assert caught.value is error
+    else:
+        events.append(
+            {
+                "type": f"response.{ending}",
+                "sequence_number": 4,
+                "response": {
+                    **response,
+                    "status": ending,
+                    "output": [
+                        {
+                            **item,
+                            "status": "completed",
+                            "content": [{**content, "text": "done"}],
+                        }
+                    ],
+                    "incomplete_details": {"reason": "max_output_tokens"}
+                    if ending == "incomplete"
+                    else None,
+                    "error": {"code": "server_error"} if ending == "failed" else None,
+                    "usage": {"input_tokens": 2, "output_tokens": 3},
+                },
+            }
+        )
+        if ending == "completed":
+            result = wire_call("responses", events, disconnect=True)
+            assert result.message.parts[0].text == "done"
+        else:
+            with pytest.raises(ModelResponseError) as caught:
+                wire_call("responses", events, disconnect=True)
+            assert caught.value.kind == (
+                "output_limit" if ending == "incomplete" else "transport_error"
+            )
+            assert caught.value.usage is not None
+            assert caught.value.usage.output_tokens == 3
+
+    assert len(iterators) == 1
+    assert closed_before_response == [True]
 
 
 @pytest.mark.parametrize("protocol", list(MODULES))

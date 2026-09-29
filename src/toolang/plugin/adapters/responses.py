@@ -6,6 +6,7 @@ import json
 import asyncio
 import logging
 from collections.abc import Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
@@ -253,8 +254,13 @@ async def stream_response(
     terminal_response = None
     try:
         with model_transport_errors():
-            async with client.responses.stream(**payload) as stream:
-                async for event in stream:
+            # The SDK context closes HTTP, but not its __aiter__ generator.
+            # Close the iterator in this task when a terminal event ends the loop.
+            async with (
+                client.responses.stream(**payload) as stream,
+                aclosing(aiter(stream)) as events,
+            ):
+                async for event in events:
                     latest_response = (
                         getattr(event, "response", None) or latest_response
                     )
