@@ -174,21 +174,21 @@ QUEUE_SHORTCUTS = (
     QUEUE_DELETE,
 )
 GLOBAL_SHORTCUTS = (SWITCH_AREA, DISMISS_STATUS, CLEAR, QUIT)
+HELP_GROUPS = (
+    ("Input focused:", INPUT_SHORTCUTS),
+    ("Queue focused:", QUEUE_SHORTCUTS),
+    ("Global:", GLOBAL_SHORTCUTS),
+)
 
 
 def help_lines() -> tuple[str, ...]:
     """Return aligned, presentation-neutral shortcut help rows."""
 
-    groups = (
-        ("Input focused:", INPUT_SHORTCUTS),
-        ("Queue focused:", QUEUE_SHORTCUTS),
-        ("Global:", GLOBAL_SHORTCUTS),
-    )
     width = max(
-        len(shortcut.help_label) for _title, group in groups for shortcut in group
+        len(shortcut.help_label) for _title, group in HELP_GROUPS for shortcut in group
     )
     lines: list[str] = []
-    for title, group in groups:
+    for title, group in HELP_GROUPS:
         if lines:
             lines.append("")
         lines.append(title)
@@ -204,6 +204,7 @@ __all__ = [
     "DISMISS_STATUS",
     "EOF",
     "GLOBAL_SHORTCUTS",
+    "HELP_GROUPS",
     "INPUT_SHORTCUTS",
     "INSERT_NEWLINE",
     "INTERRUPT",

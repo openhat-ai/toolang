@@ -6960,14 +6960,14 @@ def test_slash_wrapped_prose_retains_its_inset(width: int) -> None:
 
 
 @pytest.mark.parametrize("width", (1, 2, 3, 4, 30, 60, 100))
-@pytest.mark.parametrize("colon", (False, True))
+@pytest.mark.parametrize("command", ("help", ":?", "keys"))
 def test_chat_help_preserves_plain_layout_at_each_width(
-    width: int, colon: bool
+    width: int, command: str
 ) -> None:
     outcome = (
         slashes.run_override_help()
-        if colon
-        else slashes.handle(cast(Any, None), QuickCommand("help"))
+        if command == ":?"
+        else slashes.handle(cast(Any, None), QuickCommand(command))
     )
     assert outcome is not None and isinstance(outcome.content, slashes.SlashHelp)
     inset = min(2, width - 1)
@@ -6995,3 +6995,43 @@ def test_chat_table_summary_wraps_with_unicode_and_preserves_inset(width: int) -
     assert all(line.startswith("  ") for line in lines[start:] if line.strip())
     assert all(get_cwidth(line) <= width for line in lines)
     assert any("sample *" in line for line in lines)
+
+
+@pytest.mark.parametrize("width", (48, 60))
+@pytest.mark.parametrize("rich", (False, True))
+def test_keys_help_wraps_descriptions_under_the_description_column(
+    width: int, rich: bool
+) -> None:
+    outcome = slashes.handle(cast(Any, None), QuickCommand("keys"))
+    assert outcome is not None
+    if rich:
+        block = (
+            blocks.SlashHelpBlock("/keys", outcome.content, max_width=width)
+            if isinstance(outcome.content, slashes.SlashHelp)
+            else blocks.SlashBlock(
+                "/keys", slashes.outcome_lines(outcome), max_width=width
+            )
+        )
+        lines = _render_text(block, width=100).splitlines()
+    else:
+        lines = list(slashes.outcome_lines(outcome, width=width))
+    start = next(
+        i for i, line in enumerate(lines) if line.lstrip().startswith("Ctrl+C ")
+    )
+    end = next(i for i, line in enumerate(lines) if line.lstrip().startswith("Ctrl+D "))
+    description_column = lines[start].index("Clear")
+    continuation = lines[start + 1 : end]
+    assert continuation
+    assert all(
+        len(line) - len(line.lstrip()) == description_column for line in continuation
+    )
+    assert (
+        " ".join(
+            [
+                lines[start][description_column:].strip(),
+                *(line.strip() for line in continuation),
+            ]
+        )
+        == shortcuts.INTERRUPT.summary
+    )
+    assert all(get_cwidth(line) <= width for line in lines)

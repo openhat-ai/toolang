@@ -28,7 +28,7 @@ from .policy import (
     materialize_runnable_list_ref,
     validate_model_reasoning_request,
 )
-from .shortcuts import help_lines as shortcut_help_lines
+from .shortcuts import HELP_GROUPS
 from .tables import table_lines
 
 
@@ -59,7 +59,7 @@ class SlashTable:
 
 @dataclass(frozen=True, slots=True)
 class SlashHelpRow:
-    """One command entry in the main slash help."""
+    """One command or shortcut entry in structured help."""
 
     command: str
     arguments: str
@@ -77,7 +77,7 @@ class SlashHelpSection:
 
 @dataclass(frozen=True, slots=True)
 class SlashHelp:
-    """Structured main slash help with shared column widths."""
+    """Structured help with shared column widths."""
 
     sections: tuple[SlashHelpSection, ...]
     footer: str
@@ -301,8 +301,17 @@ def run_override_help() -> SlashOutcome:
 
 
 def _keys(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
-    first, *rest = shortcut_help_lines()
-    return _result(first, *rest)
+    sections = tuple(
+        SlashHelpSection(
+            title,
+            tuple(
+                SlashHelpRow(shortcut.help_label, "", shortcut.summary)
+                for shortcut in group
+            ),
+        )
+        for title, group in HELP_GROUPS
+    )
+    return SlashOutcome("result", SlashHelp(sections, footer=""))
 
 
 def _exit(app: AppContext, _command: str, _argument: str) -> None:

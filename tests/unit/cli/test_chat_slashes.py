@@ -388,9 +388,18 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
     lines = slashes.outcome_lines(result)
 
     assert result.kind == "result"
-    assert lines == shortcuts.help_lines()
-    assert any(line.startswith("Esc  ") for line in lines)
-    assert any(line.startswith("Esc Esc  ") for line in lines)
+    assert isinstance(result.content, slashes.SlashHelp)
+    assert tuple(section.title for section in result.content.sections) == tuple(
+        title for title, _group in shortcuts.HELP_GROUPS
+    )
+    for section, (_title, group) in zip(
+        result.content.sections, shortcuts.HELP_GROUPS, strict=True
+    ):
+        assert [(row.command, row.description) for row in section.rows] == [
+            (shortcut.help_label, shortcut.summary) for shortcut in group
+        ]
+    assert any(line.startswith("  Esc  ") for line in lines)
+    assert any(line.startswith("  Esc Esc  ") for line in lines)
     assert "Chat shortcuts" not in lines
 
 
