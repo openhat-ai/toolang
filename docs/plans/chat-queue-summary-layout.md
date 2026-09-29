@@ -98,9 +98,10 @@ at floor((panel width - count cell width) / 2), reserving the accent cell and
 clamping to the available content area on extremely narrow terminals. Show the
 hint only if it fits completely with at least two blank cells after the centered
 count; otherwise omit it without moving the count. If the count itself cannot
-fit, truncate it using the existing ellipsis behavior. Preserve two-cell right
-padding whenever it fits; clamp padding for extremely narrow widths and never
-overwrite the accent or overflow.
+fit beside the accent, truncate it using the existing ellipsis behavior. Count
+text takes priority over horizontal padding. Preserve two-cell right padding
+whenever it fits; clamp padding for extremely narrow widths and never overwrite
+the accent or overflow.
 
 Retain existing short-terminal prioritization while updating frame/minimum
 row counts together. Main risks are off-by-one viewport sizing, stale cells

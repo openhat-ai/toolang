@@ -1794,6 +1794,26 @@ def test_chat_queue_fits_narrow_terminals_without_wrapping(
         assert lines[1].startswith("  ↳")
 
 
+@pytest.mark.parametrize("terminal_width", [10, 11, 12, 13])
+@pytest.mark.parametrize("focused", [False, True])
+def test_chat_queue_count_takes_priority_over_padding(
+    monkeypatch: pytest.MonkeyPatch, terminal_width: int, focused: bool
+) -> None:
+    panel = widgets.QueuePanel(lambda: ["item"] * 10)
+    panel.expanded = False
+    monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
+    monkeypatch.setattr(panel, "_has_focus", lambda: focused)
+
+    line = "".join(text for _style, text in panel._render())
+
+    assert line.strip() == "10 queued"
+    assert line[0] == widgets.ACCENT_CELL
+    assert get_cwidth(line) == terminal_width
+    _assert_queue_summary(
+        line, "10 queued", "space to expand" if focused else "tab to focus"
+    )
+
+
 def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
     items = ["first", "second"]
     panel = widgets.QueuePanel(lambda: items)

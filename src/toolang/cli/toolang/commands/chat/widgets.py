@@ -281,13 +281,13 @@ class QueuePanel:
         style = "class:queue"
         right = min(_QUEUE_ROW_PADDING, width)
         available = width - right
-        left = min(_QUEUE_TEXT_INSET, available)
-        label = self._truncate(self._count_label(count), available - left)
+        # Count text takes priority over padding when the terminal is narrow.
+        label = self._truncate(self._count_label(count), width)
         label_width = get_cwidth(label)
         # Width excludes the leading accent. Center against the full panel,
         # then translate back to content coordinates and clamp narrow layouts.
         centered = (width + _QUEUE_ACCENT_WIDTH - label_width) // 2
-        start = max(left, min(centered - _QUEUE_ACCENT_WIDTH, available - label_width))
+        start = max(0, centered - _QUEUE_ACCENT_WIDTH)
         count_style = (
             "class:queue.focused-count" if self._has_focus() else "class:queue.count"
         )

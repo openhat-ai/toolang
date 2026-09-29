@@ -447,8 +447,9 @@ def test_chat_tui_displays_real_compaction_lifecycle(tmp_path, outcome):
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 @pytest.mark.parametrize("action", ["delete", "edit", "fifo"])
+@pytest.mark.parametrize("terminal_rows", [12, 40])
 def test_chat_queue_removal_preserves_input_position_in_terminal(
-    tmp_path: Path, action: str
+    tmp_path: Path, action: str, terminal_rows: int
 ) -> None:
     server = Server(
         socket_name=f"toolang-queue-drain-{uuid4().hex}", config_file=os.devnull
@@ -467,14 +468,18 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
                 ]
             ),
             x=100,
-            y=40,
+            y=terminal_rows,
             environment={"TOOLANG_TMUX": "0", "TERM": "xterm-256color"},
         )
         pane = session.active_window.active_pane
         assert pane is not None
 
         def wait_for_layout(
-            count: int, *, completed: int = -1, draft: str = "Ask or describe a task"
+            count: int,
+            *,
+            started: bool = False,
+            completed: int = -1,
+            draft: str = "Ask or describe a task",
         ) -> int:
             deadline = time.monotonic() + 10
             lines: list[str] = []
@@ -489,14 +494,24 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
                     if count
                     else not summaries
                 )
+                # Completed output can be above the viewport in short terminals.
+                transcript = (
+                    pane.cmd("capture-pane", "-p", "-S", "-").stdout
+                    if completed >= 0
+                    else []
+                )
                 if (
                     len(inputs) == 1
                     and ready
+                    and (not started or any("• Thinking" in line for line in lines))
                     and any("agic:chat" in line for line in lines[inputs[0] + 1 :])
                     and (
                         completed < 0
-                        or any(f"queue response {completed}" in line for line in lines)
+                        or any(
+                            f"queue response {completed}" in line for line in transcript
+                        )
                     )
+                    and (completed != 3 or not any("Working" in line for line in lines))
                 ):
                     return inputs[0]
                 time.sleep(0.02)
@@ -504,6 +519,9 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
 
         wait_for_layout(0)
         pane.send_keys("hold queue", enter=True)
+        # Wait for the submission to clear Input and the initial live progress
+        # to settle before typing another request or measuring its position.
+        wait_for_layout(0, started=True)
         for count in range(1, 4):
             pane.send_keys(f"queued request {count}", enter=True)
             wait_for_layout(count)
