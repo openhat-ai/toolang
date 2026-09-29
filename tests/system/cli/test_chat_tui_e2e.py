@@ -292,7 +292,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         session.send(b"\t")
         # Request a complete row before waiting for text that incremental
         # terminal redraws may split across cursor movements.
-        _wait_redrawn(session, "1 queued (space to collapse)")
+        _wait_redrawn(session, "space to collapse")
         focused = session.wait_for(
             "↳ queued follow-up",
             "1 queued",
@@ -344,7 +344,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
         session.send(b"\t")
-        output = _wait_redrawn(session, "(space to collapse)")
+        output = _wait_redrawn(session, "space to collapse")
         assert "queued follow-up" in output
         assert "space to collapse" in output
         assert "Window too small" not in output
@@ -443,6 +443,75 @@ def test_chat_tui_displays_real_compaction_lifecycle(tmp_path, outcome):
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+def test_chat_queue_drains_without_moving_input_up_in_terminal(tmp_path: Path) -> None:
+    server = Server(
+        socket_name=f"toolang-queue-drain-{uuid4().hex}", config_file=os.devnull
+    )
+    try:
+        session = server.new_session(
+            session_name="queue-drain",
+            start_directory=PROJECT_ROOT,
+            window_command=shlex.join(
+                [
+                    sys.executable,
+                    "-m",
+                    "tests.support.chat_tui_e2e",
+                    str(tmp_path),
+                    "queue",
+                ]
+            ),
+            x=100,
+            y=40,
+            environment={"TOOLANG_TMUX": "0", "TERM": "xterm-256color"},
+        )
+        pane = session.active_window.active_pane
+        assert pane is not None
+
+        def wait_for_layout(count: int, *, completed: int = -1) -> int:
+            deadline = time.monotonic() + 10
+            lines: list[str] = []
+            while time.monotonic() < deadline:
+                lines = pane.capture_pane() or []
+                inputs = [
+                    i for i, line in enumerate(lines) if "Ask or describe" in line
+                ]
+                summaries = [
+                    line.strip() for line in lines if re.search(r"\d+ queued", line)
+                ]
+                ready = (
+                    len(summaries) == 1 and summaries[0].startswith(f"{count} queued")
+                    if count
+                    else not summaries
+                )
+                if (
+                    len(inputs) == 1
+                    and ready
+                    and any("agic:chat" in line for line in lines[inputs[0] + 1 :])
+                    and (
+                        completed < 0
+                        or any(f"queue response {completed}" in line for line in lines)
+                    )
+                ):
+                    return inputs[0]
+                time.sleep(0.02)
+            pytest.fail("Unexpected queue layout:\n" + "\n".join(lines))
+
+        wait_for_layout(0)
+        pane.send_keys("hold queue", enter=True)
+        for count in range(1, 4):
+            pane.send_keys(f"queued request {count}", enter=True)
+            wait_for_layout(count)
+        previous_row = wait_for_layout(3)
+        for completed in range(4):
+            (tmp_path / f"release-model-{completed}").touch()
+            row = wait_for_layout(max(0, 2 - completed), completed=completed)
+            assert row >= previous_row
+            previous_row = row
+    finally:
+        server.kill()
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
