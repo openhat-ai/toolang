@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from ddgs.exceptions import DDGSException, TimeoutException
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ToolContext
@@ -14,7 +15,12 @@ from toolang.plugin.toolsets.web import create_toolset
 
 @pytest.mark.parametrize(
     ("config", "expected_backend"),
-    [({}, "google"), ({"backend": "duckduckgo"}, "duckduckgo")],
+    [
+        ({}, "brave"),
+        ({"backend": "duckduckgo"}, "duckduckgo"),
+        ({"backend": "auto"}, "auto"),
+        ({"backend": "google,brave"}, "google,brave"),
+    ],
 )
 def test_web_search_uses_plugin_backend(
     monkeypatch,
@@ -75,7 +81,7 @@ def test_web_search_uses_plugin_backend(
 
     assert calls == {
         "timeout": 5,
-        "query": "toolang",
+        "query": "toolang site:example.com",
         "max_results": 15,
         "backend": expected_backend,
     }
@@ -95,3 +101,245 @@ def test_web_search_uses_plugin_backend(
 def test_web_search_rejects_invalid_backend_config() -> None:
     with pytest.raises(ToolangError, match="web backend must be a non-empty string"):
         create_toolset({"backend": " "})
+
+
+@pytest.mark.parametrize(
+    "first_outcome",
+    [
+        DDGSException("No results found."),
+        TimeoutException("request timed out"),
+        [],
+        [{"href": "https://elsewhere.test/page"}],
+        [{"href": "https://[invalid"}, {"href": "javascript:void(0)"}, {}],
+    ],
+)
+def test_web_search_falls_back_until_results_match_domains(
+    monkeypatch, tmp_path, first_outcome
+) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append((query, backend))
+        if len(calls) == 1:
+            if isinstance(first_outcome, Exception):
+                raise first_outcome
+            return first_outcome
+        return [{"href": "https://docs.fly.io/machines", "title": "Machines"}]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    result = asyncio.run(
+        create_toolset({})
+        .tools()["search"]
+        .invoke(
+            {"query": "Fly.io Machines", "domains": ["FLY.IO"]},
+            ToolContext(tmp_path, tmp_path),
+        )
+    ).output
+
+    assert calls == [
+        ("Fly.io Machines site:fly.io", "brave"),
+        ("Fly.io Machines site:fly.io", "google"),
+    ]
+    assert result == {
+        "query": "Fly.io Machines",
+        "domains": ["fly.io"],
+        "results": [
+            {
+                "title": "Machines",
+                "url": "https://docs.fly.io/machines",
+                "snippet": None,
+            }
+        ],
+    }
+
+
+def test_web_search_reports_unavailable_services_after_all_backends_fail(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        if backend == "google":
+            return []
+        raise DDGSException("request failed")
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    with caplog.at_level("DEBUG", logger="toolang.plugin.toolsets.web"):
+        with pytest.raises(ToolangError, match="no usable results"):
+            asyncio.run(
+                create_toolset({})
+                .tools()["search"]
+                .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+            )
+
+    assert calls == ["brave", "google", "duckduckgo"]
+    for backend in calls:
+        assert f"backend={backend}" in caplog.text
+    assert "request failed" in caplog.text
+    assert "elapsed=" in caplog.text
+
+
+def test_web_search_retries_within_total_timeout(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        if len(calls) == 1:
+            raise DDGSException("No results found.")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    with pytest.raises(ToolangError, match="timed out after 1s"):
+        asyncio.run(
+            create_toolset({"timeout": 1})
+            .tools()["search"]
+            .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+        )
+    assert calls == ["brave", "google"]
+
+
+def test_web_search_uses_last_backend_when_earlier_backends_fail(
+    monkeypatch, tmp_path
+) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        assert query == "Fly.io"
+        calls.append(backend)
+        if backend != "duckduckgo":
+            raise DDGSException("request failed")
+        return [{"href": "https://fly.io/docs/"}]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    result = asyncio.run(
+        create_toolset({})
+        .tools()["search"]
+        .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+    ).output
+
+    assert calls == ["brave", "google", "duckduckgo"]
+    assert result["results"][0]["url"] == "https://fly.io/docs/"
+
+
+def test_web_search_honors_explicit_backend_on_failure(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        raise DDGSException("request failed")
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    with pytest.raises(ToolangError, match="no usable results"):
+        asyncio.run(
+            create_toolset({"backend": " yahoo "})
+            .tools()["search"]
+            .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+        )
+    assert calls == ["yahoo"]
+
+
+def test_web_search_scopes_multiple_domains_and_filters_results(
+    monkeypatch, tmp_path
+) -> None:
+    async def search(query, *, max_results, timeout, backend):
+        assert query == "deployment (site:fly.io OR site:example.com)"
+        assert max_results == 6
+        return [
+            {"href": "https://fly.io.evil.test/"},
+            {"href": "https://notfly.io/"},
+            {"href": "https://example.com@evil.test/"},
+            {"href": "https://fly.io/docs/", "title": " Fly.io "},
+            {"href": "https://docs.example.com/"},
+            {"href": "https://example.com/extra"},
+        ]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    result = asyncio.run(
+        create_toolset({})
+        .tools()["search"]
+        .invoke(
+            {
+                "query": "deployment",
+                "domains": [" FLY.IO ", "example.com"],
+                "top_k": 2,
+            },
+            ToolContext(tmp_path, tmp_path),
+        )
+    ).output
+
+    assert result["query"] == "deployment"
+    assert result["domains"] == ["fly.io", "example.com"]
+    assert result["results"] == [
+        {"url": "https://fly.io/docs/", "title": "Fly.io", "snippet": None},
+        {"url": "https://docs.example.com/", "title": None, "snippet": None},
+    ]
+
+
+def test_web_search_cancels_stalled_attempt_before_fallback(monkeypatch, tmp_path):
+    calls = []
+    cancelled = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        if backend == "brave":
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(backend)
+        assert cancelled == ["brave"]
+        return [{"href": "https://fly.io/"}]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    monkeypatch.setattr("toolang.plugin.toolsets.web.BACKEND_TIMEOUT", 0.01)
+    result = asyncio.run(
+        create_toolset({})
+        .tools()["search"]
+        .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+    ).output
+
+    assert calls == ["brave", "google"]
+    assert result["results"][0]["url"] == "https://fly.io/"
+
+
+def test_web_search_propagates_cancellation_without_fallback(monkeypatch, tmp_path):
+    calls = []
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def search(query, *, max_results, timeout, backend):
+            calls.append(backend)
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+        task = asyncio.create_task(
+            create_toolset({})
+            .tools()["search"]
+            .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert calls == ["brave"]
+
+
+def test_web_search_does_not_hide_programming_errors(monkeypatch, tmp_path):
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        raise ValueError("unexpected bug")
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    with pytest.raises(ValueError, match="unexpected bug"):
+        asyncio.run(
+            create_toolset({})
+            .tools()["search"]
+            .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+        )
+    assert calls == ["brave"]

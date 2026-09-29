@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 from urllib.parse import urlparse
 
 from anyio import to_process
+from ddgs.exceptions import DDGSException
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool, Toolset
@@ -16,9 +19,12 @@ from toolang.base.types.tool import ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.tool_descriptions import action_summary
 
-DEFAULT_BACKEND = "google"
+logger = logging.getLogger(__name__)
+
+DEFAULT_BACKENDS = ("brave", "google", "duckduckgo")
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT = 15
+BACKEND_TIMEOUT = 5
 
 
 @dataclass(slots=True)
@@ -30,13 +36,13 @@ class WebToolset:
     description: str | None = (
         "Search the public web and return concise result snippets."
     )
-    _backend: str = field(init=False, repr=False)
+    _backends: tuple[str, ...] = field(init=False, repr=False)
     _top_k: int = field(init=False, repr=False)
     _timeout: int = field(init=False, repr=False)
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._backend = _backend_value(self.config.get("backend"))
+        self._backends = _backend_values(self.config.get("backend"))
         self._top_k = _int_value(self.config.get("top_k"), default=DEFAULT_TOP_K)
         self._timeout = _int_value(
             self.config.get("timeout"),
@@ -56,41 +62,52 @@ class WebToolset:
         ) -> dict[str, Any]:
             limit = _int_value(top_k, default=self._top_k)
             normalized_domains = _domains(domains)
+            search_query = _domain_query(query, normalized_domains)
+            attempt_timeout = min(self._timeout, BACKEND_TIMEOUT)
             try:
                 async with asyncio.timeout(self._timeout):
-                    raw_results = await _run_search(
-                        query,
-                        max_results=max(limit * 3, limit),
-                        timeout=min(self._timeout, 5),
-                        backend=self._backend,
-                    )
+                    for backend in self._backends:
+                        started = monotonic()
+                        try:
+                            async with asyncio.timeout(attempt_timeout):
+                                raw_results = await _run_search(
+                                    search_query,
+                                    max_results=limit * 3,
+                                    timeout=attempt_timeout,
+                                    backend=backend,
+                                )
+                        except (DDGSException, TimeoutError) as exc:
+                            logger.debug(
+                                "web.search.failed backend=%s elapsed=%.3f error=%r",
+                                backend,
+                                monotonic() - started,
+                                exc,
+                            )
+                            continue
+                        filtered = _filter_results(
+                            raw_results, normalized_domains, limit
+                        )
+                        logger.debug(
+                            "web.search.results backend=%s elapsed=%.3f raw=%d usable=%d",
+                            backend,
+                            monotonic() - started,
+                            len(raw_results),
+                            len(filtered),
+                        )
+                        if filtered:
+                            return {
+                                "query": query,
+                                "domains": normalized_domains,
+                                "results": filtered,
+                            }
             except TimeoutError as exc:
                 raise ToolangError(
                     f"web search timed out after {self._timeout}s"
                 ) from exc
-            filtered: list[dict[str, str | None]] = []
-            for item in raw_results:
-                href = _normalized_text(item.get("href"))
-                if href is None:
-                    continue
-                if normalized_domains and not _matches_domains(
-                    href, normalized_domains
-                ):
-                    continue
-                filtered.append(
-                    {
-                        "title": _normalized_text(item.get("title")),
-                        "url": href,
-                        "snippet": _normalized_text(item.get("body")),
-                    }
-                )
-                if len(filtered) >= limit:
-                    break
-            return {
-                "query": query,
-                "domains": normalized_domains,
-                "results": filtered,
-            }
+            raise ToolangError(
+                "web search services returned no usable results "
+                f"(tried: {', '.join(self._backends)})"
+            )
 
         return {"search": create_function_tool(search)}
 
@@ -146,12 +163,42 @@ def _search_text(
         return list(searcher.text(query, max_results=max_results, backend=backend))
 
 
-def _backend_value(value: object) -> str:
+def _backend_values(value: object) -> tuple[str, ...]:
     if value is None:
-        return DEFAULT_BACKEND
+        return DEFAULT_BACKENDS
     if not isinstance(value, str) or not value.strip():
         raise ToolangError("web backend must be a non-empty string")
-    return value.strip()
+    # Explicit DDGS expressions (including auto and lists) remain opt-in.
+    return (value.strip(),)
+
+
+def _domain_query(query: str, domains: list[str]) -> str:
+    if not domains:
+        return query
+    sites = " OR ".join(f"site:{domain}" for domain in domains)
+    if len(domains) > 1:
+        sites = f"({sites})"
+    return f"{query} {sites}"
+
+
+def _filter_results(
+    raw_results: list[dict[str, Any]], domains: list[str], limit: int
+) -> list[dict[str, str | None]]:
+    filtered: list[dict[str, str | None]] = []
+    for item in raw_results:
+        href = _normalized_text(item.get("href"))
+        if href is None or not _matches_domains(href, domains):
+            continue
+        filtered.append(
+            {
+                "title": _normalized_text(item.get("title")),
+                "url": href,
+                "snippet": _normalized_text(item.get("body")),
+            }
+        )
+        if len(filtered) >= limit:
+            break
+    return filtered
 
 
 def _int_value(value: object, *, default: int) -> int:
@@ -184,8 +231,14 @@ def _domains(value: object) -> list[str]:
 
 
 def _matches_domains(url: str, domains: list[str]) -> bool:
-    hostname = (urlparse(url).hostname or "").lower()
-    return any(
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return False
+    return not domains or any(
         hostname == domain or hostname.endswith(f".{domain}") for domain in domains
     )
 
