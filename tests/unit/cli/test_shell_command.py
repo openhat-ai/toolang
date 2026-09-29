@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -69,24 +70,24 @@ def test_shell_opens_root_without_an_agent_and_respects_root_precedence(
 
 @pytest.mark.parametrize("is_file", [False, True])
 def test_shell_reports_an_unusable_root_without_creating_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, is_file: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    is_file: bool,
 ) -> None:
     root = tmp_path / "root"
     if is_file:
         root.write_text("unchanged", encoding="utf-8")
+    monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setattr(shell_command, "_require_interactive_terminal", lambda *_: None)
 
-    def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        assert kwargs["cwd"] == root
-        if is_file:
-            raise NotADirectoryError(str(root))
-        raise FileNotFoundError(str(root))
+    # An invalid cwd prevents subprocess from executing the interactive shell.
+    assert cli.main(["--root", str(root), "shell"]) == 1
 
-    monkeypatch.setattr(shell_command.subprocess, "run", run)
-
-    with pytest.raises(ClickException, match="could not start shell"):
-        shell_command.shell(_context(root, None))
-
+    output = strip_ansi(capsys.readouterr().err)
+    assert "could not start shell '/bin/sh'" in output
+    expected_errno = errno.ENOTDIR if is_file else errno.ENOENT
+    assert f"[Errno {expected_errno}]" in output
     assert root.is_file() if is_file else not root.exists()
     if is_file:
         assert root.read_text(encoding="utf-8") == "unchanged"
