@@ -328,3 +328,12 @@ def test_configured_caps_update_preserves_entry_comment_and_spacing(
         '[skills]\nreviewer = { ref = "https://example/reviewer" }'
         " # Keep this comment\n"
     )
+
+
+def test_authored_caps_use_short_lock_filename(tmp_path: Path) -> None:
+    caps = AuthoredCaps(tmp_path)
+
+    assert caps.lock_path == tmp_path / ".caps.lock"
+    with caps.write_lock():
+        assert caps.lock_path.is_file()
+    assert not (tmp_path / ".authored-caps.lock").exists()
