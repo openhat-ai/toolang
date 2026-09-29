@@ -1,13 +1,15 @@
 # Reliable default web search
 
 Status: Initial backend configuration approved on 2026-09-28; reliability repair
-approved by the user on 2026-09-29 after reproducing search failures.
+approved by the user on 2026-09-29 after reproducing search failures. The user
+also approved the model-facing interface, guidance, and live comparison update
+on 2026-09-29.
 
 ## Goal and success criteria
 
 An unconfigured `web.search` tries independent search backends when a service
 fails or returns no usable results. Users do not need an API key or backend
-configuration. A successful search preserves the existing result schema.
+configuration. A successful search preserves the existing result fields.
 
 ## Findings
 
@@ -22,8 +24,11 @@ configuration. A successful search preserves the existing result schema.
 
 ## Scope and decisions
 
-- Require `ddgs>=9.16.0,<10` and lock 9.16.0.
-- With no configured `backend`, try `brave`, `google`, then `duckduckgo` in
+- Require `ddgs>=9.16.0,<10` and lock 9.16.0. A small Yahoo adapter
+  recognizes both observed `relsrch` and `algo` result containers, retains DDGS
+  request/redirect handling, and avoids duplicated title/favicon URLs. It uses
+  instance-local subclassing, never a global DDGS registry patch.
+- With no configured `backend`, try `brave`, `yahoo`, `google`, then `duckduckgo` in
   separate, sequential DDGS calls. Stop at the first usable result set, even
   if it contains fewer than `top_k` results. Do not merge providers or use the
   DDGS multi-backend aggregator for this default path.
@@ -42,23 +47,47 @@ configuration. A successful search preserves the existing result schema.
   domains. Keep strict hostname/subdomain filtering afterward and discard
   malformed or non-HTTP(S) result URLs, including invalid ports and unescaped
   whitespace. Preserve the original query in output.
-- If all attempts fail, raise a `ToolangError` saying the search services
-  returned no usable results and listing the attempted backends. Preserve the
-  total-timeout error. Log backend, elapsed time, error, and raw/usable result
+- If all attempts fail, report that the search services returned no usable
+  results and list the attempted backends. Preserve the total-timeout message. Log backend, elapsed time, error, and usable result
   counts at debug level; do not claim that no relevant pages exist.
-- Keep `backend` out of model-facing arguments. Do not add proxy, region,
-  caching, paid-provider, or other toolset changes.
+- Add optional model-facing `preferred_backend`: a single curated engine to
+  try first, followed by the normal default chain without duplicates. Leave it
+  unset for normal searches. Offer Brave, Google, DuckDuckGo, Yahoo, Mojeek,
+  and Startpage; never pass a model-supplied expression to DDGS. Explicit plugin
+  backend configuration takes precedence and disables model preferences.
+- Publish an explicit typed input schema with descriptions for query, result
+  limit, hostname restrictions, and backend preference. Reject blank queries,
+  malformed domains, and unsupported preferences before contacting providers.
+- Preserve query/domains/results in successful output and add status, selected
+  backend, and compact attempt diagnostics. Exhaustion and total timeout return
+  `ToolResult(error=...)` with the same structured diagnostics and recovery
+  guidance, so runtime error status and model-visible evidence are both kept.
+  Never infer HTTP status or claim that no pages exist from DDGS's ambiguous
+  no-results exception. Propagate cancellation and unexpected errors.
+- Guide the model to use focused queries, restrict to authoritative hostnames
+  when appropriate, treat snippets as discovery evidence, inspect attempt
+  diagnostics, and avoid repeating identical failed calls immediately.
+- Compare the prior PR head (b22d883d) with the updated implementation using
+  real tool invocations, identical English/Chinese and domain-scoped queries,
+  alternating run order, and recorded results/latency/failures. Keep live tests
+  opt-in and report limitations; do not claim a reliability improvement unless
+  measurements show one. Also exercise the new schema with a real model.
+- Do not add proxy requirements, paid providers, persistent caches, or changes
+  to other toolsets.
 
 ## Implementation touchpoints and acceptance tests
 
 - `pyproject.toml`, `uv.lock`: update DDGS and its dependency graph.
+- `src/toolang/plugin/toolsets/_web_yahoo.py`: Yahoo layout compatibility.
 - `src/toolang/plugin/toolsets/web.py`: default fallback, deadlines, domain
   query construction, filtering, and diagnostics.
 - `tests/unit/plugin/test_web_search.py`: offline tests for failures and empty
   results followed by success; later-backend success; explicit selection;
   all-backend failure; domain scoping and strict filtering; per-attempt and
   total deadlines; cancellation; unexpected errors.
-- Preserve process isolation and existing tool/result schemas. Run the focused
+- `scripts/benchmark_web_search.py` and `docs/evaluations/`: reproducible live
+  comparison and measured outcomes.
+- Preserve process isolation and existing successful result fields. Run the focused
   plugin tests and all default repository checks. Run live smoke checks
   separately from the deterministic default test suite.
 

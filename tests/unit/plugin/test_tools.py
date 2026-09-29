@@ -307,12 +307,11 @@ def test_web_search_enforces_an_outer_timeout(
         stalled,
     )
 
-    with pytest.raises(ToolangError, match="web search timed out after 1s"):
-        _invoke(
-            tool,
-            {"query": "toolang"},
-            _tool_context(tmp_path, "web"),
-        )
+    result = asyncio.run(
+        tool.invoke({"query": "toolang"}, _tool_context(tmp_path, "web"))
+    )
+    assert result.error == "web search timed out after 1s"
+    assert result.output["status"] == "timeout"
 
 
 def test_web_search_validation_uses_the_canonical_toolset() -> None:
