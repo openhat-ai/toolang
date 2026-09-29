@@ -6638,17 +6638,22 @@ def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
     assert all(get_cwidth(line) == 20 for line in body)
 
 
-def test_chat_status_and_run_context_use_unlined_entry_labels() -> None:
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_chat_status_and_run_context_use_compact_entry_labels(kind: str) -> None:
     from toolang.cli.toolang.commands.chat.blocks import _run_context
     from toolang.cli.toolang.commands.chat.widgets import _chat_runnable_label
 
-    assert _chat_runnable_label("agent::agic:<entry:3>") == "agic:<entry>"
+    assert _chat_runnable_label(f"agent::{kind}:<entry:3>") == f"{kind}:-"
     assert _chat_runnable_label("agent::agic:<adhoc:5>") == "agic:<adhoc>"
     assert _chat_runnable_label("agic:chat") == "agic:chat"
     assert (
-        _run_context("agent::agic:<entry:3>", "openai/gpt-5", "", 200)
-        == "agic:<entry> · openai/gpt-5"
+        _run_context(f"agent::{kind}:<entry:3>", "openai/gpt-5", "", 200)
+        == f"{kind}:- · openai/gpt-5"
     )
+    status = widgets.StatusBar(f"agent::{kind}:<entry:3>", "openai/gpt-5")
+    rendered = "".join(text for _style, text in status._render())
+    assert rendered.startswith(f"  {kind}:- ")
+    assert status.runnable_label == f"agent::{kind}:<entry:3>"
 
 
 @pytest.mark.parametrize("slow_metadata", ["write", "rename"])
