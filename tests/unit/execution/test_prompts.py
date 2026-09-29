@@ -103,7 +103,7 @@ def test_protocol_groups_complete_tag_examples_without_granting_recall() -> None
         "handoffs",
         "context",
     ]
-    assert root[0].attrib == {"list": "tmp,example-project"}
+    assert root[0].attrib == {"list": "lab,example-project"}
     assert root[2].attrib == root[3].attrib
     assert root[4].attrib == {"ref": "skill/example-testing", "removed": "true"}
     assert root[5].attrib == {"enabled": "true"}

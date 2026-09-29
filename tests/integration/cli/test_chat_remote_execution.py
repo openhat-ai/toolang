@@ -103,11 +103,11 @@ agic chat(_: Part[]) -> Part[]:
             assert session.list_runnables("runnable")["default"] == entry
             assert setting == entry
         thread_id = session.create_thread()
-        absolute_workspace = core.layout.home / ".tmp" / "absolute"
+        absolute_workspace = core.layout.home / "lab" / "absolute"
         absolute_workspace.mkdir(parents=True)
-        assert session.resolve_workdir(None, None, thread_id) == "tmp://"
+        assert session.resolve_workdir(None, None, thread_id) == "lab://"
         assert session.resolve_workdir(str(absolute_workspace), None, thread_id) == (
-            "tmp://absolute"
+            "lab://absolute"
         )
         request = session.build_request(
             thread_id,
@@ -121,7 +121,7 @@ agic chat(_: Part[]) -> Part[]:
             errors.append,
             states.append,
         )
-        assert session.resolve_workdir(None, None, thread_id) == "tmp://"
+        assert session.resolve_workdir(None, None, thread_id) == "lab://"
         result = session.get_result(None, thread_id=thread_id)
 
         assert isinstance(events[0], RunBegin)
@@ -129,7 +129,7 @@ agic chat(_: Part[]) -> Part[]:
         root_id = events[0].run
         assert states == [
             RunAccepted(root_id),
-            RunWorkdirUpdated(root_id, "tmp://"),
+            RunWorkdirUpdated(root_id, "lab://"),
         ]
         assert result.run_id == root_id
         assert result.output == (TextPart("remote response"),)

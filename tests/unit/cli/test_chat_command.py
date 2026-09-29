@@ -335,7 +335,7 @@ class _Client:
         for value in (workdir, workdir_base):
             if isinstance(value, str) and "://" in value:
                 return value
-        return "tmp://"
+        return "lab://"
 
     def apply_setting(
         self,

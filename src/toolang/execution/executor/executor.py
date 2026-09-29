@@ -17,7 +17,10 @@ from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
-from toolang.common.layout import ensure_tmp_workspace
+from toolang.common.layout import (
+    IMPLICIT_WORKSPACE_NAME,
+    ensure_scratch_workspace,
+)
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.base.utils.workspace_paths import (
@@ -352,10 +355,10 @@ class RunExecutor:
     def _default_workdir(self, setup: AgentSetup, state: AgentState) -> str:
         environment = setup.environment
         if environment is None or environment.workspace_location == "host":
-            ensure_tmp_workspace(setup.layout.home)
+            ensure_scratch_workspace(setup.layout.home)
         names = available_workspaces(setup, state)
-        if not names or names[0] != "tmp":
-            raise ToolangError("implicit tmp workspace is unavailable")
+        if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
+            raise ToolangError("implicit lab workspace is unavailable")
         return workspace_uri(names[-1])
 
     def _valid_workdir(
@@ -1506,10 +1509,12 @@ class RunExecutor:
                         index=candidate.index,
                         invalidated_runs=invalidated,
                         finished_at=utc_now(),
-                        fallback_workdir=workspace_uri("tmp"),
+                        fallback_workdir=workspace_uri(IMPLICIT_WORKSPACE_NAME),
                     )
                     for invalidated_run in invalidated:
-                        execution._cwd_cache[invalidated_run] = workspace_uri("tmp")
+                        execution._cwd_cache[invalidated_run] = workspace_uri(
+                            IMPLICIT_WORKSPACE_NAME
+                        )
                     execution._current_state = (
                         state,
                         ControlRef(RunRef(active.root_run_id), candidate.index),

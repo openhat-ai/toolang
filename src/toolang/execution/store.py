@@ -29,6 +29,7 @@ from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.base.utils.workspace_paths import parse_cwd
+from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.run_results import run_completion, run_receipt, scheduled_run
@@ -1183,7 +1184,7 @@ class RunStore:
         index: int,
         invalidated_runs: Sequence[str],
         finished_at: str,
-        fallback_workdir: str = "tmp://",
+        fallback_workdir: str = f"{IMPLICIT_WORKSPACE_NAME}://",
     ) -> None:
         """Apply State adoption and all affected Run locations in one transaction."""
         with self.write_transaction():

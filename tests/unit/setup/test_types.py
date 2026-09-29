@@ -252,14 +252,14 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     guest = Path("/srv/toolang/agents/alice/.workspaces/repo")
     repo = tmp_path / "repo"
-    tmp_source = layout.home / ".tmp"
-    guest_tmp = Path("/srv/toolang/agents/alice/.workspaces/tmp")
+    lab_source = layout.home / "lab"
+    guest_lab = Path("/srv/toolang/agents/alice/.workspaces/lab")
     monkeypatch.setenv(
         "TOOLANG_WORKSPACE_MOUNTS",
         json.dumps(
             {
                 "repo": [str(repo), str(guest)],
-                "tmp": [str(tmp_source), str(guest_tmp)],
+                "lab": [str(lab_source), str(guest_lab)],
             }
         ),
     )
@@ -269,22 +269,52 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
         environment=AgentEnvironment.capture(layout, sandbox="docker:python:3.13-slim"),
     )
     assert setup.workspace_roots({"repo": str(repo)}) == {
-        "tmp": guest_tmp,
+        "lab": guest_lab,
         "repo": guest,
     }
     assert setup.workspace_roots({"repo": str(tmp_path / "replacement")}) == {
-        "tmp": guest_tmp
+        "lab": guest_lab
     }
     assert setup.workspace_roots({"added": str(tmp_path / "added")}) == {
-        "tmp": guest_tmp
+        "lab": guest_lab
     }
     assert AgentSetup(layout=layout, envs={}).workspace_roots({"repo": str(repo)}) == {
-        "tmp": tmp_source,
+        "lab": lab_source,
         "repo": repo,
     }
     assert (
         setup.workspace_roots(
-            {"tmp": str(tmp_path / "configured-tmp"), "repo": str(repo)}
-        )["tmp"]
-        == guest_tmp
+            {"lab": str(tmp_path / "configured-lab"), "repo": str(repo)}
+        )["lab"]
+        == guest_lab
     )
+
+
+def test_guest_workspace_roots_include_configured_tmp_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    layout = AgentLayout.resident(tmp_path / "host", "alice")
+    configured = tmp_path / "configured-tmp"
+    lab_guest = Path("/srv/toolang/agents/alice/.workspaces/lab")
+    tmp_guest = Path("/srv/toolang/agents/alice/.workspaces/tmp")
+    monkeypatch.setenv(
+        "TOOLANG_WORKSPACE_MOUNTS",
+        json.dumps(
+            {
+                "lab": [str(layout.home / "lab"), str(lab_guest)],
+                "tmp": [str(configured), str(tmp_guest)],
+            }
+        ),
+    )
+    setup = AgentSetup(
+        layout=layout,
+        envs={},
+        environment=AgentEnvironment.capture(layout, sandbox="docker:python:3.13-slim"),
+    )
+
+    assert setup.workspace_roots({"tmp": str(configured)}) == {
+        "lab": lab_guest,
+        "tmp": tmp_guest,
+    }

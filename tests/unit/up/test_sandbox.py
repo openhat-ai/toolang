@@ -1137,15 +1137,15 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
         assert isinstance(prepare, tuple)
         request = cast(SandboxRequest, prepare[2])
         hosted = Path("/runtime/agents/alice/.workspaces/repo")
-        tmp_root = spec.serve.layout.home / ".tmp"
-        hosted_tmp = Path("/runtime/agents/alice/.workspaces/tmp")
+        lab_root = spec.serve.layout.home / "lab"
+        hosted_lab = Path("/runtime/agents/alice/.workspaces/lab")
         assert SandboxMount(repo, hosted) in request.mounts
-        assert SandboxMount(tmp_root.resolve(), hosted_tmp) in request.mounts
+        assert SandboxMount(lab_root.resolve(), hosted_lab) in request.mounts
         assert not any(mount.local_path == missing for mount in request.mounts)
         assert request.envs["TOOLANG_WORKSPACE_LOCATION"] == "guest"
         assert json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"]) == {
             "repo": [str(repo), str(hosted)],
-            "tmp": [str(tmp_root.resolve()), str(hosted_tmp)],
+            "lab": [str(lab_root.resolve()), str(hosted_lab)],
         }
         new = tmp_path / "new"
         new.mkdir()

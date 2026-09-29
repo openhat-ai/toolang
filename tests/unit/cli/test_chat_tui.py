@@ -3407,7 +3407,7 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
 
 def test_chat_status_workspace_label_uses_workspace_uri_or_base() -> None:
     assert tui._workspace_label("tq://src/ui") == "tq"
-    assert tui._workspace_label("src/ui", "tmp://") == "tmp"
+    assert tui._workspace_label("src/ui", "lab://") == "lab"
     assert tui._workspace_label("/absolute/path") is None
 
 
@@ -3420,7 +3420,7 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
             thread_id: str | None,
         ) -> str:
             del workdir_base, thread_id
-            return "repo://project" if workdir == "/private/project" else "tmp://"
+            return "repo://project" if workdir == "/private/project" else "lab://"
 
     client = WorkspaceClient()
     app = tui.ChatTuiApp(
@@ -3443,7 +3443,7 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
 
     app.setting = replace(app.setting, workdir=None, workdir_base=None)
     app.app_context.refresh_status()
-    assert app.status_bar.workspace_label == "tmp"
+    assert app.status_bar.workspace_label == "lab"
 
 
 def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
@@ -5225,7 +5225,7 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
                 runnable=RunnableRequest("flow:research", CallInput({"_": "queued"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
-                workdir="tmp://queued",
+                workdir="lab://queued",
             ),
         )
     )
@@ -5234,8 +5234,8 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
 
     assert app.status_bar.running
     assert app.status_bar.runnable_label == "agic:chat"
-    assert app.status_bar.run_workspace_label == "tmp"
-    assert app.status_bar._center_label() == "tmp"
+    assert app.status_bar.run_workspace_label == "lab"
+    assert app.status_bar._center_label() == "lab"
     assert app.run_in_flight.is_set()
 
 
@@ -6795,6 +6795,6 @@ def test_chat_tui_seeds_and_updates_session_workdir() -> None:
         app._session_workdir_revision,
         True,
     )
-    app._handle_run_state(RunWorkdirUpdated("run_1", "tmp://final"))
-    assert app.setting.workdir == "tmp://final"
+    app._handle_run_state(RunWorkdirUpdated("run_1", "lab://final"))
+    assert app.setting.workdir == "lab://final"
     assert app.setting.workdir_base is None

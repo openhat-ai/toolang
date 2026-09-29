@@ -326,7 +326,7 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(setup.layout)
     core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
-    (core.layout.home / ".tmp" / "subdir").mkdir(parents=True)
+    (core.layout.home / "lab" / "subdir").mkdir(parents=True)
     agents.write_runtime_state(
         core.layout,
         endpoint="http://127.0.0.1:7001",
@@ -355,7 +355,7 @@ agic chat(_: Part[]) -> Part[]:
                 "/api/v1/runs/workdir/resolve",
                 json={
                     "thread_id": thread_id,
-                    "workdir": str(core.layout.home / ".tmp" / "subdir"),
+                    "workdir": str(core.layout.home / "lab" / "subdir"),
                 },
             )
             relative_workdir = client.post(
@@ -363,7 +363,7 @@ agic chat(_: Part[]) -> Part[]:
                 json={
                     "thread_id": thread_id,
                     "workdir": "subdir",
-                    "workdir_base": "tmp://",
+                    "workdir_base": "lab://",
                 },
             )
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
@@ -380,7 +380,7 @@ agic chat(_: Part[]) -> Part[]:
                     },
                     "policy": {"allow": [], "limits": {}},
                     "workdir": "subdir",
-                    "workdir_base": "tmp://",
+                    "workdir_base": "lab://",
                 },
             )
             run_id = executed.headers["X-Toolang-Run-ID"]
@@ -410,17 +410,17 @@ agic chat(_: Part[]) -> Part[]:
             "max_output": None,
         }
         assert defaults.json()["runnable"] == "agic:chat"
-        assert defaults.json()["workdir"] == "tmp://"
+        assert defaults.json()["workdir"] == "lab://"
         assert thread_defaults.status_code == 200
-        assert thread_defaults.json()["workdir"] == "tmp://"
+        assert thread_defaults.json()["workdir"] == "lab://"
         assert absolute_workdir.status_code == 200
-        assert absolute_workdir.json() == {"workdir": "tmp://subdir"}
+        assert absolute_workdir.json() == {"workdir": "lab://subdir"}
         assert relative_workdir.status_code == 200
-        assert relative_workdir.json() == {"workdir": "tmp://subdir"}
+        assert relative_workdir.json() == {"workdir": "lab://subdir"}
         assert final_thread_defaults.status_code == 200
-        assert final_thread_defaults.json()["workdir"] == "tmp://subdir"
+        assert final_thread_defaults.json()["workdir"] == "lab://subdir"
         assert new_session_defaults.status_code == 200
-        assert new_session_defaults.json()["workdir"] == "tmp://subdir"
+        assert new_session_defaults.json()["workdir"] == "lab://subdir"
         assert models.status_code == 200
         assert models.json()["default"] == TEST_MODEL_REF
         assert core.store.list_runs(limit=None) == [core.store.get_run(run_id=run_id)]

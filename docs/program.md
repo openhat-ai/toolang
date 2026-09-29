@@ -738,7 +738,7 @@ grants service tools.
   internal tombstone, not a model-facing revision. Trigger and guidance share a
   ref but have separate visibility. Definition changes retract stale guidance.
 - Each Model Call receives the usable workspace names in
-  `<toolang:workspace list="tmp,repo1"/>` and its current workdir in
+  `<toolang:workspace list="lab,repo1"/>` and its current workdir in
   `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
   workspace roots are not exposed.
 - Lifecycle controls such as run, retry, reload, execute, fork, and rewind do

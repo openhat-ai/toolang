@@ -52,7 +52,7 @@ def _run_defaults() -> dict[str, object]:
             "ref": "test/model",
         },
         "runnable": "agic:chat",
-        "workdir": "tmp://",
+        "workdir": "lab://",
         "policy": {"allow": [], "limits": {}},
     }
 
@@ -81,7 +81,7 @@ def test_remote_chat_initial_workdir_uses_selected_thread() -> None:
         transport=httpx.MockTransport(handler),
     )
     try:
-        assert session.initial_workdir(None) == "tmp://"
+        assert session.initial_workdir(None) == "lab://"
         assert session.initial_workdir("term_existing") == "repo://from-history"
     finally:
         session.close()

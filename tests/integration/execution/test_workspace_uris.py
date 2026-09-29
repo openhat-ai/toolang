@@ -179,7 +179,7 @@ def test_retry_keeps_still_authorized_recorded_workspace_grants(
                 )
                 assert retried.status == "succeeded", retried.error
                 assert _workspace_lists(harness.adapter.invocations[-1].call)[-1:] == [
-                    "tmp,repo"
+                    "lab,repo"
                 ]
                 assert watcher.load(original.revision).workspaces == {"repo": str(repo)}
             finally:
@@ -393,10 +393,10 @@ def test_reload_updates_revision_listing_grants_and_mapping_in_one_run(tmp_path)
             results = _results(harness, run)
             assert results["reload"].error is None
             assert _workspace_lists(harness.adapter.invocations[0].call)[-1:] == [
-                "tmp,moving,removed"
+                "lab,moving,removed"
             ]
             assert _workspace_lists(harness.adapter.invocations[-1].call)[-1:] == [
-                "tmp,moving,added"
+                "lab,moving,added"
             ]
             assert "not available" in results["removed"].error
             assert results["moved"].error is results["added"].error is None

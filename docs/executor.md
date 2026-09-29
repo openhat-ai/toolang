@@ -294,7 +294,7 @@ have separate visibility. Withdrawals append a revision-zero tombstone; previous
 calls and their content remain unchanged. Public message payloads omit metadata.
 
 Every Model Call receives the current usable workspace names as
-`<toolang:workspace list="tmp,repo1"/>` and the current workdir as
+`<toolang:workspace list="lab,repo1"/>` and the current workdir as
 `<toolang:workdir path="repo1://src"/>`. These runtime declarations are refreshed on
 every call; workspace names do not expose host roots. Assembly does not scan rules;
 preflight blocks a path-aware operation until applicable rules are current and model-visible.
