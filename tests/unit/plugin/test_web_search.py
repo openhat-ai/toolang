@@ -343,3 +343,58 @@ def test_web_search_does_not_hide_programming_errors(monkeypatch, tmp_path):
             .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
         )
     assert calls == ["brave"]
+
+
+@pytest.mark.parametrize("backend", ["google", "auto", "google,brave"])
+def test_web_search_explicit_backend_keeps_the_total_timeout(
+    monkeypatch, tmp_path, backend
+) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        # An explicit DDGS expression can take several requests to complete.
+        await asyncio.sleep(0.02)
+        return [{"href": "https://fly.io/docs/"}]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    monkeypatch.setattr("toolang.plugin.toolsets.web.BACKEND_TIMEOUT", 0.01)
+    result = asyncio.run(
+        create_toolset({"backend": backend, "timeout": 15})
+        .tools()["search"]
+        .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+    ).output
+
+    assert calls == [backend]
+    assert result["results"][0]["url"] == "https://fly.io/docs/"
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "https://fly.io:invalid/docs/",
+        "https://fly.io:999999/docs/",
+        "https://bad host/docs/",
+        "https://fly.io/do cs/",
+    ],
+)
+def test_web_search_does_not_stop_on_malformed_result_urls(
+    monkeypatch, tmp_path, href
+) -> None:
+    calls = []
+
+    async def search(query, *, max_results, timeout, backend):
+        calls.append(backend)
+        if backend == "brave":
+            return [{"href": href}]
+        return [{"href": "https://fly.io:443/docs/a%20b"}]
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", search)
+    result = asyncio.run(
+        create_toolset({})
+        .tools()["search"]
+        .invoke({"query": "Fly.io"}, ToolContext(tmp_path, tmp_path))
+    ).output
+
+    assert calls == ["brave", "google"]
+    assert result["results"][0]["url"] == "https://fly.io:443/docs/a%20b"

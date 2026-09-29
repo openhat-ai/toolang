@@ -63,7 +63,9 @@ class WebToolset:
             limit = _int_value(top_k, default=self._top_k)
             normalized_domains = _domains(domains)
             search_query = _domain_query(query, normalized_domains)
-            attempt_timeout = min(self._timeout, BACKEND_TIMEOUT)
+            # Only fallback attempts need to leave time for another backend.
+            # An explicit DDGS expression retains the configured total budget.
+            attempt_timeout = BACKEND_TIMEOUT if len(self._backends) > 1 else None
             try:
                 async with asyncio.timeout(self._timeout):
                     for backend in self._backends:
@@ -73,7 +75,7 @@ class WebToolset:
                                 raw_results = await _run_search(
                                     search_query,
                                     max_results=limit * 3,
-                                    timeout=attempt_timeout,
+                                    timeout=min(self._timeout, BACKEND_TIMEOUT),
                                     backend=backend,
                                 )
                         except (DDGSException, TimeoutError) as exc:
@@ -231,8 +233,12 @@ def _domains(value: object) -> list[str]:
 
 
 def _matches_domains(url: str, domains: list[str]) -> bool:
+    if any(character.isspace() for character in url):
+        return False
     try:
         parsed = urlparse(url)
+        # urlparse defers invalid-port errors until this property is accessed.
+        _ = parsed.port
         hostname = (parsed.hostname or "").lower()
     except ValueError:
         return False

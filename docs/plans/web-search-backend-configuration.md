@@ -33,12 +33,15 @@ configuration. A successful search preserves the existing result schema.
 - Retry on DDGS exceptions, an attempt timeout, empty results, or results
   entirely removed by URL/domain filtering. Propagate cancellation and
   unexpected programming errors.
-- Keep the existing total `timeout` (15 seconds by default). Cap each attempt
-  at five seconds, including worker startup, and keep process workers
-  cancellable. The total deadline covers all attempts.
+- Keep the existing total `timeout` (15 seconds by default). Cap each default
+  fallback attempt at five seconds, including worker startup, and keep process
+  workers cancellable. The total deadline covers all attempts. An explicit
+  backend expression retains the full configured total budget; DDGS request
+  timeouts remain capped at five seconds in both cases.
 - Add `site:hostname` for one domain and `(site:a OR site:b)` for multiple
   domains. Keep strict hostname/subdomain filtering afterward and discard
-  malformed or non-HTTP(S) result URLs. Preserve the original query in output.
+  malformed or non-HTTP(S) result URLs, including invalid ports and unescaped
+  whitespace. Preserve the original query in output.
 - If all attempts fail, raise a `ToolangError` saying the search services
   returned no usable results and listing the attempted backends. Preserve the
   total-timeout error. Log backend, elapsed time, error, and raw/usable result
