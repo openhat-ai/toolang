@@ -73,7 +73,9 @@ caller input budget. Its original records remain unchanged.
 tokens and includes reasoning; an explicit reasoning budget must be smaller than
 the resolved output allowance. Batch admission uses 80% of the compact model's
 safety input capacity; its window controls batching independently of the thread
-model's percentage denominator.
+model's percentage denominator. The summary target is soft: the returned text
+must fit both the assembled caller request and the next compact request, each
+counted by its own model-bound estimator and usage calibration.
 
 When context metadata is unknown, a percentage trigger leaves admission to the
 known safety budget. If compaction is needed with unresolved percentage summary

@@ -14,8 +14,6 @@ import math
 import re
 from typing import cast
 
-import tiktoken
-
 from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
@@ -30,7 +28,7 @@ from toolang.base.types.model import Model, ModelRequest, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.compaction import CompactionResult
 from toolang.lang.input import CallInput
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage
+from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.execution.assembly.history import (
     HistorySelection,
     HistoryUnit,
@@ -56,6 +54,7 @@ from toolang.execution.types import (
     validate_compaction_coverage,
 )
 from toolang.execution.errors import HistoryChangedError
+from toolang.execution import tokens
 from toolang.plugin.models.budget import input_budget, output_budget
 
 # One observed DeepSeek call used 16% more provider input tokens than the
@@ -67,68 +66,12 @@ _CONTEXT_ERROR = re.compile(
     re.IGNORECASE,
 )
 
-# Provisional, exact-ref corrections measured on the same two reducer prompts.
-# Other models keep the unadjusted encoding estimate; admission/retry is separate.
-_MODEL_TOKEN_SCALES = {
-    "vercel/openai/gpt-6-luna-fast": 0.92,
-    "vercel/anthropic/claude-sonnet-5": 1.55,
-    "deepseek/deepseek-flash": 1.0,
-}
-
 
 def resolve_target(value: int | float, context: int | None) -> int | None:
     """Resolve a captured token count/fraction against thread context only."""
     if isinstance(value, int):
         return value
     return max(1, int(context * Decimal(str(value)))) if context is not None else None
-
-
-def estimate_model_input_tokens(request: ModelCall, model: Model) -> int:
-    """Estimate a complete ModelCall's input tokens without invoking the model.
-
-    Use o200k_base for serialized text, retaining InputEstimate's framing and
-    media allowance. Corrections are provisional, not model-native tokenizers.
-    This function does not choose batch boundaries or handle provider errors.
-    """
-    return math.ceil(_input_tokens(request) * _MODEL_TOKEN_SCALES.get(model.ref, 1.0))
-
-
-def _text_tokens(text: str) -> int:
-    return len(tiktoken.get_encoding("o200k_base").encode_ordinary(text))
-
-
-def _message_tokens(message: Message) -> int:
-    return (
-        8
-        + _text_tokens(json.dumps(message.to_data(), ensure_ascii=False))
-        + 4096
-        * sum(part.type in {"image", "audio", "document"} for part in message.parts)
-    )
-
-
-def _input_tokens(request: ModelCall) -> int:
-    """Count unscaled components; apply the model correction only to their sum."""
-    fixed = json.dumps(
-        {
-            "instructions": request.instructions,
-            "tools": [item.to_data() for item in request.tools],
-            "output_schema": request.output_schema,
-            "continuation": request.continuation,
-            "reasoning": request.reasoning.to_data() if request.reasoning else None,
-        },
-        ensure_ascii=False,
-    )
-    schema_overhead = (
-        256 + _text_tokens(json.dumps(request.output_schema, ensure_ascii=False))
-        if request.output_schema is not None
-        else 0
-    )
-    return (
-        32
-        + _text_tokens(fixed)
-        + schema_overhead
-        + sum(_message_tokens(message) for message in request.messages)
-    )
 
 
 class HistoryReader:
@@ -429,14 +372,6 @@ def _estimate_fits(estimate: int, scale: float, capacity: int) -> bool:
     return estimate * scale <= capacity * ADMISSION_FRACTION
 
 
-def _update_estimate_scale(
-    scale: float, estimate: int, usage: ModelUsage | None
-) -> float:
-    if estimate <= 0 or usage is None:
-        return scale
-    return max(scale, usage.input_tokens / estimate)
-
-
 def is_context_overflow(error: ModelResponseError) -> bool:
     return error.kind == "provider_rejection" and bool(
         _CONTEXT_ERROR.search(str(error))
@@ -460,7 +395,7 @@ class Compaction:
         summary: str = "",
         max_output_tokens: int | None = None,
         reasoning: Reasoning | None = None,
-        summary_limit: int | None = None,
+        summary_fits: Callable[[str], bool] | None = None,
     ) -> None:
         if size <= 0:
             raise ValueError("size must be positive")
@@ -472,10 +407,10 @@ class Compaction:
         self.reader = HistoryReader(roots, load_unit)
         self.model, self.size, self.summary = model, size, summary
         self.reasoning = reasoning
-        self.summary_limit = summary_limit
-        self.target = min(size, summary_limit or size, max(1, capacity // 4))
+        self.summary_fits = summary_fits
+        self.target = min(size, max(1, capacity // 4))
         self._summary_retries = 0
-        self.scale = 1.0
+        self.counter = tokens.TokenCounter(model.ref)
         self.batch: list[HistoryUnit] = []
         self.estimate = 0
         self._serialized: dict[RunRef | StepRef, str] = {}
@@ -490,8 +425,8 @@ class Compaction:
         )
 
     def _fits(self, call: ModelCall) -> bool:
-        self.estimate = estimate_model_input_tokens(call, self.model)
-        return _estimate_fits(self.estimate, self.scale, self.capacity)
+        self.estimate = self.counter.base(call)
+        return _estimate_fits(self.estimate, self.counter.scale, self.capacity)
 
     def _truncate(self, unit: HistoryUnit) -> None:
         original = json.loads(self._serialized[unit.ref])
@@ -507,7 +442,7 @@ class Compaction:
                 )
             self._serialized[unit.ref] = content
             if self._fits(self.request((unit,))):
-                self._unit_tokens[unit.ref] = _text_tokens(content)
+                self._unit_tokens[unit.ref] = tokens.text_tokens(content)
                 return
             if limit == 64:
                 # Extremely wide/deep payloads get one marked textual excerpt.
@@ -526,7 +461,7 @@ class Compaction:
                     shortened, ensure_ascii=False, separators=(",", ":")
                 )
                 if self._fits(self.request((unit,))):
-                    self._unit_tokens[unit.ref] = _text_tokens(
+                    self._unit_tokens[unit.ref] = tokens.text_tokens(
                         self._serialized[unit.ref]
                     )
                     return
@@ -539,26 +474,26 @@ class Compaction:
         if self._pending_call is not None:
             return self._pending_call
         if not self.batch:
-            base = estimate_model_input_tokens(self.request(()), self.model)
+            base = self.counter.base(self.request(()))
             total = 0
             while (unit := self.reader.peek()) is not None:
                 if unit.ref not in self._serialized:
                     self._serialized[unit.ref] = _unit_json(unit)
-                    self._unit_tokens[unit.ref] = _text_tokens(
+                    self._unit_tokens[unit.ref] = tokens.text_tokens(
                         self._serialized[unit.ref]
                     )
-                tokens = self._unit_tokens[unit.ref]
+                unit_tokens = self._unit_tokens[unit.ref]
                 estimate = base + math.ceil(
-                    (total + tokens) * _MODEL_TOKEN_SCALES.get(self.model.ref, 1.0)
+                    (total + unit_tokens) * self.counter.correction
                 )
-                if not _estimate_fits(estimate, self.scale, self.capacity):
+                if not _estimate_fits(estimate, self.counter.scale, self.capacity):
                     if self.batch:
                         break
                     self._truncate(unit)
-                    tokens = self._unit_tokens[unit.ref]
+                    unit_tokens = self._unit_tokens[unit.ref]
                 self.batch.append(unit)
                 self.reader.advance()
-                total += tokens
+                total += unit_tokens
         if not self.batch:
             return None
         while not self._fits(call := self.request(self.batch)):
@@ -572,10 +507,7 @@ class Compaction:
 
     def validate_summary(self, result: ModelCallResult) -> str:
         summary = summary_text(result)
-        if (
-            self.summary_limit is not None
-            and (len(summary.encode("utf-8")) + 2) // 3 > self.summary_limit
-        ):
+        if self.summary_fits is not None and not self.summary_fits(summary):
             raise SummaryTooLarge(
                 "compaction summary exceeds the caller's remaining input budget"
             )
@@ -583,8 +515,10 @@ class Compaction:
             _call(summary, (), self.target, self.output), reasoning=self.reasoning
         )
         if not _estimate_fits(
-            estimate_model_input_tokens(following, self.model) + 256,
-            _update_estimate_scale(self.scale, self.estimate, result.usage),
+            self.counter.base(following) + 256,
+            self.counter.calibrated_scale(
+                self.estimate, result.usage.input_tokens if result.usage else None
+            ),
             self.capacity,
         ):
             raise SummaryTooLarge(
@@ -602,7 +536,9 @@ class Compaction:
     def accept(self, result: ModelCallResult) -> None:
         summary = self.validate_summary(result)
         self.summary = summary
-        self.scale = _update_estimate_scale(self.scale, self.estimate, result.usage)
+        self.counter.scale = self.counter.calibrated_scale(
+            self.estimate, result.usage.input_tokens if result.usage else None
+        )
         for unit in self.batch:
             self._serialized.pop(unit.ref, None)
             self._unit_tokens.pop(unit.ref, None)
@@ -613,10 +549,12 @@ class Compaction:
     def reject(self, error: ModelResponseError) -> None:
         if not is_context_overflow(error):
             raise error
-        self.scale = _update_estimate_scale(self.scale, self.estimate, error.usage)
+        self.counter.scale = self.counter.calibrated_scale(
+            self.estimate, error.usage.input_tokens if error.usage else None
+        )
         self._pending_call = None
         if len(self.batch) == 1:
-            self.scale *= 2
+            self.counter.scale *= 2
             self._truncate(self.batch[0])
             return
         midpoint = max(1, len(self.batch) // 2)
@@ -807,7 +745,6 @@ class CompactSpec:
     size: int
     versions: Mapping[str, str]
     units: tuple[RunRef | StepRef, ...]
-    summary_limit: int | None = None
     summary_fits: Callable[[str], bool] | None = None
 
     def input(self) -> CallInput:
@@ -840,7 +777,6 @@ class CompactSpec:
                         else None,
                         "model": self.model.ref,
                         "limit": dict(self.model.limit),
-                        "summary_limit": self.summary_limit,
                     },
                     sort_keys=True,
                 ),

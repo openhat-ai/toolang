@@ -34,21 +34,10 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.assembly.history import summary_message
 from toolang.execution.compaction import permit
-from toolang.execution.executor.budget import InputEstimate
+from toolang.execution.tokens import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 from toolang.plugin.models.collections import ModelCollection
-
-
-@pytest.fixture(autouse=True)
-def offline_compact_estimate(monkeypatch):
-    from toolang.execution import compaction
-
-    monkeypatch.setattr(
-        compaction,
-        "_text_tokens",
-        lambda text: (len(text.encode("utf-8")) + 2) // 3,
-    )
 
 
 def compact_runs(harness, thread):
@@ -1499,5 +1488,49 @@ def test_batched_tool_replies_remain_in_their_own_step_units(tmp_path, skipped):
                     if isinstance(p, ToolResultPart)
                 ]
                 assert replies == [call.tool_call_id]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("caller_scale,success", [(1, True), (2, False)])
+def test_summary_publication_uses_the_caller_model_count(
+    tmp_path, monkeypatch, caller_scale, success
+):
+    from toolang.execution import tokens
+
+    h = seeded_harness(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h)
+            monkeypatch.setattr(
+                tokens,
+                "_MODEL_TOKEN_SCALES",
+                {"test/scripted": caller_scale, "test/reducer": 1},
+            )
+            h.setup = replace(
+                h.setup,
+                compact=replace(h.setup.compact, trigger=11200, recent=1, summary=256),
+            )
+            summary = "fact " * 1500
+            h.adapter._responses.extend(
+                [reply(summary), reply("done")] if success else [reply(summary)] * 3
+            )
+            run = await h.executor.run(spec(h, thread, "continue"))
+            assert run.status == ("succeeded" if success else "failed"), (
+                h.store.resolve_error(run.error) if run.error else None
+            )
+            assert (h.store.get_thread(thread_id=thread).horizon is not None) == success
+            (child,) = compact_runs(h, thread)
+            model_steps = [
+                s for s in h.store.list_steps(run_id=child.id) if s.kind == "model"
+            ]
+            assert len(model_steps) == (1 if success else 3)
+            assert all(
+                s.status == ("succeeded" if success else "failed") for s in model_steps
+            )
+            assert h.adapter.invocations[-1].model.ref == (
+                "test/scripted" if success else "test/reducer"
+            )
 
     asyncio.run(scenario())

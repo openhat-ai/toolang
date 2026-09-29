@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from toolang.execution import compaction as experiment
+from toolang.execution import tokens
 from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import (
     ImagePart,
@@ -29,7 +30,7 @@ def offline_encoding(monkeypatch):
         def encode_ordinary(self, text):
             return list(text.encode("utf-8"))
 
-    monkeypatch.setattr(experiment.tiktoken, "get_encoding", lambda name: Encoding())
+    monkeypatch.setattr(tokens.tiktoken, "get_encoding", lambda name: Encoding())
 
 
 class History:
@@ -288,9 +289,7 @@ def test_provider_usage_calibrates_future_admission() -> None:
     estimate = 500
     capacity = 1000
     assert experiment._estimate_fits(estimate, 1.0, capacity)
-    scale = experiment._update_estimate_scale(
-        1.0, estimate, ModelUsage(input_tokens=900, output_tokens=10)
-    )
+    scale = tokens.TokenCounter().calibrated_scale(estimate, 900)
     assert scale == pytest.approx(1.8)
     assert not experiment._estimate_fits(estimate, scale, capacity)
     assert experiment._estimate_fits(800, 1.0, capacity)
@@ -368,32 +367,20 @@ def test_o200k_input_estimate_uses_exact_model_corrections() -> None:
         for m in call.messages
     )
 
-    def model(ref: str) -> Model:
-        return cast(Model, SimpleNamespace(ref=ref))
-
-    assert (
-        experiment.estimate_model_input_tokens(call, model("vercel/google/unknown"))
-        == base
+    assert tokens.TokenCounter("vercel/google/unknown").base(call) == base
+    assert tokens.TokenCounter("vercel/openai/gpt-6-luna-fast").base(call) == math.ceil(
+        base * 0.92
     )
-    assert experiment.estimate_model_input_tokens(
-        call, model("vercel/openai/gpt-6-luna-fast")
-    ) == math.ceil(base * 0.92)
-    assert experiment.estimate_model_input_tokens(
-        call, model("vercel/anthropic/claude-sonnet-5")
+    assert tokens.TokenCounter("vercel/anthropic/claude-sonnet-5").base(
+        call
     ) == math.ceil(base * 1.55)
+    assert tokens.TokenCounter("deepseek/deepseek-flash").base(call) == base
     assert (
-        experiment.estimate_model_input_tokens(call, model("deepseek/deepseek-flash"))
-        == base
-    )
-    assert (
-        experiment.estimate_model_input_tokens(
-            call, model("vercel/anthropic/claude-opus-5.5")
-        )
-        == base
+        tokens.TokenCounter("vercel/anthropic/claude-opus-5.5").base(call) == base
     )  # An unmeasured variant does not inherit Sonnet's correction.
     assert (
-        experiment.estimate_model_input_tokens(
-            experiment._call("", (), 512, 2048), model("deepseek/deepseek-flash")
+        tokens.TokenCounter("deepseek/deepseek-flash").base(
+            experiment._call("", (), 512, 2048)
         )
         > 0
     )
@@ -425,13 +412,13 @@ def test_incremental_counts_match_full_requests_after_rejection_and_calibration(
     )
     call = reducer.next_call()
     assert call is not None and len(reducer.batch) > 1
-    assert reducer.estimate == experiment.estimate_model_input_tokens(call, model)
+    assert reducer.estimate == tokens.TokenCounter(model.ref).base(call)
     reducer.reject(
         ModelResponseError("context_length_exceeded", kind="provider_rejection")
     )
     covered = []
     while (call := reducer.next_call()) is not None:
-        assert reducer.estimate == experiment.estimate_model_input_tokens(call, model)
+        assert reducer.estimate == tokens.TokenCounter(model.ref).base(call)
         covered.extend(str(unit.run_id) for unit in reducer.batch)
         reducer.accept(
             ModelCallResult(
@@ -442,7 +429,7 @@ def test_incremental_counts_match_full_requests_after_rejection_and_calibration(
             )
         )
     assert covered == list(history.values)
-    assert reducer.scale > 1
+    assert reducer.counter.scale > 1
 
 
 def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
@@ -455,7 +442,7 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
             encoded[text] += 1
             return list(text.encode("utf-8"))
 
-    monkeypatch.setattr(experiment.tiktoken, "get_encoding", lambda name: Encoding())
+    monkeypatch.setattr(tokens.tiktoken, "get_encoding", lambda name: Encoding())
     history = History({f"run_{i}": f"payload-{i} " + "x" * 2000 for i in range(5)})
     model = cast(
         Model,
@@ -522,7 +509,7 @@ def test_reasoning_budget_is_validated_before_compact_request():
 
 def test_wide_latest_step_is_bounded_without_losing_tool_pair():
     from toolang.execution.assembly.history import HistorySelection
-    from toolang.execution.executor.budget import message_tokens
+    from toolang.execution.tokens import message_tokens
 
     ref = RunRef("run_wide")
     call = ToolCallPart(
@@ -592,3 +579,43 @@ def test_summary_admission_uses_the_new_provider_calibration():
     with pytest.raises(experiment.SummaryTooLarge, match="next batch"):
         reducer.validate_summary(result)
     assert reducer.summary == ""
+
+
+@pytest.mark.parametrize(
+    "caller_scale,compact_scale,error", [(5, 1, "caller"), (1, 5, "next batch")]
+)
+def test_summary_is_counted_separately_for_both_models(
+    monkeypatch, caller_scale, compact_scale, error
+):
+    from toolang.base.types.run import ModelCall
+
+    monkeypatch.setattr(
+        tokens,
+        "_MODEL_TOKEN_SCALES",
+        {"test/caller": caller_scale, "test/reducer": compact_scale},
+    )
+    caller = tokens.TokenCounter("test/caller")
+    ref = RunRef("run_a")
+    unit = experiment.HistoryUnit(ref, "succeeded", (Message.user("old fact"),))
+    model = cast(
+        Model,
+        SimpleNamespace(ref="test/reducer", limit={"context": 18000, "output": 2048}),
+    )
+    reducer = experiment.Compaction(
+        (ref,),
+        lambda _: unit,
+        model,
+        size=256,
+        max_output_tokens=2048,
+        summary_fits=lambda summary: (
+            caller.base(ModelCall("", [Message.user(summary)])) <= 6000
+        ),
+    )
+    assert reducer.next_call() is not None
+    oversized = ModelCallResult(message=Message.assistant("fact " * 500))
+    with pytest.raises(experiment.SummaryTooLarge, match=error):
+        reducer.accept(oversized)
+    assert reducer.summary == ""
+    assert [unit.ref for unit in reducer.batch] == [ref]
+    reducer.accept(ModelCallResult(message=Message.assistant("short fact")))
+    assert reducer.summary == "short fact"

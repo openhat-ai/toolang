@@ -38,7 +38,7 @@ from ..compaction import bound_latest_step, resolve_target
 from ..assembly.history import HistorySelection
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
-from .budget import message_tokens, text_tokens
+from ..tokens import InputEstimate, TokenCounter, text_tokens
 from .common import BoundRun
 from .resources import (
     available_workspaces,
@@ -99,6 +99,7 @@ def build_agic_frame(
     far: str = "",
     near: Sequence[Message] = (),
     history: HistorySelection | None = None,
+    estimate: InputEstimate | None = None,
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
@@ -226,6 +227,12 @@ def build_agic_frame(
             f"model {resolved_model.ref} (output source: {output_source}): {exc}"
         ) from exc
 
+    if estimate is not None:
+        estimate.bind_model(resolved_model)
+    counter = (
+        estimate.counter if estimate is not None else TokenCounter(resolved_model.ref)
+    )
+
     inputs = prompting.PromptInputs(
         run.state,
         run.setup,
@@ -265,7 +272,9 @@ def build_agic_frame(
         )
         if uses_near:
             history = bound_latest_step(
-                history, max(1, admitted_input // 2), message_tokens
+                history,
+                max(1, admitted_input // 2),
+                counter.message,
             )
             inputs = replace(
                 inputs,

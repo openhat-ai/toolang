@@ -48,7 +48,6 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
     """Prepare the internal child and adopt its completed output under one permit."""
     from ..steps.model import (
         compaction_boundary,
-        compaction_summary_budget,
         compaction_summary_fits,
     )
 
@@ -136,7 +135,6 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                         ]
                     ]
                 ),
-                summary_limit=compaction_summary_budget(state, end),
                 summary_fits=lambda summary: compaction_summary_fits(
                     state, end, summary
                 ),
@@ -240,7 +238,7 @@ async def execute(
         summary=summary,
         max_output_tokens=spec.request.max_output,
         reasoning=spec.request.reasoning,
-        summary_limit=spec.summary_limit,
+        summary_fits=spec.summary_fits,
     )
     while (call := reducer.next_call()) is not None:
         execution.raise_if_canceling(run.id, call=True)
@@ -316,15 +314,7 @@ async def execute(
             )
             execution.require_model_pricing(spec.model)
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
-            summary = reducer.validate_summary(response)
-            if (
-                reducer.reader.index == len(reducer.reader.run_ids)
-                and spec.summary_fits is not None
-                and not spec.summary_fits(summary)
-            ):
-                raise compaction.SummaryTooLarge(
-                    "compaction summary does not fit the complete caller request"
-                )
+            reducer.validate_summary(response)
             assert response.message is not None
             for index, part in enumerate(response.message.parts):
                 await _emit_part(execution, model, index, part)

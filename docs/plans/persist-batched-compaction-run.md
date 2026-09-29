@@ -117,8 +117,13 @@ demand, and discard serialized bodies after their checkpoint is accepted.
 
 Greedily admit units after reserving instructions, previous summary, framing,
 and output. Verify the exact assembled request before dispatch. The compactor
-uses its model's input capacity with an 80% admission factor, estimates with
-`o200k_base` and model corrections, and calibrates from provider usage. Recognized
+uses its model's input capacity with an 80% admission factor. Both execution
+paths use `execution/tokens.py`: a shared `o200k_base` estimate with provisional
+model corrections, independently calibrated from each model's inclusive provider
+usage. These are estimates, not model-native tokenizer counts. Prefix caches
+expire when history changes; the same model's calibration survives compaction.
+Changing the bound model resets both. Appended messages use the calibrated
+model estimate without recounting an unchanged prefix. Recognized
 provider context errors shrink the pending batch; other errors propagate. An
 ordinary model call rejected specifically for context overflow tightens its local
 input estimate and re-enters preflight, within the existing bounded recovery
@@ -138,8 +143,12 @@ large historical Step. Truncation affects request copies; original records stay
 available for inspection. Minimum metadata, fixed content, or summaries that
 cannot fit cause an explicit failure. Token estimates and summary size remain
 approximations, so complete-request admission applies before publication and
-again after adoption. Internally cap the summary prompt target by available
-caller and compactor space. An oversized response advances no checkpoint; retry
+again after adoption. Cap the summary prompt target by compactor space.
+Check every returned summary
+against the complete caller request using the caller's calibrated estimator, and
+against the next batch using the compactor's estimator; never convert a token
+count directly between the two models. An oversized response advances no
+checkpoint; retry
 the same batch at most twice with a smaller target, then fail without publishing.
 
 ## Checkpoints, publication, and recovery
@@ -192,7 +201,8 @@ to `src/toolang`. Configuration details are specified in [Compaction configurati
 | Action | Location | Responsibility |
 | --- | --- | --- |
 | Add | `execution/executor/runs/compact.py` | Prepare the child, restore progress, execute and record the compact Run loop. |
-| Change | `execution/compaction.py` | Own truncation, serialized requests, token estimation, batching, checkpoint validation, and the thread permit. Accept concrete policy values from the runtime. |
+| Move | `execution/executor/budget.py` → `execution/tokens.py` | Share model-bound estimates, framing and calibration between caller and compactor. |
+| Change | `execution/compaction.py` | Own truncation, serialized requests, batching, checkpoint validation, and the thread permit. Accept concrete policy values from the runtime. |
 | Change | `execution/executor/{steps/model.py,frame.py,runs/agic.py}` | Apply configured admission, bound the required retained Step, choose coverage, and rebuild calls after adoption. |
 | Change | `execution/executor/{executor.py,tool_runtime.py}`, `execution/tools/_toolang.py` | Integrate internal dispatch, the runtime Tool Step, shared lifecycle, and history adoption. |
 | Change | `execution/{assembly/history.py,inspection/history.py,store.py}` | Own shared Step history units, select partial-root suffixes, validate results, publish atomically, recover history, and protect adopted references. |
@@ -207,6 +217,10 @@ to `src/toolang`. Configuration details are specified in [Compaction configurati
   model-originated execution requests cannot invoke it.
 - A large root spans batches; tool units remain paired; partial-root selection
   and restart omit no units and repeat no accepted coverage.
+- Distinct caller/compact model counts govern their own admission; usage calibration
+  stays isolated, survives history replacement, and resets on model changes.
+  A summary fitting only one side advances no checkpoint. An opt-in cross-model
+  provider test verifies adoption, resumed caller facts, and actual input usage.
 - XML-wrapped JSON matches the counted payload. Output reservations, calibrated
   estimates, context rejection, truncation, and invalid responses are checked.
 - Successful checkpoints, completed unpublished work, and published results

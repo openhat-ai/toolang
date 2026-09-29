@@ -33,6 +33,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         ),
     )
 
+    parser.addoption(
+        "--live-compact-model",
+        action="store",
+        default=None,
+        metavar="SELECTOR",
+        help="run the cross-model compaction check with this distinct compact model",
+    )
+
 
 def pytest_collection_modifyitems(
     config: pytest.Config,
@@ -52,3 +60,20 @@ def pytest_collection_modifyitems(
         for marker, selected in enabled.items():
             if not selected and item.get_closest_marker(marker) is not None:
                 item.add_marker(pytest.mark.skip(reason=reasons[marker]))
+
+
+@pytest.fixture(autouse=True)
+def offline_token_encoding(request):
+    """Keep protocol/execution tests independent of downloaded tokenizer data."""
+    if request.node.get_closest_marker("live_provider") is not None:
+        yield
+        return
+    import tiktoken
+
+    class Encoding:
+        def encode_ordinary(self, text):
+            return range((len(text.encode("utf-8")) + 2) // 3)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tiktoken, "get_encoding", lambda name: Encoding())
+        yield

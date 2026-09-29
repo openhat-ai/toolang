@@ -19,7 +19,7 @@ from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
-from toolang.execution import compaction
+from toolang.execution import compaction, tokens
 from toolang.execution.events import (
     PartBegin,
     PartEnd,
@@ -87,6 +87,8 @@ async def seed(h, monkeypatch):
 
     def text_tokens(text):
         value = json.loads(text)
+        if not isinstance(value, dict):
+            return 0
         if "messages" in value:
             return 4000
         parts = value.get("parts", [])
@@ -99,7 +101,7 @@ async def seed(h, monkeypatch):
             return 4000 * len(units)
         return 0
 
-    monkeypatch.setattr(compaction, "_text_tokens", text_tokens)
+    monkeypatch.setattr(tokens, "text_tokens", text_tokens)
     return thread, tuple(roots)
 
 
@@ -339,7 +341,11 @@ def test_terminal_failure_never_publishes_or_calls_normal_model(
         async with h:
             thread, _ = await seed(h, monkeypatch)
             if failure == "oversized":
-                monkeypatch.setattr(compaction, "_text_tokens", lambda text: 100000)
+                monkeypatch.setattr(
+                    tokens.TokenCounter,
+                    "base",
+                    lambda self, request, overhead=0: 100000,
+                )
             else:
                 h.adapter._responses.append(
                     RuntimeError("provider offline")
@@ -542,7 +548,7 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
     async def scenario():
         async with h:
             thread, roots = await seed(h, monkeypatch)
-            monkeypatch.setattr(compaction, "_text_tokens", lambda text: 0)
+            monkeypatch.setattr(tokens, "text_tokens", lambda text: 0)
             h.adapter._responses.extend(
                 [
                     ModelResponseError(

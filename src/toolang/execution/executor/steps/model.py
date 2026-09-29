@@ -37,7 +37,6 @@ from toolang.state.state import AgentState
 
 from ...assembly import prompting
 from ...assembly.message_buffer import MessageBuffer
-from ...assembly.history import summary_message
 from ...assembly.utils import literal_delta
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...recall import required_declarations, history_variables, recall_revisions
@@ -60,7 +59,6 @@ from ...types import (
     RulesRecallTarget,
     WorkspaceRecallTarget,
 )
-from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from . import tool as tool_step
@@ -90,6 +88,7 @@ def _candidate(
     _AgicFrame, MessageBuffer, tuple[ControlRecord, ...], ModelCall, ModelMessages
 ]:
     prepared = state.frame_for_step(agent_state, state_ref)
+    state.estimate.bind_model(prepared.model)
     if (
         state.context_budget is not None
         and state.context_budget[0] == prepared.model.ref
@@ -322,7 +321,12 @@ def _boundary(
         else messages,
     )
     # This lower bound excludes the summary.
-    if InputEstimate().count(required, None, prepared.input_overhead) > budget:
+    if (
+        state.estimate.count(
+            required, _estimate_binding(prepared), prepared.input_overhead
+        )
+        > budget
+    ):
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )
@@ -337,7 +341,7 @@ def _boundary(
     # Keep the latest complete Step and an optional suffix within the soft target.
     for index in range(len(roots) - 1, 0, -1):
         root, messages = roots[index]
-        size = sum(message_tokens(message) for message in messages)
+        size = sum(state.estimate.counter.message(message) for message in messages)
         if index != len(roots) - 1 and retained + size > recent:
             break
         retained += size
@@ -363,22 +367,6 @@ def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
     return _boundary(state, prepared, request, controls)
 
 
-def compaction_summary_budget(state: _AgicState, end: RunRef | StepRef) -> int:
-    assert state.execution is not None
-    prepared, _, _, request, _ = _candidate(
-        state, *state.execution.state_snapshot(), compacted=(end, "")
-    )
-    if prepared.input_budget is None:
-        raise ToolangError("compaction requires a caller input budget")
-    available = prepared.input_budget - InputEstimate().count(
-        request, None, prepared.input_overhead
-    )
-    available -= message_tokens(summary_message("")) + 128
-    if available <= 0:
-        raise ToolangError("retained history leaves no room for a compaction summary")
-    return available
-
-
 def compaction_summary_fits(
     state: _AgicState, end: RunRef | StepRef, summary: str
 ) -> bool:
@@ -388,7 +376,9 @@ def compaction_summary_fits(
     )
     return (
         prepared.input_budget is not None
-        and InputEstimate().count(request, None, prepared.input_overhead)
+        and state.estimate.count(
+            request, _estimate_binding(prepared), prepared.input_overhead
+        )
         <= prepared.input_budget
     )
 

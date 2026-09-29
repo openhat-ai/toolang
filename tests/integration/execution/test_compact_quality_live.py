@@ -2,6 +2,11 @@
 
 uv run pytest -s tests/integration/execution/test_compact_quality_live.py \
     --live-model 'deepseek/deepseek-v4-flash effort=low'
+
+Cross-model execution (synthetic history, real compact and caller requests):
+uv run pytest -s tests/integration/execution/test_compact_quality_live.py -k distinct_models \
+    --live-model 'vercel/openai/gpt-6-luna-fast effort=low max_output=8192' \
+    --live-compact-model 'deepseek/deepseek-v4-flash effort=low max_output=8192'
 """
 
 import asyncio
@@ -130,5 +135,154 @@ def test_live_cumulative_compaction_preserves_corrections_and_provenance(
         assert result.message is not None
         answer = json.loads(message_text(result.message.parts))
         assert answer == EXPECTED, {"answer": answer, "summary": reducer.summary}
+
+    asyncio.run(scenario())
+
+
+def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
+    """Exercise ordinary preflight, batching, publication and the resumed model."""
+    from toolang.base.model_settings import parse_model_body
+    from toolang.base.types.message import TextPart
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution.inspection.history import RunHistory
+    from toolang.execution.tokens import TokenCounter
+    from toolang.execution.types import ThreadPrefix
+    from toolang.plugin.models.budget import input_budget
+    from tests.support.execution_harness import ExecutionHarness
+    from tests.support.setup import replace_materialized_setup
+
+    caller_selector = request.config.getoption("--live-model")
+    compact_selector = request.config.getoption("--live-compact-model")
+    if not caller_selector or not compact_selector:
+        pytest.skip("pass --live-model and --live-compact-model")
+
+    async def scenario():
+        h = ExecutionHarness.create(
+            tmp_path,
+            source="""agic chat(_: Part[]) -> Text:
+  context = none
+  instruct = none
+  user: {{_}}
+""",
+            responses=[
+                ModelCallResult(
+                    message=Message.assistant(
+                        fact + "\nIrrelevant log: " + "ping " * 4000
+                    )
+                )
+                for fact in FACTS
+            ],
+        )
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            for index in range(len(FACTS)):
+                seeded = await h.executor.run(
+                    h.run_spec(
+                        thread=thread,
+                        runnable="chat",
+                        primary=(
+                            TextPart(f"Record project update {index}: {FACTS[index]}"),
+                        ),
+                    )
+                )
+                assert seeded.status == "succeeded", seeded.error
+            live = await SetupWatcher(
+                h.setup.layout, default_overrides={"model": caller_selector}
+            ).refresh()
+            caller_request = live.defaults.model
+            assert caller_request is not None
+            compact_request = parse_model_body(compact_selector)
+            caller = resolve_model(live.models_effective(), caller_request.ref)
+            assert compact_request.identity is not None
+            compact = resolve_model(live.models_effective(), compact_request.identity)
+            assert caller.ref != compact.ref
+            caller = replace(caller, limit={"context": 32000, "output": 8192})
+            compact = replace(compact, limit={"context": 16000, "output": 8192})
+            calls = []
+
+            class RecordingAdapter:
+                def __init__(self, delegate):
+                    self.delegate = delegate
+
+                def record(self, model, call, result):
+                    assert result.usage is not None
+                    capacity = input_budget(model.limit, call.max_output_tokens)
+                    assert capacity is not None
+                    estimated = TokenCounter(model.ref).base(call)
+                    print(
+                        json.dumps(
+                            {
+                                "model": model.ref,
+                                "estimate": estimated,
+                                "actual_input": result.usage.input_tokens,
+                                "input_budget": capacity,
+                            }
+                        ),
+                        flush=True,
+                    )
+                    assert result.usage.input_tokens <= capacity
+                    calls.append((model.ref, call, result))
+                    return result
+
+                async def invoke(self, model, call, *, environ):
+                    result = await asyncio.wait_for(
+                        self.delegate.invoke(model, call, environ=environ), 180
+                    )
+                    return self.record(model, call, result)
+
+                async def stream(self, model, call, *, environ, on_event):
+                    result = await asyncio.wait_for(
+                        self.delegate.stream(
+                            model, call, environ=environ, on_event=on_event
+                        ),
+                        180,
+                    )
+                    return self.record(model, call, result)
+
+            h.setup = replace_materialized_setup(
+                live,
+                models=(caller, compact),
+                adapters={
+                    key: RecordingAdapter(adapter)
+                    for key, adapter in live.adapters().items()
+                },
+                compact_model=compact_request,
+            )
+            h.setup = replace(
+                h.setup,
+                compact=replace(
+                    h.setup.compact, trigger=16000, recent=1500, summary=768
+                ),
+            )
+            question = (
+                "Use both the generated history summary and the retained recent messages as project history. Latest corrections supersede previous values. Return one JSON object, without Markdown, with keys "
+                + ", ".join(EXPECTED)
+                + ". Booleans for permissions/completion/approval, integer for budget, YYYY-MM-DD for date, exact strings otherwise; unknown facts null."
+            )
+            run = await asyncio.wait_for(
+                h.executor.run(
+                    h.run_spec(
+                        thread=thread, runnable="chat", primary=(TextPart(question),)
+                    )
+                ),
+                420,
+            )
+            assert run.status == "succeeded", (
+                h.store.resolve_error(run.error) if run.error else None
+            )
+            output = RunHistory(h.store).get_compaction(thread)
+            assert output is not None
+            assert sum(ref == compact.ref for ref, _, _ in calls) >= 2
+            assert calls[-1][0] == caller.ref
+            assert any(
+                output.result.summary in message_text(message.parts)
+                for message in calls[-1][1].messages
+            )
+            final = h.store.run_output_text(run_id=run.id)
+            assert json.loads(final) == EXPECTED, final
+            print(
+                f"Cross-model run {run.id}: {len(calls) - 1} compact calls, summary adopted, caller facts verified",
+                flush=True,
+            )
 
     asyncio.run(scenario())
