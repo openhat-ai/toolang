@@ -91,9 +91,9 @@ def _format_elapsed_seconds(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     if hours:
-        return f"{hours}h{minutes:02d}m{seconds:02d}s"
+        return f"{hours}h{minutes:02d}m{seconds:02d}"
     if minutes:
-        return f"{minutes}m{seconds:02d}s"
+        return f"{minutes}m{seconds:02d}"
     return f"{seconds}s"
 
 
@@ -649,7 +649,64 @@ class PromptBox:
         return self._input_rows() + 2
 
 
+class RunStatusBar:
+    """Two-row run activity surface above Queue and Input."""
+
+    def __init__(self, *, get_rows: Callable[[], int]) -> None:
+        self.rows = get_rows
+        self.running = False
+        self._elapsed_seconds = 0
+        self.view = FormattedTextControl(self._render)
+
+    def container(self) -> Window:
+        return Window(
+            self.view,
+            height=self.rows,
+            style="class:status",
+            always_hide_cursor=True,
+            wrap_lines=False,
+            char=" ",
+        )
+
+    def set_running(self, running: bool) -> None:
+        self.running = running
+        self._elapsed_seconds = 0
+
+    @property
+    def elapsed_seconds(self) -> int:
+        return self._elapsed_seconds
+
+    def set_elapsed_seconds(self, elapsed_seconds: int) -> bool:
+        elapsed_seconds = max(0, elapsed_seconds)
+        if elapsed_seconds == self._elapsed_seconds:
+            return False
+        self._elapsed_seconds = elapsed_seconds
+        return True
+
+    def _elapsed_label(self) -> str:
+        if not self.running:
+            return ""
+        return (
+            _format_elapsed_seconds(self._elapsed_seconds)
+            if self._elapsed_seconds >= 1
+            else "running"
+        )
+
+    def _render(self) -> list[tuple[str, str]]:
+        rows = self.rows()
+        if not rows:
+            return []
+        cells = [("class:status", "\n")] if rows == 2 else []
+        width = get_app().output.get_size().columns
+        inset = _STATUS_INSET if width > 2 * len(_STATUS_INSET) else ""
+        label = truncate(self._elapsed_label(), max(0, width - 2 * len(inset)))
+        cells.extend((("class:status", inset), ("class:status.elapsed", label)))
+        return cells
+
+
 class StatusBar:
+    """Session settings, workspace identity, and diagnostics below Input."""
+
     def __init__(
         self,
         runnable_label: str,
@@ -665,7 +722,6 @@ class StatusBar:
         self._transient_error = ""
         self._persistent_error = ""
         self.running = False
-        self._elapsed_seconds = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -715,18 +771,6 @@ class StatusBar:
         self.running = running
         if not running:
             self.run_workspace_label = self.workspace_label
-        self._elapsed_seconds = 0
-
-    @property
-    def elapsed_seconds(self) -> int:
-        return self._elapsed_seconds
-
-    def set_elapsed_seconds(self, elapsed_seconds: int) -> bool:
-        elapsed_seconds = max(0, elapsed_seconds)
-        if elapsed_seconds == self._elapsed_seconds:
-            return False
-        self._elapsed_seconds = elapsed_seconds
-        return True
 
     def _status_insets(self, *, leading: bool = True) -> tuple[str, str, int]:
         """Return the inset cells and the width left for status content.
@@ -747,15 +791,6 @@ class StatusBar:
         workspace = self.run_workspace_label if self.running else self.workspace_label
         parts = [part for part in (self.agent_label, workspace) if part]
         return "@".join(parts)
-
-    def _elapsed_label(self) -> str:
-        if not self.running:
-            return ""
-        return (
-            _format_elapsed_seconds(self._elapsed_seconds)
-            if self._elapsed_seconds >= 1
-            else "running"
-        )
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
@@ -795,37 +830,18 @@ class StatusBar:
         if body_width < center_label_width + 2 * _STATUS_CENTER_GAP:
             left_label = ""
             model_label = ""
-            elapsed_label = ""
             center_label = truncate(center_label, body_width)
             center_label_width = get_cwidth(center_label)
             center_start = (body_width - center_label_width) // 2
-            elapsed_label_width = 0
-            elapsed_start = center_start
         else:
             center_start = (body_width - center_label_width) // 2
             center_end = center_start + center_label_width
-            elapsed_label = self._elapsed_label()
-            elapsed_width = get_cwidth(elapsed_label)
-            elapsed_start = center_start - _STATUS_CENTER_GAP - elapsed_width
-            # Keep room for an inner-edge ellipsis and a two-cell gap between
-            # the runnable and elapsed; otherwise omit elapsed, not the center.
-            minimum_elapsed_start = 3 if full_left_label else 0
-            if elapsed_label and elapsed_start < minimum_elapsed_start:
-                elapsed_label = ""
-            if elapsed_label:
-                elapsed_width = get_cwidth(elapsed_label)
-                elapsed_start = center_start - _STATUS_CENTER_GAP - elapsed_width
-                left_limit = elapsed_start - 2
-            else:
-                elapsed_start = center_start
-                left_limit = center_start - _STATUS_CENTER_GAP
-
+            left_limit = center_start - _STATUS_CENTER_GAP
             right_limit = body_width - center_end - _STATUS_CENTER_GAP
             left_label = _truncate_status_edge_left(full_left_label, max(0, left_limit))
             model_label = _truncate_status_edge_right(
                 full_model_label, max(0, right_limit)
             )
-            elapsed_label_width = get_cwidth(elapsed_label)
 
         cells: list[tuple[str, str]] = []
         if left_cell:
@@ -834,11 +850,6 @@ class StatusBar:
         if left_label:
             cells.append(("class:status", left_label))
             cursor += get_cwidth(left_label)
-        if elapsed_label:
-            if elapsed_start > cursor:
-                cells.append(("class:status", " " * (elapsed_start - cursor)))
-            cells.append(("class:status.elapsed", elapsed_label))
-            cursor = elapsed_start + elapsed_label_width
         if center_label:
             if center_start > cursor:
                 cells.append(("class:status", " " * (center_start - cursor)))

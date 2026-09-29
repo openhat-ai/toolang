@@ -411,22 +411,29 @@ session value, but the status bar is not their confirmation channel. Slash
 summary and detail rows align with other output using a two-space indent and no
 leading marker column.
 
-The status bar keeps the session runnable in its left corner and the session
-model plus effort in its right corner. The center anchor is the Chat agent and
-workspace in `agent@workspace` form; it is fixed at the status line's absolute
-center. The workspace comes from session settings while idle and from the active
-root run while running. The active runnable is never duplicated beside the
-model. While running, elapsed time occupies a compact slot immediately left of
-the anchor; the slot is blank while idle. Successful root `_toolang.chdir`
-changes update the workspace. `/cd` changes the session workspace for subsequent
-runs; after the current run ends, the center returns to the latest session
-workspace. Only the workspace name is shown, not the path. If the full status
-line overflows, the centered identity stays intact, with one space between
-adjacent status items; the session runnable and model truncate toward the center with a single
-`…` when needed. On extremely narrow terminals, elapsed and both session edge
-labels are hidden to show the center alone; the center is truncated only if it
-cannot fit by itself. A context-usage slot is reserved to the anchor's right
-but is currently empty; no context usage is displayed.
+The session status bar below Input keeps the session runnable in its left
+corner and the session model plus effort in its right corner. The center anchor
+is the Chat agent and workspace in `agent@workspace` form; it is fixed at the
+status line's absolute center. The workspace comes from session settings while
+idle and from the active root run while running. The active runnable is never
+duplicated beside the model. Successful root `_toolang.chdir` changes update
+the workspace. `/cd` changes the session workspace for subsequent runs; after
+the current run ends, the center returns to the latest session workspace. Only
+the workspace name is shown, not the path. If the full status line overflows,
+the centered identity stays intact, with one space between adjacent status
+items; the session runnable and model truncate toward the center with a single
+`…` when needed. On extremely narrow terminals, both session edge labels are
+hidden to show the center alone; the center is truncated only if it cannot fit
+by itself.
+
+A separate run status bar sits immediately above the Queue panel, or Input when
+no inputs are queued. It uses two rows: a blank separator followed by dim elapsed
+time indented two cells from the left. The label is `running` below one second,
+then `1s`, `1m20`, or `1h01m01`. Both rows remain blank while idle. The right side
+is reserved for future context information and displays nothing yet. The session
+status bar never shows elapsed time, and its errors do not interrupt the run
+bar's timer. On very short terminals, the run bar yields rows to keep Input and
+steer feedback usable.
 
 The status bar's right side shows the canonical session model ref without a
 field label. An empty effective model collection appears as
