@@ -10,6 +10,9 @@ wheels/
 *.egg-info
 .DS_Store
 
+# Local Git worktrees
+/.worktrees/
+
 # Virtual environments
 .venv
 
