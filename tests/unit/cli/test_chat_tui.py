@@ -5315,6 +5315,66 @@ def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
     assert app.status_bar.error_message == ""
 
 
+@pytest.mark.parametrize("rows", [4, 5, 6, 30])
+def test_chat_tui_clear_collapses_run_spacing_until_next_run(rows: int) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            output.rows = rows
+            app.queue.clear()
+            app._finish_active_run()
+            app.prompt.replace_input("draft")
+            _render_chat_layout(app)
+
+            for _ in range(2):
+                app._handle_clear()
+                screen = _render_chat_layout(app)
+                lines = _screen_lines(screen, output.columns)
+                assert lines[1].strip() == "draft"
+                assert "class:input" in screen.data_buffer[0][1].style
+                assert app._run_status_rows() == 0
+
+            app._set_status_running(True)
+            assert app._run_status_rows() == min(2, rows - 4)
+            running = _render_chat_layout(app)
+            running_lines = _screen_lines(running, output.columns)
+            input_row = next(
+                i for i, line in enumerate(running_lines) if "draft" in line
+            )
+            if rows > 4:
+                assert running_lines[input_row - 2].strip() == "Working"
+
+            app._finish_active_run()
+            stopped_lines = _screen_lines(_render_chat_layout(app), output.columns)
+            assert "draft" in stopped_lines[input_row]
+            assert not any("Working" in line for line in stopped_lines)
+            assert app._run_status_rows() == min(2, rows - 4)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("active_run, in_flight", [(True, False), (False, True)])
+def test_chat_tui_rejected_clear_preserves_run_spacing(
+    active_run: bool, in_flight: bool
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            app.queue.clear()
+            app.active_run_id = "run_busy" if active_run else None
+            if in_flight:
+                app.run_in_flight.set()
+            app._set_status_running(True)
+            before = _screen_lines(_render_chat_layout(app), output.columns)
+            app._handle_clear()
+            after = _screen_lines(_render_chat_layout(app), output.columns)
+            assert app._run_status_rows() == 2
+            assert next(
+                i for i, line in enumerate(before) if "Working" in line
+            ) == next(i for i, line in enumerate(after) if "Working" in line)
+            assert "Wait for the active run" in app.status_bar.error_message
+
+    asyncio.run(exercise())
+
+
 def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

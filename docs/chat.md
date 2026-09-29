@@ -430,7 +430,9 @@ A separate run status bar sits immediately above the Queue panel, or Input when
 no inputs are queued. It uses two rows: a blank separator followed by dim elapsed
 time indented two cells from the left. The label is `Working` below one second,
 then `Working for 1s`, `Working for 1m3s`, or `Working for 1h1m1s`. Both rows
-remain blank while idle. The right side is reserved for future context information and displays nothing yet. The session
+remain blank while idle. Ctrl+L collapses these rows until the next run starts;
+after that run settles, the blank rows remain to keep Input stable. The right
+side is reserved for future context information and displays nothing yet. The session
 status bar never shows elapsed time, and its errors do not interrupt the run
 bar's timer. On very short terminals, the run bar yields rows to keep Input and
 steer feedback usable.

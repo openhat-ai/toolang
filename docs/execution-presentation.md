@@ -732,7 +732,9 @@ row showing dim elapsed time at column two. It inherits the terminal background.
 The label is `Working` below one elapsed second, then `Working for` followed
 by whole-second time, such as `Working for 1m3s` or `Working for 1h1m1s`.
 `0s` is never shown. The timer resets for each queued run and clears when the active run settles; requesting cancellation alone does
-not clear it. Both rows remain blank while idle. The right side, inset two cells,
+not clear it. Both rows remain blank while idle. An idle Ctrl+L collapses both
+rows until the next run starts. Run settlement keeps the restored blank rows
+so Input does not move. The right side, inset two cells,
 is reserved for future context information and renders no value or placeholder.
 On very short terminals, the separator and then the information row yield to
 minimum Input, Queue, and steer-feedback space.

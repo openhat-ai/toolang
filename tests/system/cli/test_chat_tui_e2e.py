@@ -648,7 +648,26 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                 time.sleep(0.02)
             pytest.fail("Unexpected terminal layout:\n" + "\n".join(lines))
 
+        def clear_and_wait_for_top_input() -> None:
+            pane.send_keys("C-l", enter=False)
+            deadline = time.monotonic() + 10
+            lines: list[str] = []
+            while time.monotonic() < deadline:
+                lines = pane.capture_pane() or []
+                if (
+                    len(lines) >= 4
+                    and "Ask or describe" in lines[1]
+                    and "agic:chat" in lines[3]
+                    and not any("Working" in line for line in lines)
+                ):
+                    return
+                time.sleep(0.02)
+            pytest.fail(
+                "Input did not move to the top after clear:\n" + "\n".join(lines)
+            )
+
         wait_for_layout(queued=False, running=False)
+        clear_and_wait_for_top_input()
         pane.send_keys("hold status", enter=True)
         for queued in (False, True):
             if queued:
@@ -667,5 +686,6 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
         wait_for_layout(queued=False, running=True)
         (tmp_path / "release-model").touch()
         wait_for_layout(queued=False, running=False)
+        clear_and_wait_for_top_input()
     finally:
         server.kill()
