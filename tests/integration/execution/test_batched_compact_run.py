@@ -1,6 +1,7 @@
 """Internal compaction runs share ownership, events and durable recovery."""
 
 import asyncio
+import json
 from contextlib import closing
 from dataclasses import replace
 
@@ -83,11 +84,12 @@ async def seed(h, monkeypatch):
             else None
         ),
     )
-    monkeypatch.setattr(
-        compaction,
-        "_text_tokens",
-        lambda text: 4000 if "<historical_run created_at=" in text else 0,
-    )
+
+    def text_tokens(text):
+        parts = json.loads(text).get("parts", [])
+        return 4000 if parts and "messages" in json.loads(parts[0]["text"]) else 0
+
+    monkeypatch.setattr(compaction, "_text_tokens", text_tokens)
     return thread, tuple(roots)
 
 

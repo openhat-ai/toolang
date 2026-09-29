@@ -23,6 +23,14 @@ Keep two compaction implementation modules:
 | `src/toolang/execution/compaction.py` | Explicit compaction inputs and state; history reconstruction; whole-root batch selection; token estimation; reducer request construction; cumulative summaries; context-overflow batch reduction; checkpoint and result validation; compaction permit. No dependency on executor internals. |
 | `src/toolang/execution/executor/runs/compact.py` | Runtime preparation and a short Run loop: restore progress, obtain batches, execute and record read/model Steps through executor facilities, feed results back into compaction state, and return the final summary. |
 
+Compaction requirements live in `ModelCall.instructions`. Input user messages are
+JSON data: an optional `previous_summary` object, followed by one object per
+historical Run with `created_at`, `status`, and `messages`. Reuse canonical
+`Message.to_data()` (`role` plus `parts`), including structured tool calls/results
+and media part data; do not attach media natively or introduce another transcript
+format. Run IDs remain in durable read/checkpoint records rather than prompt
+wrappers. Estimate and cache each serialized Run independently.
+
 Keep one execution loop in `executor/runs/compact.py`; the core supplies state and operations rather than a second provider-invocation loop. Resolve setup and environment defaults at the runtime boundary, and pass concrete values into the core so its functions remain reusable.
 
 `executor/steps/model.py` owns admission and retriggering. `executor/executor.py` owns shared Run lifecycle and history adoption. `executor/tool_runtime.py` is a thin bridge. `store.py` and `inspection/history.py` retain their persistence and read responsibilities, reusing core validation where appropriate.

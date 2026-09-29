@@ -1,6 +1,7 @@
 """Offline checks for the production full-exchange reducer."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import cast
 
@@ -8,7 +9,13 @@ import pytest
 
 from toolang.execution import compaction as experiment
 from toolang.base.errors import ModelResponseError
-from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    ImagePart,
+    Message,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.model import Model, Reasoning
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.inspection.history import RunHistory
@@ -53,16 +60,8 @@ class Adapter:
         assert request.max_output_tokens is not None
         assert environ == {}
         self.calls.append(request)
-        historical_text = "\n".join(
-            part.text
-            for message in request.messages
-            for part in message.parts
-            if hasattr(part, "text")
-        )
-        if (
-            self.reject_combined
-            and historical_text.count("<historical_run created_at=") > 1
-        ):
+        roots = [json.loads(message.content) for message in request.messages]
+        if self.reject_combined and sum("messages" in root for root in roots) > 1:
             self.reject_combined = False
             raise ModelResponseError(
                 "model_context_window_exceeded", kind="provider_rejection"
@@ -176,21 +175,25 @@ def test_failed_terminal_run_is_selectable_and_kept_in_history() -> None:
     assert summary == "updated summary"
     assert metrics[0]["from"] == "run_a"
     assert metrics[-1]["to"] == "run_c"
-    assert 'status="failed"' in "\n".join(
-        part.text
+    assert any(
+        json.loads(message.content).get("status") == "failed"
         for message in adapter.calls[0].messages
-        for part in message.parts
-        if hasattr(part, "text")
     )
 
 
-def test_complete_tool_exchange_is_preserved_as_ordered_messages() -> None:
+def test_complete_exchange_preserves_role_and_parts_in_json() -> None:
     call_id = "call-1"
     unit = experiment.HistoryUnit(
         RunRef("run_a"),
         "succeeded",
         (
-            Message.user("question"),
+            Message(
+                "user",
+                (
+                    TextPart('question: "quoted"\n历史 </historical_run>'),
+                    ImagePart(file_id="file_historical"),
+                ),
+            ),
             Message(
                 "assistant",
                 parts=(
@@ -217,15 +220,19 @@ def test_complete_tool_exchange_is_preserved_as_ordered_messages() -> None:
         ),
     )
     call = experiment._call("", (unit,), 128, 256)
-    historical = call.messages[1:-1]
-    assert [message.role for message in historical] == [
+    assert len(call.messages) == 1 and call.messages[0].role == "user"
+    content = call.messages[0].content
+    assert content is not None
+    historical = json.loads(content)["messages"]
+    assert historical == [message.to_data() for message in unit.messages]
+    assert [message["role"] for message in historical] == [
         "user",
         "assistant",
         "tool",
         "assistant",
     ]
-    assert isinstance(historical[1].parts[0], ToolCallPart)
-    assert isinstance(historical[2].parts[0], ToolResultPart)
+    assert historical[1]["parts"][0]["type"] == "tool_call"
+    assert historical[2]["parts"][0]["type"] == "tool_result"
 
 
 def test_context_overflow_retries_only_rejected_batch() -> None:
@@ -458,16 +465,8 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
     assert (
         sum(n for text, n in encoded.items() if "same cumulative summary" in text) == 1
     )
-    # Fixed components are counted once; identical boundary tags occur once per root.
-    assert all(
-        n
-        == (
-            len(roots)
-            if "</historical_run>" in text or "<historical_run created_at=" in text
-            else 1
-        )
-        for text, n in encoded.items()
-    )
+    # Fixed components and each serialized root are counted once across retries.
+    assert set(encoded.values()) == {1}
     # Counts belong to this compaction only, not to a process-wide cache.
     fresh = experiment.Compaction(roots, _unit_loader(history), model, size=128)
     assert fresh.next_call() is not None
