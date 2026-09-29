@@ -341,6 +341,7 @@ class ChatTuiApp:
         self._status_elapsed_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
         self._footer_row_floor = 0
+        self._run_status_collapsed = False
         self.progress_max_width = progress_max_width
         self.surfaces = surfaces
         self.presenter = ChatRunPresenter(
@@ -503,6 +504,8 @@ class ChatTuiApp:
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
 
     def _run_status_rows(self) -> int:
+        if self._run_status_collapsed:
+            return 0
         # Blank status spacing yields before the minimum input and steer feedback.
         return min(
             2,
@@ -800,6 +803,7 @@ class ChatTuiApp:
 
     def _set_status_running(self, running: bool) -> None:
         if running:
+            self._run_status_collapsed = False
             self._status_activity_started_at = (
                 self.loop.time() if self.loop is not None else None
             )
@@ -957,6 +961,7 @@ class ChatTuiApp:
             return
         self.status_bar.clear_transient_error()
         self._footer_row_floor = 0
+        self._run_status_collapsed = True
         renderer = self.app.renderer
         output = self.app.output
         renderer.erase()
