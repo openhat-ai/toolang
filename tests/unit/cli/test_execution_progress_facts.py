@@ -9,7 +9,7 @@ def test_elapsed_normalizes_rounded_seconds_into_minutes() -> None:
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:01:59.600Z",
         )
-        == "2m"
+        == "2m0s"
     )
 
 
@@ -54,7 +54,7 @@ def test_elapsed_rounds_seconds_to_whole_values() -> None:
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:59.600Z",
         )
-        == "1m"
+        == "1m0s"
     )
     assert (
         elapsed_fact(
@@ -63,3 +63,8 @@ def test_elapsed_rounds_seconds_to_whole_values() -> None:
         )
         == "1m21s"
     )
+
+
+def test_elapsed_uses_unpadded_hours_minutes_and_seconds() -> None:
+    assert elapsed_fact("2026-01-01T00:00:00Z", "2026-01-01T01:01:01Z") == "1h1m1s"
+    assert elapsed_fact("2026-01-01T00:00:00Z", "2026-01-01T00:01:08Z") == "1m8s"

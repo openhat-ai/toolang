@@ -373,6 +373,7 @@ class ChatTuiApp:
             self.agent_name,
             workspace_label,
         )
+        self.run_status_bar = widgets.RunStatusBar(get_rows=self._run_status_rows)
         self.prompt = widgets.PromptBox(
             self._handle_prompt_event,
             self._invalidate_ui,
@@ -391,6 +392,7 @@ class ChatTuiApp:
                     height=self._input_spacer_rows,
                     always_hide_cursor=True,
                 ),
+                self.run_status_bar.container(),
                 self.queue_panel.container(),
                 self.prompt.container(),
                 self.status_bar.container(),
@@ -516,7 +518,9 @@ class ChatTuiApp:
 
     def _input_spacer_rows(self) -> int:
         live_rows = self._live_area_height()
-        fixed_footer_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        fixed_footer_rows = (
+            self.queue_panel.rows() + self.prompt.rows() + 1 + self._run_status_rows()
+        )
         terminal_rows = self.app.output.get_size().rows
         required_rows = min(terminal_rows, live_rows + fixed_footer_rows)
         self._footer_row_floor = min(
@@ -525,6 +529,20 @@ class ChatTuiApp:
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
 
+    def _run_status_rows(self) -> int:
+        # Blank status spacing yields before the minimum input and steer feedback.
+        return min(
+            2,
+            max(
+                0,
+                self.app.output.get_size().rows
+                - self.queue_panel.minimum_rows()
+                - 3  # Input needs its text row and two padding rows.
+                - 1  # Session status.
+                - self._steer_feedback_rows(),
+            ),
+        )
+
     def _available_input_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
         return max(
@@ -532,6 +550,7 @@ class ChatTuiApp:
             terminal_rows
             - self.queue_panel.minimum_rows()
             - 1
+            - self._run_status_rows()
             - self._steer_feedback_rows(),
         )
 
@@ -541,12 +560,15 @@ class ChatTuiApp:
             self.app.output.get_size().rows
             - self.prompt.rows()
             - 1
+            - self._run_status_rows()
             - self._steer_feedback_rows(),
         )
 
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
-        reserved_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        reserved_rows = (
+            self.queue_panel.rows() + self.prompt.rows() + 1 + self._run_status_rows()
+        )
         return max(0, terminal_rows - reserved_rows)
 
     def _handle_prompt_event(self, event: ChatUIEvent) -> None:
@@ -788,7 +810,7 @@ class ChatTuiApp:
         while True:
             await self._status_elapsed_wake.wait()
             self._status_elapsed_wake.clear()
-            while self.status_bar.running:
+            while self.run_status_bar.running:
                 loop = self.loop or asyncio.get_running_loop()
                 started_at = self._status_activity_started_at
                 if started_at is None:
@@ -809,10 +831,9 @@ class ChatTuiApp:
         if self._status_activity_started_at is None:
             return
         elapsed = max(0.0, now - self._status_activity_started_at)
-        changed = self.status_bar.set_elapsed_seconds(int(elapsed))
+        changed = self.run_status_bar.set_elapsed_seconds(int(elapsed))
         if changed:
             self.presenter.refresh(self.app_context)
-        if changed and not self.status_bar.error_message:
             self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
@@ -821,6 +842,7 @@ class ChatTuiApp:
                 self.loop.time() if self.loop is not None else None
             )
             self.status_bar.set_running(True)
+            self.run_status_bar.set_running(True)
             self._status_elapsed_wake.set()
             self._invalidate_ui()
             return
@@ -829,12 +851,14 @@ class ChatTuiApp:
     def _stop_status_activity(self) -> None:
         changed = (
             self.status_bar.running
-            or self.status_bar.elapsed_seconds != 0
+            or self.run_status_bar.running
+            or self.run_status_bar.elapsed_seconds != 0
             or self.status_bar.run_workspace_label != self.status_bar.workspace_label
         )
         self._status_activity_started_at = None
         self._status_run_id = None
         self.status_bar.set_running(False)
+        self.run_status_bar.set_running(False)
         self._status_elapsed_wake.set()
         if changed:
             self._invalidate_ui()

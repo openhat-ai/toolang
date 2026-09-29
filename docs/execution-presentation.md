@@ -429,9 +429,14 @@ line. Undefined facts are omitted, and a StepPath is not displayed by itself.
 Duration, execution counts, and usage are separate facts. Tokens and cost form
 one usage group, separated by a space. Counts form one
 `RUNS runs MODELS models TOOLS tools` group and omit zero categories.
-Human durations keep milliseconds below one second, otherwise round to whole
-seconds; exact minutes omit `00s`. Stored timestamps retain their original
-precision.
+All CLI duration displays use one compact format: `250ms`, `1s`, `1m8s`,
+`1m0s`, or `1h1m1s`. This includes run/step facts, the Chat run status bar,
+operational progress, and agent uptime (prefixed with `up `). Positive durations
+below one second retain milliseconds; other durations round to whole seconds.
+Units have no spaces or zero padding, and lower zero units remain visible.
+Zero or negative durations render as `0s`. Chat's live timer and agent uptime
+continue to floor their clock values before formatting. Stored timestamps
+retain their original precision.
 Token usage is `↑INPUT(CACHE%) ↓OUTPUT(REASONING)`: the input parenthetical is
 the complete cache-read ratio, while the output parenthetical is the reasoning
 token count. Output is inclusive and already contains reasoning. Explicit zero
@@ -705,11 +710,12 @@ padding; pending and adopted bars have no corner label during execution.
 Incomplete transport evidence keeps corners empty and uses existing recovery
 or error diagnostics. Late callbacks cannot change a completed transcript.
 
-The status bar does not paint a base background and therefore inherits the
-terminal background. Its left corner always shows the current session runnable
-as `agic:name` or `flow:name`, without the `module$` prefix. The active root
-runnable is never shown there. A session runnable change updates only this left
-corner; it never adds a runnable beside the model.
+The session status bar below Input does not paint a base background and
+therefore inherits the terminal background. Its left corner always shows the
+current session runnable as `agic:name` or `flow:name`, without the `module$`
+prefix. The active root runnable is never shown there. A session runnable
+change updates only this left corner; it never adds a runnable beside the
+model.
 
 The absolute center anchor is the Chat agent and current workspace in
 `agent@workspace` form. The agent stays constant for the session. The
@@ -720,17 +726,22 @@ session setting for subsequent runs without changing the active run's
 workspace. When the run ends, the center returns to the latest session
 workspace. Directory paths within a workspace are not shown.
 
-While running, elapsed time occupies a right-aligned slot immediately left of
-the center anchor: `running` below one elapsed second, then compact whole-second
-time such as `18s`, `1m20s`, or `1h01m01s`. `0s` is never shown. The elapsed
-slot is blank while idle and its changing width never moves the center anchor.
-A context-usage slot is reserved immediately right of the anchor but currently
-renders no value, placeholder, separator, or visible padding. Agent/workspace
-text uses normal intensity; elapsed text and the structural `@` are dim. If the
-full line overflows, the complete center stays fixed with a one-cell margin on
-each side; session edge labels elide inward with one `…`. If the center plus
-margins cannot fit, elapsed and both edge labels are hidden, and the center is
-truncated only when it cannot fit alone.
+A separate run status bar directly precedes the Queue panel, or Input when the
+queue is empty. It has a blank first row separating live output and a second
+row showing dim elapsed time at column two. It inherits the terminal background.
+The label is `Working` below one elapsed second, then `Working for` followed
+by whole-second time, such as `Working for 1m3s` or `Working for 1h1m1s`.
+`0s` is never shown. The timer resets for each queued run and clears when the active run settles; requesting cancellation alone does
+not clear it. Both rows remain blank while idle. The right side, inset two cells,
+is reserved for future context information and renders no value or placeholder.
+On very short terminals, the separator and then the information row yield to
+minimum Input, Queue, and steer-feedback space.
+
+The session bar never renders elapsed or the `Working` label. Agent/workspace
+text uses normal intensity; the structural `@` is dim. If the full line overflows, the
+complete center stays fixed with a one-cell margin on each side; session edge
+labels elide inward with one `…`. If the center plus margins cannot fit, both
+edge labels are hidden, and the center is truncated only when it cannot fit alone.
 
 The right corner contains only the current session model and its existing
 effort suffix. It is never replaced by an active model step. An empty effective
@@ -740,14 +751,15 @@ or token-budget control but has no explicit session value appears as
 `MODEL · auto`. Models without applicable reasoning control omit the suffix.
 The model remains right-aligned against the terminal edge. At narrow widths,
 the model ref is elided before an applicable effort suffix if the session
-corners alone need more space. Runnable, model, center labels, and elapsed text
+corners alone need more space. Runnable, model, and center labels
 inherit the terminal's default foreground; only the `@` separator is dim.
 Setting commands remain available while running and update the session
 corners immediately without changing the active run's center context. Hotkey
 hints are omitted.
-The status redraws when a visible value, run state, error, or elapsed second
-changes. Run completion returns immediately to the idle form, and status state
-is never committed to execution scrollback.
+The status bars redraw when a visible value, run state, error, or elapsed
+second changes. Session errors do not suppress run elapsed updates. Run
+completion returns immediately to the idle form, and status state is never
+committed to execution scrollback.
 
 Submitted `/models`, `/caps`, and `/tools` results retain structured columns
 through scrollback rendering. Their headers use normal terminal text and a dim

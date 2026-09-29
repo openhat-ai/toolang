@@ -336,7 +336,7 @@ def test_tty_elapsed_is_per_activity_and_appears_after_one_second() -> None:
     now[0] = 0.9
     assert progress._live_text().plain == "Installing Toolang..."
     now[0] = 1.2
-    assert progress._live_text().plain == "Installing Toolang (1.2s)..."
+    assert progress._live_text().plain == "Installing Toolang (1s)..."
 
     progress(
         _event(
@@ -345,7 +345,7 @@ def test_tty_elapsed_is_per_activity_and_appears_after_one_second() -> None:
             "Installed Toolang",
         )
     )
-    assert progress._live_text().plain == "Installed Toolang (1.2s)"
+    assert progress._live_text().plain == "Installed Toolang (1s)"
     now[0] = 1.3
     progress(_event("runtime", "create", "Checking Toolang..."))
     assert progress._live_text().plain == "Checking Toolang..."
@@ -518,3 +518,23 @@ def test_setup_failure_uses_the_same_stable_block() -> None:
         "  Stage: setup.discover",
         "  Reason: catalog crashed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"), [(60, "1m0s"), (68, "1m8s"), (3661, "1h1m1s")]
+)
+def test_operational_progress_uses_compact_duration(
+    seconds: int, expected: str
+) -> None:
+    now = [0.0]
+    progress = CliProgress(
+        stream=_TTYBuffer(), _clock=lambda: now[0], _reveal_seconds=60
+    )
+    try:
+        progress(_event("runtime", "create", "Installing Toolang..."))
+        now[0] = float(seconds)
+        assert progress._live_text().plain == f"Installing Toolang ({expected})..."
+        progress(_event("runtime", "create", "Installed Toolang"))
+        assert progress._live_text().plain == f"Installed Toolang ({expected})"
+    finally:
+        progress.close()

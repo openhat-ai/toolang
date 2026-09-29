@@ -17,6 +17,7 @@ from toolang.cli.common.parameters import TextType
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
+from toolang.common.time import format_duration
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
@@ -321,7 +322,5 @@ def _human_uptime_since(timestamp_text: str) -> str | None:
     started = parse_utc_timestamp(timestamp_text)
     if started is None:
         return None
-    import humanize
-
     total_seconds = max(int((_utc_now() - started).total_seconds()), 0)
-    return f"up {humanize.naturaldelta(total_seconds)}"
+    return f"up {format_duration(total_seconds)}"

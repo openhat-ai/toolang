@@ -2352,7 +2352,7 @@ def test_chat_queue_layout_left_aligns_summary_and_joins_input(
             assert input_row == panel_bottom + 2
             assert not lines[input_row - 1].strip()
             assert app._input_spacer_rows() > 0
-            assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 1
+            assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 3
             assert get_cwidth(lines[panel_bottom]) == columns
             assert get_cwidth(lines[input_row + 2].rstrip()) == columns - get_cwidth(
                 widgets._STATUS_INSET
@@ -2442,7 +2442,7 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             lines = _screen_lines(screen, output.columns)
             assert not any("Window too small" in line for line in lines)
             top = next(i for i, line in enumerate(lines) if "10 queued" in line)
-            entry_count = min(8, terminal_rows - 7)
+            entry_count = min(8, max(1, terminal_rows - 9))
             entry_rows = lines[top + 2 : top + 2 + entry_count]
             assert len(entry_rows) == entry_count
             assert all(widgets._QUEUE_ENTRY_ICON in row for row in entry_rows)
@@ -2522,7 +2522,7 @@ def test_chat_input_reclaims_height_when_queue_empties() -> None:
                 app._pop_queued_call(0)
             screen = _render_chat_layout(app)
             lines = _screen_lines(screen, output.columns)
-            assert app.prompt.rows() == 7
+            assert app.prompt.rows() == 5
             assert app.queue_panel.rows() == 0
             assert any("last" in line for line in lines)
             assert "agic:chat" in lines[-1]
@@ -2586,7 +2586,8 @@ def test_chat_resize_erases_the_reflowed_live_origin(
             cursor = screen.get_cursor_position(app.app.layout.current_window)
             # A terminal reflows the full-width painted Queue/Input rows before
             # delivering SIGWINCH. The cursor's logical row also wraps.
-            live_rows = app._live_area_height()
+            # The two idle run-status rows have no painted background.
+            live_rows = app._live_area_height() + 2
             wrapped_rows = (100 + columns - 1) // columns
             reflowed_y = (
                 live_rows + (cursor.y - live_rows) * wrapped_rows + cursor.x // columns
@@ -3230,7 +3231,6 @@ def test_chat_status_bar_keeps_session_settings_at_the_edges(
 
     status.set_run_workspace("tmp")
     status.set_running(True)
-    status.set_elapsed_seconds(90)
     running = "".join(text for _style, text in status._render())
 
     assert "^d exit" not in idle
@@ -3238,7 +3238,8 @@ def test_chat_status_bar_keeps_session_settings_at_the_edges(
     assert idle.startswith(f"{widgets._STATUS_INSET}{runnable}")
     assert "hak@tq" in idle
     assert running.startswith(f"{widgets._STATUS_INSET}{runnable}")
-    assert "1m30s hak@tmp" in running
+    assert "hak@tmp" in running
+    assert "1m30s" not in running
     assert "running for" not in running
     assert "agent::" not in idle + running
     assert "tmp @ runtime model" not in running
@@ -3262,43 +3263,29 @@ def test_chat_status_bar_keeps_center_agent_stable_across_run_lifecycle() -> Non
     status.set_running(True)
     running_fragments = status._render()
     running = "".join(text for _style, text in running_fragments)
-    status.set_elapsed_seconds(1)
-    elapsed_fragments = status._render()
-    elapsed = "".join(text for _style, text in elapsed_fragments)
 
     assert status._center_label() == "hak@tmp"
     assert "hak@tq" in idle
-    assert "running hak@tmp" in running
-    assert "1s hak@tmp" in elapsed
+    assert "hak@tmp" in running
+    assert "running" not in running
     for line, center_label in (
         (idle, "hak@tq"),
         (running, "hak@tmp"),
-        (elapsed, "hak@tmp"),
     ):
         center = (
             get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
         )
         assert center == pytest.approx(40, abs=0.5)
 
-    for seconds, expected in ((90, "1m30s"), (3661, "1h01m01s")):
-        status.set_elapsed_seconds(seconds)
-        line = "".join(text for _style, text in status._render())
-        assert f"{expected} hak@tmp" in line
-        center_label = "hak@tmp"
-        center = (
-            get_cwidth(line[: line.index(center_label)]) + get_cwidth(center_label) / 2
-        )
-        assert center == pytest.approx(40, abs=0.5)
-
-    assert ("class:status.context", "hak") in elapsed_fragments
-    assert ("class:status.context.symbol", "@") in elapsed_fragments
-    assert ("class:status.context", "tmp") in elapsed_fragments
+    assert ("class:status.context", "hak") in running_fragments
+    assert ("class:status.context.symbol", "@") in running_fragments
+    assert ("class:status.context", "tmp") in running_fragments
     palette = widgets._chat_ui_palette()
     assert palette["status.context"] == ""
     assert palette["status.context.symbol"] == "dim"
     assert palette["status.elapsed"] == "dim"
-    assert ("class:status.elapsed", "1s") in elapsed_fragments
-    assert ("class:status.context.symbol", "@") in elapsed_fragments
+    assert all(style != "class:status.elapsed" for style, _ in running_fragments)
+    assert ("class:status.context.symbol", "@") in running_fragments
 
     status.set_running(False)
     stopped = "".join(text for _style, text in status._render())
@@ -3319,7 +3306,8 @@ def test_chat_status_bar_updates_only_the_session_setting_edges_during_a_run(
     text = "".join(fragment for _style, fragment in status._render())
 
     assert text.startswith(f"{widgets._STATUS_INSET}flow:relay")
-    assert "running hak@run-space" in text
+    assert "hak@run-space" in text
+    assert "running" not in text
     assert text.endswith(f"new-model · high{widgets._STATUS_INSET}")
     assert "new-session-space" not in text
     assert text.count("flow:relay") == 1
@@ -3338,14 +3326,13 @@ def test_chat_status_bar_keeps_center_and_truncates_edges_inward(
         "very-long-workspace-name",
     )
     status.set_running(True)
-    status.set_elapsed_seconds(18)
 
     text = "".join(fragment for _style, fragment in status._render())
     center_label = "very-long-agent-name@very-long-workspace-name"
 
     assert get_cwidth(text) == 70
     assert text.startswith(
-        f"{widgets._STATUS_INSET}flo…  18s {center_label} …-5 · high"
+        f"{widgets._STATUS_INSET}flow:a_v… {center_label} …-5 · high"
     )
     assert text.endswith(f"…-5 · high{widgets._STATUS_INSET}")
     assert f"{center_label} …-5 · high" in text
@@ -3363,11 +3350,10 @@ def test_chat_status_bar_reserves_no_visible_context_usage_content(
     status = widgets.StatusBar("agic:chat", "runtime model", "hak", "toolang")
     idle = "".join(text for _style, text in status._render())
     status.set_running(True)
-    status.set_elapsed_seconds(90)
     running = "".join(text for _style, text in status._render())
 
     assert "hak@toolang" in idle
-    assert "1m30s hak@toolang" in running
+    assert idle == running
     assert "300k/1M" not in idle + running
     assert " / " not in idle + running
     assert idle.count("hak@toolang") == running.count("hak@toolang") == 1
@@ -3394,7 +3380,6 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
         "a-very-long-workspace",
     )
     status.set_running(True)
-    status.set_elapsed_seconds(3661)
 
     text = "".join(fragment for _style, fragment in status._render())
 
@@ -3437,7 +3422,7 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
 
     assert app.status_bar.workspace_label == "repo"
     app.status_bar.set_run_workspace(app._workspace_label_for("/private/project", None))
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     assert app.status_bar._center_label() == "hak@repo"
     app.status_bar.set_running(False)
 
@@ -3463,7 +3448,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
     )
     monkeypatch.setattr(tui.events, "handle_run_event", lambda _event, _app: None)
     app.status_bar.set_run_workspace("session")
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app.handle_run_event(_run_begin())
 
     app.handle_run_event(
@@ -3539,16 +3524,6 @@ def test_chat_status_qualifies_resolved_runnables() -> None:
     assert tui._qualified_runnable_label("research", payload) == "flow:research"
 
 
-@pytest.mark.parametrize(
-    ("seconds", "expected"),
-    [(0, "0s"), (59, "59s"), (60, "1m00s"), (68, "1m08s"), (3661, "1h01m01s")],
-)
-def test_chat_status_elapsed_time_uses_whole_seconds(
-    seconds: int, expected: str
-) -> None:
-    assert widgets._format_elapsed_seconds(seconds) == expected
-
-
 def test_chat_tui_floors_status_elapsed_time() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
@@ -3557,17 +3532,17 @@ def test_chat_tui_floors_status_elapsed_time() -> None:
         input_history=None,
         client=FakeClient(),
     )
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app._status_activity_started_at = 100.0
 
     app._update_status_elapsed(168.9)
 
-    assert app.status_bar.elapsed_seconds == 68
-    assert "1m08s" in "".join(text for _style, text in app.status_bar._render())
+    assert app.run_status_bar.elapsed_seconds == 68
+    assert "1m8s" in "".join(text for _style, text in app.run_status_bar._render())
 
     app._update_status_elapsed(171.2)
 
-    assert app.status_bar.elapsed_seconds == 71
+    assert app.run_status_bar.elapsed_seconds == 71
 
 
 def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() -> None:
@@ -3580,7 +3555,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
     )
     now = ["2026-01-01T00:00:00Z"]
     app.presenter._projector._clock = lambda: now[0]
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app._status_activity_started_at = 100.0
     app.presenter.handle(
         RunBegin(
@@ -3625,7 +3600,7 @@ def test_chat_tui_invalidates_only_when_the_visible_elapsed_second_changes(
         input_history=None,
         client=FakeClient(),
     )
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app._status_activity_started_at = 100.0
     invalidations = 0
 
@@ -3639,11 +3614,11 @@ def test_chat_tui_invalidates_only_when_the_visible_elapsed_second_changes(
     app._update_status_elapsed(101.1)
     app._update_status_elapsed(101.9)
 
-    assert app.status_bar.elapsed_seconds == 1
+    assert app.run_status_bar.elapsed_seconds == 1
     assert invalidations == 1
 
 
-def test_chat_tui_tracks_elapsed_without_invalidating_a_visible_error(
+def test_chat_tui_repaints_run_elapsed_while_session_error_is_visible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = tui.ChatTuiApp(
@@ -3653,7 +3628,7 @@ def test_chat_tui_tracks_elapsed_without_invalidating_a_visible_error(
         input_history=None,
         client=FakeClient(),
     )
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app.status_bar.set_error("Connection lost")
     app._status_activity_started_at = 100.0
     invalidations = 0
@@ -3666,10 +3641,10 @@ def test_chat_tui_tracks_elapsed_without_invalidating_a_visible_error(
 
     app._update_status_elapsed(101.1)
 
-    assert app.status_bar.elapsed_seconds == 1
-    assert invalidations == 0
-    app.status_bar.clear_transient_error()
-    assert "1s" in "".join(text for _style, text in app.status_bar._render())
+    assert app.run_status_bar.elapsed_seconds == 1
+    assert invalidations == 1
+    assert "Connection lost" in "".join(text for _, text in app.status_bar._render())
+    assert "1s" in "".join(text for _, text in app.run_status_bar._render())
 
 
 def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
@@ -3689,7 +3664,7 @@ def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
 
         def record_status_elapsed(now: float) -> None:
             update_status_elapsed(now)
-            if app.status_bar.elapsed_seconds > 0:
+            if app.run_status_bar.elapsed_seconds > 0:
                 elapsed_updated.set()
 
         monkeypatch.setattr(app, "_update_status_elapsed", record_status_elapsed)
@@ -3702,7 +3677,7 @@ def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
 
             app._set_status_running(False)
 
-            assert app.status_bar.elapsed_seconds == 0
+            assert app.run_status_bar.elapsed_seconds == 0
             assert not app.status_bar.running
         finally:
             refresh.cancel()
@@ -3730,7 +3705,7 @@ def test_chat_tui_restarts_elapsed_refresh_timing_for_the_next_run(
 
         def record_status_elapsed(now: float) -> None:
             update_status_elapsed(now)
-            if app.status_bar.elapsed_seconds > 0:
+            if app.run_status_bar.elapsed_seconds > 0:
                 elapsed_updated.set()
 
         monkeypatch.setattr(app, "_update_status_elapsed", record_status_elapsed)
@@ -3776,7 +3751,10 @@ def test_chat_tui_stops_short_run_activity_immediately() -> None:
     ]
 
 
-def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
+@pytest.mark.parametrize("outcome", ["succeeded", "failed", "canceled"])
+def test_chat_tui_run_lifecycle_starts_and_stops_status_activity(
+    outcome: Literal["succeeded", "failed", "canceled"],
+) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
@@ -3800,11 +3778,21 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
 
     assert app.run_in_flight.is_set()
     assert app.status_bar.running
+    assert app.run_status_bar.running
+    app.run_status_bar.set_elapsed_seconds(80)
 
-    app._finish_active_run()
+    app.active_run_id = "run_1"
+    app.handle_run_event(_run_begin())
+    if outcome == "canceled":
+        app._request_run_cancel()
+        assert app.run_status_bar.running
+        assert app.run_status_bar.elapsed_seconds == 80
+    app.handle_run_event(RunEnd(run="run_1", status=outcome))
 
     assert not app.run_in_flight.is_set()
     assert not app.status_bar.running
+    assert not app.run_status_bar.running
+    assert app.run_status_bar.elapsed_seconds == 0
 
 
 def test_chat_status_bar_error_uses_red_foreground_without_a_background(
@@ -4043,7 +4031,7 @@ def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
     )
     monkeypatch.setattr(tui.events, "handle_run_event", lambda _event, _app: None)
     app.status_bar.set_run_workspace("run-workspace")
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
 
     app.handle_run_event(_run_begin(runnable_name="review"))
     app.handle_run_event(
@@ -4077,7 +4065,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
         True,
     )
     app.status_bar.set_run_workspace("active-space")
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
 
     app.handle_submit("/flow research")
 
@@ -5215,7 +5203,7 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
     app.active_run_id = "run_busy"
     app.run_in_flight.set()
     app.status_bar.set_run_workspace("current")
-    app.status_bar.set_running(True)
+    app._set_status_running(True)
     app.queue.append(
         QueuedCall(
             "queued",
@@ -5230,8 +5218,12 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
         )
     )
 
+    app.run_status_bar.set_elapsed_seconds(80)
     app._finish_active_run()
 
+    assert app.run_status_bar.running
+    assert app.run_status_bar.elapsed_seconds == 0
+    assert app.run_status_bar._elapsed_label() == "Working"
     assert app.status_bar.running
     assert app.status_bar.runnable_label == "agic:chat"
     assert app.status_bar.run_workspace_label == "lab"
@@ -6317,7 +6309,10 @@ def test_chat_live_steer_feedback_has_blank_rows_before_queue(accepted: int) -> 
             assert "pending" in lines[status_row]
             assert not lines[status_row - 1].strip()
             assert not lines[status_row + 1].strip()
-            assert "3 queued" in lines[status_row + 2]
+            assert all(
+                not line.strip() for line in lines[status_row + 2 : status_row + 4]
+            )
+            assert "3 queued" in lines[status_row + 4]
             # The upper gap is outside the padded control bar.
             assert _cell_attrs(app, screen, status_row - 1, 0).bgcolor == ""
 
@@ -6798,3 +6793,105 @@ def test_chat_tui_seeds_and_updates_session_workdir() -> None:
     app._handle_run_state(RunWorkdirUpdated("run_1", "lab://final"))
     assert app.setting.workdir == "lab://final"
     assert app.setting.workdir_base is None
+
+
+@pytest.mark.parametrize("queue_state", ["absent", "collapsed", "expanded"])
+@pytest.mark.parametrize("running", [False, True])
+def test_chat_run_status_immediately_precedes_queue_or_input(
+    queue_state: str,
+    running: bool,
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            if queue_state == "absent":
+                app.queue.clear()
+            app.queue_panel.expanded = queue_state == "expanded"
+            app._set_status_running(running)
+            app._status_activity_started_at = 100.0 if running else None
+            app._update_status_elapsed(180.9)
+            app.prompt.replace_input("draft")
+            app.unfinalized_blocks.append(
+                blocks.ExecutionProgressBlock(
+                    ProgressBlock("step:run_busy.0", (ProgressRow("working"),))
+                )
+            )
+            screen = _render_chat_layout(app)
+            lines = _screen_lines(screen, output.columns)
+            surface_row = next(
+                i
+                for i, line in enumerate(lines)
+                if ("draft" if queue_state == "absent" else "3 queued") in line
+            ) - (1 if queue_state == "absent" else 0)
+            assert not lines[surface_row - 2].strip()
+            assert lines[surface_row - 1].rstrip() == (
+                "  Working for 1m20s" if running else ""
+            )
+            assert _cell_attrs(app, screen, surface_row - 1, 2).bgcolor == ""
+            if running:
+                assert _cell_attrs(app, screen, surface_row - 1, 2).dim
+            assert "1m20s" not in lines[-1]
+            assert "Working" not in lines[-1]
+            assert "agic:chat" in lines[-1]
+            app._set_status_running(False)
+            stopped = _screen_lines(_render_chat_layout(app), output.columns)
+            assert len(stopped) == len(lines)
+            assert not stopped[surface_row - 1].strip()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("columns", [1, 2, 4, 5, 10, 80])
+@pytest.mark.parametrize(
+    "seconds, label",
+    [
+        (0, "Working"),
+        (1, "Working for 1s"),
+        (59, "Working for 59s"),
+        (60, "Working for 1m0s"),
+        (63, "Working for 1m3s"),
+        (80, "Working for 1m20s"),
+        (3661, "Working for 1h1m1s"),
+    ],
+)
+def test_chat_run_status_fits_compact_elapsed_in_two_rows(
+    columns: int,
+    seconds: int,
+    label: str,
+) -> None:
+    output = _TerminalOutput()
+    output.columns = columns
+    with set_app(tui.Application(input=DummyInput(), output=output)):
+        status = widgets.RunStatusBar(get_rows=lambda: 2)
+        status.set_running(True)
+        status.set_elapsed_seconds(seconds)
+        lines = "".join(text for _, text in status._render()).split("\n")
+        assert len(lines) == 2
+        assert lines[0] == ""
+        assert get_cwidth(lines[1]) <= columns
+        if columns == 80:
+            assert lines[1] == f"  {label}"
+        status.set_running(False)
+        assert not "".join(text for _, text in status._render()).strip()
+
+
+@pytest.mark.parametrize("rows, status_rows", [(4, 0), (5, 1), (6, 2), (30, 2)])
+def test_chat_run_status_yields_space_to_input_on_short_terminals(
+    rows: int,
+    status_rows: int,
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            app.queue.clear()
+            output.rows = rows
+            app._set_status_running(True)
+            app.run_status_bar.set_elapsed_seconds(80)
+            app.prompt.replace_input("draft")
+            screen = _render_chat_layout(app)
+            lines = _screen_lines(screen, output.columns)
+            assert screen.height <= rows
+            assert app._run_status_rows() == status_rows
+            assert any("draft" in line for line in lines)
+            assert "agic:chat" in lines[-1]
+            assert any("1m20s" in line for line in lines) == bool(status_rows)
+
+    asyncio.run(exercise())

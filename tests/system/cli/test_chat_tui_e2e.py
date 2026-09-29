@@ -443,3 +443,118 @@ def test_chat_tui_displays_real_compaction_lifecycle(tmp_path, outcome):
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+def test_chat_run_status_stays_above_queue_and_input_in_terminal(
+    tmp_path: Path,
+) -> None:
+    bootstrap = """
+import runpy
+import sys
+from pathlib import Path
+from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
+
+original_init = ChatTuiApp.__init__
+def init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    def rendered(app):
+        Path(sys.argv[1], 'run-status-width').write_text(str(app.output.get_size().columns))
+    self.app.after_render += rendered
+ChatTuiApp.__init__ = init
+runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
+"""
+    server = Server(
+        socket_name=f"toolang-run-status-{uuid4().hex}", config_file=os.devnull
+    )
+    try:
+        session = server.new_session(
+            session_name="run-status",
+            start_directory=PROJECT_ROOT,
+            window_command=shlex.join(
+                [
+                    sys.executable,
+                    "-c",
+                    bootstrap,
+                    str(tmp_path),
+                    "status",
+                ]
+            ),
+            x=100,
+            y=30,
+            environment={"TOOLANG_TMUX": "0", "TERM": "xterm-256color"},
+        )
+        window = session.active_window
+        pane = window.active_pane
+        assert pane is not None
+
+        rendered_width = tmp_path / "run-status-width"
+
+        def wait_for_layout(
+            *, queued: bool, running: bool, columns: int = 100
+        ) -> list[str]:
+            deadline = time.monotonic() + 10
+            lines: list[str] = []
+            while time.monotonic() < deadline:
+                # tmux can expose the old frame before Chat handles SIGWINCH.
+                # Wait for the app's render, then for the PTY grid to catch up.
+                if not rendered_width.exists() or rendered_width.read_text() != str(
+                    columns
+                ):
+                    time.sleep(0.02)
+                    continue
+                lines = pane.capture_pane() or []
+                input_rows = [
+                    i for i, line in enumerate(lines) if "Ask or describe" in line
+                ]
+                queue_rows = [i for i, line in enumerate(lines) if "1 queued" in line]
+                session_rows = [
+                    line
+                    for i, line in enumerate(lines)
+                    if input_rows
+                    and i > input_rows[0]
+                    and "agic:chat" in line
+                    and line.rstrip().endswith("· auto")
+                ]
+                if (
+                    len(input_rows) == 1
+                    and len(queue_rows) == int(queued)
+                    and len(session_rows) == 1
+                    and len(session_rows[0].rstrip()) == columns - 2
+                ):
+                    surface = queue_rows[0] if queued else input_rows[0] - 1
+                    status = lines[surface - 1] if surface >= 2 else "invalid"
+                    elapsed = bool(
+                        re.fullmatch(
+                            r"  Working for (?:\d+s|\d+m\d+s|\d+h\d+m\d+s)",
+                            status.rstrip(),
+                        )
+                    )
+                    if (elapsed if running else not status.strip()) and not lines[
+                        surface - 2
+                    ].strip():
+                        return lines
+                time.sleep(0.02)
+            pytest.fail("Unexpected terminal layout:\n" + "\n".join(lines))
+
+        wait_for_layout(queued=False, running=False)
+        pane.send_keys("hold status", enter=True)
+        for queued in (False, True):
+            if queued:
+                pane.send_keys("queued follow-up", enter=True)
+            for columns in (100, 40, 100):
+                window.resize(width=columns)
+                lines = wait_for_layout(queued=queued, running=True, columns=columns)
+                session_line = next(
+                    line for line in reversed(lines) if "agic:chat" in line
+                )
+                assert not re.search(r"\b(?:Working|\d+s)\b", session_line)
+        # This fixture provides one model response. Remove the queued draft
+        # before release so exhaustion diagnostics cannot disturb the idle frame.
+        pane.send_keys("Tab", enter=False)
+        pane.send_keys("d", enter=False)
+        wait_for_layout(queued=False, running=True)
+        (tmp_path / "release-model").touch()
+        wait_for_layout(queued=False, running=False)
+    finally:
+        server.kill()

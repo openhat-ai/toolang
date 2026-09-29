@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ...common.events import ProgressEvent
 from ...common.progress import ProgressSink
+from ...common.time import format_duration
 from .execution_progress.config import resolve_progress_max_width
 from .execution_progress.formatting import one_line, wrap_display
 
@@ -388,12 +389,12 @@ class CliProgress:
         if state.active and state.activity_started_at is not None:
             seconds = max(self._clock() - state.activity_started_at, 0.0)
             if seconds >= _ELAPSED_REVEAL_SECONDS:
-                elapsed = _format_elapsed(seconds)
+                elapsed = format_duration(seconds)
         elif (
             state.activity_elapsed is not None
             and state.activity_elapsed >= _ELAPSED_REVEAL_SECONDS
         ):
-            elapsed = _format_elapsed(state.activity_elapsed)
+            elapsed = format_duration(state.activity_elapsed)
         return self._event_text(state.event, elapsed=elapsed)
 
     def _event_text(self, event: ProgressEvent, *, elapsed: str | None) -> str:
@@ -523,19 +524,6 @@ def _with_facts(label: str, facts: list[str]) -> str:
     base = label[:-3].rstrip() if running else label
     suffix = f" ({', '.join(facts)})"
     return f"{base}{suffix}{'...' if running else ''}"
-
-
-def _format_elapsed(seconds: float) -> str:
-    if seconds < 10:
-        return f"{seconds:.1f}s"
-    rounded = round(seconds)
-    if rounded < 60:
-        return f"{rounded}s"
-    minutes, secs = divmod(rounded, 60)
-    if minutes < 60:
-        return f"{minutes}m {secs:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes:02d}m {secs:02d}s"
 
 
 def _bounded_detail(detail: str | None) -> str | None:
