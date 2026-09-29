@@ -2595,21 +2595,35 @@ def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
                             await renderer.wait_for_cpr_responses(timeout=0)
                         renderer.erase(leave_alternate_screen=False)
                         app._write_scrollback([Text("stable line\n" * 5)])
-                    reports.append(output.cursor_row + 1)
+                    origin_row = output.cursor_row + 1
+                    pending_count = len(renderer._waiting_for_cpr_futures)
                     renderer.request_absolute_cursor_position()
+                    if len(renderer._waiting_for_cpr_futures) > pending_count:
+                        reports.append(origin_row)
                     _render_chat_layout(app)
 
-                current_request = renderer._waiting_for_cpr_futures[-1]
+                current_request = (
+                    renderer._waiting_for_cpr_futures[-1]
+                    if renderer._waiting_for_cpr_futures
+                    else None
+                )
                 for index, row in enumerate(reports):
                     renderer.report_absolute_cursor_row(row)
-                    assert current_request.done() == (index == len(reports) - 1)
+                    if current_request is not None:
+                        assert current_request.done() == (index == len(reports) - 1)
                     screen = _render_chat_layout(app)
                     lines = _screen_lines(screen, output.columns)
                     assert output.scrolled_rows == 0
                     assert any("Ask or describe" in line for line in lines)
 
+                if current_request is None:
+                    renderer.erase()
+                    renderer.request_absolute_cursor_position()
+                    renderer.report_absolute_cursor_row(origin_row)
+                    _render_chat_layout(app)
+                assert output.scrolled_rows == 0
                 assert not renderer.waiting_for_cpr
-                assert renderer._min_available_height == output.rows - reports[-1] + 1
+                assert renderer._min_available_height == output.rows - origin_row + 1
                 await app.app.cancel_and_wait_for_background_tasks()
 
     asyncio.run(exercise())
@@ -2642,6 +2656,49 @@ def test_chat_renderer_ignores_obsolete_cursor_reports(
             assert old_request.done()
             assert renderer._min_available_height == 0
             renderer.request_absolute_cursor_position()
+            renderer.report_absolute_cursor_row(8)
+            assert renderer._min_available_height == output.rows - 7
+            assert not renderer.waiting_for_cpr
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("queries", [1, 3])
+def test_chat_pauses_cursor_queries_until_timed_out_replies_are_drained(
+    monkeypatch: pytest.MonkeyPatch, queries: int
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            renderer = app.app.renderer
+            renderer.cpr_support = CPR_Support.SUPPORTED
+            sent: list[bool] = []
+
+            def unavailable() -> int:
+                raise NotImplementedError
+
+            monkeypatch.setattr(output, "get_rows_below_cursor_position", unavailable)
+            monkeypatch.setattr(output, "ask_for_cpr", lambda: sent.append(True))
+            for _ in range(queries):
+                renderer.request_absolute_cursor_position()
+            await renderer.wait_for_cpr_responses(timeout=0)
+
+            # A missing reply must not consume newer replies indefinitely or
+            # cause each subsequent terminal transaction to wait for a timeout.
+            for _ in range(3):
+                renderer.erase()
+                renderer.request_absolute_cursor_position()
+                assert len(sent) == queries
+                assert not renderer.waiting_for_cpr
+                await renderer.wait_for_cpr_responses(timeout=0)
+
+            for index in range(queries):
+                renderer.report_absolute_cursor_row(1)
+                assert renderer._min_available_height == 0
+                renderer.request_absolute_cursor_position()
+                drained = index == queries - 1
+                assert len(sent) == queries + int(drained)
+                assert renderer.waiting_for_cpr == drained
+
             renderer.report_absolute_cursor_row(8)
             assert renderer._min_available_height == output.rows - 7
             assert not renderer.waiting_for_cpr

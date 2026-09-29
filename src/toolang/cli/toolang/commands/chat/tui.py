@@ -232,6 +232,14 @@ class _ChatRenderer(Renderer):
         self._stale_cpr_requests = set(self._cpr_requests)
 
     def request_absolute_cursor_position(self) -> None:
+        # CPR has no request IDs. After a timeout, sending more queries would
+        # make a missing old reply indistinguishable from a fresh one. Render
+        # without CPR until those replies drain, without adding more waiters.
+        if any(
+            request.done() or request not in self._waiting_for_cpr_futures
+            for request in self._cpr_requests
+        ):
+            return
         pending_count = len(self._waiting_for_cpr_futures)
         super().request_absolute_cursor_position()
         if len(self._waiting_for_cpr_futures) > pending_count:
