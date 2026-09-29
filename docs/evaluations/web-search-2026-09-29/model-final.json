@@ -1,0 +1,110 @@
+[
+  {
+    "input": {
+      "domains": [
+        "fly.io"
+      ],
+      "query": "Fly.io Machines deployment documentation",
+      "top_k": 5
+    },
+    "output": {
+      "attempts": [
+        {
+          "backend": "brave",
+          "elapsed_ms": 976,
+          "error": "No results found.",
+          "status": "error"
+        },
+        {
+          "backend": "yahoo",
+          "elapsed_ms": 1710,
+          "result_count": 5,
+          "status": "ok"
+        }
+      ],
+      "backend": "yahoo",
+      "domains": [
+        "fly.io"
+      ],
+      "query": "Fly.io Machines deployment documentation",
+      "results": [
+        {
+          "title": "Fly Machines - Fly.io",
+          "url": "https://docs.fly.io/machines"
+        },
+        {
+          "title": "Fly Machines · Fly",
+          "url": "https://fly.io/machines/"
+        },
+        {
+          "title": "fly machines run - Fly.io",
+          "url": "https://docs.fly.io/model-context-protocol/deploy-with/flyctl-machines"
+        },
+        {
+          "title": "fly machines run · Fly Docs",
+          "url": "https://fly.io/docs/mcp/deploy-with/flyctl-machines/"
+        },
+        {
+          "title": "Preview: Deploying applications on Machines with flyctl",
+          "url": "https://community.fly.io/t/preview-deploying-applications-on-machines-with-flyctl/6171"
+        }
+      ],
+      "status": "ok"
+    },
+    "status": "succeeded"
+  },
+  {
+    "input": {
+      "domains": [
+        "fly.io"
+      ],
+      "query": "flyctl deploy Machines app configuration docs",
+      "top_k": 5
+    },
+    "output": {
+      "attempts": [
+        {
+          "backend": "brave",
+          "elapsed_ms": 669,
+          "error": "No results found.",
+          "status": "error"
+        },
+        {
+          "backend": "yahoo",
+          "elapsed_ms": 2165,
+          "result_count": 5,
+          "status": "ok"
+        }
+      ],
+      "backend": "yahoo",
+      "domains": [
+        "fly.io"
+      ],
+      "query": "flyctl deploy Machines app configuration docs",
+      "results": [
+        {
+          "title": "App configuration (fly.toml) · Fly Docs",
+          "url": "https://fly.io/docs/reference/configuration/"
+        },
+        {
+          "title": "App configuration (fly.toml) - Fly.io",
+          "url": "https://docs.fly.io/reference/configuration"
+        },
+        {
+          "title": "Deploy an app - Fly.io",
+          "url": "https://docs.fly.io/launch/deploy"
+        },
+        {
+          "title": "fly machines run · Fly Docs",
+          "url": "https://fly.io/docs/mcp/deploy-with/flyctl-machines/"
+        },
+        {
+          "title": "Help understanding fly machine configuration",
+          "url": "https://community.fly.io/t/help-understanding-fly-machine-configuration/13042"
+        }
+      ],
+      "status": "ok"
+    },
+    "status": "succeeded"
+  }
+]
