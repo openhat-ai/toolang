@@ -678,14 +678,14 @@ class RemoteChatSession:
             path = f"/api/v1/threads/{thread_id}/result"
             operation = "get latest result"
         else:
-            raise ValueError("No run result is available in this chat.")
+            raise ValueError("No saved output is available in this chat.")
         try:
             detail = await self._run_detail(path, operation=operation)
         except RemoteChatError as exc:
             if exc.status_code == 404:
                 if run_id is not None:
                     raise ValueError(f"Run not found: {run_id}") from None
-                raise ValueError("No run result is available in this chat.") from None
+                raise ValueError("No saved output is available in this chat.") from None
             raise
         if run_id is not None and detail.id != run_id:
             raise _RemoteChatProtocolError(
@@ -697,7 +697,7 @@ class RemoteChatSession:
             else ()
         )
         if not output:
-            raise ValueError(f"Run has no result: {detail.id}")
+            raise ValueError(f"Run has no saved output: {detail.id}")
         return ChatResult(run_id=detail.id, output=output)
 
     async def _build_request(

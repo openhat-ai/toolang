@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 import pytest
 from prompt_toolkit.application.current import create_app_session, set_app
-from prompt_toolkit.completion import CompleteEvent, Completion
+from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
 from prompt_toolkit.input import DummyInput
@@ -59,7 +59,6 @@ from toolang.cli.common.terminal_surfaces import (
 )
 from toolang.cli.toolang.commands.chat import (
     blocks,
-    completion,
     events,
     rendering,
     shortcuts,
@@ -2064,48 +2063,17 @@ def test_chat_tui_bindings_cover_all_documented_shortcut_metadata() -> None:
             assert expected.bindings[0].keys in actual, shortcut.name
 
 
-def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
-    (tmp_path / "README.md").write_text("read me", encoding="utf-8")
-    completer = completion.ChatInputCompleter(resource_paths=lambda: [str(tmp_path)])
-    completer.set_prompts(
-        {
-            "items": [
-                {
-                    "name": "review",
-                    "params": [
-                        {"name": "focus", "optional": False},
-                        {"name": "tone", "optional": True},
-                    ],
-                }
-            ]
-        }
+def test_chat_prompt_box_has_no_input_completion() -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    assert (
+        list(
+            prompt.buffer.completer.get_completions(
+                Document(":"), CompleteEvent(completion_requested=True)
+            )
+        )
+        == []
     )
-    event = CompleteEvent(completion_requested=True)
-
-    def values(source: str) -> list[str]:
-        return [
-            item.text for item in completer.get_completions(Document(source), event)
-        ]
-
-    assert values("/mo") == []
-    assert values("$rev") == ["$review focus= tone="]
-    assert values(":limit ti") == [":limit time="]
-    assert values("  $rev") == []
-    assert values("ordinary /mo") == []
-    assert values("first\n/mo") == []
-    assert values("@READ") == ["ME.md"]
-
-
-def test_chat_prompt_box_enables_completion_for_authored_source() -> None:
-    completer = completion.ChatInputCompleter()
-    prompt = widgets.PromptBox(
-        lambda _event: None,
-        lambda: None,
-        completer=completer,
-    )
-
-    assert prompt.buffer.completer is completer
-    assert prompt.buffer.complete_while_typing()
+    assert not prompt.buffer.complete_while_typing()
 
 
 def test_chat_prompt_grows_for_wrapped_input(
@@ -2844,13 +2812,9 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
 
     rendered = _render_text(block.render(), width=100)
     segments = rendering.render_segments(block.render(), width=100)
-    heading = next(
-        segment for segment in segments if segment.text == "Session commands:"
-    )
+    heading = next(segment for segment in segments if segment.text.strip() == "Session")
     command = next(segment for segment in segments if segment.text == "/model")
-    argument = next(
-        segment for segment in segments if segment.text == "[MODEL] [effort=VALUE]"
-    )
+    argument = next(segment for segment in segments if segment.text == "[MODEL]")
     alias = next(segment for segment in segments if "(alias: /show)" in segment.text)
     narrow = _render_text(
         blocks.SlashHelpBlock("/help", outcome.content, max_width=24).render(),
@@ -2860,7 +2824,7 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
 
     assert all(get_cwidth(line) <= 60 for line in rendered.splitlines())
     assert all(get_cwidth(line) <= 24 for line in narrow.splitlines())
-    assert "Set the session model or effort" in narrow_words
+    assert "Set model or parameters" in narrow_words
     assert "all available" in narrow_words
     assert "alias: /show" in narrow_words
     assert heading.style is not None and heading.style.bold
@@ -4586,32 +4550,47 @@ def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("expanded", [False, True])
-def test_chat_tui_queue_focus_shortcuts_yield_to_input_completion(
-    expanded: bool,
+@pytest.mark.parametrize("source", (":", "$", "@", "/"))
+def test_chat_tui_namespace_input_does_not_interfere_with_queue_focus(
+    source: str,
 ) -> None:
+    class NoCompletionClient(FakeClient):
+        def list_prompts(self, runnable: str | None = None) -> dict[str, object]:
+            pytest.fail("Chat must not fetch a completion catalog")
+
+    client = NoCompletionClient()
     app = tui.ChatTuiApp(
         thread_id="term_busy",
-        setting=FakeClient().initial_setting(),
+        setting=client.initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=FakeClient(),
+        client=client,
     )
     app.active_run_id = "run_busy"
     app.handle_submit("queued input")
-    app.queue_panel.expanded = expanded
-    key_bindings = app.app.key_bindings
-    assert key_bindings is not None
-    app.prompt.buffer._set_completions([Completion("/help")])
-
+    app.prompt.buffer.document = Document(source, len(source))
+    app.app_context.refresh_status()
+    assert app.prompt.buffer.complete_state is None
+    assert (
+        list(
+            app.prompt.buffer.completer.get_completions(
+                app.prompt.buffer.document, CompleteEvent(completion_requested=True)
+            )
+        )
+        == []
+    )
     with set_app(app.app):
-        tab_bindings = key_bindings.get_bindings_for_keys((Keys.Tab,))
-        backtab_bindings = key_bindings.get_bindings_for_keys((Keys.BackTab,))
-
-        assert not [binding for binding in tab_bindings if binding.filter()]
-        assert not [binding for binding in backtab_bindings if binding.filter()]
-        assert app.app.layout.current_control is not app.queue_panel.view
-        assert app.queue_panel.expanded is expanded
+        bindings = app.app.key_bindings
+        assert bindings is not None
+        tab = [
+            binding
+            for binding in bindings.get_bindings_for_keys((Keys.Tab,))
+            if binding.filter()
+        ]
+        assert len(tab) == 1
+        tab[0].handler(cast(Any, SimpleNamespace()))
+        assert app.app.layout.current_control is app.queue_panel.view
+        assert app.prompt.buffer.text == source
 
 
 def test_chat_tui_queue_steer_has_no_single_key_binding() -> None:
@@ -5059,8 +5038,10 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
     app.handle_submit("/model")
 
     assert app.status_bar.error_message == ""
-    assert any("/model [MODEL] [effort=VALUE]" in value for value in rendered)
-    assert any("Set the session model or effort" in value for value in rendered)
+    assert any("/model [MODEL] [PARAM=VALUE...]" in value for value in rendered)
+    assert any(
+        "Set the session model or its parameters." in value for value in rendered
+    )
     assert client.model_reads == initial_reads
 
 
@@ -5101,7 +5082,7 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
         (":missing value", "Unknown run override :missing · See :? for help"),
         (
             ":model effort=high",
-            "Add runnable input after the override · See :? for help",
+            "Include primary or named input with the override · See :? for help",
         ),
     ],
 )
@@ -5141,11 +5122,11 @@ def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("/model", "/model [MODEL] [effort=VALUE]"),
+        ("/model", "/model [MODEL] [PARAM=VALUE...]"),
         ("/help\nInput", "Error: quick command cannot be combined with other input"),
-        ("/?", "Session commands:"),
-        (":?", "Run overrides change settings for this run only."),
-        ("/keys", "These shortcuts control interactive Chat."),
+        ("/?", "Session"),
+        (":?", "Overrides apply to this run only; session defaults stay unchanged."),
+        ("/keys", "Input focused:"),
     ],
 )
 def test_chat_tui_recognized_help_usage_and_errors_enter_scrollback(
@@ -5499,7 +5480,7 @@ def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
 
     def write_scrollback(renderables: Sequence[RenderableType | None]) -> None:
         assert len(renderables) == 1
-        assert "/model [MODEL] [effort=VALUE]" in _render_text(renderables[0])
+        assert "/model [MODEL] [PARAM=VALUE...]" in _render_text(renderables[0])
         order.append("write")
 
     monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
@@ -6966,3 +6947,51 @@ def test_chat_run_status_yields_space_to_input_on_short_terminals(
             assert any("1m20s" in line for line in lines) == bool(status_rows)
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("width", (30, 60))
+def test_slash_wrapped_prose_retains_its_inset(width: int) -> None:
+    summary = "Runnable set to flow:" + "very_long_name_" * 8
+    block = blocks.SlashBlock("/flow review", (summary,), "success")
+    lines = _render_text(block.render(), width=width).splitlines()
+    start = next(i for i, line in enumerate(lines) if "Runnable" in line)
+    assert all(line.startswith("  ") for line in lines[start:] if line.strip())
+    assert all(get_cwidth(line) <= width for line in lines)
+
+
+@pytest.mark.parametrize("width", (1, 2, 3, 4, 30, 60, 100))
+@pytest.mark.parametrize("colon", (False, True))
+def test_chat_help_preserves_plain_layout_at_each_width(
+    width: int, colon: bool
+) -> None:
+    outcome = (
+        slashes.run_override_help()
+        if colon
+        else slashes.handle(cast(Any, None), QuickCommand("help"))
+    )
+    assert outcome is not None and isinstance(outcome.content, slashes.SlashHelp)
+    inset = min(2, width - 1)
+    expected = [
+        " " * inset + line if line else ""
+        for line in slashes.outcome_lines(outcome, width=max(1, width - inset))
+    ]
+    rendered = _render_text(
+        blocks.SlashHelpBlock("?", outcome.content, max_width=width), width=100
+    )
+    actual = rendered.splitlines()[-len(expected) :]
+    assert [line.rstrip() for line in actual] == [line.rstrip() for line in expected]
+    assert all(get_cwidth(line) <= width for line in rendered.splitlines())
+
+
+@pytest.mark.parametrize("width", (30, 60, 100))
+def test_chat_table_summary_wraps_with_unicode_and_preserves_inset(width: int) -> None:
+    table = slashes.SlashTable(
+        "模型 " * 40, ("MODEL",), (("sample *",),), protected_suffixes=(" *",)
+    )
+    lines = _render_text(
+        blocks.SlashTableBlock("/models", table, max_width=width), width=120
+    ).splitlines()
+    start = next(index for index, line in enumerate(lines) if "模型" in line)
+    assert all(line.startswith("  ") for line in lines[start:] if line.strip())
+    assert all(get_cwidth(line) <= width for line in lines)
+    assert any("sample *" in line for line in lines)

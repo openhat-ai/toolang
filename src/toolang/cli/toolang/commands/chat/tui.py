@@ -13,16 +13,15 @@ from uuid import uuid4
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.filters import Condition, has_completions, has_focus
+from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.containers import DynamicContainer, Float, FloatContainer
+from prompt_toolkit.layout.containers import DynamicContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.renderer import Renderer
@@ -59,7 +58,6 @@ from . import rendering
 from . import shortcuts
 from . import slashes
 from . import widgets
-from .completion import ChatInputCompleter
 from .marks import ChatMarks
 from .base import (
     AppContext,
@@ -123,10 +121,6 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "quit",
     }
 )
-
-
-def _selected_runnable(setting: SessionSetting) -> str | None:
-    return None if setting.runnable_follows_default else setting.runnable
 
 
 def _workspace_label(
@@ -222,7 +216,6 @@ class ChatTuiAppContext:
     def refresh_status(self) -> None:
         runnable_label, model_label, workspace_label = self._app._status_labels()
         self._app.status_bar.set_status(runnable_label, model_label, workspace_label)
-        self._app._refresh_prompt_completions()
 
     def request_exit(self) -> None:
         self._app.app.exit()
@@ -281,7 +274,6 @@ class ChatTuiApp:
         client: ChatClient,
         agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
-        resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
         marks: ChatMarks | None = None,
     ) -> None:
@@ -294,7 +286,6 @@ class ChatTuiApp:
                 client=client,
                 agent_name=agent_name,
                 progress_max_width=progress_max_width,
-                resource_paths=resource_paths,
                 surfaces=surfaces,
                 marks=marks,
             ).run_loop()
@@ -310,7 +301,6 @@ class ChatTuiApp:
         client: ChatClient,
         agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
-        resource_paths: tuple[str, ...] = (),
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
         marks: ChatMarks | None = None,
     ) -> None:
@@ -357,9 +347,6 @@ class ChatTuiApp:
             max_width=progress_max_width,
             code_background=surfaces.code_background,
         )
-        self.completer = ChatInputCompleter(
-            resource_paths=(lambda: list(resource_paths)) if resource_paths else None
-        )
         self._model_effort_applicability: dict[str, bool] = {}
 
         self.queue_panel = widgets.QueuePanel(
@@ -379,10 +366,8 @@ class ChatTuiApp:
             self._invalidate_ui,
             on_input=self._clear_status_error,
             history_store=self.input_history,
-            completer=self.completer,
             get_max_rows=self._available_input_rows,
         )
-        self._refresh_prompt_completions()
         keys = KeyBindings()
         self.prompt.bind(keys)
         self._bind_queue_keys(keys)
@@ -406,19 +391,7 @@ class ChatTuiApp:
         )
         self.app = Application(
             layout=Layout(
-                FloatContainer(
-                    content=body,
-                    floats=[
-                        Float(
-                            xcursor=True,
-                            ycursor=True,
-                            content=CompletionsMenu(
-                                max_height=8,
-                                display_arrows=True,
-                            ),
-                        ),
-                    ],
-                ),
+                body,
                 focused_element=self.prompt.buffer,
             ),
             key_bindings=keys,
@@ -580,17 +553,6 @@ class ChatTuiApp:
             return
         self.ui_events.put_nowait(event)
 
-    def _refresh_prompt_completions(self) -> None:
-        try:
-            list_prompts = getattr(self.client, "list_prompts", None)
-            if not callable(list_prompts):
-                return
-            payload = list_prompts(_selected_runnable(self.setting))
-            if isinstance(payload, Mapping):
-                self.completer.set_prompts(payload)
-        except (OSError, RuntimeError, ToolangError, ValueError):
-            return
-
     def _enqueue_ui_event_from_thread(self, event: ChatUIEvent) -> None:
         if self.loop is not None:
             with suppress(RuntimeError):
@@ -732,7 +694,7 @@ class ChatTuiApp:
         for binding in shortcuts.SWITCH_AREA.bindings:
             keys.add(
                 *binding,
-                filter=prompt_focus & queue_available & ~has_completions,
+                filter=prompt_focus & queue_available,
             )(focus_queue)
             keys.add(*binding, filter=queue_focus)(focus_prompt)
         for binding in shortcuts.QUEUE_TOGGLE.bindings:

@@ -20,10 +20,13 @@ from toolang.execution.types import (
 )
 from toolang.cli.toolang.commands.chat import shortcuts, slashes
 from toolang.cli.toolang.commands.chat.base import ChatResult
-from toolang.cli.toolang.commands.chat.input import QuickCommand
+from toolang.cli.toolang.commands.chat.input import (
+    QuickCommand,
+    is_runnable_input,
+    parse_chat_input,
+)
 from toolang.cli.toolang.commands.chat.policy import (
     reconcile_session_model,
-    run_override_help_lines,
     session_model_reconciliation_required,
 )
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
@@ -311,34 +314,30 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
 
     help_lines = slashes.outcome_lines(help_result)
     assert help_result.kind == "result"
-    assert help_lines == (
-        "Session commands:",
-        "",
-        "  /model     [MODEL] [effort=VALUE]  Set the session model or effort",
-        "  /runnable  RUNNABLE                Switch the session runnable",
-        "  /agic      AGIC                    Switch the session agic",
-        "  /flow      FLOW                    Switch the session flow",
-        "  /allow     FIELD=QUERY...          Set session resource ceilings",
-        "  /cd        [PATH]                  Set or show the session workdir",
-        "  /limit     FIELD=VALUE...          Set session run limits",
-        "",
-        "Inspection commands:",
-        "",
-        "  /models    [-a] [QUERY]            List allowed models (-a: all available)",
-        "  /tools     [-a] [QUERY]            List allowed tools (-a: all available)",
-        "  /caps      [-a] [QUERY]            List allowed capabilities (-a: all available)",
-        "  /agics                             List available agics",
-        "  /flows                             List available flows",
-        "  /output    [RUN]                   Show output from the given or latest run (alias: /show)",
-        "",
-        "Other commands:",
-        "",
-        "  /help                              Show this help (alias: /?)",
-        "  /exit                              Exit Chat (alias: /quit)",
-        "  /keys                              Show keyboard shortcuts",
-        "",
-        "To list one-run colon directives, type :?.",
-    )
+    assert help_lines[0] == "Session"
+    assert help_lines[1].startswith("  /model ")
+    assert "Inspection" in help_lines and "Other" in help_lines
+    commands = [line.split()[0] for line in help_lines if line.startswith("  /")]
+    assert commands == [
+        "/model",
+        "/runnable",
+        "/allow",
+        "/cd",
+        "/limit",
+        "/models",
+        "/tools",
+        "/caps",
+        "/agics",
+        "/flows",
+        "/output",
+        "/help",
+        "/exit",
+        "/keys",
+    ]
+    assert any("shortcuts: /agic, /flow" in line for line in help_lines)
+    for alias in ("/show", "/?", "/quit"):
+        assert any(f"(alias: {alias})" in line for line in help_lines)
+    assert help_lines[-1] == ":? shows one-run overrides."
     assert not any("/queue" in line or "/steer" in line for line in help_lines)
     assert all(
         get_cwidth(line) <= 10 for line in slashes.outcome_lines(help_result, width=10)
@@ -347,32 +346,41 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
     assert app.exited is True
 
 
-def test_run_override_help_explains_lifetime_and_uses_shared_forms() -> None:
-    lines = slashes.outcome_lines(slashes.run_override_help())
-    expected_forms = (
-        ":model MODEL",
-        ":model unset",
-        ":model effort=VALUE",
-        ":agic AGIC",
-        ":flow FLOW",
-        ":runnable RUNNABLE",
-        ":workdir PATH",
-        ":allow FIELD=QUERY...",
-        ":limit FIELD=VALUE...",
-    )
+def test_run_override_help_covers_all_operations_and_input_forms() -> None:
+    result = slashes.run_override_help()
+    assert isinstance(result.content, slashes.SlashHelp)
+    rows = result.content.sections[0].rows
+    assert [row.command for row in rows] == [
+        ":model",
+        ":runnable",
+        ":workdir",
+        ":allow",
+        ":limit",
+    ]
+    lines = slashes.outcome_lines(result)
+    text = "\n".join(lines)
+    for expected in (
+        "session defaults stay unchanged",
+        "primary or named input",
+        ":agic NAME",
+        ":flow NAME",
+        "max_output=POSITIVE_INT|auto",
+        "unset",
+        "default",
+        "-- TEXT",
+        "- stream",
+        "--- fenced block",
+        "psyches",
+        "agic_tool_calls",
+        "/cd",
+    ):
+        assert expected in text
 
-    assert lines[:8] == (
-        "Run overrides change settings for this run only.",
-        "Session defaults stay unchanged.",
-        "effort=auto inherits model or provider reasoning defaults.",
-        "",
-        "Put one or more override lines first.",
-        "Include the run input in the same submission.",
-        "",
-        "Available overrides:",
-    )
-    assert lines[8:] == run_override_help_lines() == expected_forms
-    assert "Run overrides" not in lines
+    example = lines[lines.index("Example") + 1 :]
+    parsed = parse_chat_input("\n".join(line.removeprefix("  ") for line in example))
+    assert is_runnable_input(parsed)
+    assert parsed[0].model is not None and parsed[0].model.max_output == 8192
+    assert parsed[1]["_"] == "Review this change."
 
 
 def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
@@ -380,96 +388,25 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
     lines = slashes.outcome_lines(result)
 
     assert result.kind == "result"
-    assert lines[:4] == (
-        "These shortcuts control interactive Chat.",
-        "Standard cursor and text-editing keys are not listed.",
-        "",
-        "Available shortcuts:",
-    )
-    assert lines[4:] == shortcuts.help_lines()
+    assert lines == shortcuts.help_lines()
     assert any(line.startswith("Esc  ") for line in lines)
     assert any(line.startswith("Esc Esc  ") for line in lines)
     assert "Chat shortcuts" not in lines
 
 
-@pytest.mark.parametrize(
-    ("name", "expected"),
-    [
-        (
-            "model",
-            (
-                "/model [MODEL] [effort=VALUE]",
-                "",
-                "Set the session model or effort",
-                "",
-                "Examples:",
-                "  /model openai/gpt-5 effort=high",
-                "  /model openai/gpt-5",
-                "  /model effort=high",
-            ),
-        ),
-        (
-            "agic",
-            (
-                "/runnable RUNNABLE",
-                "/agic     AGIC",
-                "/flow     FLOW",
-                "",
-                "Switch the session runnable",
-                "",
-                "Examples:",
-                "  /runnable flow:review",
-                "  /runnable agic:chat",
-                "  /runnable default",
-                "  /agic chat",
-                "  /flow review",
-            ),
-        ),
-        (
-            "allow",
-            (
-                "/allow FIELD=QUERY...",
-                "",
-                "Set session resource ceilings",
-                "",
-                "Fields:",
-                "  models, tools, psyches, skills, services, prompts",
-                "",
-                "Examples:",
-                "  /allow models=openai/*",
-                "  /allow tools=shell/* skills=review*",
-                "  /allow models=none",
-            ),
-        ),
-        (
-            "limit",
-            (
-                "/limit FIELD=VALUE...",
-                "",
-                "Set session run limits",
-                "",
-                "Fields:",
-                "  agic_model_calls, agic_tool_calls, tokens, cost, time",
-                "",
-                "Examples:",
-                "  /limit tokens=2000",
-                "  /limit time=120 cost=1.50",
-                "  /limit agic_model_calls=100 agic_tool_calls=50",
-            ),
-        ),
-    ],
-)
-def test_required_command_without_body_returns_focused_help(
-    name: str,
-    expected: tuple[str, ...],
-) -> None:
+@pytest.mark.parametrize("name", ("model", "agic", "allow", "limit"))
+def test_required_command_without_body_returns_focused_help(name: str) -> None:
     app = _App()
     app.client.error = AssertionError("client must not be called")
-
     result = _outcome(slashes.handle(app, QuickCommand(name)))
-
     assert result.kind == "usage"
-    assert slashes.outcome_lines(result) == expected
+    lines = slashes.outcome_lines(result)
+    canonical = "runnable" if name == "agic" else name
+    assert lines[0].startswith(f"/{canonical} ")
+    assert lines[1].startswith("Set ")
+    assert len(lines[lines.index("Examples:") + 1 :]) == 2
+    if name == "model":
+        assert "  max_output=POSITIVE_INT|auto" in lines
     assert app.setting == _surface()
     assert app.status_refreshes == 0
 
@@ -493,7 +430,9 @@ def test_model_identity_and_effort_update_independently() -> None:
         "openai/gpt-5",
         reasoning=Reasoning(effort="high"),
     )
-    assert slashes.outcome_lines(selected) == ("Model set to openai/gpt-5 · high",)
+    assert slashes.outcome_lines(selected) == (
+        "Model set to openai/gpt-5 · effort=high",
+    )
 
     slashes.handle(app, QuickCommand("model", "effort=low"))
     assert app.setting.model == ModelRequest(
@@ -509,7 +448,9 @@ def test_model_identity_and_effort_update_independently() -> None:
 
     automatic = _outcome(slashes.handle(app, QuickCommand("model", "effort=auto")))
     assert app.setting.model == ModelRequest("openai/gpt-5")
-    assert slashes.outcome_lines(automatic) == ("Model set to openai/gpt-5 · auto",)
+    assert slashes.outcome_lines(automatic) == (
+        "Model set to openai/gpt-5 · effort=auto",
+    )
     assert app.status_refreshes == 4
 
 
@@ -542,7 +483,9 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
     result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
 
     assert result.kind == "success"
-    assert slashes.outcome_lines(result) == ("Model set to openai/gpt-5 · medium",)
+    assert slashes.outcome_lines(result) == (
+        "Model set to openai/gpt-5 · effort=medium",
+    )
 
 
 def test_model_none_is_rejected_without_loading_resources() -> None:
@@ -626,8 +569,9 @@ def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None
     assert app.setting.allow.models == ("openrouter/*",)
     assert slashes.outcome_lines(result) == (
         "Allowed 1 model",
-        "Model changed: openai/gpt-5 -> openrouter/openai/o3 because "
-        "openai/gpt-5 is outside allow.models",
+        "",
+        "Model changed: openai/gpt-5 -> openrouter/openai/o3",
+        "  Previous model is outside allow.models.",
     )
     assert app.status_refreshes == 1
     assert app.client.resource_calls == [
@@ -657,12 +601,12 @@ def test_cd_sets_or_resets_only_the_session_workdir() -> None:
     changed = _outcome(slashes.handle(app, QuickCommand("cd", "../tests")))
     assert app.setting.workdir == "../tests"
     assert app.setting.workdir_base == "repo://src"
-    assert slashes.outcome_lines(changed) == ("Session workdir set to ../tests",)
+    assert slashes.outcome_lines(changed) == ("Workdir set to ../tests",)
 
     reset = _outcome(slashes.handle(app, QuickCommand("cd", "default")))
     assert app.setting.workdir is None
     assert app.setting.workdir_base is None
-    assert slashes.outcome_lines(reset) == ("Session workdir reset",)
+    assert slashes.outcome_lines(reset) == ("Workdir reset to thread/default",)
     assert app.status_refreshes == 2
 
 
@@ -716,7 +660,8 @@ def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     assert app.setting.allow.models == ()
     assert slashes.outcome_lines(result) == (
         "Allowed 0 models",
-        "Model cleared: openai/gpt-5 is outside allow.models; no models available",
+        "",
+        "Model cleared: no models available.",
     )
     assert app.client.resource_calls == [("models", None, ())]
     assert app.status_refreshes == 1
@@ -752,7 +697,7 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
 
     assert result.kind == "success"
     assert slashes.outcome_lines(result) == (
-        "Model set to openrouter/openai/o3 · high",
+        "Model set to openrouter/openai/o3 · effort=high",
     )
     assert app.setting.model == ModelRequest(
         "openrouter/openai/o3",
@@ -802,6 +747,7 @@ def test_models_table_formats_prices_efforts_and_default_marker() -> None:
 
     assert slashes.outcome_lines(result) == (
         "2 models allowed.",
+        "",
         "  MODEL                 PRICE ($/1M)     EFFORT",
         "  ────────────────────  ───────────────  ─────────────────",
         "  openai/gpt-5 *        $ 1.25 / $10.00  low, high",
@@ -842,7 +788,7 @@ def test_resource_tables_fit_unicode_cells_without_wrapping() -> None:
     lines = slashes.outcome_lines(outcome, width=38)
 
     assert all("\n" not in line and get_cwidth(line) <= 38 for line in lines[1:])
-    assert lines[1].strip().endswith("EFFORT")
+    assert lines[2].strip().endswith("EFFORT")
     assert lines[-1].split("  ", 2)[1].endswith(" *")
     assert "…" in lines[-1]
 
@@ -997,27 +943,12 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
         )
 
 
-@pytest.mark.parametrize(
-    ("command", "headers"),
-    [
-        ("models", ("MODEL", "ALLOWED", "PRICE ($/1M)", "EFFORT")),
-        ("tools", ("TOOL", "ALLOWED", "DESCRIPTION")),
-        ("caps", ("CAP", "ALLOWED", "SCOPE", "FORM", "DESCRIPTION")),
-    ],
-)
-def test_all_resource_tables_keep_allowed_column_without_matches(
-    command: str,
-    headers: tuple[str, ...],
-) -> None:
+@pytest.mark.parametrize("command", ("models", "tools", "caps"))
+def test_empty_resource_queries_show_only_the_summary(command: str) -> None:
     result = _outcome(slashes.handle(_App(), QuickCommand(command, "-a missing/*")))
-
-    assert isinstance(result.content, slashes.SlashTable)
+    assert isinstance(result.content, slashes.SlashText)
     assert result.content.summary.endswith("matched out of 2 available.")
-    assert result.content.headers == headers
-    assert result.content.rows == ()
-    lines = slashes.outcome_lines(result, width=60)
-    assert "ALLOWED" in lines[1]
-    assert len(lines) == 3
+    assert slashes.outcome_lines(result, width=60) == (result.content.summary,)
 
 
 def test_agics_and_flows_list_available_items_and_mark_the_current_kind() -> None:
@@ -1075,3 +1006,15 @@ def test_quick_client_errors_return_scrollback_errors() -> None:
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == ("Error: unavailable",)
     assert app.status_refreshes == 0
+
+
+@pytest.mark.parametrize("identity", ("", "openai/gpt-5 "))
+def test_model_output_limit_is_applied_and_reported(identity: str) -> None:
+    app = _App()
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", f"{identity}max_output=8192"))
+    )
+    assert app.setting.model is not None
+    assert app.setting.model.max_output == 8192
+    assert isinstance(result.content, slashes.SlashText)
+    assert "max_output=8192" in result.content.summary

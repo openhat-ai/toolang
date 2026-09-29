@@ -52,11 +52,10 @@ from .rendering import (
     terminal_width,
 )
 from .slashes import (
-    HELP_DESCRIPTION_MIN_WIDTH,
     SlashHelp,
-    SlashHelpRow,
     SlashTable,
-    help_column_widths,
+    SlashOutcome,
+    outcome_lines,
     model_reasoning_value,
 )
 from .tables import table_lines
@@ -776,17 +775,9 @@ class SlashBlock:
             input_background=self.input_background,
             width=width,
         )
-        if self.body:
-            first, *rest = self.body
-            lines.append(self._summary_line(first))
-            if rest:
-                first_detail = rest[0]
-                if first_detail.strip() and not (
-                    first.lstrip().startswith(("/", ":"))
-                    and first_detail.lstrip().startswith(("/", ":"))
-                ):
-                    lines.append(Text())
-                lines.extend(self._body_line(line) for line in rest)
+        for index, line in enumerate(self.body):
+            styled = self._summary_line(line) if index == 0 else self._body_line(line)
+            lines.extend(_wrap_slash_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
     def _summary_line(self, line: str) -> Text:
@@ -834,7 +825,7 @@ class SlashBlock:
         text = Text(f"  {leading}")
         SlashBlock._append_usage(text, usage)
         if summary:
-            text.append(" " * max(2, 34 - text.cell_len))
+            text.append(" " * (len(stripped) - len(usage) - len(summary)))
             text.append(summary, style="none")
         return text
 
@@ -845,6 +836,20 @@ class SlashBlock:
             "Fields:",
             "Available overrides:",
             "Available shortcuts:",
+            "Parameters:",
+            "Values:",
+            "Shortcuts:",
+            "Session",
+            "Inspection",
+            "Other",
+            "Overrides",
+            "Model",
+            "Runnable",
+            "Fields",
+            "Example",
+            "Input focused:",
+            "Queue focused:",
+            "Global:",
         }
 
     @staticmethod
@@ -889,21 +894,17 @@ class SlashTableBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        summary = Text("  ")
-        summary.append(self.table.summary)
-        yield from console.render(
-            Group(
-                *_slash_control_lines(
-                    self.message,
-                    input_background=self.input_background,
-                    width=width,
-                ),
-                summary,
-                Text(),
-                _SlashTableRows(self.table),
-            ),
-            options.update_width(width),
+        lines: list[RenderableType] = _slash_control_lines(
+            self.message,
+            input_background=self.input_background,
+            width=width,
         )
+        lines.extend(
+            _wrap_slash_text(console, Text(f"  {self.table.summary}"), width=width)
+        )
+        if self.table.rows:
+            lines.extend((Text(), _SlashTableRows(self.table)))
+        yield from console.render(Group(*lines), options.update_width(width))
 
 
 @dataclass(frozen=True, slots=True)
@@ -924,101 +925,35 @@ class SlashHelpBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        command_width, argument_width = help_column_widths(self.help)
-        aligned_prefix_width = command_width + argument_width + 6
-        aligned = aligned_prefix_width + HELP_DESCRIPTION_MIN_WIDTH <= width
+        inset = min(2, max(0, width - 1))
         lines: list[RenderableType] = _slash_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
-        for section_index, section in enumerate(self.help.sections):
-            if section_index:
-                lines.append(Text())
-            lines.extend((Text(section.title, style="bold"), Text()))
-            if aligned:
-                table = Table.grid(padding=(0, 2), expand=False)
-                table.add_column(width=command_width + 2, no_wrap=True)
-                table.add_column(width=argument_width, no_wrap=True)
-                table.add_column(overflow="fold")
-                for row in section.rows:
-                    command = Text("  ")
-                    command.append(row.command, style="cyan")
-                    table.add_row(
-                        command,
-                        Text(row.arguments, style="dim"),
-                        _help_description(row),
-                    )
-                lines.append(table)
-            else:
-                for row in section.rows:
-                    lines.extend(_compact_help_row(console, row, width=width))
-        lines.extend((Text(), Text(self.help.footer)))
+        for line in outcome_lines(
+            SlashOutcome("result", self.help), width=max(1, width - inset)
+        ):
+            styled = SlashBlock._body_line(line)
+            # Alias notes stay visually subordinate even after wrapping.
+            if "alias:" in styled.plain:
+                start = styled.plain.index("alias:")
+                styled.stylize("dim", max(0, start - 1))
+            lines.extend(_wrap_slash_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
 
-def _compact_help_row(
-    console: Console,
-    row: SlashHelpRow,
-    *,
-    width: int,
-) -> list[Text]:
-    command = Text("  ")
-    command.append(row.command, style="cyan")
-    usage = command.copy()
-    if row.arguments:
-        usage.append("  ")
-        usage.append(row.arguments, style="dim")
-    lines: list[Text]
-    if usage.cell_len <= width:
-        lines = [usage]
-    else:
-        lines = [command]
-        lines.extend(
-            _indented_help_lines(
-                console,
-                Text(row.arguments, style="dim"),
-                width=width,
-            )
-        )
-    lines.extend(
-        _indented_help_lines(
-            console,
-            _help_description(row),
-            width=width,
-        )
-    )
-    return lines
-
-
-def _help_description(row: SlashHelpRow) -> Text:
-    description = Text(row.description)
-    if row.aliases:
-        description.append(
-            f" (alias: {', '.join(row.aliases)})",
-            style="dim",
-        )
-    return description
-
-
-def _indented_help_lines(
-    console: Console,
-    text: Text,
-    *,
-    width: int,
-) -> list[Text]:
-    indent_width = min(4, max(0, width - 1))
-    wrapped = text.wrap(
-        console,
-        max(1, width - indent_width),
-        overflow="fold",
-    )
-    lines: list[Text] = []
-    for line in wrapped:
-        rendered = Text(" " * indent_width)
-        rendered.append(line)
-        lines.append(rendered)
-    return lines
+def _wrap_slash_text(console: Console, text: Text, *, width: int) -> list[Text]:
+    """Preserve each logical line's inset on every wrapped physical line."""
+    if not text.plain.strip():
+        return [Text()]
+    leading = len(text.plain) - len(text.plain.lstrip(" "))
+    indent = min(leading, max(0, width - 1))
+    content = text[leading:]
+    return [
+        Text(" " * indent) + part
+        for part in content.wrap(console, max(1, width - indent), overflow="fold")
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1031,15 +966,16 @@ class _SlashTableRows:
         options: ConsoleOptions,
     ) -> RenderResult:
         del console
+        indent = 2 if options.max_width >= 4 else 0
         lines = table_lines(
             self.table.headers,
             self.table.rows,
-            width=max(1, options.max_width - 2),
+            width=max(1, options.max_width - indent),
             shrink_order=self.table.shrink_order,
             protected_suffixes=self.table.protected_suffixes,
         )
         for index, line in enumerate(lines):
-            rendered = Text("  ")
+            rendered = Text(" " * indent)
             rendered.append(line, style="dim" if index == 1 else "none")
             rendered.no_wrap = True
             yield rendered

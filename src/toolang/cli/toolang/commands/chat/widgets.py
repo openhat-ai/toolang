@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -337,7 +336,6 @@ class PromptBox:
         *,
         on_input: Callable[[], None] | None = None,
         history_store: ChatInputHistoryStore | None = None,
-        completer: Completer | None = None,
         get_max_rows: Callable[[], int] | None = None,
     ) -> None:
         self.emit = emit
@@ -351,8 +349,7 @@ class PromptBox:
         self.buffer = Buffer(
             multiline=True,
             history=self.history,
-            completer=completer,
-            complete_while_typing=completer is not None,
+            complete_while_typing=False,
         )
         self.history_index: int | None = None
         self.history_draft = ""
