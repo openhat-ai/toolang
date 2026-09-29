@@ -27,16 +27,6 @@ def setting_slash_usage(name: str) -> str:
     return f"/{name} {setting_body}"
 
 
-def run_override_help_lines() -> tuple[str, ...]:
-    """Return canonical colon override forms."""
-
-    return tuple(
-        f":{name} {body}"
-        for name, (_setting_body, override_bodies) in SETTING_OVERRIDE_FORMS.items()
-        for body in override_bodies
-    )
-
-
 def run_override_error(source: str, message: str) -> str:
     """Add concise Chat guidance to one rejected colon override."""
 
@@ -48,7 +38,9 @@ def run_override_error(source: str, message: str) -> str:
     if name and name not in SETTING_OVERRIDE_FORMS:
         return f"Unknown run override :{name} · See :? for help"
     if "colon override requires runnable input" in message.casefold():
-        return "Add runnable input after the override · See :? for help"
+        return "Include primary or named input with the override · See :? for help"
+    if "duplicate model override" in message.casefold():
+        return "Duplicate model override; combine model and parameters on one line · See :? for help"
     detail = message.rstrip(" .")
     return f"{detail} · See :? for help"
 

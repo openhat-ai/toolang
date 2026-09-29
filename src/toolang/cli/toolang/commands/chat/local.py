@@ -429,15 +429,15 @@ class LocalChatSession:
                 else ()
             )
             if not output:
-                raise ValueError(f"Run has no result: {run_id}")
+                raise ValueError(f"Run has no saved output: {run_id}")
             return ChatResult(run_id=run_id, output=output)
         if thread_id is None:
-            raise ValueError("No run result is available in this chat.")
+            raise ValueError("No saved output is available in this chat.")
         with self.store.read_transaction():
             try:
                 view = self.history.thread_view(thread_id)
             except KeyError:
-                raise ValueError("No run result is available in this chat.") from None
+                raise ValueError("No saved output is available in this chat.") from None
             for run in view.runs(reverse=True):
                 if run.status != "succeeded" or run.output is None:
                     continue
@@ -449,7 +449,7 @@ class LocalChatSession:
                 )
                 if output:
                     return ChatResult(run_id=run.id, output=output)
-        raise ValueError("No run result is available in this chat.")
+        raise ValueError("No saved output is available in this chat.")
 
     def run(
         self,

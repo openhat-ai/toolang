@@ -474,9 +474,9 @@ def test_scripted_chat_projects_shared_slash_outcomes(
     )
 
     output = capsys.readouterr().out
-    assert "Model set to test/model · high" in output
-    assert "/model [MODEL] [effort=VALUE]" in output
-    assert "Set the session model or effort" in output
+    assert "Model set to test/model · effort=high" in output
+    assert "/model [MODEL] [PARAM=VALUE...]" in output
+    assert "Set the session model or its parameters." in output
     assert "0 models allowed." in output
     assert "Success:" not in output
     assert "Result:" not in output
@@ -504,13 +504,16 @@ def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
     assert "Unknown command /missing · See /? for help" in captured.err
     assert "Enter a run override after : · See :? for help" in captured.err
     assert "Unknown run override :missing · See :? for help" in captured.err
-    assert "Run overrides change settings for this run only." in captured.out
-    assert "These shortcuts control interactive Chat." in captured.out
-    assert "Session commands:" in captured.out
-    assert "To list one-run colon directives, type :?." in captured.out
-    assert "Available overrides:" in captured.out
-    assert "Available shortcuts:" in captured.out
-    assert "Inspection commands:" in captured.out
+    assert (
+        "Overrides apply to this run only; session defaults stay unchanged."
+        in captured.out
+    )
+    assert "Input focused:" in captured.out
+    assert "Session" in captured.out
+    assert ":? shows one-run overrides." in captured.out
+    assert "Overrides" in captured.out
+    assert "Queue focused:" in captured.out
+    assert "Inspection" in captured.out
     assert "Chat Commands" not in captured.out
     assert "Run Overrides" not in captured.out
     assert "Chat shortcuts" not in captured.out
@@ -552,7 +555,7 @@ def test_scripted_slash_help_honors_the_configured_maximum_width(
     )
 
     output = capsys.readouterr().out
-    assert "Session commands:" in output
+    assert "Session" in output
     assert all(len(line) <= 48 for line in output.splitlines())
 
 
