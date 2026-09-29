@@ -86,7 +86,7 @@ async def seed(h, monkeypatch):
     monkeypatch.setattr(
         compaction,
         "_text_tokens",
-        lambda text: 4000 if "[Begin historical Run" in text else 0,
+        lambda text: 4000 if "<historical_run created_at=" in text else 0,
     )
     return thread, tuple(roots)
 

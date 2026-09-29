@@ -1067,7 +1067,7 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
             assert entry.input["end"] == (roots[-2].id if keep_middle else latest)
             assert json.loads(str(entry.input["policy"]))["size"] == target
             compact_call = harness.adapter.invocations[-2].call
-            assert f"approximately {target} tokens" in str(compact_call.messages)
+            assert f"approximately {target} tokens" in compact_call.instructions
             assert compact_call.max_output_tokens == max(target * 2, target + 1024)
             final = str(harness.adapter.invocations[-1].call.messages)
             assert latest_text in final

@@ -61,8 +61,7 @@ class Adapter:
         )
         if (
             self.reject_combined
-            and "run_a" in historical_text
-            and "run_b" in historical_text
+            and historical_text.count("<historical_run created_at=") > 1
         ):
             self.reject_combined = False
             raise ModelResponseError(
@@ -177,7 +176,7 @@ def test_failed_terminal_run_is_selectable_and_kept_in_history() -> None:
     assert summary == "updated summary"
     assert metrics[0]["from"] == "run_a"
     assert metrics[-1]["to"] == "run_c"
-    assert "status=failed" in "\n".join(
+    assert 'status="failed"' in "\n".join(
         part.text
         for message in adapter.calls[0].messages
         for part in message.parts
@@ -218,7 +217,7 @@ def test_complete_tool_exchange_is_preserved_as_ordered_messages() -> None:
         ),
     )
     call = experiment._call("", (unit,), 128, 256)
-    historical = call.messages[2:-2]
+    historical = call.messages[1:-1]
     assert [message.role for message in historical] == [
         "user",
         "assistant",
@@ -305,13 +304,7 @@ def test_summary_size_and_output_ceiling_are_independent() -> None:
     adapter = Adapter()
     run_compact(history, adapter, to="run_a", size=1024, max_output_tokens=512)
     assert adapter.calls[0].max_output_tokens == 512
-    prompt_text = "\n".join(
-        part.text
-        for message in adapter.calls[0].messages
-        for part in message.parts
-        if hasattr(part, "text")
-    )
-    assert "approximately 1024 tokens" in prompt_text
+    assert "approximately 1024 tokens" in adapter.calls[0].instructions
 
 
 def test_o200k_input_estimate_uses_exact_model_corrections() -> None:
@@ -463,11 +456,18 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
     for payload in history.values.values():
         assert sum(n for text, n in encoded.items() if payload in text) == 1
     assert (
-        sum(n for text, n in encoded.items() if "Previous cumulative summary" in text)
-        == 1
+        sum(n for text, n in encoded.items() if "same cumulative summary" in text) == 1
     )
-    # Every fixed request component and root boundary is also counted just once.
-    assert set(encoded.values()) == {1}
+    # Fixed components are counted once; identical boundary tags occur once per root.
+    assert all(
+        n
+        == (
+            len(roots)
+            if "</historical_run>" in text or "<historical_run created_at=" in text
+            else 1
+        )
+        for text, n in encoded.items()
+    )
     # Counts belong to this compaction only, not to a process-wide cache.
     fresh = experiment.Compaction(roots, _unit_loader(history), model, size=128)
     assert fresh.next_call() is not None
