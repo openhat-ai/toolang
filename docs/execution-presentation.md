@@ -729,16 +729,16 @@ workspace. Directory paths within a workspace are not shown.
 A separate run status bar directly precedes the Queue panel, or Input when the
 queue is empty. It has a blank first row separating live output and a second
 row showing dim elapsed time at column two. It inherits the terminal background.
-The label is `running` below one elapsed second, then whole-second time such as
-`18s`, `1m20s`, or `1h1m1s`. `0s` is never shown. The timer resets for each queued
-run and clears when the active run settles; requesting cancellation alone does
+The label is `Working` below one elapsed second, then `Working for` followed
+by whole-second time, such as `Working for 1m3s` or `Working for 1h1m1s`.
+`0s` is never shown. The timer resets for each queued run and clears when the active run settles; requesting cancellation alone does
 not clear it. Both rows remain blank while idle. The right side, inset two cells,
 is reserved for future context information and renders no value or placeholder.
 On very short terminals, the separator and then the information row yield to
 minimum Input, Queue, and steer-feedback space.
 
-The session bar never renders elapsed or `running`. Agent/workspace text uses
-normal intensity; the structural `@` is dim. If the full line overflows, the
+The session bar never renders elapsed or the `Working` label. Agent/workspace
+text uses normal intensity; the structural `@` is dim. If the full line overflows, the
 complete center stays fixed with a one-cell margin on each side; session edge
 labels elide inward with one `…`. If the center plus margins cannot fit, both
 edge labels are hidden, and the center is truncated only when it cannot fit alone.

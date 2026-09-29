@@ -526,7 +526,8 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                     status = lines[surface - 1] if surface >= 2 else "invalid"
                     elapsed = bool(
                         re.fullmatch(
-                            r"  (?:\d+s|\d+m\d+s|\d+h\d+m\d+s)", status.rstrip()
+                            r"  Working for (?:\d+s|\d+m\d+s|\d+h\d+m\d+s)",
+                            status.rstrip(),
                         )
                     )
                     if (elapsed if running else not status.strip()) and not lines[
@@ -547,7 +548,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                 session_line = next(
                     line for line in reversed(lines) if "agic:chat" in line
                 )
-                assert not re.search(r"\b(?:running|\d+s)\b", session_line)
+                assert not re.search(r"\b(?:Working|\d+s)\b", session_line)
         # This fixture provides one model response. Remove the queued draft
         # before release so exhaustion diagnostics cannot disturb the idle frame.
         pane.send_keys("Tab", enter=False)

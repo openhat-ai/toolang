@@ -677,9 +677,9 @@ class RunStatusBar:
         if not self.running:
             return ""
         return (
-            format_duration(self._elapsed_seconds)
+            f"Working for {format_duration(self._elapsed_seconds)}"
             if self._elapsed_seconds >= 1
-            else "running"
+            else "Working"
         )
 
     def _render(self) -> list[tuple[str, str]]:

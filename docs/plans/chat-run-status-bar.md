@@ -23,7 +23,7 @@ existing bottom bar as the session status bar.
 live area
 existing variable spacer, when needed
                                       <- run status row 1: blank
-  1m20s                               <- run status row 2
+  Working for 1m3s                    <- run status row 2
 queue area, when present
 input box
   runnable       agent@workspace       model
@@ -35,13 +35,14 @@ input box
 - Put elapsed at display column two (two leading spaces), with dim text and
   the terminal's normal background. Add no border, marker, or heading.
 - Keep duration units without zero padding: `1s`, `59s`, `1m0s`, `1m20s`, and
-  `1h1m1s`. Preserve whole-second flooring and `running` below one second.
+  `1h1m1s`. Preserve whole-second flooring. Show `Working` below one second,
+  then `Working for DURATION`, for example `Working for 1m3s`.
 - While idle, render no text on either row. Starting each queued run resets
   elapsed; normal completion, failure, and settled cancellation clear it.
   A cancellation request alone does not stop the timer.
 - Reserve the concept of a right-side field ending two cells before the right
   terminal edge. Leave it empty: no context data, placeholder, or separator.
-- Remove both `running` and elapsed from the session status bar. Preserve its
+- Keep both `Working` and elapsed out of the session status bar. Preserve its
   runnable/model edges, centered identity, workspace lifecycle, and errors.
   Elapsed no longer consumes any of its width budget.
 - Session errors must not hide or stop run-bar updates. Keep the existing timer
@@ -86,7 +87,7 @@ dependency. Cover unit boundaries and each surface with regression tests.
    failing, cancelling, and advancing queued runs follow the lifecycle above.
 3. Values at 0, 1, 59, 60, 80, and 3661 seconds match the defined labels; timer
    updates use deterministic clocks in unit tests.
-4. The session bar never contains elapsed or `running`; its identity and edge
+4. The session bar never contains elapsed or `Working`; its identity and edge
    anchors remain stable as time changes. The future right-side field is empty.
 5. Elapsed continues repainting while a session error is visible.
 6. Multiline input, expanded/collapsed queues, live output, steer feedback, and
@@ -101,5 +102,6 @@ The permanent two-row cost reduces live-output space; incomplete row-budget
 updates could clip the prompt or leave stale terminal rows. Timer ownership
 changes must preserve workspace reset and presenter refreshes.
 
-No open questions. The user approved the initial `running` label and clarified
-that duration units remain visible without leading zeros.
+No open questions. The user specified `Working` below one second and
+`Working for DURATION` thereafter, with duration units visible and no leading
+zeros.

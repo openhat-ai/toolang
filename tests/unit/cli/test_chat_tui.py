@@ -5223,7 +5223,7 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
 
     assert app.run_status_bar.running
     assert app.run_status_bar.elapsed_seconds == 0
-    assert app.run_status_bar._elapsed_label() == "running"
+    assert app.run_status_bar._elapsed_label() == "Working"
     assert app.status_bar.running
     assert app.status_bar.runnable_label == "agic:chat"
     assert app.status_bar.run_workspace_label == "lab"
@@ -6823,12 +6823,14 @@ def test_chat_run_status_immediately_precedes_queue_or_input(
                 if ("draft" if queue_state == "absent" else "3 queued") in line
             ) - (1 if queue_state == "absent" else 0)
             assert not lines[surface_row - 2].strip()
-            assert lines[surface_row - 1].rstrip() == ("  1m20s" if running else "")
+            assert lines[surface_row - 1].rstrip() == (
+                "  Working for 1m20s" if running else ""
+            )
             assert _cell_attrs(app, screen, surface_row - 1, 2).bgcolor == ""
             if running:
                 assert _cell_attrs(app, screen, surface_row - 1, 2).dim
             assert "1m20s" not in lines[-1]
-            assert "running" not in lines[-1]
+            assert "Working" not in lines[-1]
             assert "agic:chat" in lines[-1]
             app._set_status_running(False)
             stopped = _screen_lines(_render_chat_layout(app), output.columns)
@@ -6842,12 +6844,13 @@ def test_chat_run_status_immediately_precedes_queue_or_input(
 @pytest.mark.parametrize(
     "seconds, label",
     [
-        (0, "running"),
-        (1, "1s"),
-        (59, "59s"),
-        (60, "1m0s"),
-        (80, "1m20s"),
-        (3661, "1h1m1s"),
+        (0, "Working"),
+        (1, "Working for 1s"),
+        (59, "Working for 59s"),
+        (60, "Working for 1m0s"),
+        (63, "Working for 1m3s"),
+        (80, "Working for 1m20s"),
+        (3661, "Working for 1h1m1s"),
     ],
 )
 def test_chat_run_status_fits_compact_elapsed_in_two_rows(
