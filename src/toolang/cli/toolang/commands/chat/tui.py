@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
@@ -24,7 +25,7 @@ from prompt_toolkit.layout.containers import DynamicContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.renderer import Renderer
+from prompt_toolkit.renderer import CPR_Support, Renderer
 from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -226,23 +227,34 @@ class _ChatRenderer(Renderer):
 
     def reset(self, _scroll: bool = False, leave_alternate_screen: bool = True) -> None:
         super().reset(_scroll=_scroll, leave_alternate_screen=leave_alternate_screen)
-        # Replies remain FIFO even when output has moved the live origin. Keep
-        # their futures so the base renderer can consume and complete each one.
-        self._stale_cpr_requests = set(self._waiting_for_cpr_futures)
+        if not hasattr(self, "_cpr_requests"):
+            self._cpr_requests: deque[asyncio.Future[None]] = deque()
+        self._stale_cpr_requests = set(self._cpr_requests)
+
+    def request_absolute_cursor_position(self) -> None:
+        pending_count = len(self._waiting_for_cpr_futures)
+        super().request_absolute_cursor_position()
+        if len(self._waiting_for_cpr_futures) > pending_count:
+            # Unlike the base wait queue, this FIFO survives timeouts. Each
+            # query still owns one reply even after its future is cancelled.
+            self._cpr_requests.append(self._waiting_for_cpr_futures[-1])
 
     def report_absolute_cursor_row(self, row: int) -> None:
-        request = (
-            self._waiting_for_cpr_futures[0] if self._waiting_for_cpr_futures else None
+        if not self._cpr_requests:
+            return
+        request = self._cpr_requests.popleft()
+        self.cpr_support = CPR_Support.SUPPORTED
+        pending = request in self._waiting_for_cpr_futures
+        current = (
+            pending and not request.done() and request not in self._stale_cpr_requests
         )
-        current = request is not None and request not in self._stale_cpr_requests
-        available_height = self._min_available_height
-        if request is not None:
-            self._stale_cpr_requests.discard(request)
-        super().report_absolute_cursor_row(row)
-        if not current:
-            # A previous origin (or timed-out request) must not reserve blank
-            # rows that force the terminal to scroll before visible content fits.
-            self._min_available_height = available_height
+        self._stale_cpr_requests.discard(request)
+        if pending:
+            self._waiting_for_cpr_futures.remove(request)
+        if not request.done():
+            request.set_result(None)
+        if current:
+            self._min_available_height = self.output.get_size().rows - row + 1
 
     def render(self, app: Application, layout: Layout, is_done: bool = False) -> None:
         self._reflow_cursor()

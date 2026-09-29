@@ -2549,8 +2549,10 @@ def test_chat_queue_reserves_space_for_a_scrolling_draft_after_resize(
 
 
 @pytest.mark.parametrize("commits", [1, 3])
+@pytest.mark.parametrize("timeout", [False, True])
 def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
     commits: int,
+    timeout: bool,
 ) -> None:
     class ReportingOutput(_TerminalOutput):
         cursor_row = 0
@@ -2589,14 +2591,18 @@ def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
                 reports = []
                 for index in range(commits + 1):
                     if index:
+                        if timeout:
+                            await renderer.wait_for_cpr_responses(timeout=0)
                         renderer.erase(leave_alternate_screen=False)
                         app._write_scrollback([Text("stable line\n" * 5)])
                     reports.append(output.cursor_row + 1)
                     renderer.request_absolute_cursor_position()
                     _render_chat_layout(app)
 
-                for row in reports:
+                current_request = renderer._waiting_for_cpr_futures[-1]
+                for index, row in enumerate(reports):
                     renderer.report_absolute_cursor_row(row)
+                    assert current_request.done() == (index == len(reports) - 1)
                     screen = _render_chat_layout(app)
                     lines = _screen_lines(screen, output.columns)
                     assert output.scrolled_rows == 0
