@@ -222,7 +222,27 @@ class ChatTuiAppContext:
 
 
 class _ChatRenderer(Renderer):
-    """Account for reflow before any operation that touches the old frame."""
+    """Keep cursor offsets and height reports tied to the current live origin."""
+
+    def reset(self, _scroll: bool = False, leave_alternate_screen: bool = True) -> None:
+        super().reset(_scroll=_scroll, leave_alternate_screen=leave_alternate_screen)
+        # Replies remain FIFO even when output has moved the live origin. Keep
+        # their futures so the base renderer can consume and complete each one.
+        self._stale_cpr_requests = set(self._waiting_for_cpr_futures)
+
+    def report_absolute_cursor_row(self, row: int) -> None:
+        request = (
+            self._waiting_for_cpr_futures[0] if self._waiting_for_cpr_futures else None
+        )
+        current = request is not None and request not in self._stale_cpr_requests
+        available_height = self._min_available_height
+        if request is not None:
+            self._stale_cpr_requests.discard(request)
+        super().report_absolute_cursor_row(row)
+        if not current:
+            # A previous origin (or timed-out request) must not reserve blank
+            # rows that force the terminal to scroll before visible content fits.
+            self._min_available_height = available_height
 
     def render(self, app: Application, layout: Layout, is_done: bool = False) -> None:
         self._reflow_cursor()

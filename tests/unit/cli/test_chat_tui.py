@@ -24,6 +24,7 @@ from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.layout.screen import Screen
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.renderer import CPR_Support
 from prompt_toolkit.styles import Attrs
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
@@ -2543,6 +2544,101 @@ def test_chat_queue_reserves_space_for_a_scrolling_draft_after_resize(
                 if not focused:
                     cursor = screen.get_cursor_position(app.app.layout.current_window)
                     assert 0 <= cursor.y < screen.height - 2
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("commits", [1, 3])
+def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
+    commits: int,
+) -> None:
+    class ReportingOutput(_TerminalOutput):
+        cursor_row = 0
+        scrolled_rows = 0
+
+        def get_rows_below_cursor_position(self) -> int:
+            raise NotImplementedError
+
+        def write(self, data: str) -> None:
+            for char in data:
+                if char == "\n":
+                    self.cursor_row += 1
+                    if self.cursor_row >= self.rows:
+                        self.cursor_row = self.rows - 1
+                        self.scrolled_rows += 1
+
+        def write_raw(self, data: str) -> None:
+            self.write(data)
+
+        def cursor_up(self, amount: int) -> None:
+            self.cursor_row = max(0, self.cursor_row - amount)
+
+    async def exercise() -> None:
+        output = ReportingOutput()
+        with create_app_session(input=DummyInput(), output=output):
+            app = tui.ChatTuiApp(
+                thread_id=None,
+                setting=FakeClient().initial_setting(),
+                home="/tmp/agent",
+                input_history=None,
+                client=FakeClient(),
+            )
+            with set_app(app.app):
+                renderer = app.app.renderer
+                renderer.cpr_support = CPR_Support.SUPPORTED
+                reports = []
+                for index in range(commits + 1):
+                    if index:
+                        renderer.erase(leave_alternate_screen=False)
+                        app._write_scrollback([Text("stable line\n" * 5)])
+                    reports.append(output.cursor_row + 1)
+                    renderer.request_absolute_cursor_position()
+                    _render_chat_layout(app)
+
+                for row in reports:
+                    renderer.report_absolute_cursor_row(row)
+                    screen = _render_chat_layout(app)
+                    lines = _screen_lines(screen, output.columns)
+                    assert output.scrolled_rows == 0
+                    assert any("Ask or describe" in line for line in lines)
+
+                assert not renderer.waiting_for_cpr
+                assert renderer._min_available_height == output.rows - reports[-1] + 1
+                await app.app.cancel_and_wait_for_background_tasks()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+@pytest.mark.parametrize("support", [CPR_Support.UNKNOWN, CPR_Support.SUPPORTED])
+def test_chat_renderer_ignores_obsolete_cursor_reports(
+    monkeypatch: pytest.MonkeyPatch, timeout: bool, support: CPR_Support
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            app.queue.clear()
+            app._finish_active_run()
+            renderer = app.app.renderer
+            renderer.cpr_support = support
+
+            # DummyOutput has a synchronous cursor API; use VT100's async path.
+            def unavailable() -> int:
+                raise NotImplementedError
+
+            monkeypatch.setattr(output, "get_rows_below_cursor_position", unavailable)
+            renderer.request_absolute_cursor_position()
+            old_request = renderer._waiting_for_cpr_futures[0]
+            if timeout:
+                await renderer.wait_for_cpr_responses(timeout=0)
+            else:
+                renderer.erase()
+            renderer.report_absolute_cursor_row(1)
+            assert old_request.done()
+            assert renderer._min_available_height == 0
+            renderer.request_absolute_cursor_position()
+            renderer.report_absolute_cursor_row(8)
+            assert renderer._min_available_height == output.rows - 7
+            assert not renderer.waiting_for_cpr
 
     asyncio.run(exercise())
 
