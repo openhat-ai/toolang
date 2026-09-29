@@ -154,11 +154,13 @@ def _unit_json(unit: HistoryUnit) -> str:
                 metadata = {
                     key: value
                     for key, value in data.items()
-                    if key not in {"data", "image_url"}
+                    if key != "data"
+                    and not (
+                        key in {"image_url", "url"}
+                        and isinstance(value, str)
+                        and value.lower().startswith("data:")
+                    )
                 }
-                url = data.get("image_url")
-                if isinstance(url, str) and not url.startswith("data:"):
-                    metadata["image_url"] = url
                 parts.append(
                     TextPart(
                         f"[Media not interpreted; inspect {unit.step_id or unit.run_id}: "

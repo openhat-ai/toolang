@@ -63,8 +63,9 @@ margin. Estimate the complete request and recheck it after adopting a summary.
 
 `recent` excludes the summary, fixed instructions, and current Run. Preserve at
 least the latest complete history unit and paired tool messages, then add earlier
-units while they fit. Coverage may end inside a root. An oversized mandatory
-latest Step is shortened with omission markers to at most half the effective
+units while they fit the soft target and the complete caller request without a
+summary. Fixed/current content takes precedence over optional retained units.
+Coverage may end inside a root. An oversized mandatory latest Step is shortened with omission markers to at most half the effective
 caller input budget. Its original records remain unchanged.
 
 `summary` is a prompt target. The compact model output allowance is
@@ -83,10 +84,11 @@ or recent targets, report that context metadata or absolute token settings are
 required. Integer targets can resolve without a context window. Compaction still
 requires a known input or context limit for its own model.
 
-The configured summary target is capped internally by remaining caller input
-space and compact-model capacity. Validate that the result leaves space for the
-next batch and fits the caller's rebuilt request before publication. Oversized
-responses retry the same batch at most twice with a smaller target and advance no
+The summary prompt target is capped by compact-model input capacity. Validate
+the returned text against each model independently: it must leave space for the
+next batch and fit the caller's rebuilt request before publication. Do not
+convert the caller's remaining tokens into a target for a different tokenizer.
+Oversized responses retry the same batch at most twice with a smaller target and advance no
 checkpoint. Fixed/current content or minimum Step metadata can still exhaust
 capacity; fail explicitly rather than publish an unusable result.
 

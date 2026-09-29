@@ -354,7 +354,17 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; required near cannot be compacted"
         )
-    return roots[index][0]
+    # Recent is a soft target. Fixed/current content can leave less room than
+    # that target, even though the mandatory latest unit still fits. Check the
+    # actual rebuilt request before asking a reducer to summarize this prefix.
+    for boundary, messages in roots[index:]:
+        if messages and messages[0].role == "tool":
+            continue
+        if compaction_summary_fits(state, boundary, ""):
+            return boundary
+    raise ToolangError(
+        "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
+    )
 
 
 def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:

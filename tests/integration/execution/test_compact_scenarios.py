@@ -1545,3 +1545,38 @@ def test_summary_publication_uses_the_caller_model_count(
             )
 
     asyncio.run(scenario())
+
+
+def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[
+            reply("old " * 18000),
+            reply("middle " * 850),
+            reply("latest " * 120),
+        ],
+    )
+
+    async def scenario():
+        async with h:
+            thread, latest = await seed(h)
+            constrain(h, context=10000)
+            h.setup = replace(
+                h.setup,
+                compact=replace(h.setup.compact, recent=5000, summary=256),
+            )
+            h.adapter._responses.extend([reply("Short facts.")] * 3 + [reply("done")])
+            current = await h.executor.run(spec(h, thread, "current " * 500))
+            assert current.status == "succeeded", (
+                h.store.resolve_error(current.error) if current.error else None
+            )
+            result = RunHistory(h.store).get_compaction(thread)
+            assert result is not None and result.result.end == latest
+            caller = h.adapter.invocations[-1].call
+            assert "latest " * 120 in str(caller.messages)
+            assert "middle " * 850 not in str(caller.messages)
+            assert InputEstimate().count(caller, None) <= 8000
+            assert len(h.adapter.invocations) == 5
+
+    asyncio.run(scenario())

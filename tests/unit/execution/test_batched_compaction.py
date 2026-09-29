@@ -11,6 +11,8 @@ from toolang.execution import compaction as experiment
 from toolang.execution import tokens
 from toolang.base.errors import ModelResponseError
 from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
     ImagePart,
     Message,
     TextPart,
@@ -542,14 +544,26 @@ def test_wide_latest_step_is_bounded_without_losing_tool_pair():
     assert history.near[-1].parts == messages[-1].parts
 
 
-def test_serialized_media_has_reference_without_inline_binary():
+@pytest.mark.parametrize(
+    "part",
+    [
+        ImagePart(image_url="data:image/png;base64," + "AAAA" * 10000),
+        AudioPart(data="AAAA" * 10000, format="wav", transcript="Recorded words."),
+        DocumentPart(data="AAAA" * 10000),
+        DocumentPart(url="data:application/pdf;base64," + "AAAA" * 10000),
+        ImagePart(image_url="DATA:image/png;base64," + "AAAA" * 10000),
+        ImagePart(image_url="https://example.test/image.png"),
+        DocumentPart(url="https://example.test/report.pdf"),
+    ],
+)
+def test_serialized_media_has_reference_without_inline_binary(part):
     unit = experiment.HistoryUnit(
         RunRef("run_image"),
         "succeeded",
         (
             Message(
                 "user",
-                (ImagePart(image_url="data:image/png;base64," + "AAAA" * 10000),),
+                (part,),
             ),
         ),
     )
@@ -557,6 +571,11 @@ def test_serialized_media_has_reference_without_inline_binary():
     assert "AAAA" not in json.dumps(data)
     assert "run_image" in json.dumps(data)
     assert "not interpreted" in json.dumps(data)
+    if isinstance(part, AudioPart):
+        assert part.transcript in json.dumps(data)
+    for value in part.to_data().values():
+        if isinstance(value, str) and value.startswith("https://"):
+            assert value in json.dumps(data)
 
 
 def test_summary_admission_uses_the_new_provider_calibration():

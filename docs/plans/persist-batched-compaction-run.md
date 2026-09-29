@@ -49,9 +49,10 @@ The ordered unit stream is shared by batching and retained-history selection.
 
 A root's first unit uses its `RunRef` as the boundary; later units use `StepRef`.
 A batch can end inside a root. Retain at least the latest complete unit and its
-paired tool messages. Add earlier units while they fit the soft `recent` target.
-Only historical terminal roots participate; compaction child records do not
-contribute conversation history.
+paired tool messages. Add earlier units while they fit the soft `recent` target
+and the complete caller request without a summary. Fixed instructions and current
+input take precedence over optional retained units. Only historical terminal roots
+participate; compaction child records do not contribute conversation history.
 
 Coverage is half-open, with these persisted entry fields:
 
@@ -235,8 +236,9 @@ to `src/toolang`. Configuration details are specified in [Compaction configurati
 ## Quality verification
 
 Keep deterministic execution tests offline. Include regression cases for unused
-history, wide retained Steps, grouped skipped tools, successful Steps in failed
-Runs, oversized summaries, provider context rejection, and reopening the Store
+history, wide retained Steps, recent targets that exceed the caller's remaining
+space, media data URLs, grouped skipped tools, successful Steps in failed Runs,
+oversized summaries, provider context rejection, and reopening the Store
 after an accepted batch inside one root. A resumed reducer reads only pending
 unit bodies and never repeats accepted coverage.
 

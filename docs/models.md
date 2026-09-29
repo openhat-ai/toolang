@@ -144,8 +144,10 @@ trigger = "80%"
 - `summary`: soft target for summary length; default 4096 tokens.
 - `recent`: soft target for retained historical Steps; default 30%. It excludes
   the summary, fixed instructions, and the current Run. Keep the latest complete
-  Step and paired tool calls/results; add earlier Steps while they fit. Compaction
-  advances at least one unit and may stop inside a root.
+  Step and paired tool calls/results; add earlier Steps while they fit the target
+  and the complete request without a summary. Fixed instructions and current
+  input take precedence over optional retained Steps. Compaction advances at
+  least one unit and may stop inside a root.
 - `trigger`: complete-request input budget; default 80%. Preflight compacts when
   the estimated input exceeds the smaller of this value and the calling model's
   safe input allowance (input limit, output reservation, and estimation margin).
