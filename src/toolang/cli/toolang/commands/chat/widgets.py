@@ -67,7 +67,7 @@ def _chat_ui_palette(
         "queue.selected.hint": "dim",
         "queue.hint": "dim",
         "queue.count": "dim",
-        "queue.focused-count": "bold",
+        "queue.focused-count": "",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"bg:{surfaces.input_background}",
         "input.placeholder": f"bg:{surfaces.input_background} dim",

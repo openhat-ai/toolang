@@ -80,7 +80,7 @@ its normal state and summary. Keep errors in the existing session status.
 ## Styling and transitions
 
 - Use dim styling for the unfocused count. When focused, render the count in
-  normal foreground with bold weight; keep the hint dim. This also makes
+  normal foreground with normal weight; keep the hint dim. This also makes
   collapsed focus visible.
 - Preserve the existing selected-row background and actions when expanded.
 - Tab changes focus without changing expansion; Space changes expansion only

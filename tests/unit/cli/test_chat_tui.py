@@ -2461,7 +2461,7 @@ def test_chat_queue_focus_styles_respect_selection_padding(
             summary = _cell_attrs(app, screen, top, lines[top].index("3 queued"))
             assert summary.dim is not focused
             assert summary.color == ""
-            assert summary.bold is focused
+            assert not summary.bold
             for row in range(top, bottom + 1):
                 assert _cell_attrs(app, screen, row, 0).bgcolor == "ansibrightmagenta"
                 selected = expanded and focused and row == top + 1 + selected_index
