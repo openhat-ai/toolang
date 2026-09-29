@@ -1037,6 +1037,31 @@ def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
     assert display_runnable_ref("agic:研究", surface="chat") == "agic:研究"
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("module", ["", "agent::"])
+@pytest.mark.parametrize("name", ["<entry>", "<entry:3>"])
+def test_chat_entry_display_does_not_change_reference_identity(
+    kind: str, module: str, name: str
+) -> None:
+    from toolang.lang.types import display_runnable_ref, parse_runnable_ref_parts
+
+    reference = f"{module}{kind}:{name}"
+
+    assert display_runnable_ref(reference, surface="chat") == f"{kind}:-"
+    assert display_runnable_ref(reference, surface="help") == f"{kind}:<entry>"
+    assert display_runnable_ref(reference, surface="progress") == f"{kind}:{name}"
+    assert parse_runnable_ref_parts(reference).name == name
+    with pytest.raises(ValueError):
+        parse_runnable_ref_parts(f"{kind}:-")
+
+
+def test_chat_unqualified_entry_display_defaults_to_agic() -> None:
+    from toolang.lang.types import display_runnable_ref
+
+    assert display_runnable_ref("<entry>", surface="chat") == "agic:-"
+    assert display_runnable_ref("agent::<entry:3>", surface="chat") == "agic:-"
+
+
 def test_historical_nested_statements_load_new_default_fields() -> None:
     from toolang.lang.ast import flow_stmt_from_data
 

@@ -150,8 +150,9 @@ Never store `agic:<entry>` or `agic:<adhoc>` for unnamed or adhoc.
 
 ## Display
 
-- Script help and Chat TUI: `agic:<entry>` / `agic:<adhoc>` (no module, no
-  line).
+- Script help: `agic:<entry>` / `agic:<adhoc>` (no module, no line).
+- Chat TUI: `agic:-` / `agic:<adhoc>` (no module, no line), with the same
+  entry shorthand for `flow:-`. See [Compact Chat entry labels](chat-entry-label.md).
 - Progress: `agic:<entry:3>` / `agic:<adhoc:5>` (line, no module).
 - Records persist the module-qualified lined form for unnamed and adhoc.
 - Named runnables keep `agic:NAME` / `flow:NAME` everywhere.
