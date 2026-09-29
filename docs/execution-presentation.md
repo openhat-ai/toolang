@@ -429,9 +429,14 @@ line. Undefined facts are omitted, and a StepPath is not displayed by itself.
 Duration, execution counts, and usage are separate facts. Tokens and cost form
 one usage group, separated by a space. Counts form one
 `RUNS runs MODELS models TOOLS tools` group and omit zero categories.
-Human durations keep milliseconds below one second, otherwise round to whole
-seconds; exact minutes omit `00s`. Stored timestamps retain their original
-precision.
+All CLI duration displays use one compact format: `250ms`, `1s`, `1m8s`,
+`1m0s`, or `1h1m1s`. This includes run/step facts, the Chat run status bar,
+operational progress, and agent uptime (prefixed with `up `). Positive durations
+below one second retain milliseconds; other durations round to whole seconds.
+Units have no spaces or zero padding, and lower zero units remain visible.
+Zero or negative durations render as `0s`. Chat's live timer and agent uptime
+continue to floor their clock values before formatting. Stored timestamps
+retain their original precision.
 Token usage is `↑INPUT(CACHE%) ↓OUTPUT(REASONING)`: the input parenthetical is
 the complete cache-read ratio, while the output parenthetical is the reasoning
 token count. Output is inclusive and already contains reasoning. Explicit zero

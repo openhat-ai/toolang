@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from toolang.base.money import cost_units
+from toolang.common.time import format_duration
 from ..output import parse_utc_timestamp
 from .formatting import count
 
@@ -35,15 +36,7 @@ def elapsed_fact(started_at: str, finished_at: str) -> str:
         duration = max(0.0, (finished - started).total_seconds())
     except (TypeError, ValueError):
         return ""
-    if duration < 1:
-        milliseconds = round(duration * 1000)
-        if milliseconds < 1000:
-            return f"{milliseconds}ms"
-    rounded = round(duration)
-    if rounded < 60:
-        return f"{rounded}s"
-    minutes, seconds = divmod(rounded, 60)
-    return f"{minutes}m" if seconds == 0 else f"{minutes}m{seconds:02d}s"
+    return format_duration(duration)
 
 
 def compact_count(value: int) -> str:

@@ -3524,16 +3524,6 @@ def test_chat_status_qualifies_resolved_runnables() -> None:
     assert tui._qualified_runnable_label("research", payload) == "flow:research"
 
 
-@pytest.mark.parametrize(
-    ("seconds", "expected"),
-    [(0, "0s"), (59, "59s"), (60, "1m0s"), (68, "1m8s"), (3661, "1h1m1s")],
-)
-def test_chat_status_elapsed_time_uses_whole_seconds(
-    seconds: int, expected: str
-) -> None:
-    assert widgets._format_elapsed_seconds(seconds) == expected
-
-
 def test_chat_tui_floors_status_elapsed_time() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,

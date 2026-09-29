@@ -16,6 +16,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
+from toolang.common.time import format_duration
 from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.lang.types import display_runnable_ref
 from toolang.cli.common.terminal_surfaces import (
@@ -84,17 +85,6 @@ def _chat_runnable_label(reference: str) -> str:
     """Return one Chat status label without module or source line."""
 
     return display_runnable_ref(reference.rsplit("::", 1)[-1], surface="chat")
-
-
-def _format_elapsed_seconds(seconds: int) -> str:
-    seconds = max(0, seconds)
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours}h{minutes}m{seconds}s"
-    if minutes:
-        return f"{minutes}m{seconds}s"
-    return f"{seconds}s"
 
 
 class QueuePanel:
@@ -687,7 +677,7 @@ class RunStatusBar:
         if not self.running:
             return ""
         return (
-            _format_elapsed_seconds(self._elapsed_seconds)
+            format_duration(self._elapsed_seconds)
             if self._elapsed_seconds >= 1
             else "running"
         )

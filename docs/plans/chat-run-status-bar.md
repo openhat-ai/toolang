@@ -64,7 +64,19 @@ input box
   in `chat-status-live-cluster.md`, not its session identity/edge behavior.
 
 No changes to execution events, persisted accounting, context usage collection,
-queue controls, or transcript/run-summary duration displays.
+or queue controls.
+
+### Approved Duration Consolidation
+
+The user additionally requested a single duration formatter for all four CLI
+surfaces: the run status bar, execution facts (including inspect and run
+summaries), operational progress, and agent uptime. Use
+`common/time.py` to format numeric seconds without I/O, clock access, or
+timestamp parsing. Keep timestamp parsing and live-clock flooring at call sites.
+Render `250ms` below one second, otherwise round to whole seconds and show
+`1m8s`, `1m0s`, or `1h1m1s` without spaces or zero padding. Zero and negative
+values render as `0s`. Remove duplicated formatters and the unused humanize
+dependency. Cover unit boundaries and each surface with regression tests.
 
 ## Acceptance Tests
 
