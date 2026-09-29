@@ -1,4 +1,4 @@
-"""Open an interactive shell in one resident agent home."""
+"""Open an interactive shell in the Toolang root or a resident agent home."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from typing import TextIO
 import typer
 from typer._click.exceptions import ClickException
 
-from ...common.context import context_layout
+from ...common.context import context_agent, context_layout, context_root
 
 
 def shell(ctx: typer.Context) -> None:
-    """Run the configured interactive shell from the selected agent home."""
+    """Run the configured interactive shell from the selected directory."""
 
-    layout = context_layout(ctx)
+    directory = context_layout(ctx).home if context_agent(ctx) else context_root(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
     executable = os.environ.get("SHELL", "/bin/sh")
     try:
-        result = subprocess.run([executable, "-i"], cwd=layout.home, check=False)
+        result = subprocess.run([executable, "-i"], cwd=directory, check=False)
     except OSError as exc:
         raise ClickException(f"could not start shell {executable!r}: {exc}") from exc
 
