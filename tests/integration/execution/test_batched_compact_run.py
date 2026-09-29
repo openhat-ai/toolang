@@ -19,7 +19,14 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution import compaction
-from toolang.execution.events import RunBegin
+from toolang.execution.events import (
+    PartBegin,
+    PartEnd,
+    RunBegin,
+    RunEnd,
+    StepBegin,
+    StepEnd,
+)
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.executor import _Execution
@@ -378,6 +385,149 @@ def test_direct_child_cancel_is_consumed_and_stops_parent(tmp_path, monkeypatch)
                 == "applied"
             )
             assert RunHistory(h.store).get_compaction(thread) is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("target", ["parent", "child"])
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "run_begin",
+        "tool_begin",
+        "tool_end",
+        "model_begin",
+        "model_end",
+        "tool_part_begin",
+        "tool_part_end",
+        "model_part_begin",
+        "model_part_end",
+    ],
+)
+def test_cancel_at_internal_event_boundaries_closes_lifecycle(
+    tmp_path, monkeypatch, target, boundary
+):
+    h = harness_at(tmp_path)
+
+    class CancelTracer(RecordingRunTracer):
+        child = None
+        parent = None
+        fired = False
+
+        async def on_event(self, event):
+            self.events.append(event)
+            if isinstance(event, RunBegin) and event.runnable == compaction.RUNNABLE:
+                self.child = event.run
+                self.parent = event.parent.run_id
+            point = None
+            if isinstance(event, RunBegin | RunEnd) and event.run == self.child:
+                point = event.type
+            elif (
+                isinstance(event, StepBegin | StepEnd)
+                and event.step.run_id == self.child
+            ):
+                point = (
+                    f"{event.kind}_{'begin' if isinstance(event, StepBegin) else 'end'}"
+                )
+            elif (
+                isinstance(event, PartBegin | PartEnd)
+                and event.step.run_id == self.child
+            ):
+                kind = h.store.get_step(ref=event.step).kind
+                point = f"{kind}_{event.type}"
+            if point == boundary and not self.fired:
+                self.fired = True
+                h.executor.cancel(
+                    run_id=self.parent if target == "parent" else self.child
+                )
+                # A canceled observer must not block lifecycle cleanup.
+                await asyncio.Future()
+
+    tracer = CancelTracer()
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            parent = await asyncio.wait_for(current(h, thread, tracer=tracer), 2)
+            assert tracer.fired
+            assert parent.status == "canceled"
+            (child,) = producers(h, thread)
+            assert child.status == "canceled"
+            steps = h.store.list_steps(run_id=child.id)
+            assert all(s.status != "running" for s in steps)
+            if steps and boundary not in {"tool_end", "model_end"}:
+                assert steps[-1].status == "canceled"
+            assert [s.kind for s in h.store.list_steps(run_id=parent.id)] == ["tool"]
+            assert RunHistory(h.store).get_compaction(thread) is None
+            projector = ProgressProjector()
+            for event in tracer.events:
+                projector.handle(event)
+                assert not projector._broken, event
+            assert_replayed(h.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_retry_cannot_delete_an_adopted_compaction_child(tmp_path, monkeypatch):
+    h = harness_at(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            owner = await current(h, thread)
+            assert owner.status == "succeeded"
+            (child,) = producers(h, thread)
+            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
+            h.adapter._responses.append(reply("later"))
+            later = await current(h, thread)
+            assert later.status == "succeeded"
+            before = h.store.list_run_tree(root_run_id=owner.id)
+            steps = h.store.list_steps(run_id=owner.id)
+            controls = h.store.list_run_controls(run_id=owner.id)
+            with pytest.raises(ValueError, match="referenced horizon.*use rerun"):
+                await h.executor.retry(
+                    owner.id, setup=h.setup, state=h.state, anchor=child.parent
+                )
+            assert h.store.list_run_tree(root_run_id=owner.id) == before
+            assert h.store.list_steps(run_id=owner.id) == steps
+            assert h.store.list_run_controls(run_id=owner.id) == controls
+            assert h.store.get_run(run_id=child.id) == child
+            for action in (h.executor.retry, h.executor.rerun):
+                h.adapter._responses.append(reply("later again"))
+                result = await action(later.id, setup=h.setup, state=h.state)
+                assert result.status == "succeeded", result.error
+            # The rejected owner's supported alternative retains the producer.
+            h.adapter._responses.append(reply("owner again"))
+            result = await h.executor.rerun(owner.id, setup=h.setup, state=h.state)
+            assert result.status == "succeeded", result.error
+            assert h.store.get_run(run_id=child.id) == child
+
+    asyncio.run(scenario())
+
+
+def test_retry_can_replace_an_unpublished_compaction_child(tmp_path, monkeypatch):
+    h = harness_at(tmp_path)
+
+    def fail_publication(*args):
+        raise RuntimeError("publication interrupted")
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 3)
+            with monkeypatch.context() as patch:
+                patch.setattr(_Execution, "compact", fail_publication)
+                owner = await current(h, thread)
+            assert owner.status == "failed"
+            (child,) = producers(h, thread)
+            assert child.status == "succeeded"
+            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
+            h.adapter._responses.append(reply("retried"))
+            retried = await h.executor.retry(owner.id, setup=h.setup, state=h.state)
+            assert retried.status == "succeeded", retried.error
+            assert h.store.get_run(run_id=child.id) is None
 
     asyncio.run(scenario())
 

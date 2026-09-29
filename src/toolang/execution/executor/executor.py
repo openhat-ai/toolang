@@ -2825,7 +2825,22 @@ class _Execution:
                     await emit(event)
                 else:
                     await self.executor._emit_event_locked(self._active, event)
-            except BaseException:
+            except BaseException as exc:
+                if isinstance(exc, asyncio.CancelledError):
+                    # RunBegin is durable before observers are awaited. Close an
+                    # accepted child even if cancellation prevents execute().
+                    # accept() already owns event_lock, so do not acquire it again.
+                    async def emit_terminal(event: RunEvent) -> None:
+                        if self._active is not None:
+                            await self.executor._emit_event_locked(self._active, event)
+                        elif self._emit_trace is not None:
+                            await self._emit_trace(event)
+
+                    record = self.store.get_run(run_id=binding.run_id)
+                    if record is not None:
+                        await self.executor._ensure_terminal(
+                            binding.run_id, emit=emit_terminal, status="canceled"
+                        )
                 self._active_bindings.pop(binding.run_id, None)
                 self._cwd_cache.pop(binding.run_id, None)
                 self._run_lineages.pop(binding.run_id, None)

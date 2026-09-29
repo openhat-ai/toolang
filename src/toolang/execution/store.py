@@ -2714,6 +2714,26 @@ class RunStore:
                     removed_runs.add(run.id)
                     changed = True
         if removed_runs:
+            # A published producer can outlive its owning Step: thread horizons
+            # and later Run controls retain its output. Reject the entire retry
+            # transaction rather than leave those durable references dangling.
+            horizons = {
+                str(row["horizon"])
+                for row in self._conn.execute(
+                    "SELECT horizon FROM threads WHERE horizon IS NOT NULL"
+                )
+            }
+            for row in self._conn.execute(
+                "SELECT * FROM controls WHERE kind IN ('run', 'compact')"
+            ):
+                payload = _control_from_row(row).payload
+                if isinstance(payload, RunControlPayload | CompactControlPayload):
+                    if payload.horizon is not None:
+                        horizons.add(str(payload.horizon))
+            if referenced := sorted(removed_runs & horizons):
+                raise ValueError(
+                    f"retry would delete referenced horizon {referenced[0]}; use rerun"
+                )
             removed_placeholders = ", ".join("?" for _ in removed_runs)
             removed_params = tuple(removed_runs)
             self._conn.execute(
