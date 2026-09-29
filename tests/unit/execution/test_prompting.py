@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import cast
 from xml.etree import ElementTree as ET
 
+from toolang.execution.assembly.history import summary_message
+
 import pytest
 
 from tests.support.prompting import instruction_inputs, render_instructions
@@ -322,7 +324,7 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
         recall=recall,
     )
     assert assembled == [
-        *([Message.user("Summary {{literal}}")] if "far" in recall else []),
+        *([summary_message("Summary {{literal}}")] if "far" in recall else []),
         *(near if "near" in recall else ()),
         *current,
     ]

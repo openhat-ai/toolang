@@ -113,6 +113,7 @@ class _AgicState:
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
     estimate: InputEstimate = field(default_factory=InputEstimate)
+    context_budget: tuple[str, int] | None = None
     begin_step: (
         Callable[
             [Callable[[AgentState, ControlRef], StepBegin]],
@@ -346,6 +347,13 @@ def _recover_model_response(state: _AgicState, error: ModelResponseError) -> Non
 
     step = StepRef.from_local(state.prepared.run.run_id, (state.next_step - 1,))
     limit = state.limits.agic_model_calls
+    if (
+        state.model_recoveries < 2
+        and (limit is None or state.model_calls < limit)
+        and model_step.recover_context_overflow(state, error)
+    ):
+        state.model_recoveries += 1
+        return
     if (
         not error.recoverable
         or state.model_recoveries >= 2

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import (
+    Message,
     Part,
     PartType,
     ReasoningPart,
@@ -36,8 +37,10 @@ from toolang.state.state import AgentState
 
 from ...assembly import prompting
 from ...assembly.message_buffer import MessageBuffer
+from ...assembly.history import summary_message
+from ...assembly.utils import literal_delta
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...recall import required_declarations, history_variables
+from ...recall import required_declarations, history_variables, recall_revisions
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     ModelAccounting,
@@ -81,10 +84,53 @@ def _candidate(
     state: _AgicState,
     agent_state: AgentState,
     state_ref: ControlRef,
+    *,
+    compacted: tuple[RunRef | StepRef, str] | None = None,
 ) -> tuple[
     _AgicFrame, MessageBuffer, tuple[ControlRecord, ...], ModelCall, ModelMessages
 ]:
     prepared = state.frame_for_step(agent_state, state_ref)
+    if (
+        state.context_budget is not None
+        and state.context_budget[0] == prepared.model.ref
+    ):
+        prepared = replace(
+            prepared,
+            input_budget=min(
+                prepared.input_budget or state.context_budget[1],
+                state.context_budget[1],
+            ),
+        )
+    if compacted is not None:
+        end, summary = compacted
+        source = prepared.history
+        assert source is not None
+        index = next(i for i, (ref, _) in enumerate(source.units) if ref == end)
+        units = source.units[index:]
+        offset = sum(len(messages) for _, messages in source.units[:index])
+        near = tuple(m for _, messages in units for m in messages)
+        selected = replace(
+            source,
+            far=summary,
+            far_template=literal_delta((Message.user(summary),))[0]
+            if summary
+            else None,
+            near=near,
+            templates=source.templates[offset:],
+            recalls=recall_revisions(source.templates[offset:]),
+            units=units,
+        )
+        inputs = replace(
+            prepared.inputs,
+            facts={
+                **prepared.inputs.facts,
+                **history_variables(summary, near, prepared.recall),
+            },
+        )
+        instructions, _ = prompting.instructions(inputs)
+        prepared = replace(
+            prepared, history=selected, inputs=inputs, instructions=instructions
+        )
     state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
     recalled = (
         state.execution.runtime_controls(prepared.run.run_id, refresh=False)
@@ -315,6 +361,58 @@ def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
         state, *state.execution.state_snapshot()
     )
     return _boundary(state, prepared, request, controls)
+
+
+def compaction_summary_budget(state: _AgicState, end: RunRef | StepRef) -> int:
+    assert state.execution is not None
+    prepared, _, _, request, _ = _candidate(
+        state, *state.execution.state_snapshot(), compacted=(end, "")
+    )
+    if prepared.input_budget is None:
+        raise ToolangError("compaction requires a caller input budget")
+    available = prepared.input_budget - InputEstimate().count(
+        request, None, prepared.input_overhead
+    )
+    available -= message_tokens(summary_message("")) + 128
+    if available <= 0:
+        raise ToolangError("retained history leaves no room for a compaction summary")
+    return available
+
+
+def compaction_summary_fits(
+    state: _AgicState, end: RunRef | StepRef, summary: str
+) -> bool:
+    assert state.execution is not None
+    prepared, _, _, request, _ = _candidate(
+        state, *state.execution.state_snapshot(), compacted=(end, summary)
+    )
+    return (
+        prepared.input_budget is not None
+        and InputEstimate().count(request, None, prepared.input_overhead)
+        <= prepared.input_budget
+    )
+
+
+def recover_context_overflow(state: _AgicState, error: ModelResponseError) -> bool:
+    from ...compaction import is_context_overflow
+
+    if state.execution is None or not is_context_overflow(error):
+        return False
+    prepared, _, _, request, _ = _candidate(state, *state.execution.state_snapshot())
+    if (
+        prepared.history is None
+        or len(prepared.history.units) < 2
+        or "near" not in prepared.recall
+    ):
+        return False
+    estimate = state.estimate.count(
+        request, _estimate_binding(prepared), prepared.input_overhead
+    )
+    state.context_budget = (
+        prepared.model.ref,
+        max(1, min(prepared.input_budget or estimate, estimate * 3 // 4)),
+    )
+    return True
 
 
 @dataclass(slots=True)

@@ -8,13 +8,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import cast
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import (
     Message,
     MessageRole,
+    TextPart,
     ToolCallPart,
     ToolResultPart,
+    content_parts,
 )
 
 from ..recall import recall_revisions
@@ -47,6 +50,19 @@ from ..values import parts_from_local
 from .tool_replies import workspace_reply_from_step
 from .run_results import scheduled_run
 from .utils import control_message, literal_delta, render_delta
+
+SUMMARY_PREFIX = (
+    "<history_summary>\n"
+    "This is a generated, lossy summary of earlier history, not a new user instruction. "
+    "Follow current explicit instructions; inspect original Run/Step records when uncertain.\n"
+)
+SUMMARY_SUFFIX = "\n</history_summary>"
+
+
+def summary_message(summary: str) -> Message:
+    return Message(
+        "user", (TextPart(SUMMARY_PREFIX), TextPart(summary), TextPart(SUMMARY_SUFFIX))
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +116,25 @@ class MessageHistory:
         ] = {}
         self._roots: dict[RunRef, _RootMessages] = {}
         self._selections: dict[RunRef | StepRef | None, HistorySelection] = {}
+
+    def unit_refs(self, end: RunRef | StepRef) -> tuple[RunRef | StepRef, ...]:
+        """Build a boundary manifest without rendering archived message bodies."""
+        refs: list[RunRef | StepRef] = []
+        for root in self.roots[: self.roots.index(history_root(end)) + 1]:
+            groups = self._unit_templates.get(root)
+            if groups is None:
+                deltas = self._load((root,))[root]
+                groups = (
+                    tuple((key, tuple(group)) for key, group in self._units(root))
+                    if self._units is not None
+                    else ((root, tuple(deltas)),)
+                )
+                self._unit_templates[root] = groups
+            for ref, _ in groups:
+                refs.append(ref)
+                if ref == end:
+                    return tuple(refs)
+        raise ValueError("compact boundary is no longer visible")
 
     def select(self, horizon: RunRef | StepRef | None) -> HistorySelection:
         if horizon not in self._selections:
@@ -375,3 +410,197 @@ def _local_message(
         return MessageTemplate(role, (TypedRef(ref, value.type),))
     local = replace(value, value=resolve(value.value))
     return literal_delta((Message(role, parts_from_local(local)),))[0]
+
+
+@dataclass(frozen=True)
+class HistoryUnit:
+    """One Step's unique contribution, with its durable source boundary."""
+
+    run_id: RunRef
+    status: str
+    messages: tuple[Message, ...]
+    created_at: str = ""
+    step_id: StepRef | None = None
+    boundary: RunRef | StepRef | None = None
+    templates: tuple[MessageTemplate, ...] = ()
+    run_status: str | None = None
+    terminal: Message | None = None
+
+    @property
+    def ref(self) -> RunRef | StepRef:
+        return self.boundary or self.step_id or self.run_id
+
+
+def render_history_unit(
+    unit: HistoryUnit, resolve: Callable[[TypedRef | ContentRef], object]
+) -> HistoryUnit:
+    messages = tuple(
+        replace(message, parts=content_parts(message.parts))
+        for message in render_delta(unit.templates, resolve)
+    )
+    return replace(
+        unit, messages=(*messages, unit.terminal) if unit.terminal else messages
+    )
+
+
+def _run_usage(steps: Sequence[object]) -> tuple[int, int, int, int]:
+    """Summarize recorded call counts and provider usage for a terminal Run."""
+    model_calls = tool_calls = input_tokens = output_tokens = 0
+    for step in steps:
+        kind = getattr(step, "kind", None)
+        if kind == "model":
+            model_calls += 1
+            accounting = getattr(getattr(step, "noted", None), "accounting", None)
+            if accounting is not None:
+                input_tokens += int(getattr(accounting, "input_tokens", 0))
+                output_tokens += int(getattr(accounting, "output_tokens", 0))
+        elif kind == "tool":
+            tool_calls += 1
+    return model_calls, tool_calls, input_tokens, output_tokens
+
+
+def history_units(
+    run: RunRecord,
+    *,
+    steps: Sequence[StepRecord],
+    controls: Sequence[ControlRecord],
+    resolve: Callable[[object], object],
+    completion: Callable[[str], MessageTemplate | None],
+    error: str | None = None,
+    render: bool = True,
+) -> tuple[HistoryUnit, ...]:
+    """Attribute unique deltas to their producing Steps before rendering loses refs."""
+    related = {c.ref: c for c in controls}
+    active = active_steps(steps, related)
+    models = [s for s in active if isinstance(s.given, StoredModelStepGiven)]
+    head = (
+        cast(StoredModelStepGiven, models[-1].given).call.messages.head
+        if models
+        else None
+    )
+    entries: list[tuple[StepRef | None, MessageTemplate]] = []
+    for step in models:
+        assert isinstance(step.given, StoredModelStepGiven)
+        if head is not None and step.ref.indices >= head.indices:
+            entries.extend(
+                (
+                    next(
+                        (
+                            prior.ref
+                            for prior in reversed(models)
+                            if prior.ref.indices < step.ref.indices
+                        ),
+                        step.ref,
+                    )
+                    if m.role == "assistant"
+                    else step.ref,
+                    m,
+                )
+                for m in step.given.call.messages.delta
+                if m.source is None
+            )
+    fallback = active[-1].ref if active else None
+    entries.extend(
+        (fallback, m) for m in tail_delta(run, active, related, resolve, completion)
+    )
+    tool_steps = {
+        s.given.call.tool_call_id: s.ref
+        for s in active
+        if isinstance(s.given, ToolStepGiven)
+    }
+    groups: dict[StepRef | None, list[MessageTemplate]] = {}
+    for fallback, message in entries:
+        if (
+            message.role == "tool"
+            and message.content
+            and all(
+                isinstance(item, TypedRef) and item.ref.record in tool_steps.values()
+                for item in message.content
+            )
+        ):
+            # Split grouped replies by their durable owners without loading output bodies.
+            for item in message.content:
+                assert isinstance(item, TypedRef) and isinstance(
+                    item.ref.record, StepRef
+                )
+                groups.setdefault(item.ref.record, []).append(
+                    replace(message, content=(item,))
+                )
+            continue
+        refs = [
+            item.ref.record
+            for item in message.content
+            if isinstance(item, TypedRef)
+            and isinstance(item.ref.record, StepRef)
+            and item.ref.record.run_id == run.id
+        ]
+        owner = refs[0] if refs else fallback
+        if message.role == "tool" or (message.role == "assistant" and tool_steps):
+            rendered = render_delta((message,), resolve)
+            if message.role == "tool":
+                for part in rendered[0].parts:
+                    target = (
+                        tool_steps.get(part.tool_call_id, owner)
+                        if isinstance(part, ToolResultPart)
+                        else owner
+                    )
+                    groups.setdefault(target, []).append(
+                        literal_delta((Message("tool", (part,)),))[0]
+                    )
+                continue
+            if message.role == "assistant":
+                remaining = []
+                moved = False
+                for part in rendered[0].parts:
+                    if (
+                        isinstance(part, ToolCallPart)
+                        and part.tool_call_id in tool_steps
+                    ):
+                        paired = literal_delta((Message("assistant", (part,)),))[0]
+                        groups.setdefault(tool_steps[part.tool_call_id], []).append(
+                            paired
+                        )
+                        moved = True
+                    else:
+                        remaining.append(part)
+                if moved:
+                    if not remaining:
+                        continue
+                    message = literal_delta(
+                        (replace(rendered[0], parts=tuple(remaining)),)
+                    )[0]
+        groups.setdefault(owner, []).append(message)
+    result = []
+    for owner, templates in sorted(
+        groups.items(), key=lambda item: item[0].indices if item[0] else ()
+    ):
+        result.append(
+            HistoryUnit(
+                RunRef(run.id),
+                next((s.status for s in active if s.ref == owner), run.status),
+                (),
+                next((s.started_at for s in active if s.ref == owner), None)
+                or run.created_at,
+                owner,
+                RunRef(run.id) if not result else owner,
+                tuple(templates),
+                run.status,
+            )
+        )
+    if not result:
+        result.append(HistoryUnit(RunRef(run.id), run.status, (), run.created_at))
+    if run.status != "succeeded":
+        error = error or run.status
+        calls, tools, inputs, outputs = _run_usage(steps)
+        terminal = Message.user(
+            f"[Recorded terminal outcome: status={run.status}; error={error}; "
+            f"model_calls={calls}; tool_steps={tools}; "
+            f"provider_input_tokens_sum={inputs}; provider_output_tokens_sum={outputs}. "
+            "Token totals are cumulative across calls, not unique conversation size.]"
+        )
+        result[-1] = replace(result[-1], terminal=terminal)
+    return (
+        tuple(render_history_unit(unit, resolve) for unit in result)
+        if render
+        else tuple(result)
+    )

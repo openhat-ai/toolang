@@ -70,7 +70,8 @@ caller input budget. Its original records remain unchanged.
 `summary` is a prompt target. The compact model output allowance is
 `max(2 * summary, summary + 1024)` unless its model specification supplies
 `max_output`, clamped to that model's output limit. The default allowance is 8192
-tokens and includes reasoning. Batch admission uses 80% of the compact model's
+tokens and includes reasoning; an explicit reasoning budget must be smaller than
+the resolved output allowance. Batch admission uses 80% of the compact model's
 safety input capacity; its window controls batching independently of the thread
 model's percentage denominator.
 
@@ -80,9 +81,12 @@ or recent targets, report that context metadata or absolute token settings are
 required. Integer targets can resolve without a context window. Compaction still
 requires a known input or context limit for its own model.
 
-Soft targets do not guarantee that the final request fits. Fixed/current content,
-minimum Step metadata, or a large cumulative summary can still exhaust capacity;
-report failure when further compaction cannot advance safely.
+The configured summary target is capped internally by remaining caller input
+space and compact-model capacity. Validate that the result leaves space for the
+next batch and fits the caller's rebuilt request before publication. Oversized
+responses retry the same batch at most twice with a smaller target and advance no
+checkpoint. Fixed/current content or minimum Step metadata can still exhaust
+capacity; fail explicitly rather than publish an unusable result.
 
 ## Implementation changes
 

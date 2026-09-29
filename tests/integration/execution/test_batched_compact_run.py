@@ -36,7 +36,7 @@ from toolang.execution.executor.steps import model as model_step
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import CompactControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
-from toolang.execution.types import ModelStepNoted, RunRef, ThreadPrefix
+from toolang.execution.types import ModelStepNoted, RunRef, ThreadPrefix, ToolStepGiven
 from toolang.plugin.models.collections import ModelCollection
 
 SOURCE = """agic chat(_: Part[]) -> Text:
@@ -717,5 +717,126 @@ def test_compaction_usage_is_charged_to_parent_tree_limit(tmp_path, monkeypatch)
             assert child.status == "failed"
             assert len(h.adapter.invocations) == 6
             assert RunHistory(h.store).get_compaction(thread) is None
+
+    asyncio.run(scenario())
+
+
+def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypatch):
+    from tests.support.execution_harness import RecordingTool
+    from tests.integration.execution.test_compact_scenarios import constrain
+    from toolang.setup.config import resolve_compact_config
+
+    tool = RecordingTool("lookup__read", output={"text": "large body " * 5000})
+    calls = [ToolCall(str(i), str(i), tool.name, {}) for i in range(3)]
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            *[ModelCallResult(tool_calls=(call,)) for call in calls],
+            reply("latest Step"),
+        ],
+    )
+    captured = []
+    invoke = compact_run.invoke
+
+    async def capture(state, step):
+        captured.append((state, step, state.execution._active))
+        return await invoke(state, step)
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            original = await current(h, thread)
+            assert original.status == "succeeded"
+            source_units = compaction.history_units(h.store, original)
+            constrain(h)
+            h.setup = replace_materialized_setup(
+                h.setup,
+                models=ModelCollection(
+                    tuple(
+                        replace(m, limit={"context": 8000, "output": 1024})
+                        if m.id == "reducer"
+                        else m
+                        for m in h.setup.models_effective()
+                    )
+                ),
+            )
+            h.setup = replace(
+                h.setup,
+                compact=resolve_compact_config(
+                    (
+                        {
+                            "compact": {
+                                "model": "test/reducer",
+                                "summary": 128,
+                                "recent": 1,
+                            }
+                        },
+                    )
+                ),
+            )
+            h.adapter._responses.extend([reply("Cumulative facts.")] * 16)
+            emit = h.executor._emit_event_locked
+
+            async def crash_after_checkpoint(active, event):
+                result = await emit(active, event)
+                if (
+                    isinstance(event, StepEnd)
+                    and event.kind == "model"
+                    and event.status == "succeeded"
+                ):
+                    raise ProcessCrash()
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(compact_run, "invoke", capture)
+                patch.setattr(h.executor, "_emit_event_locked", crash_after_checkpoint)
+                with pytest.raises(ProcessCrash):
+                    await current(h, thread)
+            (child,) = producers(h, thread)
+            cursor, _ = compaction.read_checkpoint(h.store, child)
+            assert 0 < cursor < len(source_units) - 1
+            state, step, old_active = captured[0]
+            with closing(RunStore(h.store.db_path)) as store:
+                executor = RunExecutor(store, h.executor.ids)
+                executor._persist = _PersistSink(store)
+                parent = state.prepared.run
+                active = replace(
+                    old_active, task=asyncio.current_task(), controls={}, ended=set()
+                )
+                execution = _Execution(executor, root=parent, active=active)
+                active.execution = execution
+                executor._active[parent.run_id] = active
+                state.execution = execution
+                state.refresh_frame = None
+                rendered = []
+                render_unit = compact_run.render_history_unit
+
+                def observe(unit, resolve):
+                    rendered.append(unit.ref)
+                    return render_unit(unit, resolve)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(compact_run, "render_history_unit", observe)
+                    receipt = await invoke(state, step)
+                assert receipt["controls"]
+                assert rendered and set(rendered) == {
+                    u.ref for u in source_units[cursor:-1]
+                }
+                completed = store.get_run(run_id=child.id)
+                assert completed is not None and completed.status == "succeeded"
+                reads = [
+                    s.given.call.input["units"]
+                    for s in store.list_steps(run_id=child.id)
+                    if isinstance(s.given, ToolStepGiven) and s.status == "succeeded"
+                ]
+                assert [ref for batch in reads for ref in batch] == [
+                    str(u.ref) for u in source_units[:-1]
+                ]
+                assert (
+                    compaction.read_checkpoint(store, completed)[0]
+                    == len(source_units) - 1
+                )
 
     asyncio.run(scenario())

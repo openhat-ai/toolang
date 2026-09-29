@@ -226,11 +226,6 @@ def build_agic_frame(
             f"model {resolved_model.ref} (output source: {output_source}): {exc}"
         ) from exc
 
-    if history is not None and admitted_input is not None:
-        history = bound_latest_step(
-            history, max(1, admitted_input // 2), message_tokens
-        )
-        far, near = history.far, history.near
     inputs = prompting.PromptInputs(
         run.state,
         run.setup,
@@ -250,6 +245,35 @@ def build_agic_frame(
         instruct=run.settings.instruct,
         context=run.settings.context,
     )
+    if (
+        history is not None
+        and history.near
+        and admitted_input is not None
+        and "near" in recall_sources(run.settings.recall)
+    ):
+        without_near = replace(
+            inputs,
+            facts={
+                **inputs.facts,
+                **history_variables(far, (), run.settings.recall),
+            },
+        )
+        uses_near = run.parent is None or (
+            inputs.rendered_input[:2] != without_near.rendered_input[:2]
+            or prompting.instructions(inputs)[0]
+            != prompting.instructions(without_near)[0]
+        )
+        if uses_near:
+            history = bound_latest_step(
+                history, max(1, admitted_input // 2), message_tokens
+            )
+            inputs = replace(
+                inputs,
+                facts={
+                    **inputs.facts,
+                    **history_variables(history.far, history.near, run.settings.recall),
+                },
+            )
     instructions, declarations = prompting.instructions(inputs)
     _, _, prompt_invocations = inputs.rendered_input
     if prompt_invocations:

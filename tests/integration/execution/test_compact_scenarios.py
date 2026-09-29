@@ -32,6 +32,7 @@ from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.inspection.history import RunHistory
+from toolang.execution.assembly.history import summary_message
 from toolang.execution.compaction import permit
 from toolang.execution.executor.budget import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
@@ -370,7 +371,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
             request = RunHistory(harness.store).get_model_call(steps[-1].ref)
             assert request == harness.adapter.invocations[-1].call
             assert without_runtime_snapshots(request.messages) == [
-                Message.user("Earlier facts."),
+                summary_message("Earlier facts."),
                 Message.user("middle"),
                 Message.assistant("middle"),
                 Message.user("recent"),
@@ -786,37 +787,6 @@ def test_parallel_children_do_not_automatically_recall_or_compact_root_history(
     asyncio.run(scenario())
 
 
-def test_oversized_completed_summary_fails_without_repeating_the_range(tmp_path):
-    harness = seeded_harness(tmp_path)
-    # Force the initial compaction to retain only the last complete root.
-    harness.adapter._responses[1] = reply("middle " * 8000)
-
-    async def scenario():
-        async with harness:
-            thread, end = await seed(harness)
-            turns = compact_responses(thread, end)
-            turns[-1] = ModelCallResult(message=Message.assistant("large " * 15000))
-            harness.adapter._responses.extend(turns)
-            current = await harness.executor.run(spec(harness, thread, "current"))
-            assert current.status == "failed"
-            assert (
-                len(
-                    [
-                        c
-                        for c in harness.store.list_run_controls(run_id=current.id)
-                        if isinstance(c.payload, CompactControlPayload)
-                    ]
-                )
-                == 1
-            )
-            assert [s.kind for s in harness.store.list_steps(run_id=current.id)] == [
-                "tool"
-            ]
-            assert len(compact_runs(harness, thread)) == 1
-
-    asyncio.run(scenario())
-
-
 def test_cancel_before_oversized_first_call_still_has_a_canceled_step(tmp_path):
     harness = seeded_harness(tmp_path)
 
@@ -1164,7 +1134,7 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
                 spec(harness, thread, "original goal")
             )
             assert original.status == "succeeded", original.error
-            units = compaction._history_units(harness.store, original)
+            units = compaction.history_units(harness.store, original)
             assert len(units) == 7
             assert len({u.ref for u in units}) == 7
             for unit in units:
@@ -1326,5 +1296,208 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
                 restored = RunHistory(harness.store).get_compaction(thread)
                 assert restored is not None and restored.ref == final
                 assert restored.result == output.result
+
+    asyncio.run(scenario())
+
+
+def test_recall_none_does_not_bound_unused_history(tmp_path, monkeypatch):
+    from toolang.execution.executor import frame
+
+    source = (
+        SOURCE
+        + "\nagic isolated(_: Part[]) -> Text:\n  recall = none\n  context = none\n  instruct = none\n  user: {{_}}\n"
+    )
+    h = ExecutionHarness.create(
+        tmp_path, source=source, responses=[reply("history"), reply("done")]
+    )
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            await h.executor.run(spec(h, thread, "first"))
+            constrain(h)
+
+            def unused(*args):
+                raise AssertionError("unused history must not be bounded")
+
+            monkeypatch.setattr(frame, "bound_latest_step", unused)
+            run = await h.executor.run(
+                h.run_spec(
+                    thread=thread, runnable="isolated", primary=(TextPart("next"),)
+                )
+            )
+            assert run.status == "succeeded", run.error
+
+    asyncio.run(scenario())
+
+
+def test_history_units_keep_step_outcome_when_root_fails(tmp_path):
+    from toolang.execution.compaction import history_units
+
+    tool = RecordingTool("lookup__read", output={"result": "completed"})
+    call = ToolCall("lookup", "lookup", tool.name, {})
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[ModelCallResult(tool_calls=(call,)), RuntimeError("later failure")],
+    )
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            run = await h.executor.run(spec(h, thread, "work"))
+            assert run.status == "failed"
+            tool_step = next(
+                s for s in h.store.list_steps(run_id=run.id) if s.kind == "tool"
+            )
+            unit = next(
+                u for u in history_units(h.store, run) if u.step_id == tool_step.ref
+            )
+            assert unit.status == "succeeded" and unit.run_status == "failed"
+            assert unit.created_at == tool_step.started_at
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("repaired", [False, True])
+def test_summary_must_fit_before_publication(tmp_path, repaired):
+    h = seeded_harness(tmp_path)
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h)
+            h.adapter._responses.extend(
+                [reply("summary " * 5000), reply("Short facts."), reply("done")]
+                if repaired
+                else [reply("summary " * 5000)] * 3
+            )
+            run = await h.executor.run(spec(h, thread, "continue"), tracer=tracer)
+            assert run.status == ("succeeded" if repaired else "failed"), run.error
+            horizon = h.store.get_thread(thread_id=thread).horizon
+            assert (horizon is not None) == repaired
+            controls = [
+                c
+                for c in h.store.list_run_controls(run_id=run.id)
+                if isinstance(c.payload, CompactControlPayload)
+            ]
+            assert len(controls) == int(repaired)
+            (child,) = compact_runs(h, thread)
+            steps = h.store.list_steps(run_id=child.id)
+            reads = [s.given.call.input["units"] for s in steps if s.kind == "tool"]
+            assert reads and all(refs == reads[0] for refs in reads)
+            assert len(reads) == (2 if repaired else 3)
+
+    asyncio.run(scenario())
+    assert_replayed(h.store.db_path, tracer.events)
+
+
+def test_provider_context_rejection_compacts_before_retry(tmp_path):
+    from toolang.base.errors import ModelResponseError
+
+    h = ExecutionHarness.create(
+        tmp_path, source=SOURCE, responses=[reply("old " * 3000), reply("recent")]
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            await h.executor.run(spec(h, thread, "first"))
+            await h.executor.run(spec(h, thread, "second"))
+            constrain(h, context=30000)
+            h.adapter._responses.extend(
+                [
+                    ModelResponseError(
+                        "context_length_exceeded", kind="provider_rejection"
+                    ),
+                    reply("Compact facts."),
+                    reply("done"),
+                ]
+            )
+            run = await h.executor.run(spec(h, thread, "continue"), tracer=tracer)
+            assert run.status == "succeeded", (
+                h.store.resolve_error(run.error) if run.error else None
+            )
+            assert len(compact_runs(h, thread)) == 1
+            steps = h.store.list_steps(run_id=run.id)
+            assert [(s.kind, s.status) for s in steps] == [
+                ("model", "failed"),
+                ("tool", "succeeded"),
+                ("model", "succeeded"),
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_child_without_history_references_does_not_bound_history(tmp_path, monkeypatch):
+    from toolang.execution.executor import frame
+
+    source = (
+        SOURCE
+        + "\nagic child() -> Text:\n  context = none\n  instruct = none\n  user: next\nflow parent() -> Text:\n  run child\n"
+    )
+    h = ExecutionHarness.create(
+        tmp_path, source=source, responses=[reply("history"), reply("done")]
+    )
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            await h.executor.run(spec(h, thread, "first"))
+            constrain(h)
+
+            def unused(*args):
+                raise AssertionError("child does not consume historical messages")
+
+            monkeypatch.setattr(frame, "bound_latest_step", unused)
+            run = await h.executor.run(h.run_spec(thread=thread, runnable="parent"))
+            assert run.status == "succeeded", run.error
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("skipped", [False, True])
+def test_batched_tool_replies_remain_in_their_own_step_units(tmp_path, skipped):
+    from toolang.execution.compaction import history_units
+
+    tool = RecordingTool("lookup__read", output={"body": "result"})
+    calls = tuple(
+        ToolCall(f"lookup-{i}", f"lookup-{i}", tool.name, {}) for i in range(2)
+    )
+    if skipped:
+        calls = (ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "/"}), calls[1])
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[ModelCallResult(tool_calls=calls), reply("done")],
+    )
+
+    async def scenario():
+        async with h:
+            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            run = await h.executor.run(spec(h, thread, "work"))
+            assert run.status == "succeeded", run.error
+            units = history_units(h.store, run)
+            for call in calls:
+                (unit,) = [
+                    u
+                    for u in units
+                    if any(
+                        isinstance(p, ToolCallPart)
+                        and p.tool_call_id == call.tool_call_id
+                        for m in u.messages
+                        for p in m.parts
+                    )
+                ]
+                replies = [
+                    p.tool_call_id
+                    for m in unit.messages
+                    for p in m.parts
+                    if isinstance(p, ToolResultPart)
+                ]
+                assert replies == [call.tool_call_id]
 
     asyncio.run(scenario())

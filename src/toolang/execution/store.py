@@ -3169,17 +3169,18 @@ class RunStore:
                 ids = tuple(str(ref) for ref in selected_roots)
                 steps = self.list_steps_for_runs(run_ids=ids)
                 controls = self.list_run_controls_for_runs(run_ids=ids)
-                from .compaction import _history_units
+                from .assembly.history import history_units
 
                 deltas = {}
                 for ref in selected_roots:
                     unit_cache[ref] = tuple(
                         (u.ref, u.templates)
-                        for u in _history_units(
-                            self,
+                        for u in history_units(
                             by_ref[ref],
                             steps=steps[str(ref)],
                             controls=controls[str(ref)],
+                            resolve=self.resolve_value,
+                            completion=self.run_completion,
                             render=False,
                         )
                     )

@@ -237,7 +237,10 @@ def test_complete_exchange_preserves_role_and_parts_in_json() -> None:
             "</following_messages>"
         )
     )[0]["messages"]
-    assert historical == [message.to_data() for message in unit.messages]
+    assert historical[1:] == [message.to_data() for message in unit.messages[1:]]
+    assert historical[0]["parts"][0] == unit.messages[0].parts[0].to_data()
+    assert "file_historical" in historical[0]["parts"][1]["text"]
+    assert "not interpreted" in historical[0]["parts"][1]["text"]
     assert [message["role"] for message in historical] == [
         "user",
         "assistant",
@@ -306,7 +309,9 @@ def test_failed_run_usage_marker_uses_recorded_accounting() -> None:
         ),
         SimpleNamespace(kind="tool", noted=None),
     )
-    assert experiment._run_usage(steps) == (1, 1, 1200, 30)
+    from toolang.execution.assembly.history import _run_usage
+
+    assert _run_usage(steps) == (1, 1, 1200, 30)
 
 
 def test_summary_size_and_output_ceiling_are_independent() -> None:
@@ -462,6 +467,7 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
     reducer = experiment.Compaction(roots, _unit_loader(history), model, size=128)
     assert reducer.next_call() is not None
     assert len(reducer.batch) == len(roots)
+    serialized_units = dict(reducer._serialized)
     before = encoded.copy()
     assert reducer.next_call() is not None
     assert encoded == before
@@ -476,8 +482,9 @@ def test_history_is_tokenized_once_across_batch_retries(monkeypatch):
     reducer.accept(result)
     assert reducer.next_call() is None
     for ref in roots:
-        serialized = reducer._serialized[ref]
+        serialized = serialized_units[ref]
         assert encoded[serialized] == 1
+    assert not reducer._serialized and not reducer._unit_tokens
     # Counts belong to this compaction only, not to a process-wide cache.
     fresh = experiment.Compaction(roots, _unit_loader(history), model, size=128)
     assert fresh.next_call() is not None
@@ -499,3 +506,89 @@ def test_context_relative_target_rounds_decimal_percentages_down(
     value, window, expected
 ):
     assert experiment.resolve_target(value, window) == expected
+
+
+def test_reasoning_budget_is_validated_before_compact_request():
+    model = cast(Model, SimpleNamespace(limit={"context": 200000, "output": 32768}))
+    with pytest.raises(ValueError, match="must exceed the reasoning budget"):
+        experiment.Compaction(
+            (),
+            lambda _: None,
+            model,
+            size=4096,
+            reasoning=Reasoning(budget_tokens=16384),
+        )
+
+
+def test_wide_latest_step_is_bounded_without_losing_tool_pair():
+    from toolang.execution.assembly.history import HistorySelection
+    from toolang.execution.executor.budget import message_tokens
+
+    ref = RunRef("run_wide")
+    call = ToolCallPart(
+        tool_call_id="c",
+        call_id="c",
+        tool_name="read",
+        tool_family="read",
+        input={"query": "original"},
+    )
+    result = ToolResultPart(
+        tool_call_id="c",
+        call_id="c",
+        tool_name="read",
+        tool_family="read",
+        output={"items": ["x"] * 10000},
+    )
+    messages = (
+        Message("assistant", (call,)),
+        Message("tool", (result,)),
+        Message("assistant", tuple(TextPart("x") for _ in range(1500))),
+    )
+    history = HistorySelection(
+        "", None, messages, (), {}, ((ref, messages),), ((ref, messages),)
+    )
+    bounded = experiment.bound_latest_step(history, 1500, message_tokens)
+    assert sum(message_tokens(m) for m in bounded.near) <= 1500
+    assert bounded.near[0].parts[0] == call
+    assert isinstance(bounded.near[1].parts[0], ToolResultPart)
+    assert "omitted" in str(bounded.near)
+    assert history.near[-1].parts == messages[-1].parts
+
+
+def test_serialized_media_has_reference_without_inline_binary():
+    unit = experiment.HistoryUnit(
+        RunRef("run_image"),
+        "succeeded",
+        (
+            Message(
+                "user",
+                (ImagePart(image_url="data:image/png;base64," + "AAAA" * 10000),),
+            ),
+        ),
+    )
+    data = json.loads(experiment._unit_json(unit))
+    assert "AAAA" not in json.dumps(data)
+    assert "run_image" in json.dumps(data)
+    assert "not interpreted" in json.dumps(data)
+
+
+def test_summary_admission_uses_the_new_provider_calibration():
+    model = cast(
+        Model,
+        SimpleNamespace(ref="test/model", limit={"context": 16000, "output": 4096}),
+    )
+    ref = RunRef("run_a")
+    unit = experiment.HistoryUnit(ref, "succeeded", (Message.user("history" * 50),))
+    reducer = experiment.Compaction(
+        (ref,), lambda _: unit, model, size=1024, max_output_tokens=4096
+    )
+    assert reducer.next_call() is not None
+    result = ModelCallResult(
+        message=Message.assistant("fact" * 1000),
+        usage=ModelUsage(input_tokens=reducer.estimate * 2, output_tokens=1000),
+    )
+    assert result.usage is not None
+    assert result.usage.input_tokens < reducer.capacity
+    with pytest.raises(experiment.SummaryTooLarge, match="next batch"):
+        reducer.validate_summary(result)
+    assert reducer.summary == ""

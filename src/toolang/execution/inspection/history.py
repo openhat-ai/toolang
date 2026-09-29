@@ -360,12 +360,20 @@ class RunHistory:
                 end=history_ref(cast(str, request["end"])),
             )
             if isinstance(history_ref(result.end), StepRef):
-                from ..compaction import _history_units
+                from ..assembly.history import history_units
 
                 boundary = history_ref(result.end)
                 original = self._require_run(str(history_root(boundary)))
                 if boundary not in {
-                    u.ref for u in _history_units(self._store, original)
+                    u.ref
+                    for u in history_units(
+                        original,
+                        steps=self._store.list_steps(run_id=original.id),
+                        controls=self._store.list_run_controls(run_id=original.id),
+                        resolve=self._store.resolve_value,
+                        completion=self._store.run_completion,
+                        render=False,
+                    )
                 }:
                     raise ValueError("compact Step boundary is not visible")
             if control.payload.runnable == "_:compact":

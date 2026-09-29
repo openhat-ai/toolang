@@ -29,7 +29,8 @@ sent. Current active Run input and fixed instructions must fit the calling model
 5. Restore an applicable checkpoint and execute read/model batches. Each accepted
    model response replaces the cumulative summary. Compaction model calls run
    through the internal loop with their own budget checks.
-6. Complete the child with a nonempty Text output. Atomically publish the thread
+6. Require the summary to fit the next batch and the caller's complete rebuilt
+   request, then complete the child with a nonempty Text output. Atomically publish the thread
    horizon and create the caller's `kind="compact"` control, with the outer Tool
    Step recorded as `triggered_by`.
 7. Adopt the history version, finish the outer Tool Step, rebuild the candidate,
@@ -41,7 +42,9 @@ sent. Current active Run input and fixed instructions must fit the calling model
 A history unit contains a recorded Step's unique conversation contribution.
 Reconstruct it from active message deltas and terminal output. Assign a tool call
 and its result to the same tool unit. Each unit carries its root Run reference,
-source Step reference when available, timestamp, status, and canonical messages.
+source Step reference when available, Step timestamp and status, separate root
+Run status, and canonical messages. Grouped tool replies are split by their source
+Steps so each tool call stays paired with exactly its own result.
 The ordered unit stream is shared by batching and retained-history selection.
 
 A root's first unit uses its `RunRef` as the boundary; later units use `StepRef`.
@@ -93,6 +96,7 @@ JSON array uses this unit shape:
     "step_id": "run_example.2",
     "created_at": "2026-09-29T00:00:00Z",
     "status": "succeeded",
+    "run_status": "succeeded",
     "messages": [
       {"role": "user", "parts": [{"type": "text", "text": "Continue the task."}]},
       {"role": "assistant", "parts": [{"type": "text", "text": "Recorded result."}]}
@@ -101,17 +105,24 @@ JSON array uses this unit shape:
 ]
 ```
 
-Use canonical `Message.to_data()` for role/parts, including structured tool and
-media data. `step_id` may be null when a contribution has no recorded Step.
+Use canonical `Message.to_data()` for role/parts and structured tool data.
+Represent media as marked Text parts containing media metadata, existing
+transcripts, and the source Run/Step reference. Omit inline binary payloads and
+state explicitly that media content was not interpreted. `step_id` may be null when a contribution has no recorded Step.
 XML tags delimit the two text payloads. Serialize each unit, cache its token
 estimate, join the serialized strings into the JSON array, and insert that array
 unchanged inside the wrapper. Recount a unit when truncation changes its content.
+Build coverage manifests without rendering tool outputs, render pending units on
+demand, and discard serialized bodies after their checkpoint is accepted.
 
 Greedily admit units after reserving instructions, previous summary, framing,
 and output. Verify the exact assembled request before dispatch. The compactor
 uses its model's input capacity with an 80% admission factor, estimates with
 `o200k_base` and model corrections, and calibrates from provider usage. Recognized
-provider context errors shrink the pending batch; other errors propagate.
+provider context errors shrink the pending batch; other errors propagate. An
+ordinary model call rejected specifically for context overflow tightens its local
+input estimate and re-enters preflight, within the existing bounded recovery
+allowance. Other provider rejections do not trigger compaction.
 
 For a single oversized unit, shorten large values with explicit omission
 markers while preserving valid JSON and reference metadata. Set `truncated=true`
@@ -120,11 +131,16 @@ modified serialized content is counted before it is sent. A rejected singleton
 is shortened further; instructions and the cumulative summary remain intact.
 
 Before ordinary prompt assembly, bound an oversized mandatory latest Step to
-half the caller's effective input budget. This permits progress with a single
+half the caller's effective input budget when the request uses near history.
+Coalesce short text parts and bound wide payloads without breaking tool pairing.
+This permits progress with a single
 large historical Step. Truncation affects request copies; original records stay
 available for inspection. Minimum metadata, fixed content, or summaries that
 cannot fit cause an explicit failure. Token estimates and summary size remain
-approximations, so complete-request admission still applies after compaction.
+approximations, so complete-request admission applies before publication and
+again after adoption. Internally cap the summary prompt target by available
+caller and compactor space. An oversized response advances no checkpoint; retry
+the same batch at most twice with a smaller target, then fail without publishing.
 
 ## Checkpoints, publication, and recovery
 
@@ -147,7 +163,9 @@ Distinguish the two reference roles:
   must resolve to the same summary as its completed producer.
 
 The automatic path publishes the child Run reference. New Runs capture the
-thread horizon; active Runs adopt it through their compact controls. Subsequent
+thread horizon; active Runs adopt it through their compact controls. The generated
+summary is explicitly labeled as lossy historical context, with current explicit
+instructions taking precedence and original Run/Step records available for inspection. Subsequent
 Steps record the control in `preceded_by`. Executor history and estimate caches
 advance together, while already recorded calls keep their original history.
 
@@ -174,10 +192,10 @@ to `src/toolang`. Configuration details are specified in [Compaction configurati
 | Action | Location | Responsibility |
 | --- | --- | --- |
 | Add | `execution/executor/runs/compact.py` | Prepare the child, restore progress, execute and record the compact Run loop. |
-| Change | `execution/compaction.py` | Own history units, truncation, serialized requests, token estimation, batching, checkpoint validation, and the thread permit. Accept concrete policy values from the runtime. |
+| Change | `execution/compaction.py` | Own truncation, serialized requests, token estimation, batching, checkpoint validation, and the thread permit. Accept concrete policy values from the runtime. |
 | Change | `execution/executor/{steps/model.py,frame.py,runs/agic.py}` | Apply configured admission, bound the required retained Step, choose coverage, and rebuild calls after adoption. |
 | Change | `execution/executor/{executor.py,tool_runtime.py}`, `execution/tools/_toolang.py` | Integrate internal dispatch, the runtime Tool Step, shared lifecycle, and history adoption. |
-| Change | `execution/{assembly/history.py,inspection/history.py,store.py}` | Select partial-root suffixes, validate results, publish atomically, recover history, and protect adopted references. |
+| Change | `execution/{assembly/history.py,inspection/history.py,store.py}` | Own shared Step history units, select partial-root suffixes, validate results, publish atomically, recover history, and protect adopted references. |
 | Change | `execution/{records.py,schemas.py,types.py}`, `base/types/compaction.py` | Represent Step boundaries and Run/Step horizons in existing records. |
 | Change | `setup/{types.py,config.py,models.py,watcher.py}` | Capture immutable configuration, apply inheritance, resolve the model, and include settings in Setup revisions. |
 | Change | CLI runtime policy and progress projection | Apply compact-model overrides and present the outer operation while tracking its child events. |
@@ -199,3 +217,17 @@ to `src/toolang`. Configuration details are specified in [Compaction configurati
   caller, and publish no partial result.
 - Configuration defaults, inheritance, percentage resolution, missing metadata,
   event projection, and shared accounting have deterministic offline coverage.
+
+## Quality verification
+
+Keep deterministic execution tests offline. Include regression cases for unused
+history, wide retained Steps, grouped skipped tools, successful Steps in failed
+Runs, oversized summaries, provider context rejection, and reopening the Store
+after an accepted batch inside one root. A resumed reducer reads only pending
+unit bodies and never repeats accepted coverage.
+
+The opt-in `tests/integration/execution/test_compact_quality_live.py` evaluates
+multiple real-provider batches with corrections, approval state, completed work,
+unknown facts, constraints, and exact source references. Run it with
+`uv run pytest -s tests/integration/execution/test_compact_quality_live.py --live-model 'deepseek/deepseek-v4-flash effort=low'`.
+This measures semantic retention separately from transaction and replay correctness.

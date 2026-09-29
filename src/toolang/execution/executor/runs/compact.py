@@ -17,6 +17,7 @@ from toolang.plugin.models.resolution import resolve_model_reasoning
 from toolang.setup.models import select_compact_model
 from ... import compaction
 from ...assembly.tool_replies import control_summary
+from ...assembly.history import render_history_unit
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...inspection.history import RunHistory
 from ...records import CompactControlPayload
@@ -45,7 +46,11 @@ if TYPE_CHECKING:
 
 async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
     """Prepare the internal child and adopt its completed output under one permit."""
-    from ..steps.model import compaction_boundary
+    from ..steps.model import (
+        compaction_boundary,
+        compaction_summary_budget,
+        compaction_summary_fits,
+    )
 
     execution = state.execution
     if execution is None:
@@ -104,8 +109,7 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
             adapter = setup.adapters().get(route.adapter)
             if adapter is None:
                 raise ToolangError(f"compact model adapter not found: {route.adapter}")
-            all_units = tuple(ref for ref, _ in history.select(None).units)
-            selected_units = all_units[: all_units.index(end) + 1]
+            selected_units = history.unit_refs(end)
             spec = compaction.CompactSpec(
                 target=target,
                 roots=tuple(history.roots),
@@ -132,8 +136,20 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                         ]
                     ]
                 ),
+                summary_limit=compaction_summary_budget(state, end),
+                summary_fits=lambda summary: compaction_summary_fits(
+                    state, end, summary
+                ),
             )
             saved = compaction.candidate(store, spec, step)
+            if saved is not None and saved.status == "succeeded":
+                reusable = reader.read_compaction(
+                    RunRef(saved.id), target, history.roots
+                )
+                if not compaction_summary_fits(
+                    state, history_ref(reusable.result.end), reusable.result.summary
+                ):
+                    saved = None
             if saved is None or saved.status != "succeeded":
 
                 def prepare(agent_state, state_ref):
@@ -165,6 +181,12 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
             else:
                 ref = RunRef(saved.id)
             output = reader.read_compaction(ref, target, history.roots)
+        if not compaction_summary_fits(
+            state, history_ref(output.result.end), output.result.summary
+        ):
+            raise compaction.SummaryTooLarge(
+                "completed summary does not fit the calling model"
+            )
         controls = execution.compact(step, output.ref)
         return {
             "controls": [
@@ -194,25 +216,31 @@ async def execute(
                     finished_at=utc_now(),
                 )
             )
-    records = {
-        RunRef(r.id): r
-        for r in RunHistory(store)
-        .thread_view(str(spec.target), include_children=False)
-        .roots
-    }
-    units = {
-        unit.ref: unit
-        for ref in spec.roots
-        for unit in compaction._history_units(store, records[ref])
-    }
+    cached_root: RunRef | None = None
+    units: dict[RunRef | StepRef, compaction.HistoryUnit] = {}
+
+    def load_unit(ref: RunRef | StepRef) -> compaction.HistoryUnit:
+        nonlocal cached_root, units
+        root = history_root(ref)
+        if cached_root != root:
+            record = store.get_run(run_id=str(root))
+            if record is None:
+                raise ValueError("compact source Run is missing")
+            units = {
+                u.ref: u for u in compaction.history_units(store, record, render=False)
+            }
+            cached_root = root
+        return render_history_unit(units[ref], store.resolve_value)
+
     reducer = compaction.Compaction(
         spec.units[cursor : spec.units.index(spec.end)],
-        lambda ref: units[ref],
+        load_unit,
         spec.model,
         size=spec.size,
         summary=summary,
         max_output_tokens=spec.request.max_output,
         reasoning=spec.request.reasoning,
+        summary_limit=spec.summary_limit,
     )
     while (call := reducer.next_call()) is not None:
         execution.raise_if_canceling(run.id, call=True)
@@ -288,7 +316,15 @@ async def execute(
             )
             execution.require_model_pricing(spec.model)
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
-            compaction.summary_text(response)
+            summary = reducer.validate_summary(response)
+            if (
+                reducer.reader.index == len(reducer.reader.run_ids)
+                and spec.summary_fits is not None
+                and not spec.summary_fits(summary)
+            ):
+                raise compaction.SummaryTooLarge(
+                    "compaction summary does not fit the complete caller request"
+                )
             assert response.message is not None
             for index, part in enumerate(response.message.parts):
                 await _emit_part(execution, model, index, part)
@@ -318,6 +354,9 @@ async def execute(
                 execution.record_model_accounting(spec.model, accounting)
             if isinstance(exc, ModelResponseError):
                 reducer.reject(exc)
+                continue
+            if isinstance(exc, compaction.SummaryTooLarge):
+                reducer.retry_summary(exc)
                 continue
             raise
         accounting = execution.model_accounting(spec.model, response.usage)
