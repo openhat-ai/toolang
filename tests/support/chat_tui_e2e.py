@@ -61,6 +61,16 @@ def main() -> None:
                 after_updates_gate=_DelayGate(),
             )
         ]
+    elif mode == "queue":
+        responses = [
+            ScriptedModelTurn(
+                result=ModelCallResult(
+                    message=Message.assistant(f"queue response {i}")
+                ),
+                gate=_StatusGate(root / f"release-model-{i}"),
+            )
+            for i in range(4)
+        ]
     elif mode == "status":
         responses = [
             ScriptedModelTurn(
