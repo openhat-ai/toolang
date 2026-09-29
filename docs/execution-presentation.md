@@ -725,7 +725,7 @@ A separate run status bar directly precedes the Queue panel, or Input when the
 queue is empty. It has a blank first row separating live output and a second
 row showing dim elapsed time at column two. It inherits the terminal background.
 The label is `running` below one elapsed second, then whole-second time such as
-`18s`, `1m20`, or `1h01m01`. `0s` is never shown. The timer resets for each queued
+`18s`, `1m20s`, or `1h1m1s`. `0s` is never shown. The timer resets for each queued
 run and clears when the active run settles; requesting cancellation alone does
 not clear it. Both rows remain blank while idle. The right side, inset two cells,
 is reserved for future context information and renders no value or placeholder.

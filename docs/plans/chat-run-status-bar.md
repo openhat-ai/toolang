@@ -23,7 +23,7 @@ existing bottom bar as the session status bar.
 live area
 existing variable spacer, when needed
                                       <- run status row 1: blank
-  1m20                                <- run status row 2
+  1m20s                               <- run status row 2
 queue area, when present
 input box
   runnable       agent@workspace       model
@@ -34,9 +34,8 @@ input box
   box when the queue is absent. The existing variable spacer stays above it.
 - Put elapsed at display column two (two leading spaces), with dim text and
   the terminal's normal background. Add no border, marker, or heading.
-- Match the requested compact example: `1s`, `59s`, `1m00`, `1m20`, and
-  `1h01m01`. Preserve whole-second flooring and `running` below one second.
-  Use a run-bar-specific formatter if the existing formatter has other callers.
+- Keep duration units without zero padding: `1s`, `59s`, `1m0s`, `1m20s`, and
+  `1h1m1s`. Preserve whole-second flooring and `running` below one second.
 - While idle, render no text on either row. Starting each queued run resets
   elapsed; normal completion, failure, and settled cancellation clear it.
   A cancellation request alone does not stop the timer.
@@ -90,5 +89,5 @@ The permanent two-row cost reduces live-output space; incomplete row-budget
 updates could clip the prompt or leave stale terminal rows. Timer ownership
 changes must preserve workspace reset and presenter refreshes.
 
-No open questions. The user approved the initial `running` label and compact
-duration examples above.
+No open questions. The user approved the initial `running` label and clarified
+that duration units remain visible without leading zeros.

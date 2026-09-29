@@ -486,7 +486,9 @@ def test_chat_run_status_stays_above_queue_and_input_in_terminal(
                     surface = queue_rows[0] if queued else input_rows[0] - 1
                     status = lines[surface - 1] if surface >= 2 else "invalid"
                     elapsed = bool(
-                        re.fullmatch(r"  (?:\d+s|\d+m\d{2})", status.rstrip())
+                        re.fullmatch(
+                            r"  (?:\d+s|\d+m\d+s|\d+h\d+m\d+s)", status.rstrip()
+                        )
                     )
                     if (elapsed if running else not status.strip()) and not lines[
                         surface - 2

@@ -3239,7 +3239,7 @@ def test_chat_status_bar_keeps_session_settings_at_the_edges(
     assert "hak@tq" in idle
     assert running.startswith(f"{widgets._STATUS_INSET}{runnable}")
     assert "hak@tmp" in running
-    assert "1m30" not in running
+    assert "1m30s" not in running
     assert "running for" not in running
     assert "agent::" not in idle + running
     assert "tmp @ runtime model" not in running
@@ -3526,7 +3526,7 @@ def test_chat_status_qualifies_resolved_runnables() -> None:
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(0, "0s"), (59, "59s"), (60, "1m00"), (68, "1m08"), (3661, "1h01m01")],
+    [(0, "0s"), (59, "59s"), (60, "1m0s"), (68, "1m8s"), (3661, "1h1m1s")],
 )
 def test_chat_status_elapsed_time_uses_whole_seconds(
     seconds: int, expected: str
@@ -3548,7 +3548,7 @@ def test_chat_tui_floors_status_elapsed_time() -> None:
     app._update_status_elapsed(168.9)
 
     assert app.run_status_bar.elapsed_seconds == 68
-    assert "1m08" in "".join(text for _style, text in app.run_status_bar._render())
+    assert "1m8s" in "".join(text for _style, text in app.run_status_bar._render())
 
     app._update_status_elapsed(171.2)
 
@@ -6833,11 +6833,11 @@ def test_chat_run_status_immediately_precedes_queue_or_input(
                 if ("draft" if queue_state == "absent" else "3 queued") in line
             ) - (1 if queue_state == "absent" else 0)
             assert not lines[surface_row - 2].strip()
-            assert lines[surface_row - 1].rstrip() == ("  1m20" if running else "")
+            assert lines[surface_row - 1].rstrip() == ("  1m20s" if running else "")
             assert _cell_attrs(app, screen, surface_row - 1, 2).bgcolor == ""
             if running:
                 assert _cell_attrs(app, screen, surface_row - 1, 2).dim
-            assert "1m20" not in lines[-1]
+            assert "1m20s" not in lines[-1]
             assert "running" not in lines[-1]
             assert "agic:chat" in lines[-1]
             app._set_status_running(False)
@@ -6855,9 +6855,9 @@ def test_chat_run_status_immediately_precedes_queue_or_input(
         (0, "running"),
         (1, "1s"),
         (59, "59s"),
-        (60, "1m00"),
-        (80, "1m20"),
-        (3661, "1h01m01"),
+        (60, "1m0s"),
+        (80, "1m20s"),
+        (3661, "1h1m1s"),
     ],
 )
 def test_chat_run_status_fits_compact_elapsed_in_two_rows(
@@ -6899,6 +6899,6 @@ def test_chat_run_status_yields_space_to_input_on_short_terminals(
             assert app._run_status_rows() == status_rows
             assert any("draft" in line for line in lines)
             assert "agic:chat" in lines[-1]
-            assert any("1m20" in line for line in lines) == bool(status_rows)
+            assert any("1m20s" in line for line in lines) == bool(status_rows)
 
     asyncio.run(exercise())

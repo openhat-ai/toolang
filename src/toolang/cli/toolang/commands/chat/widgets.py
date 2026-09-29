@@ -91,9 +91,9 @@ def _format_elapsed_seconds(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     if hours:
-        return f"{hours}h{minutes:02d}m{seconds:02d}"
+        return f"{hours}h{minutes}m{seconds}s"
     if minutes:
-        return f"{minutes}m{seconds:02d}"
+        return f"{minutes}m{seconds}s"
     return f"{seconds}s"
 
 
