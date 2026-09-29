@@ -180,13 +180,14 @@ following visible suffix.
 
 ModelCall preflight can initiate a runtime `_toolang.compact()` Step when the
 assembled input exceeds its budget. The Step owns a same-thread child Run with
-the reserved identity `_:compact`. It records whole-exchange read/model batches
-and a cumulative text summary. This identity is not publicly executable; there
-is no standalone CLI compact command.
+the reserved identity `_:compact`. It records Step-level read/model batches and
+a cumulative text summary. A historical root can span batches and retain a suffix
+starting at a Step. Only model preflight can initiate this internal operation.
 
 After the child succeeds, the executor publishes its reference as the thread's
 horizon and records the calling Run's compact control in one transaction. The
-next Model Step adopts that summary plus retained history. Original records and
+next Model Step adopts that summary plus retained history. Horizons also accept
+the completed producer's final successful summary Model Step. Original records and
 past ModelCalls remain inspectable. Failure stops the caller without dispatching
 the oversized call. See [model configuration](models.md#automatic-compaction-configuration) for
 `compact.model`, `summary`, `recent`, `trigger`, and runtime `--compact-model`

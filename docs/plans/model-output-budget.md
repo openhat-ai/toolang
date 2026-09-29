@@ -2,8 +2,8 @@
 
 Status: implemented.
 
-Revises [Route capabilities and call budgets](auto-output-admission.md) and
-[Compaction contract and model-call admission](compaction-contract-and-admission.md).
+Defines the output reservation used by [call admission](auto-output-admission.md)
+and [automatic history compaction](persist-batched-compaction-run.md).
 
 ## Goal and evidence
 

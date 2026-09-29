@@ -1,121 +1,201 @@
-# Persist automatic compaction as an internal child Run
+# Automatic history compaction
 
-Status: Approved for implementation. This revision replaces the separate compaction thread and CLI producer design.
+## Goal
 
-## Goal and success criteria
+Keep a conversation usable when its historical context exceeds the calling
+model's input budget. Produce a durable cumulative summary, retain recent Step
+contributions, and continue execution from the adopted result. Large historical
+root Runs must support multiple batches and recovery inside the same root.
+Original execution records and previously dispatched ModelCalls remain immutable.
 
-Before a ModelCall exceeds its input budget, compact historical Steps into a durable cumulative summary. Execute compaction as an internal child Run in the caller's thread, with auditable read/model Steps and recoverable batch checkpoints. Continue the caller only after publishing and adopting the result; a terminal compaction failure fails the calling Run without sending the oversized ModelCall.
+Success requires bounded requests, contiguous summarized coverage, recoverable
+progress, and an inspectable relationship between the caller and compaction work.
+A terminal compaction failure fails the caller before its oversized ModelCall is
+sent. Current active Run input and fixed instructions must fit the calling model.
 
-## Entry and execution identity
+## Execution flow
 
-- ModelCall preflight is the only entry that can initiate compaction. It checks the prospective request before committing the Model Step or invoking the provider. After compaction, rebuild the request and check its budget again.
-- Represent the operation as one runtime-triggered, zero-argument `_toolang.compact()` Tool Step. Resolve the current thread, allowed compact model, history boundary, environment, and limits from the caller. Recheck the boundary after acquiring the thread's compaction permit.
-- Accept a child Run in the same thread with `parent` pointing to that Tool Step. Reuse the normal Run entry control (`kind="run"`), persisting `payload.runnable="_:compact"` and concrete execution inputs. Do not add a Run table column, control kind, or authored language declaration.
-- `_:compact` uses a reserved internal namespace outside user runnable names and is an executor-owned identity. Public CLI/API Run requests and `_toolang.run/execute` cannot invoke it. Do not add it to public runnable discovery or the agic/flow language parser. Reject model-originated `_toolang.compact` calls at execution, not only by omitting its schema.
-- Reuse child acceptance, active ownership, RunBegin/RunEnd, cancellation, accounting, and failure handling. Add the internal execution dispatch without manufacturing an AgicDecl or starting an independent executor. The compact Run never runs ordinary agic preflight or recursively compacts itself.
+1. `executor/steps/model.py` prepares a candidate ModelCall and checks its complete
+   input before committing a Model Step. Admission uses cached estimates while
+   the binding and request prefix remain reusable.
+2. On overflow, choose a historical prefix using `compact.recent`. Emit a
+   runtime-triggered, zero-argument `_toolang.compact()` Tool Step.
+3. Acquire the target thread's cancellable compaction permit, then recheck the
+   budget and boundary. Resolve the model, Setup, environment, and Run limits.
+   Waiting holds no Store transaction or Model Step begin lock.
+4. Accept a same-thread child Run with `parent=outer_tool_step`. Its entry control
+   has `kind="run"` and `runnable="_:compact"`. The executor owns this identity;
+   only model preflight can initiate it.
+5. Restore an applicable checkpoint and execute read/model batches. Each accepted
+   model response replaces the cumulative summary. Compaction model calls run
+   through the internal loop with their own budget checks.
+6. Complete the child with a nonempty Text output. Atomically publish the thread
+   horizon and create the caller's `kind="compact"` control, with the outer Tool
+   Step recorded as `triggered_by`.
+7. Adopt the history version, finish the outer Tool Step, rebuild the candidate,
+   and check its complete input again. Continue only when it fits; further
+   compaction must advance the source boundary.
 
-## Module boundaries
+## History units and coverage
 
-Keep two compaction implementation modules:
+A history unit contains a recorded Step's unique conversation contribution.
+Reconstruct it from active message deltas and terminal output. Assign a tool call
+and its result to the same tool unit. Each unit carries its root Run reference,
+source Step reference when available, timestamp, status, and canonical messages.
+The ordered unit stream is shared by batching and retained-history selection.
 
-| Module | Responsibility |
+A root's first unit uses its `RunRef` as the boundary; later units use `StepRef`.
+A batch can end inside a root. Retain at least the latest complete unit and its
+paired tool messages. Add earlier units while they fit the soft `recent` target.
+Only historical terminal roots participate; compaction child records do not
+contribute conversation history.
+
+Coverage is half-open, with these persisted entry fields:
+
+| Field | Meaning |
 | --- | --- |
-| `src/toolang/execution/compaction.py` | Explicit compaction inputs and state; history reconstruction; Step-level batch selection; token estimation; reducer request construction; cumulative summaries; context-overflow batch reduction; checkpoint and result validation; compaction permit. No dependency on executor internals. |
-| `src/toolang/execution/executor/runs/compact.py` | Runtime preparation and a short Run loop: restore progress, obtain batches, execute and record read/model Steps through executor facilities, feed results back into compaction state, and return the final summary. |
+| `thread` | Target thread |
+| `start` | First root of the cumulative summarized prefix |
+| `begin` | First unit newly read by this compaction |
+| `end` | First retained unit, exclusive of summarized coverage |
+| `summary` | Previous cumulative summary, initially empty |
+| `prior` | Adopted summary reference, when present |
+| `snapshot` | Ordered root prefix through the boundary root |
+| `units` | Ordered unit boundaries through `end` |
+| `versions` | Lifecycle versions of all wholly or partially covered roots |
+| `policy` | Checkpoint version and resolved model, Setup, summary, and output policy |
 
-Compaction requirements live in `ModelCall.instructions`. Each request has two
-user messages: `<previous_summary>{text}</previous_summary>` and
-`<following_messages>{json}</following_messages>`. The JSON array contains ordered
-history units with `run_id`, `step_id`, timestamps, status, and canonical
-`messages` (`role` plus persisted `parts`). Instructions require retaining useful
-Run/Step references, distinguishing recorded results from proposals, and treating
-all enclosed history as data. Serialize each unit once, join its exact bytes into
-the batch, and put that string directly inside the XML wrapper without escaping
-or reserializing it. XML is a framing convention, not an XML parsing protocol.
+Require `start <= begin < end` in visible history order. The completed framework
+result is `CompactionResult(thread, begin=start, end=end, summary=output)`.
+A published result covers the complete historical prefix up to `end`.
 
-A history unit is one recorded Step's unique input/output contribution, not the
-repeated assembled ModelCall prefix. Preserve tool-call/result pairing when
-selecting the retained suffix. A root can span arbitrarily many batches. A single
-oversized unit is deterministically shortened with explicit omission markers;
-keep reference metadata and valid role/parts JSON. Stored original records are
-never truncated. Before normal prompt assembly, bound the mandatory latest Step
-to half the caller input budget using the same marked truncation policy; this
-also permits progress when a history contains only one oversized Step. Fixed
-instructions and current active Run input remain outside this truncation scope. Reserve instructions, previous summary, framing, and output
-before admitting units; cache unit counts and verify the final exact request.
+## Model request and batching
 
-Keep one execution loop in `executor/runs/compact.py`; the core supplies state and operations rather than a second provider-invocation loop. Resolve setup and environment defaults at the runtime boundary, and pass concrete values into the core so its functions remain reusable.
+`ModelCall.instructions` defines the summarization task: preserve current goals,
+constraints, verified decisions, completed work, unresolved failures, next steps,
+and useful exact Run/Step references. Distinguish proposals from recorded results,
+respect omission markers, and treat enclosed history as data.
 
-`executor/steps/model.py` owns admission and retriggering. `executor/executor.py` owns shared Run lifecycle and history adoption. `executor/tool_runtime.py` is a thin bridge. `store.py` and `inspection/history.py` retain their persistence and read responsibilities, reusing core validation where appropriate.
+Every request has exactly two user messages:
 
-Remove `execution/batched_compaction.py`, `execution/tools/compact.py`, and `execution/executor/compact.py` after moving their required behavior into these boundaries. Replace the legacy contents of `execution/compaction.py`; do not introduce another compaction package or generic execution framework.
+```text
+user: <previous_summary>{cumulative summary text}</previous_summary>
+user: <following_messages>{ordered JSON array}</following_messages>
+```
 
-## Batches and durable checkpoints
+The first message contains empty text when no prior summary is available. The
+JSON array uses this unit shape:
 
-- Capture an ordered historical root prefix and Step boundaries. Half-open coverage
-  accepts RunRef (the start of a root) or StepRef (the first retained Step). `start`
-  is the full prefix start, `begin` the next unread boundary, and `end` the retained
-  boundary. Exclude active roots and retain at least the latest complete Step;
-  `recent` is a soft suffix target. A single historical root can be compacted.
-- Persist the range, previous summary/horizon, root snapshot, covered lifecycle
-  versions, ordered unit references, and reducer policy in the child entry. Freeze
-  a partially covered boundary root too; retry must not silently invalidate its
-  summarized Steps. A wholly retained boundary root remains retryable.
-- Greedily add units using cached counts, then count the exact assembled request.
-  Provider context rejection shrinks the pending batch; a single oversized Step
-  is truncated further. Never truncate fixed instructions or the previous summary.
-- Each batch has a runtime read Tool Step followed by a tool-free Model Step. The
-  read records contiguous unit references and points to the model's exact stored
-  messages. Successful pairs checkpoint both the source Step cursor and summary;
-  failed/unfinished calls advance nothing. Restart never repeats accepted units.
-- Resume compatible abandoned pending/running attempts through their owning Tool Step and child Run. Never resume terminal failed/canceled attempts. A valid successful but unpublished result may be reused without model calls after validating its range, prior summary, and covered history. Reuse preserves the original parent relationship rather than reparenting a Run.
+```json
+[
+  {
+    "run_id": "run_example",
+    "step_id": "run_example.2",
+    "created_at": "2026-09-29T00:00:00Z",
+    "status": "succeeded",
+    "messages": [
+      {"role": "user", "parts": [{"type": "text", "text": "Continue the task."}]},
+      {"role": "assistant", "parts": [{"type": "text", "text": "Recorded result."}]}
+    ]
+  }
+]
+```
 
-## Publication and adoption
+Use canonical `Message.to_data()` for role/parts, including structured tool and
+media data. `step_id` may be null when a contribution has no recorded Step.
+XML tags delimit the two text payloads. Serialize each unit, cache its token
+estimate, join the serialized strings into the JSON array, and insert that array
+unchanged inside the wrapper. Recount a unit when truncation changes its content.
 
-Complete the child Run first, with its final text output. Horizons and compact controls accept either a completed producer RunRef or its final successful summary Model StepRef; Step references are validated against the same completed producer contract. Source coverage boundaries independently support StepRef. Then reuse `_Execution.compact(step, child_run_ref)` to validate and publish the thread horizon and create the caller's existing compact control in one transaction:
+Greedily admit units after reserving instructions, previous summary, framing,
+and output. Verify the exact assembled request before dispatch. The compactor
+uses its model's input capacity with an 80% admission factor, estimates with
+`o200k_base` and model corrections, and calibrates from provider usage. Recognized
+provider context errors shrink the pending batch; other errors propagate.
 
-- Child entry control: `kind="run"`, `runnable="_:compact"`; records the execution request.
-- Caller compact control: `kind="compact"`, `payload.horizon=child_run_ref`, `triggered_by=outer_tool_step`; records the result available for adoption.
+For a single oversized unit, shorten large values with explicit omission
+markers while preserving valid JSON and reference metadata. Set `truncated=true`
+in the unit envelope. Very wide payloads may become a marked text excerpt. The
+modified serialized content is counted before it is sent. A rejected singleton
+is shortened further; instructions and the cumulative summary remain intact.
 
-Do not publish inside the reducer or publish twice. Allow a successful internal child Run as a horizon; remove the requirement that the producer be a root Run. Keep the existing control schema, internal history-view adoption, and subsequent Step `preceded_by` association. Finish the outer Tool Step only after publication and adoption succeed.
+Before ordinary prompt assembly, bound an oversized mandatory latest Step to
+half the caller's effective input budget. This permits progress with a single
+large historical Step. Truncation affects request copies; original records stay
+available for inspection. Minimum metadata, fixed content, or summaries that
+cannot fit cause an explicit failure. Token estimates and summary size remain
+approximations, so complete-request admission still applies after compaction.
 
-A crash after child success leaves a reusable result. A crash after publication must not require another reducer call. Revalidate the effective published horizon and current visible prefix under the permit and transaction; an obsolete raw horizon after rewind must not permanently block a new valid result. Appended roots do not invalidate covered history. Changed covered roots or a removed boundary do invalidate it.
+## Checkpoints, publication, and recovery
 
-Compaction child Runs are execution records, not new root exchanges. Their internal read/model messages must not enter ordinary conversation history. Earlier ModelCalls remain immutable; future calls use summary plus retained history and current execution messages.
+Each batch records a runtime `_toolang__compact_read` Tool Step followed by a
+tool-free Model Step. The read records contiguous unit references and a reference
+to the exact stored ModelCall messages. A successful pair commits consumed
+coverage and a nonempty cumulative text summary. Failed or unfinished attempts
+advance no durable coverage.
 
-## Events and client presentation
+Recover compatible pending/running work through its existing owner and child.
+A successful unpublished result can be reused after validating its input
+contract, source coverage, and versions. A crash after publication reuses the
+published result. Failed and canceled children are terminal.
 
-Publish the normal child Run and Step events through the caller's event stream, including existing Part events when produced. Preserve parent relationships and standard accounting; do not add compaction-specific event types.
+Distinguish the two reference roles:
 
-The default client view shows the outer `_toolang.compact` item with elapsed time and terminal status. Consume and track the internal subtree, but suppress its read/model text from normal conversation output. Execution inspection retains the complete subtree, outputs, usage, and errors. Present a propagated failure once at the outer operation rather than repeating the same error at each ancestor. Child success alone does not complete the outer operation; publication and adoption must also succeed.
+- **Source boundary:** `end` identifies the first retained historical unit.
+- **Summary horizon:** thread and Run controls reference a successful summary
+  Run, or that producer's final successful summary Model Step. A Step horizon
+  must resolve to the same summary as its completed producer.
 
-## CLI removal
+The automatic path publishes the child Run reference. New Runs capture the
+thread horizon; active Runs adopt it through their compact controls. Subsequent
+Steps record the control in `preceded_by`. Executor history and estimate caches
+advance together, while already recorded calls keep their original history.
 
-Remove the standalone CLI `compact` command, its registration, routing, help, documentation, and command-specific tests. Remove DEFAULT/FORGET/custom `.too` producer support and bundled `defaults/compact.too` and `defaults/forget.too`. Remove `compact_<thread>` creation, discovery, idle checks, and name-based special cases. Keep compact-model configuration and runtime compact progress presentation, which automatic compaction still uses. Existing stored history is not deleted by this change.
+Revalidate the captured prefix and unit manifest before publication. Appending
+later roots preserves validity. Changes to covered history or removal of the
+boundary invalidate it. A partially covered root is version-protected; a wholly
+retained boundary root can be retried. Reject retries that would delete adopted
+summary references. Publication and control creation commit in one transaction.
 
-## Acceptance tests and verification
+## Events and client behavior
 
-Offline acceptance tests must cover:
+Use ordinary Run, Step, and Part events, parent relationships, cancellation,
+accounting, and error handling. The client shows the outer `_toolang.compact`
+operation's elapsed time and outcome. Inspection exposes the internal read/model
+records, summaries, usage, and errors. The normal conversation view suppresses
+internal summary text and presents a propagated failure once. The outer operation
+succeeds only after publication and adoption.
 
-- Preflight creates a same-thread child under the runtime Tool Step with `_:compact`; all public/model invocation paths reject internal execution.
-- Alternating read/model Steps preserve Step units, exact calls, usage, nonempty summaries, and half-open coverage without accumulating previous batch inputs.
-- Token admission, exact XML/JSON payload identity, provider calibration, context-only shrinking, multi-batch oversized roots, marked oversized-Step truncation, and invalid outputs.
-- Partial-root publication, Step horizon/control persistence, suffix reconstruction without duplication or omission, and restart inside the same root.
-- Failure and cancellation reach the child, outer Tool Step, and caller without dispatching the blocked normal ModelCall or publishing a partial result.
-- Interruption around read/model completion, child success, publication, and adoption; committed checkpoints resume without repeated successful calls and valid completed results are reused with zero calls.
-- Covered-root changes and rewind invalidate results; retained-root retries and appended later roots do not invalidate unchanged covered history or permanently block new compaction.
-- Shared executor lifecycle and accounting include the child; durable replay reconstructs the event tree and stored calls. Default client output hides internal summaries while retaining compact progress and one failure explanation.
-- The caller adopts the result through its existing compact control; subsequent Steps record causality. Internal child Steps do not leak into root history.
-- CLI compact is absent; automatic compact-model configuration and ordinary agic/flow behavior remain intact.
+## Implementation changes
 
-Before every implementation commit, run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`, and `uv run pytest -n auto`. Run `git diff --check`; before final PR handoff, rebase onto current `origin/main`, verify, push, and resolve review threads.
+This is the implementation change set for the feature. Paths below are relative
+to `src/toolang`. Configuration details are specified in [Compaction configuration](compact-configuration.md).
 
-## Risks and deferred scope
+| Action | Location | Responsibility |
+| --- | --- | --- |
+| Add | `execution/executor/runs/compact.py` | Prepare the child, restore progress, execute and record the compact Run loop. |
+| Change | `execution/compaction.py` | Own history units, truncation, serialized requests, token estimation, batching, checkpoint validation, and the thread permit. Accept concrete policy values from the runtime. |
+| Change | `execution/executor/{steps/model.py,frame.py,runs/agic.py}` | Apply configured admission, bound the required retained Step, choose coverage, and rebuild calls after adoption. |
+| Change | `execution/executor/{executor.py,tool_runtime.py}`, `execution/tools/_toolang.py` | Integrate internal dispatch, the runtime Tool Step, shared lifecycle, and history adoption. |
+| Change | `execution/{assembly/history.py,inspection/history.py,store.py}` | Select partial-root suffixes, validate results, publish atomically, recover history, and protect adopted references. |
+| Change | `execution/{records.py,schemas.py,types.py}`, `base/types/compaction.py` | Represent Step boundaries and Run/Step horizons in existing records. |
+| Change | `setup/{types.py,config.py,models.py,watcher.py}` | Capture immutable configuration, apply inheritance, resolve the model, and include settings in Setup revisions. |
+| Change | CLI runtime policy and progress projection | Apply compact-model overrides and present the outer operation while tracking its child events. |
+| Remove | `cli/toolang/commands/compact.py`, `execution/tools/compact.py`, bundled `compact.too` and `forget.too` | Remove the standalone command and its implementation, registrations, help, and command-specific tests. |
 
-Model-specific token factors are provisional; retain the safety margin and provider rejection handling. Child ownership, restart recovery, and replay must stay consistent when a process stops between durable boundaries. Removing the CLI is an intentional behavior change. Additional public compaction entry points, semantic quality evaluation, and a generic internal-runnable registry are out of scope. No design questions remain open for this implementation.
+## Acceptance criteria
 
-## Configuration
-
-[Automatic compaction configuration](compact-configuration.md) defines the
-thread-relative `summary`, `recent`, and `trigger` targets and compact-model
-selection. It supersedes fixed summary length and half-input-budget retention.
+- Preflight alone initiates the same-thread internal child; public and
+  model-originated execution requests cannot invoke it.
+- A large root spans batches; tool units remain paired; partial-root selection
+  and restart omit no units and repeat no accepted coverage.
+- XML-wrapped JSON matches the counted payload. Output reservations, calibrated
+  estimates, context rejection, truncation, and invalid responses are checked.
+- Successful checkpoints, completed unpublished work, and published results
+  survive interruptions at their durable boundaries.
+- Run/Step horizons persist and replay; changed coverage and destructive retries
+  are rejected; retained history and immutable originals remain inspectable.
+- Failure and cancellation close the child and outer operation, stop the blocked
+  caller, and publish no partial result.
+- Configuration defaults, inheritance, percentage resolution, missing metadata,
+  event projection, and shared accounting have deterministic offline coverage.

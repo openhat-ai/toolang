@@ -182,8 +182,8 @@ or `too alice run --compact-model 'openai/gpt-5 effort=low'`. Model precedence i
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `start` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. There is no disabling switch, `model = "unset"`,
-`compact.models`, `:compact` override, or `/compact` command.
+captured configuration. The [compaction design](plans/persist-batched-compaction-run.md)
+describes execution, batching, durable coverage, and history adoption.
 
 ## Catalog Plugins
 

@@ -1,97 +1,108 @@
-# Configure automatic compaction
+# Compaction configuration
 
-Status: Approved for implementation. Extends
-[internal compaction runs](persist-batched-compaction-run.md).
+## Goal and public contract
 
-## Goal and configuration
+Automatic compaction works with defaults and allows independent control of its
+model, summary size, retained history, and trigger. This configuration governs
+[automatic history compaction](persist-batched-compaction-run.md).
 
-Automatic compaction works without configuration. Root and agent `config.toml`
-accept four optional fields:
+Root and agent `config.toml` accept these optional fields:
 
 ```toml
 [compact]
-# model omitted: use the current thread model
+# Omit model to use the current thread model identity.
 summary = 4096
 recent = "30%"
 trigger = "80%"
 ```
 
-- `model`: an exact model specification with optional `effort` and `max_output`.
-  Omission follows the thread model identity, without inheriting its reasoning
-  or output settings. Explicit choices must be ready, allowed, and support tool
-  calls; never silently switch models. No disabling sentinel or enabled switch.
-- `summary`: soft summary length target, default 4096 tokens.
-- `recent`: soft budget for recent historical Steps, default 30%. Excludes
-  summary, fixed instructions, and the current Run. Always retain the latest
-  complete Step and required tool-call/result pairs; advance at least one unit.
-  A retained suffix may start inside a root.
-- `trigger`: input admission budget, default 80%. Preflight compacts when the
-  estimated complete request exceeds this budget.
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `model` | Exact model specification, optionally including `effort` and `max_output` | Current thread model identity |
+| `summary` | Soft cumulative summary length target | 4096 tokens |
+| `recent` | Soft budget for retained historical Step units | 30% of thread context |
+| `trigger` | Complete-request input threshold for preflight | 80% of thread context |
+
+Model selection must be available, allowed, and support tool calls. The default
+uses the thread model identity with the compact model's own reasoning/output
+settings. The thread model is the current root Run's model binding; nested Runs
+use that reference. A model-free root uses the calling child's model.
 
 Each size accepts a positive integer token count or a percentage string in
-`(0%, 100%]`, including decimal percentages. Reject booleans, floats, numeric
-strings, unknown fields, and invalid model sentinels. Percentages all use the
-current thread model's declared context window, never the compact model's window,
-current history length, or another configured target. Resolve by flooring to an
-integer with a minimum of one token.
+`(0%, 100%]`, including decimals. All percentages use the current thread model's
+declared context window. Resolve by flooring to an integer, with a minimum of
+one token. For a 200,000-token window, `summary="2%"`, `recent=60000`, and
+`trigger="80%"` resolve to 4,000, 60,000, and 160,000 tokens.
 
-The thread model is the current root Run's model binding; nested Runs use this
-same reference. If a model-free root delegates to a model-bound child, that
-child's model provides the reference. Resolve against the captured Setup.
+Validate field names and types during Setup loading. Require `recent < trigger`:
+compare matching units during parsing and resolved token counts during frame
+preparation. Reject invalid values with an error identifying the field.
 
-## Budget and inheritance
+## Inheritance and lifetime
 
-Resolve each field independently: agent config, root config, built-in default.
-Existing CLI/environment compact-model overrides take precedence over config for
-`model` only. No new CLI flags, environment variables, colon overrides, or slash
-commands. Reject `unset` in existing compact-model override surfaces as well.
+Resolve each field independently in this order:
 
-The effective input budget is the smaller of the resolved trigger and the actual
-calling model's safety budget (input limit, output reservation, estimation margin).
-Use it directly in normal preflight. Resolve recent and summary independently
-against the same thread context window. Require recent < trigger when both are
-resolvable. Soft targets do not guarantee the final complete request fits;
-recheck after adoption and fail when required content cannot fit.
+1. Agent configuration.
+2. Root configuration.
+3. Built-in default.
 
-When context metadata is unknown, percentage trigger cannot impose a numeric
-ceiling: retain the known safety budget, if any. Never substitute an input limit
-for context size. If compaction is needed and a percentage summary/recent remains
-unresolvable, fail with an actionable request for context metadata or absolute
-values. Integer settings still work without context metadata.
+For `model`, runtime CLI `--compact-model` takes precedence over
+`TOOLANG_COMPACT_MODEL`, followed by the configuration layers above. Both accept
+the same exact model specification. See [model configuration](../models.md#automatic-compaction-configuration)
+for invocation examples.
 
-Keep compact batching at 80% of the compact model's own safety budget. Derive its
-output allowance as `max(2 * summary, summary + 1024)` unless explicitly overridden,
-clamped to the compact model's output limit. Default allowance is 8192 tokens.
+Resolve against the captured Setup. Configuration changes produce a new Setup
+revision; accepted Runs keep their captured settings. Runtime startup overrides
+apply when creating that runtime.
 
-## Implementation and durability
+## Budget rules
 
-- `setup/types.py`, `config.py`, `models.py`, `watcher.py`: one immutable compact
-  configuration, parsing, layering, model selection, and Setup revision identity.
-- Executor frame/model preflight: resolve thread-relative targets and apply the
-  effective input budget and recent-history target. Compact run driver: pass
-  resolved summary size and thread model identity into the existing core.
-- Existing compact policy persists the concrete summary size, model, and output
-  budget; compatible pending checkpoints and valid successful results retain
-  existing reuse semantics. No new persistence format or tokenizer pass.
-- `cli/common/policy.py`: reject disabling compact-model sentinels.
-- Focused model/config docs and Setup/executor tests cover the public contract.
+The effective caller input budget is the smaller of the resolved `trigger` and
+its model's safety input budget, including output reservation and estimation
+margin. Estimate the complete request and recheck it after adopting a summary.
 
-## Acceptance and risks
+`recent` excludes the summary, fixed instructions, and current Run. Preserve at
+least the latest complete history unit and paired tool messages, then add earlier
+units while they fit. Coverage may end inside a root. An oversized mandatory
+latest Step is shortened with omission markers to at most half the effective
+caller input budget. Its original records remain unchanged.
 
-- Empty config supplies all defaults; root/agent partial overrides and CLI model
-  overrides preserve other fields. Invalid fields/values fail during Setup load.
-- Different context windows produce proportional targets; explicit token values
-  stay fixed. A different compact model does not affect the denominator. Nested
-  Runs use the root model; safety limits of the actual caller still apply.
-- Trigger changes actual admission; recent changes the retained Step
-  boundary; summary reaches the prompt, output allowance, and persisted policy.
-- Default compact selection follows the thread model, independent of catalog
-  ordering and thread reasoning/output parameters; unavailable choices fail.
-- Setup changes get new revisions; accepted Runs retain captured configuration.
-  Incremental estimation, cancellation, events, and checkpoint reuse stay intact.
-- Roots can span reducer batches. Oversized Step payloads are shortened with
-  explicit omission markers while original records remain intact. The mandatory
-  latest Step is bounded to half the caller input budget before prompt assembly;
-  fixed/current content and unusually large summaries can still exceed capacity.
+`summary` is a prompt target. The compact model output allowance is
+`max(2 * summary, summary + 1024)` unless its model specification supplies
+`max_output`, clamped to that model's output limit. The default allowance is 8192
+tokens and includes reasoning. Batch admission uses 80% of the compact model's
+safety input capacity; its window controls batching independently of the thread
+model's percentage denominator.
 
-Run all default repository checks. No open design questions remain.
+When context metadata is unknown, a percentage trigger leaves admission to the
+known safety budget. If compaction is needed with unresolved percentage summary
+or recent targets, report that context metadata or absolute token settings are
+required. Integer targets can resolve without a context window. Compaction still
+requires a known input or context limit for its own model.
+
+Soft targets do not guarantee that the final request fits. Fixed/current content,
+minimum Step metadata, or a large cumulative summary can still exhaust capacity;
+report failure when further compaction cannot advance safely.
+
+## Implementation changes
+
+- Add immutable compact settings in `setup/types.py`; parse and merge fields in
+  `setup/config.py` and include them in Setup revisions through `setup/watcher.py`.
+- Resolve explicit and default models in `setup/models.py`; parse startup model
+  overrides in `cli/common/policy.py`.
+- Resolve thread-relative targets and caller admission in executor frames and
+  model preflight. Pass concrete settings to `executor/runs/compact.py` and the
+  core compaction state.
+- Persist resolved model, Setup, summary target, and output policy in the compact
+  child entry so checkpoint reuse is validated against its execution contract.
+
+## Acceptance criteria
+
+- Empty configuration supplies all defaults; partial layers and model-only
+  overrides preserve independently configured fields.
+- Percentages follow the thread context window across nested calls and model
+  selection; absolute counts remain fixed. Missing metadata has explicit behavior.
+- Trigger changes admission, recent changes the Step boundary, and summary
+  changes the prompt target, output reservation, and captured policy.
+- Invalid configuration and unavailable models fail clearly. Captured settings,
+  checkpoint reuse, cancellation, and events remain consistent after Setup changes.
