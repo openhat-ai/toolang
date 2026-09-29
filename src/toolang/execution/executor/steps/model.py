@@ -74,8 +74,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _NeedsCompact(Exception):
-    def __init__(self, end: RunRef) -> None:
-        self.end = end
+    """Request runtime compaction; admission resolves its current boundary."""
 
 
 def _candidate(
@@ -340,7 +339,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         if interruption is None and not canceling:
             boundary = _boundary(state, prepared, request, preceding)
             if boundary is not None:
-                raise _NeedsCompact(boundary)
+                raise _NeedsCompact()
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
@@ -391,7 +390,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     while True:
         try:
             await state.start_step(begin_step)
-        except _NeedsCompact as needed:
+        except _NeedsCompact:
             identity = f"compact_{run.run_id}_{state.next_step}"
             result = await tool_step.execute(
                 state,
@@ -399,7 +398,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                     tool_call_id=identity,
                     call_id=identity,
                     name="_toolang__compact",
-                    input={"thread": run.thread, "begin": None, "end": str(needed.end)},
+                    input={},
                 ),
                 trigger="runtime",
             )

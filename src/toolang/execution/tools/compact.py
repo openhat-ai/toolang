@@ -18,40 +18,26 @@ if TYPE_CHECKING:
     from ..executor.runs.agic import _AgicState
 
 
-async def execute(
-    state: _AgicState, step: StepRef, thread: str, begin: str | None, end: str
-) -> dict[str, Any]:
+async def execute(state: _AgicState, step: StepRef) -> dict[str, Any]:
     from ..executor.executor import _setup_sandbox
     from ..executor.steps.model import compaction_boundary
 
-    target = ThreadRef.parse(thread)
-    begin_ref = RunRef.parse(begin) if begin is not None else None
-    end_ref = RunRef.parse(end)
     execution = state.execution
     if execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
     history = execution.message_history()
-    if str(target) != history.thread or str(target).startswith("compact_"):
+    target = ThreadRef.parse(history.thread)
+    if str(target).startswith("compact_"):
         raise ToolangError("compact must target the calling Run's normal Thread")
-    if (
-        not history.roots
-        or begin_ref not in {None, history.roots[0]}
-        or end_ref not in history.roots[1:]
-    ):
-        raise ToolangError(
-            "compact must cover a nonempty prefix and retain a historical root"
-        )
     store = execution.store
     lock = store.db_path.with_name(f"{store.db_path.name}.{target}.compact.lock")
     async with permit(lock):
         execution.raise_if_canceling(step.run_id, call=True)
         # Admission may change while waiting (for example after a model reload).
         # Reuse preflight's decision without duplicating its budget policy here.
-        boundary = compaction_boundary(state)
-        if boundary is None:
+        end_ref = compaction_boundary(state)
+        if end_ref is None:
             return {"controls": []}
-        if boundary != end_ref:
-            raise ToolangError("compact range changed while waiting; retry required")
         reader = RunHistory(store)
         output = reader.get_compaction(target)
         if output is not None and RunRef(output.result.end) not in history.roots:

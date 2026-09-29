@@ -51,6 +51,17 @@ def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
     assert "catalog" not in definition.description + str(definition.parameters)
 
 
+def test_compact_is_a_zero_argument_runtime_only_tool() -> None:
+    tool = load_tools()["_toolang__compact"]
+    assert getattr(tool, "model_callable") is False
+    assert tool.definition().parameters == {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+
+
 class _Runtime:
     def __init__(self, marker: str):
         self.marker = marker
@@ -89,8 +100,8 @@ class _Runtime:
         await asyncio.sleep(0)
         return ToolResult({"controls": [self.marker]})
 
-    async def compact(self, thread, begin, end):
-        self.calls.append((thread, begin, end))
+    async def compact(self):
+        self.calls.append("compact")
         return ToolResult({"controls": [self.marker]})
 
 
@@ -105,11 +116,9 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     context = RuntimeToolContext(tmp_path, tmp_path, runtime=first)
     arguments = (
         {}
-        if name == "reload"
+        if name in {"reload", "compact"}
         else {"paths": [{"workspace": "repo", "path": "/src"}]}
         if name == "honor"
-        else {"thread": "term_ab12", "end": "run_ab12"}
-        if name == "compact"
         else {"kind": "skill", "ref": "skill/testing"}
         if name == "pick"
         else {"runnable": "child", "input": {"_": "input"}}

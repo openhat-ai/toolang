@@ -149,6 +149,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                 isinstance(tool.given, ToolStepGiven)
                 and tool.given.trigger == "runtime"
             )
+            assert tool.given.call.input == {}
             controls = [
                 c
                 for c in harness.store.list_run_controls(run_id=current.id)
@@ -1074,7 +1075,7 @@ def test_automatic_compact_does_not_regress_a_newer_cli_horizon(
                         return
                     step = harness.store.get_step(ref=event.step)
                     assert step is not None and isinstance(step.given, ToolStepGiven)
-                    assert step.given.call.input["end"] == roots[1].id
+                    assert step.given.call.input == {}
                     before = roots[-1].id
                     if outside_history:
                         # CLI may retain the active Run and a later terminal root.
@@ -1202,5 +1203,32 @@ def test_compact_budget_rerenders_explicit_history_in_all_prompt_layers(
             assert "old old" not in rendered
             assert "Earlier facts." in rendered
             assert "recent" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_runtime_compact_resolves_its_boundary_at_admission(tmp_path, monkeypatch):
+    from toolang.execution.executor.steps import model as model_step
+    from toolang.execution.types import RunRef
+
+    harness = seeded_harness(tmp_path)
+
+    async def scenario():
+        async with harness:
+            thread, retained = await seed(harness)
+            # The initial preflight retains the two small recent roots. Admission
+            # can choose a newer boundary without an obsolete argument rejecting it.
+            monkeypatch.setattr(
+                model_step, "compaction_boundary", lambda state: RunRef(retained)
+            )
+            harness.adapter._responses.extend([reply("summary"), reply("done")])
+            current = await harness.executor.run(spec(harness, thread, "current"))
+            assert current.status == "succeeded", current.error
+            output = RunHistory(harness.store).get_compaction(thread)
+            assert output is not None and output.result.end == retained
+            steps = harness.store.list_steps(run_id=current.id)
+            assert isinstance(steps[0].given, ToolStepGiven)
+            assert steps[0].given.call.input == {}
+            assert [step.kind for step in steps] == ["tool", "model"]
 
     asyncio.run(scenario())
