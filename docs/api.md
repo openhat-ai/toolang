@@ -298,14 +298,14 @@ Behavior:
 - TTY progress uses color and live replacement; non-TTY progress is stable,
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
-- `--out PATH` or `-o PATH` writes the Run result to a file; `--out -` or `-o -`
+- `--out FILE` or `-o FILE` writes the Run result to a file; `--out -` or `-o -`
   writes it to stdout. Without this option, the result remains stored without
   being copied to stdout. This replaces the removed `--save` option.
-- `--sandbox SANDBOX_SPEC` selects the execution sandbox for this invocation; an
+- `--sandbox SANDBOX` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
 - `--dev [PATH]` installs Toolang in a newly started guest from one wheel; a
   directory selects its newest Toolang wheel recursively. Bare `--dev` uses `.`
-- `--model MODEL_SPEC` supplies an invocation model identity and typed
+- `--model MODEL` supplies an invocation model identity and typed
   parameters, for example `--model 'openai/gpt-5 effort=high'`
 - `--limit LIMIT=VALUE` overrides one run limit; it may be repeated
 - `--allow RESOURCE=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
@@ -599,7 +599,7 @@ Both commands accept repeatable `--allow RESOURCE=QUERY`,
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
 
-`--compact-model MODEL_SPEC` selects the new runtime's compaction model,
+`--compact-model MODEL` selects the new runtime's compaction model,
 using the same model expression as `--model`, without a `model=` prefix.
 
 Setup policy uses the following TOML shape in root and agent-home `config.toml`
@@ -1123,9 +1123,9 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang AGENT chat [--thread [THREAD]]
-[--sandbox SANDBOX_SPEC] [--default SETTING=VALUE]
+[--sandbox SANDBOX] [--default SETTING=VALUE]
 [--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
-[--compact-model MODEL_SPEC]`.
+[--compact-model MODEL]`.
 The `--thread` option has a short alias, `-t`, and accepts an optional value:
 
 - Omit the option to start a new session; its terminal thread is created on

@@ -83,7 +83,7 @@ def run(
         str | None,
         typer.Option(
             "--sandbox",
-            metavar="SANDBOX_SPEC",
+            metavar="SANDBOX",
             help="Run in this sandbox; defaults to agent config or host",
         ),
     ] = None,
@@ -213,7 +213,7 @@ def start(
         str | None,
         typer.Option(
             "--sandbox",
-            metavar="SANDBOX_SPEC",
+            metavar="SANDBOX",
             help="Run in this sandbox; defaults to agent config or host",
         ),
     ] = None,

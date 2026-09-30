@@ -52,8 +52,8 @@ roaming, and visiting agents:
 ./aide.too whats_for --no-auto-workspace
 ```
 
-`-w` / `--workspace [NAME=]PATH` adds a temporary grant and can be repeated.
-`-d / --workdir [NAME=]PATH` adds a grant and selects its root. `--workdir NAME://[SUBDIR]`
+`-w` / `--workspace [NAME=]<DIR>` adds a temporary grant and can be repeated.
+`-d / --workdir [NAME=]<DIR>` adds a grant and selects its root. `--workdir NAME://[SUBDIR]`
 selects an existing grant without adding access. Only one `--workdir` is allowed.
 Any `-w` or `--workdir` suppresses automatic srcdir inclusion; configured grants and
 `lab` remain. Without an explicit selection, the last usable workspace wins.

@@ -442,7 +442,7 @@ def _runnable_command(
             str | None,
             typer.Option(
                 "--model",
-                metavar="MODEL_SPEC",
+                metavar="MODEL",
                 help="Set model and parameters",
             ),
         ] = None,
@@ -453,8 +453,8 @@ def _runnable_command(
             typer.Option(
                 "--out",
                 "-o",
-                metavar="PATH",
-                help="Save output to PATH; - for stdout",
+                metavar="FILE",
+                help="Save output to FILE; - for stdout",
             ),
         ] = None,
         quiet: Annotated[
@@ -465,7 +465,7 @@ def _runnable_command(
             str | None,
             typer.Option(
                 "--sandbox",
-                metavar="SANDBOX_SPEC",
+                metavar="SANDBOX",
                 help="Select the execution sandbox",
             ),
         ] = None,

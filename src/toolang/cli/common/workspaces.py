@@ -28,7 +28,7 @@ WorkspaceOptions = Annotated[
     typer.Option(
         "--workspace",
         "-w",
-        metavar="[NAME=]PATH",
+        metavar="[NAME=]<DIR>",
         help="Add a temporary workspace (repeatable)",
     ),
 ]
@@ -37,7 +37,7 @@ WorkdirOption = Annotated[
     typer.Option(
         "--workdir",
         "-d",
-        metavar="PATH|URI",
+        metavar="[NAME=]<DIR>|<URI>",
         help="Set workdir; a path also adds a workspace",
     ),
 ]

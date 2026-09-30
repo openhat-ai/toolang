@@ -117,8 +117,8 @@ selected-workspace field.
 
 | Option | Meaning |
 | --- | --- |
-| Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace; `=PATH` also infers its name. |
-| `-d / --workdir [NAME=]PATH` | Add PATH and select its root as workdir; `=PATH` also infers its name. |
+| Repeatable `-w / --workspace [NAME=]<DIR>` | Add a temporary workspace; `=<DIR>` also infers its name. |
+| `-d / --workdir [NAME=]<DIR>` | Add DIR and select its root as workdir; `=<DIR>` also infers its name. |
 | `--workdir NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
 | `--no-auto-workspace` | Do not automatically add the script directory as a workspace. |
 
@@ -154,7 +154,7 @@ Allow only one workdir option, including mixed `-d` / `--workdir` spellings.
 
 `-w .` grants procdir; it re-adds srcdir only when invoked from there. For `--workdir`,
 an argument starting with a workspace URI (`NAME://`) selects an existing grant;
-otherwise parse `[NAME=]PATH` using the same rules as `-w`. A leading `=` forces
+otherwise parse `[NAME=]<DIR>` using the same rules as `-w`. A leading `=` forces
 path interpretation with an inferred name, even if the path contains `://`. A bare name always means a filesystem path. Never infer intent
 from directory/workspace existence or retry failed URI lookup as a path. Resolve
 all invocation grants before selecting a URI, so it may reference any `-w` entry.

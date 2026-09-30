@@ -593,12 +593,12 @@ def test_help_uses_semantic_configuration_metavars(
     arguments, options, tmp_path, capsys
 ):
     metavars = {
-        "--sandbox": "<SANDBOX_SPEC>",
+        "--sandbox": "<SANDBOX>",
         "--allow": "<RESOURCE>=<QUERY>",
         "--limit": "<LIMIT>=<VALUE>",
         "--default": "<SETTING>=<VALUE>",
-        "--compact-model": "<MODEL_SPEC>",
-        "--model": "<MODEL_SPEC>",
+        "--compact-model": "<MODEL>",
+        "--model": "<MODEL>",
         "--log": "<LOG_SPEC>",
     }
     assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0

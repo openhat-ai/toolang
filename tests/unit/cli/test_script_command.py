@@ -638,9 +638,11 @@ def test_script_uses_typer_help_and_authored_docs(
     for option, metavar in (
         ("--allow", "<RESOURCE>=<QUERY>"),
         ("--limit", "<LIMIT>=<VALUE>"),
-        ("--model", "<MODEL_SPEC>"),
-        ("--sandbox", "<SANDBOX_SPEC>"),
-        ("--out", "<PATH>"),
+        ("--model", "<MODEL>"),
+        ("--sandbox", "<SANDBOX>"),
+        ("--out", "<FILE>"),
+        ("--workspace", "[NAME=]<DIR>"),
+        ("--workdir", "[NAME=]<DIR>|<URI>"),
     ):
         row = next(line for line in stdout.splitlines() if option in line.split())
         assert metavar in row.split()
@@ -651,7 +653,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save output to PATH; - for stdout" in " ".join(
+    assert "Save output to FILE; - for stdout" in " ".join(
         stdout.replace("│", " ").split()
     )
     assert "stdout" in stdout

@@ -43,7 +43,7 @@ def chat_command(
         str | None,
         typer.Option(
             "--sandbox",
-            metavar="SANDBOX_SPEC",
+            metavar="SANDBOX",
             help="Execute the session in this sandbox",
         ),
     ] = None,
