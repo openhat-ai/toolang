@@ -68,23 +68,30 @@ def test_init_creates_only_a_packaged_script(
     assert neighbor.read_text() == "keep"
     assert destination.stat().st_mode & 0o111 == 0o111
     program = Program.from_source(destination.read_text())
-    assert program.agics[0].name is None
-    assert program.agics[0].input is None
+    assert [agic.name for agic in program.agics] == [
+        "issue",
+        "fix",
+        "review",
+        "whats_for",
+        "whats_new",
+        "update_i18n",
+    ]
+    assert program.flows == ()
     output = capsys.readouterr().out
     commands = output.split("Try:\n", 1)[1].splitlines()
     assert [shlex.split(command, comments=True) for command in commands] == [
         [executable, str(destination), "info"],
         [executable, str(destination), "--help"],
-        [executable, str(destination)],
-        [executable, str(destination), "chat"],
+        [executable, str(destination), "whats_for"],
+        [executable, str(destination), "whats_new"],
     ]
     for command, description in zip(
         commands,
         (
             "show agent details",
             "show runnables and options",
-            "execute the default runnable",
-            "start an interactive chat",
+            "explain the current project",
+            "list updates from the past week",
         ),
         strict=True,
     ):
@@ -92,10 +99,10 @@ def test_init_creates_only_a_packaged_script(
     assert len({command.rindex("  # ") for command in commands}) == 1
 
 
-@pytest.mark.parametrize("entry", [None, "chat", "rewrite", "polish"])
-def test_initialized_script_help_exposes_the_language_examples(
-    entry, monkeypatch, capsys
-):
+@pytest.mark.parametrize(
+    "entry", [None, "issue", "fix", "review", "whats_for", "whats_new", "update_i18n"]
+)
+def test_initialized_script_help_exposes_project_helpers(entry, monkeypatch, capsys):
     assert cli.main(["init", "."]) == 0
     capsys.readouterr()
     monkeypatch.setattr(
@@ -104,20 +111,43 @@ def test_initialized_script_help_exposes_the_language_examples(
     assert cli.main(["run", "aide.too", *([entry] if entry else []), "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     if entry is None:
-        assert "agic:chat" in output
-        assert "agic:rewrite" in output
-        assert "flow:polish" in output
-        assert "agic:<entry>" in output
-        assert "agic:main" not in output
-        assert "<agic:" not in output
-        assert "agic:default" not in output
-    else:
+        for name in ("issue", "fix", "review", "whats_for", "whats_new", "update_i18n"):
+            assert f"agic:{name}" in output
+        assert "agic:<entry>" not in output
+    elif entry in {"issue", "fix", "review"}:
         assert "INPUT" in output
-        if entry in {"rewrite", "polish"}:
-            assert "tone=<TONE>" in output
-        if entry == "polish":
-            assert "Rewrite in the requested tone." in output
-            assert "Check the result with an inline agic." in output
+    elif entry == "whats_new":
+        assert "since=<SINCE>" in output
+        assert "* since=" not in output
+    elif entry == "update_i18n":
+        assert "locale=<LOCALE>" in output
+        assert "[locale=" not in output
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_initialized_script_without_runnable_only_shows_help(
+    explicit, monkeypatch, capsys
+):
+    assert cli.main(["init", "."]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("selected a default runnable"),
+    )
+
+    assert cli.main([*(["run"] if explicit else []), "aide.too"]) == 0
+    assert "agic:whats_for" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("entry", ["issue", "fix", "review", "update_i18n"])
+def test_initialized_script_requires_its_input(entry, monkeypatch):
+    assert cli.main(["init", "."]) == 0
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("executed without input")
+    )
+
+    assert cli.main(["aide.too", entry]) == 2
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])

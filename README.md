@@ -10,7 +10,7 @@ The language expresses agent loops with fine-grained control using a small subse
 
 ## Getting started
 
-Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** support is coming soon.
+Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** is not supported yet.
 
 Install Toolang with `uv` or `pip`; the main command is `toolang`, with `too` as a shorter alias:
 
@@ -19,27 +19,27 @@ uv tool install toolang  # or: pip install toolang
 too --version            # same as: toolang --version
 ```
 
-Toolang supports **Anthropic**, **DeepSeek**, **Google**, **OpenAI** and **OpenRouter** out of the box, along with local models through **Ollama** and **llama.cpp**. To inspect all configured providers and list available models, run:
+### Models
+
+Toolang bundles a catalog of recent models from [models.dev](https://models.dev/), filtered by both `knowledge > 2025-00` and `last_updated > 2026-00`. Set your provider's API key to get started; no additional model configuration is required. Local models are discovered from running **Ollama** and **llama.cpp** servers.
 
 ```bash
-too providers --all
-too models
+too providers --all  # List all providers and their required environment variables
+too models           # List ready models
 ```
 
-To use additional providers or models, put a compatible flat catalog at
-`~/.toolang/catalog.json`. See [Model Catalog](docs/models.md#static-catalog)
-for the format and an upstream conversion example.
+Download updated or full model catalogs from [openhat-ai/models](https://github.com/openhat-ai/models).
 
-## Remote agents
+## Shared agents
 
-Run a shared agent locally by referencing its URL or GitHub shorthand. Toolang fetches the definition and starts a terminal chat using your model configuration:
+Run a shared agent locally using its URL or GitHub shorthand:
 
 ```bash
 too https://toolang.ai/dev.too chat
 too briceyan/dev chat
 ```
 
-In remote-agent chat mode, the agent responds only to your messages; it does not start tasks or chores on its own.
+In this chat mode, tasks and chores are disabled, so the agent responds only to your messages. You can also download and review the `.too` source before running it.
 
 ## Local agents
 
@@ -54,16 +54,9 @@ Once created, the agent is ready for a conversation:
 
 ```bash
 too NAME chat
-too NAME shell
 ```
 
-`too NAME shell` opens an interactive shell in the agent's home. Use `too shell`
-to open one in the Toolang root (`TOOLANG_ROOT`, or `~/.toolang` by default), or
-`too --root /path/to/toolang-root shell` to select another root. The destination
-must already exist. Exit to return to your previous shell; an interactive
-terminal is required.
-
-You can then configure the agent's capabilities and add tasks or recurring chores. Use the CLI help to see the available commands:
+Use the CLI help to configure the agent and add tasks or recurring chores:
 
 ```bash
 too --help
@@ -71,7 +64,7 @@ too --help
 
 ## Scripts
 
-Toolang also runs agents as scripts. Here is hello world in Toolang:
+A `.too` file can also run as a script. Here is hello world in Toolang:
 
 ```bash
 cat > hello-world.too <<'EOF'
@@ -82,43 +75,39 @@ EOF
 too hello-world.too
 ```
 
-Use `too init` to generate `aide.too` as a starting point. Read the source or use `--help` to see its available runnables:
+To start from a template, use `too init` to create `aide.too` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
 
 ```bash
 too init DIR
 too DIR/aide.too --help
 ```
 
-You can rename the file or modify the code to suit your needs, then call it from Makefiles, CI jobs, or other scripts to add agent capabilities to existing automation.
-
-To execute a runnable, pass its name and the arguments defined by its signature. If you omit the name, Toolang calls the entry runnable, as in the hello-world script above:
+The generated script provides six named runnables for issues, fixes, pull request reviews, project overviews, recent updates, and localization. Select one by name and pass its arguments on the command line:
 
 ```bash
-too DIR/aide.too polish tone=professional -- "Can you send the notes?"
-```
-
-The same script can also run interactively:
-
-```bash
-too DIR/aide.too chat
+too DIR/aide.too whats_for
+too DIR/aide.too whats_new                     # Updates from the past week
+too DIR/aide.too whats_new since=v0.2.0
+too DIR/aide.too review -- "https://github.com/OWNER/REPO/pull/123"
+too DIR/aide.too update_i18n locale=zh-CN
 ```
 
 ## Language
 
 The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
 
-See [examples](./examples) for runnable Toolang programs:
+See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for runnable Toolang programs:
 
 | Example | Description |
 | --- | --- |
-| [`hello-world.too`](./examples/hello-world.too) | Hello world in Toolang. |
-| [`signatures.too`](./examples/signatures.too) | Agic signature forms, from shorthand to fully typed. |
-| [`structured-output.too`](./examples/structured-output.too) | Define a struct and use it for structured output. |
-| [`caps.too`](./examples/caps.too) | Define and use caps in agics. |
-| [`hands.too`](./examples/hands.too) | Delegate work to multiple hands. |
-| [`handoffs.too`](./examples/handoffs.too) | Transfer work to one of several specialist handoffs. |
-| [`minimal.too`](./examples/minimal.too) | A minimal agent. |
-| [`developer.too`](./examples/developer.too) | Define a complete coding agent with reusable caps. |
+| [`hello-world.too`](https://github.com/openhat-ai/toolang/blob/main/examples/hello-world.too) | Hello world in Toolang. |
+| [`signatures.too`](https://github.com/openhat-ai/toolang/blob/main/examples/signatures.too) | Agic signature forms, from shorthand to fully typed. |
+| [`structured-output.too`](https://github.com/openhat-ai/toolang/blob/main/examples/structured-output.too) | Define a struct and use it for structured output. |
+| [`caps.too`](https://github.com/openhat-ai/toolang/blob/main/examples/caps.too) | Define and use caps in agics. |
+| [`hands.too`](https://github.com/openhat-ai/toolang/blob/main/examples/hands.too) | Delegate work to one of the runnables. |
+| [`handoffs.too`](https://github.com/openhat-ai/toolang/blob/main/examples/handoffs.too) | Transfer work to one of the runnables. |
+| [`minimal.too`](https://github.com/openhat-ai/toolang/blob/main/examples/minimal.too) | An agent in 14 characters. |
+| [`developer.too`](https://github.com/openhat-ai/toolang/blob/main/examples/developer.too) | Define a complete coding agent with reusable caps. |
 
 ## Common commands
 
@@ -126,18 +115,20 @@ Use these commands to run and manage agents. Add `--help` to any command for its
 
 ```bash
 too new <agent>                       # Create a local agent
-too clone <ref> <agent>               # Clone an agent definition
-too serve <ref>                       # Run an agent service in the foreground
-too start <agent>                     # Start a local agent service in the background
-too stop <agent>                      # Stop a running agent service
+too clone <ref> <agent>               # Clone an agent
+too <agent> chat                      # Chat with an agent
+too [agent] shell                     # Open a shell in the Toolang root or agent home
+too serve <ref>                       # Run an agent in the foreground
+too start <agent>                     # Start an agent in the background
+too stop <agent>                      # Stop a running agent
 
 too init <dir>                        # Create aide.too in a directory
-too [run] <script> [runnable]         # Execute a script; run is optional
+too [run] <file.too> [runnable]       # Execute a .too file; run is optional
 
-too caps                              # List available capabilities
+too caps                              # List available caps
 too tools                             # List available tools
 too models                            # List available models
-too providers                         # List available providers
+too providers                         # List available model providers
 
 too --help                            # Show common commands
 too more                              # Show additional commands

@@ -35,8 +35,8 @@ def init_script(
     examples = (
         (f"{script} info", "show agent details"),
         (f"{script} --help", "show runnables and options"),
-        (script, "execute the default runnable"),
-        (f"{script} chat", "start an interactive chat"),
+        (f"{script} whats_for", "explain the current project"),
+        (f"{script} whats_new", "list updates from the past week"),
     )
     width = max(len(command) for command, _description in examples)
     typer.echo("\nTry:")
