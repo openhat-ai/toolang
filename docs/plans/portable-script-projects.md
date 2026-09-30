@@ -2,8 +2,9 @@
 
 Status: Feature definition; no runtime implementation. Confirmed: script-based
 configuration discovery, layered TOML, nearest catalog, script-directory workdir,
-no implicit caller-cwd workspace, and best-effort initialization. Remaining choices
-are proposals for approval, including temporary-workspace CLI syntax.
+no implicit caller-cwd workspace, best-effort initialization, and resident
+agent-local ownership of workspaces and jobs. Applying that ownership boundary
+to roaming ancestor layers and temporary-workspace CLI syntax remain proposals.
 
 ## Goal and scope
 
@@ -58,21 +59,39 @@ Script symlinks follow their real target's project. A configuration symlink keep
 its discovered pathname's directory as its base; generated aliases retain that
 origin rather than rebasing relative values under `.toolang/`.
 
+## Ownership before inheritance
+
+Inheritance follows the concept's owner, not simply the presence of a field in
+an outer config. Preserve this resident design as the rule for similar features:
+
+| Ownership | Examples | Rule |
+| --- | --- | --- |
+| Agent-local | Workspace grants, authored program, jobs (tasks/chores), schedules and execution state | Resident inputs belong to agent home; never inherit or discover them from the shared root. |
+| Shareable | Catalogs, reusable caps, plugin settings, run/model defaults and policies | May be supplied at root and specialized by the agent using their existing selection/merge rules. |
+| Run-local | Temporary workspace grants and workdir overrides | Belong to the accepted Run; do not write them into agent or shared configuration. |
+
+For roaming, propose treating ancestor TOML files as shared layers and only
+`script_dir/toolang.toml` as the agent-local configuration. Ancestor workspace
+entries therefore do not grant access to descendant scripts. Job files are not
+TOML merge fields; this scope adds no ancestor job discovery or roaming job
+commands. Visiting retains its explicit agent context without adopting agent-local
+resources from cache parents. Future fields must declare ownership and inheritance
+semantics before joining shared loading or inspection.
+
 ## Configuration and catalog selection
 
-Load every discovered `toolang.toml` from outermost to innermost. Resolve each
-layer's relative filesystem values before combining it with other layers. Reuse
-resident field semantics rather than applying one generic merge to every field:
+Load every discovered `toolang.toml` from outermost to innermost, selecting only
+fields eligible for that layer's ownership. Resolve each retained filesystem value
+against its originating file before combining layers. Reuse resident field
+semantics rather than applying one generic merge to every field:
 
 - `default`, `compact`, `limit`, `allow`, and `sandbox` use their existing ordered
   resolvers, including model-override, allow-sentinel, and sandbox-reset behavior.
 - Plugin mappings and authored cap tables merge recursively; nearer scalar and
   array values replace older values. Arrays are not concatenated.
-- For roaming project layers, merge `[workspaces]` by name, with nearer definitions
-  overriding that name and preserving the declared ordering. Validate the resulting
-  grants. These are all project-authored agent inputs. Preserve resident's existing
-  agent-only workspace grants; do not turn user-level root settings into grants
-  for every resident agent as a side effect of this work.
+- Read `[workspaces]` only from the agent-local configuration, preserving its
+  ordering and validation. This preserves resident home-only grants; the proposed
+  roaming equivalent is script-local grants, without ancestor workspace merging.
 
 Select only the nearest `toolang.catalog.json`; never merge catalog files or read
 a project's generic `catalog.json`. Its discovery does not depend on where TOML
@@ -89,17 +108,17 @@ an outer catalog. Unselected outer catalog files need not be loaded.
 
 ```text
 repo/                         # git_root; contains .git
-  toolang.toml                # outer policy, e.g. [workspaces] project = "."
+  toolang.toml                # shared policy and plugin settings
   toolang.catalog.json
   scripts/
-    toolang.toml              # overrides matching outer settings
+    toolang.toml              # local [workspaces] project = "..", plus overrides
     toolang.catalog.json      # selected catalog, if present
     aide.too                  # script_dir and default workdir: repo/scripts
 ```
 
 Running this script from `/tmp` changes neither configuration nor workdir. The
-outer `project = "."` explicitly grants repository access; discovering the Git
-root alone does not. A non-Git archive needs config beside its entry script to
+script-local `project = ".."` explicitly grants repository access; discovering the
+Git root alone does not. A non-Git archive needs config beside its entry script to
 retain this behavior. Keep root entry scripts for projects intended for both Git
 and archive distribution without additional configuration.
 
@@ -148,7 +167,7 @@ execution contexts, while keeping run inspection and control addressable.
 
 | Behavior | Resident | Roaming | Visiting |
 | --- | --- | --- | --- |
-| Authored inputs | Explicit Toolang root and agent home | Script-to-Git-root project layers | Downloaded source and existing visiting setup; no traversal of cache parents or implicit companion fetch |
+| Authored inputs | Shared Toolang root plus agent-local home | Shared ancestor layers plus agent-local script directory | Downloaded source and existing visiting setup; no traversal of cache parents or implicit companion fetch |
 | Default workdir | Existing configured workspace selection, otherwise `lab` | `script://` | Existing authorized-workspace selection, otherwise `lab`; a download cache is not a project workspace |
 | Relative config values | Each authored file's directory | Each authored file's directory | Origin of any explicitly supplied local config; never infer a remote base from a temporary cache |
 | `info`, `models`, `providers`, `tools`, `workspace list` | Supported | Support identically | Support identically |
@@ -159,7 +178,9 @@ Use one inspection pipeline against the selected layout and ordered sources, wit
 the same options, filtering, and output fields for all placements. `info` shows
 source, boundary, config layers, catalog selection and provenance, runtime root,
 and effective workdir/workspaces. `workspace list` includes implicit and temporary
-grants, availability, and origins. No model Run or secret values are needed.
+grants, availability, and origins. Inspection must expose field ownership and
+out-of-scope declarations without treating them as effective agent settings.
+No model Run or secret values are needed.
 Distinguish newly resolved settings from an existing server's mounted bindings;
 historical inspection uses recorded Run bindings. Targetless global listings keep
 their existing root-level meaning. Placement differences follow source ownership
@@ -167,10 +188,9 @@ and workspace authorization, not different inspection capabilities.
 
 Roaming `workspace add/remove` edits only script-local `toolang.toml`, creating it
 exclusively when absent. Preserve comments and write relative paths against that
-file. An inherited entry cannot be removed locally without a masking mechanism;
-report its defining file rather than silently editing an ancestor or deleting a
-local override and unexpectedly exposing the inherited grant. General masking is
-outside this scope. Resident mutations retain their destination and use the same
+file. Shared ancestor declarations are not effective workspace entries and cannot
+be removed through an agent workspace command. No inheritance-masking mechanism
+is needed. Resident mutations retain their destination and use the same
 CLI/config path-base rules. Do not mutate implicit or temporary grants persistently.
 
 ## Materialization, portability, and init
@@ -210,11 +230,11 @@ transaction journal, initialization lock, or automatic recovery.
 | Area | Required offline checks |
 | --- | --- |
 | Discovery | Different invocation directories give identical inputs; script/config symlinks, root/subdirectory calls, worktrees, submodules, nested repos, non-Git directories, invalid markers and candidates. |
-| Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; inherited workspaces; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
-| Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or new resident root workspace grants. |
+| Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; home/script-local workspace ownership; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
+| Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or inherited root/ancestor workspace grants, jobs, schedules, or execution state. Shared catalogs, caps, and policies remain available to multiple agents. |
 | Workspaces | Script-relative fs and shell access; no implicit grants to process cwd or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
 | Persistence | Config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
-| Mutations/init | Source-local config edits and inherited-removal errors; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
+| Mutations/init | Source-local config edits without ancestor mutations; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
 
 Likely files: `common/layout.py`, `up/{process,mounts,sandbox}.py`,
 `setup/{config,watcher,types}.py`, `state/{config,source,prepare,state}.py`,
