@@ -9,11 +9,8 @@ from toolang.cli.common.workspaces import (
     resolve_workspaces,
     running_workspaces,
 )
-from toolang.common.config_sources import config_sources
-from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 
 import asyncio
-import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,7 +35,6 @@ from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
-    load_runtime_environ,
     require_runtime_agent,
     resolve_model_catalog_option,
     ui_base_url,
@@ -46,7 +42,6 @@ from ...common.context import (
 )
 from ...common.output import (
     agent_avatar,
-    created_time,
     echo_pairs_table,
     echo_table,
     parse_utc_timestamp,
@@ -216,50 +211,14 @@ def info_agent(
         else SetupWatcher(layout)
     )
     setup = asyncio.run(watcher.refresh())
-    created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
-    updated_at = runtime_value(runtime_state.get("updated_at"))
-    status_value = status.status
+    status_value = "not running" if status.status == "stopped" else status.status
     if status.status == "running" and started_at != "-":
         online = _human_uptime_since(started_at)
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
         ("Home", shorten_home_path(layout.home)),
-        (
-            "Config",
-            ", ".join(
-                str(source.path)
-                for source in config_sources(layout)
-                if source.path.is_file()
-            )
-            or "none",
-        ),
-        (
-            "Catalog",
-            str(
-                resolve_model_catalog_path(
-                    layout,
-                    explicit=model_catalog,
-                    environ=load_runtime_environ(layout, base_environ=os.environ),
-                )
-            ),
-        ),
-        ("Workspaces", ", ".join(["lab", *state.workspaces, *selection.additions])),
-        (
-            "Workdir",
-            selection.workdir
-            or next(
-                (
-                    f"{name}://"
-                    for name, path in reversed(list(state.workspaces.items()))
-                    if Path(path).is_dir()
-                ),
-                "lab://",
-            ),
-        ),
-        ("Caps", _caps_summary(state)),
-        ("Jobs", _jobs_summary(layout)),
         ("Tools", _tools_summary(setup)),
         (
             "Models",
@@ -269,29 +228,22 @@ def info_agent(
                 running=status.status != "stopped",
             ),
         ),
+        ("Caps", _caps_summary(state)),
+        ("Jobs", _jobs_summary(layout)),
+        ("Workspaces", ", ".join(["lab", *state.workspaces, *selection.additions])),
         ("Status", status_value),
     ]
-    if status.status == "running" and runtime_state.get("workspace_additions"):
-        rows.append(("Server grants", str(runtime_state["workspace_additions"])))
     if status.status == "stopped":
-        rows.append(("Created", created_at))
         echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
-    message = runtime_value(status.message)
     if runtime_identity is not None and status.status != "stopped":
         rows.append(runtime_identity)
     if status.endpoint:
         rows.append(("API", status.endpoint))
     if status.webui_url:
         rows.append(("WebUI", status.webui_url))
-    if status.status == "running" and started_at != "-":
-        rows.append(("Started", started_at))
-    if status.status != "running" and updated_at != "-":
-        rows.append(("Updated", updated_at))
-    if status.status != "running" and message != "-":
-        rows.append(("Message", message))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 

@@ -156,6 +156,33 @@ def test_info_values_inherit_the_terminal_foreground(monkeypatch) -> None:
     assert value.style is None or (value.style.color is None and not value.style.dim)
 
 
+@pytest.mark.parametrize("color", [True, False])
+def test_info_uses_standard_ansi_title_and_field_colors(monkeypatch, color) -> None:
+    rendered = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_INFO_CONSOLE",
+        Console(
+            file=rendered,
+            force_terminal=color,
+            color_system="standard" if color else None,
+            no_color=not color,
+            width=120,
+            _environ={},
+        ),
+    )
+
+    echo_pairs_table([("Home", "/tmp/eve")], avatar="logo", title="EVE")
+
+    value = rendered.getvalue()
+    if color:
+        assert "\x1b[1;32mEVE" in value
+        assert "\x1b[1;33mHome" in value
+    else:
+        assert "\x1b[" not in value
+        assert "EVE" in value and "Home" in value
+
+
 def test_home_path_shortening_uses_the_user_home() -> None:
     path = Path.home() / ".toolang" / "agents" / "eve"
 

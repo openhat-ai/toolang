@@ -3238,7 +3238,60 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
-    assert "stopped" in result.stdout
+    assert "not running" in result.stdout
+
+
+@pytest.mark.parametrize("target_first", [False, True])
+@pytest.mark.parametrize("status", ["stopped", "starting", "running", "failed"])
+def test_agent_info_fields_follow_the_compact_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda self, **kwargs: agents.AgentStatus(
+            name="alice",
+            status=status,
+            endpoint="http://localhost:8123",
+            api_url="http://localhost:8123/api",
+            webui_url="http://localhost:8123/ui",
+            sandbox="host",
+            message="runtime failed",
+        ),
+    )
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "state",
+        lambda self: {
+            "started_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "workspace_additions": {"extra": str(tmp_path)},
+        },
+    )
+    monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
+    )
+
+    args = ("alice", "info") if target_first else ("info", "alice")
+    result = _invoke(root, *args)
+
+    assert result.exit_code == 0, result.stderr
+    expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
+    if status != "stopped":
+        expected += ["Sandbox", "PID", "API", "WebUI"]
+    assert [key for key, _value in captured] == expected
+    status_value = dict(captured)["Status"]
+    if status == "stopped":
+        assert status_value == "not running"
+    elif status == "running":
+        assert status_value.startswith("running (up ")
+    else:
+        assert status_value == status
 
 
 def test_agent_info_reports_only_state_published_caps(
