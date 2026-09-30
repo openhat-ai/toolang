@@ -137,9 +137,9 @@ def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
 def test_info_values_inherit_the_terminal_foreground(monkeypatch) -> None:
     captured = []
 
-    class _CapturedConsole:
-        def print(self, renderable) -> None:
-            captured.append(renderable)
+    class _CapturedConsole(Console):
+        def print(self, *objects, **kwargs) -> None:
+            captured.extend(objects)
 
     monkeypatch.setattr(output, "_INFO_CONSOLE", _CapturedConsole())
 
@@ -154,6 +154,53 @@ def test_info_values_inherit_the_terminal_foreground(monkeypatch) -> None:
     value = next(segment for segment in segments if "/tmp/eve" in segment.text)
 
     assert value.style is None or (value.style.color is None and not value.style.dim)
+
+
+@pytest.mark.parametrize("avatar", [None, "logo"])
+@pytest.mark.parametrize("color_mode", ["standard", "disabled", "no_color"])
+def test_info_palette_uses_two_aligned_rows_of_ansi_backgrounds(
+    monkeypatch, avatar, color_mode
+) -> None:
+    rendered = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_INFO_CONSOLE",
+        Console(
+            file=rendered,
+            force_terminal=True,
+            color_system=None if color_mode == "disabled" else "standard",
+            no_color=color_mode == "no_color",
+            width=120,
+            _environ={},
+        ),
+    )
+    monkeypatch.setattr(output.typer, "echo", lambda: rendered.write("\n"))
+
+    echo_pairs_table([("Status", "not running")], avatar=avatar, title="EVE")
+
+    value = rendered.getvalue()
+    if color_mode != "standard":
+        assert not any(
+            f"\x1b[{code}m" in value for code in (*range(40, 48), *range(100, 108))
+        )
+        assert not output._info_palette()
+        return
+    for code in (*range(40, 48), *range(100, 108)):
+        assert f"\x1b[{code}m   \x1b[0m" in value
+    lines = Text.from_ansi(value).split("\n")
+    status_index = next(
+        index for index, line in enumerate(lines) if "Status" in line.plain
+    )
+    assert not lines[status_index + 1].plain.strip()
+    column = lines[status_index].plain.index("Status")
+    console = output._INFO_CONSOLE
+    for offset, first_color in ((2, 0), (3, 8)):
+        line = lines[status_index + offset]
+        for index in range(8):
+            for cell in range(3):
+                style = line.get_style_at_offset(console, column + index * 3 + cell)
+                assert style.bgcolor is not None
+                assert style.bgcolor.number == first_color + index
 
 
 @pytest.mark.parametrize("color", [True, False])
