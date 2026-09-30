@@ -24,21 +24,26 @@ def init_script(
         template = load_template("script").raw_text
         destination = directory.expanduser().resolve() / "aide.too"
         config = destination.with_name("toolang.toml")
-        for target in (config, destination):
-            if target.exists() or target.is_symlink():
-                raise ClickException(f"{target.name} already exists")
+        conflicts = [
+            target.name
+            for target in (destination, config)
+            if target.exists() or target.is_symlink()
+        ]
+        if conflicts:
+            raise ClickException(
+                f"aborted to avoid overwriting: {', '.join(conflicts)}"
+            )
         destination.parent.mkdir(parents=True, exist_ok=True)
         with config.open("x", encoding="utf-8") as stream:
-            stream.write(
-                "# Project settings for Toolang scripts.\n"
-                "# Relative paths are resolved from this file's directory.\n"
-            )
+            stream.write("# Toolang settings. Paths are relative to this file.\n")
         with destination.open("x", encoding="utf-8") as stream:
             stream.write(template.rstrip("\n") + "\n")
             stream.flush()
             os.fchmod(stream.fileno(), os.fstat(stream.fileno()).st_mode | 0o111)
     except FileExistsError as exc:
         name = Path(exc.filename).name if exc.filename else directory.name
+        if exc.filename and Path(exc.filename) in (destination, config):
+            raise ClickException(f"aborted to avoid overwriting: {name}") from exc
         raise ClickException(f"{name} already exists") from exc
     except OSError as exc:
         raise ClickException(str(exc)) from exc

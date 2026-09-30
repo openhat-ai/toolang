@@ -189,7 +189,7 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
         output.symlink_to(target)
     assert cli.main(["init", "."]) == 1
     message = capsys.readouterr()
-    assert message.err == f"Error: {filename} already exists\n"
+    assert message.err == f"Error: aborted to avoid overwriting: {filename}\n"
     assert message.out == ""
     other = "toolang.toml" if filename == "aide.too" else "aide.too"
     assert not (tmp_path / other).exists()
@@ -199,6 +199,20 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
         assert target.read_text() == "keep"
     elif kind == "dangling":
         assert output.is_symlink() and not target.exists()
+
+
+def test_init_reports_all_existing_outputs(tmp_path, capsys):
+    for name in ("aide.too", "toolang.toml"):
+        (tmp_path / name).write_text("keep")
+
+    assert cli.main(["init", "."]) == 1
+    message = capsys.readouterr()
+    assert message.err == (
+        "Error: aborted to avoid overwriting: aide.too, toolang.toml\n"
+    )
+    assert message.out == ""
+    for name in ("aide.too", "toolang.toml"):
+        assert (tmp_path / name).read_text() == "keep"
 
 
 def test_init_rejects_a_file_as_directory(tmp_path, capsys):
@@ -238,7 +252,7 @@ def test_init_reports_a_postcheck_collision(filename, tmp_path, monkeypatch, cap
     monkeypatch.setattr(Path, "open", create_before_exclusive_open)
     assert cli.main(["init", "."]) == 1
     message = capsys.readouterr()
-    assert message.err == f"Error: {filename} already exists\n"
+    assert message.err == f"Error: aborted to avoid overwriting: {filename}\n"
     assert message.out == ""
     assert output.read_text() == "keep"
     assert (tmp_path / "toolang.toml").is_file()
