@@ -20,11 +20,11 @@ also resolve differently when execution moves to a server or container.
 | Term | Meaning |
 | --- | --- |
 | `procdir` | Captured client process directory; base for explicit CLI paths and Chat/script input attachments. |
-| `sourcedir` | Parent of the real `.too` source file, after resolving symlinks. |
+| `srcdir` | Parent of the real `.too` source file, after resolving symlinks. |
 | `workspace` | A named authorized directory. |
 | `workdir` | Run location such as `repo://src`; identifies both workspace and directory within it. |
 
-Use `procdir` and `workdir` consistently in Toolang-owned terminology. Changing
+Use `procdir`, `workdir`, and `srcdir` consistently in Toolang-owned terminology. Changing
 workdir does not change procdir. Preserve historical-record readability when
 aligning existing fields; do not introduce a second workspace-selection setting.
 
@@ -52,11 +52,11 @@ have no file resolver; adding source-relative attachments there is outside scope
 
 ## Discovery and ownership
 
-Search both companion names independently from `sourcedir` through the nearest
+Search both companion names independently from `srcdir` through the nearest
 Git working-tree root, inclusive. Only directories containing a companion file
 contribute configuration layers; empty ancestors are not runtime locations.
 A worktree, submodule, or nested repository stops at its own working-tree root, not a metadata directory or outer repository. Without a working tree, inspect
-only `sourcedir`. Do not use procdir, inherit Git relocation environment overrides,
+only `srcdir`. Do not use procdir, inherit Git relocation environment overrides,
 or cross a broken nearest Git marker. Git-backed discovery must diagnose an
 unresolvable boundary rather than silently change its configuration inputs.
 
@@ -112,7 +112,7 @@ discovery alone changes neither workdir nor access.
 
 ## Workspaces and placement
 
-Propose implicit `script://` for roaming, rooted at `sourcedir`, as its initial
+Propose implicit `script://` for roaming, rooted at `srcdir`, as its initial
 workdir unless explicitly selected otherwise. Keep `lab` and configured workspaces;
 reject conflicting authored use of `script`. No implicit procdir or Git-root grant.
 Keep existing duplicate/nested-root rules; allow an implicit-root alias without
@@ -145,7 +145,7 @@ project/generated dotenv discovery or implicit `~/.toolang` inheritance.
 
 ## Generated files and initialization
 
-Roaming runtime data belongs at `sourcedir/.toolang/`, matching the existing
+Roaming runtime data belongs at `srcdir/.toolang/`, matching the existing
 source-local layout. Ancestor configuration/catalog files and the Git boundary do
 not relocate it. This generated directory is distinct from the resident root
 (default `~/.toolang`); do not merge their configuration or state. Keep canonical
