@@ -127,8 +127,8 @@ def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
         "",
         "               EVE",
         "               ───",
-        "   logo-one    Home     /tmp/eve",
-        "   logo-two    Created  now",
+        "   logo-one    Home: /tmp/eve",
+        "   logo-two    Created: now",
         "   logo-3--",
         "",
     ]
@@ -224,7 +224,7 @@ def test_info_uses_standard_ansi_title_and_field_colors(monkeypatch, color) -> N
     value = rendered.getvalue()
     if color:
         assert "\x1b[1;32mEVE" in value
-        assert "\x1b[1;33mHome" in value
+        assert "\x1b[1;33mHome:\x1b[0m /tmp/eve" in value
     else:
         assert "\x1b[" not in value
         assert "EVE" in value and "Home" in value

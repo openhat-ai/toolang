@@ -183,10 +183,9 @@ def echo_pairs_table(
         pad_edge=False,
         collapse_padding=True,
     )
-    table.add_column("FIELD", no_wrap=True, style="bold yellow")
-    table.add_column("VALUE", no_wrap=False, overflow="fold")
+    table.add_column("INFO", no_wrap=False, overflow="fold")
     for key, value in rows:
-        table.add_row(Text(key), Text(value))
+        table.add_row(Text.assemble((f"{key}:", "bold yellow"), f" {value}"))
     palette = _info_palette()
     if avatar is None:
         typer.echo()
