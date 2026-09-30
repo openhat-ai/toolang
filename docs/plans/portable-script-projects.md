@@ -25,6 +25,9 @@ equivalent Toolang versions, credentials, catalogs, and external services.
   ones. Agent State workspaces currently come only from agent-home config.
 - Catalog selection uses CLI, environment, home file, root file, then bundled
   data. `setup/watcher.py` overwrites authored `models_dev.path`.
+- Local script input includes use process cwd; hosted script calls send raw
+  input whose default resolver uses server cwd (or agent home). Scheduled jobs
+  instead use their authored file's directory. These bases are not interchangeable.
 - Workspace roots must be absolute. `info` accepts all placements, but
   `models/providers/tools/workspace` accept only resident targets. Model/tool
   listing code also constructs resident layouts internally; routing alone is
@@ -135,7 +138,7 @@ or `git` workspaces. Keep existing `lab` ownership rules.
 | Workspace or catalog path in config | Its own `config_dir`, including inherited values; expand `~`, retain absolute paths. |
 | Explicit CLI path, `@file`, or relative catalog environment override | Captured `invocation_dir`, resolved before server/container handoff. This is explicit input, not project discovery. |
 | Runtime fs/shell relative path | The Run's current workdir; never the hosting process's incidental cwd. |
-| Source-language include | Its owning parser's explicit base; preserve existing include semantics. |
+| Input `@file` references | Use the input-origin rules below, separately from Run workdir. |
 | Docker guest root | Remains an absolute guest path. |
 | Service command/arguments or cap references | Keep their existing semantics; do not rebase arbitrary strings or remote references. |
 
@@ -162,6 +165,36 @@ Temporary grants still require isolated Run bindings and compatible host/guest
 mounts: reuse a server only when its binding map matches; never mutate an active
 server's grants from another caller. Separate lifecycle ownership for incompatible
 execution contexts, while keeping run inspection and control addressable.
+
+## Input file references
+
+Proposed rule: resolve `@file` against the input's origin, not automatically
+against the script directory or Run workdir. Explicitly including one file supplies
+its content; it does not grant the containing directory as a workspace.
+
+| Input origin | Relative `@file` base |
+| --- | --- |
+| CLI arguments, named inputs, stdin, and terminal Chat input | The submitting client's captured `invocation_dir`, including when execution is hosted or containerized. Piped stdin does not identify an originating file. |
+| Scheduled task/chore body | The authored job file's directory; retain the existing agent-home fallback when no file origin exists. |
+| Server-authored API input without a client attachment context | The request's resolved, authorized workdir; never incidental server process cwd. Client-local files must be transferred as attachments. |
+| Uploaded/typed attachment | Its explicit resource identity/content; no filesystem-relative lookup. |
+
+For example, from `/repo`, `too /tools/aide.too review '@notes.md'` attaches
+`/repo/notes.md`, while the roaming Run still starts in `/tools`. An explicit
+workdir override or later directory change must not reinterpret that attachment.
+
+Capture the include context at input submission. Resolve client files into typed
+Parts on the client before execution handoff; preserve content through the request
+transport rather than sending a relative path for the server to reopen. Preserve
+Content parsing, prompt expansion, coercion, and provenance: an input `$prompt`
+expands in the same include context, and escapes/fences keep their existing meaning.
+Do not implement this as raw string substitution or recursively parse included
+file bytes. Missing/unreadable files reject the input before Run acceptance.
+
+Agic/flow bodies currently supply no file include resolver; `@file` there is not
+implicitly script-relative. Adding source-relative attachments to authored bodies
+is a separate language decision, outside this scope. The implementation must pass
+an explicit resolver/base, never call process cwd deep inside the shared parser.
 
 ## Placement comparison and inspection
 
@@ -233,6 +266,7 @@ transaction journal, initialization lock, or automatic recovery.
 | Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; home/script-local workspace ownership; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
 | Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or inherited root/ancestor workspace grants, jobs, schedules, or execution state. Shared catalogs, caps, and policies remain available to multiple agents. |
 | Workspaces | Script-relative fs and shell access; no implicit grants to process cwd or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
+| Input includes | Distinct same-named files in caller, script, job, and server directories; primary/named/stdin input; prompt expansion and escapes; explicit workdir overrides; local/hosted/guest attachment parity; missing files reject input; attaching a file grants no workspace. |
 | Persistence | Config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
 | Mutations/init | Source-local config edits without ancestor mutations; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
 
@@ -240,7 +274,9 @@ Likely files: `common/layout.py`, `up/{process,mounts,sandbox}.py`,
 `setup/{config,watcher,types}.py`, `state/{config,source,prepare,state}.py`,
 `plugin/{config,catalogs/models_dev/path}.py`, `cli/common/agent_server.py`,
 `cli/toolang/routing.py`, relevant CLI commands, execution records/binding logic,
-and their unit/integration tests. Resolve paths at loading/CLI boundaries; core
+and their unit/integration tests. Input-reference touchpoints also include
+`lang/{input,includes}.py`, `execution/{calls,schemas}.py`, API input transport,
+Chat clients, and `work/scheduler.py`. Resolve paths at loading/CLI boundaries; core
 schemas receive concrete values and remain independent of runtime orchestration.
 
 Implementation requires the standard Ruff, type, and offline test checks. This
