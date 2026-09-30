@@ -2,7 +2,7 @@
 
 Status: Feature definition; no runtime implementation. Confirmed: script-based
 configuration discovery, layered TOML, nearest catalog, script-directory workdir,
-no implicit caller-cwd workspace, best-effort initialization, and resident
+no implicit caller-directory workspace, best-effort initialization, and resident
 agent-local ownership of workspaces and jobs. Applying that ownership boundary
 to roaming ancestor layers and temporary-workspace CLI syntax remain proposals.
 
@@ -25,8 +25,8 @@ equivalent Toolang versions, credentials, catalogs, and external services.
   ones. Agent State workspaces currently come only from agent-home config.
 - Catalog selection uses CLI, environment, home file, root file, then bundled
   data. `setup/watcher.py` overwrites authored `models_dev.path`.
-- Local script input includes use process cwd; hosted script calls send raw
-  input whose default resolver uses server cwd (or agent home). Scheduled jobs
+- Local script input includes use process directory; hosted script calls send raw
+  input whose default resolver uses server process directory (or agent home). Scheduled jobs
   instead use their authored file's directory. These bases are not interchangeable.
 - Workspace roots must be absolute. `info` accepts all placements, but
   `models/providers/tools/workspace` accept only resident targets. Model/tool
@@ -40,17 +40,18 @@ equivalent Toolang versions, credentials, catalogs, and external services.
 | `script_dir` | Parent of the real `.too` file after resolving script symlinks. Default roaming workdir and discovery starting point. |
 | `git_root` | Root of the nearest Git working tree containing `script_dir`. A configuration-search boundary, not an automatic workspace grant or workdir. |
 | `config_dir` | Directory of each discovered authored configuration pathname; every layer has its own path base. |
-| `process_cwd` | The submitting client's OS working directory, captured at the invocation boundary. Base for explicit CLI paths and Chat/script input files; never an implicit project or workspace selection. |
+| `procdir` | The submitting client's OS working directory, captured at the invocation boundary. Base for explicit CLI paths and Chat/script input files; never an implicit project or workspace selection. |
 | `runtime_dir` | Generated `.toolang/`, under `git_root` when present, otherwise `script_dir`. Never an authored path base. |
 | `workspace` | A named authorized directory, such as `repo`; it does not by itself identify the current position. |
 | `workdir` | A Run's current workspace location, such as `repo://src`. Identifies both the selected workspace and the relative directory within it. Initially the script directory for roaming. |
 
-Use `process_cwd` for the OS directory and `workdir` for the Run location;
-avoid bare `cwd` when either could be meant. The selected workspace is derived
-from `workdir`, not another independently mutable setting. Chat `/cd` and Run
-workdir overrides change `workdir`, not `process_cwd` or the base of client file
-attachments. Existing internal/persisted `cwd` fields can retain their names;
-where they store a workspace URI, their meaning is `workdir`, not OS cwd.
+Use `procdir` for the process directory and `workdir` for the Run location
+throughout Toolang-owned documentation, interfaces, and implementation vocabulary.
+The selected workspace is derived from `workdir`, not another independently mutable
+setting. Chat `/cd` and Run workdir overrides change `workdir`, not `procdir` or
+the base of client file attachments. When aligning existing field names during
+implementation, preserve historical-record readability at decoding boundaries;
+new records and public interfaces use the unambiguous terms.
 
 `git_root` means the working-tree top level, not the `.git` metadata directory,
 a remote repository, or the outermost repository. A linked worktree has its own
@@ -65,7 +66,7 @@ Git to be installed; Git-backed discovery must fail clearly if it cannot establi
 the boundary instead of silently using different configuration.
 
 Both companion filenames are searched independently from `script_dir` through
-`git_root`, inclusive. Never search from process cwd or above that boundary.
+`git_root`, inclusive. Never search from process directory or above that boundary.
 Script symlinks follow their real target's project. A configuration symlink keeps
 its discovered pathname's directory as its base; generated aliases retain that
 origin rather than rebasing relative values under `.toolang/`.
@@ -138,14 +139,14 @@ and archive distribution without additional configuration.
 For roaming scripts, propose implicit `script://` bound to `script_dir`, alongside
 `lab` and configured workspaces. Initial workdir is `script://`, regardless of
 workspace insertion order, unless explicitly selected otherwise. Reserve `script`
-against conflicting authored grants for this placement. Do not add implicit `cwd`
-or `git` workspaces. Keep existing `lab` ownership rules.
+against conflicting authored grants for this placement. Do not implicitly grant the caller's directory
+or Git root as workspaces. Keep existing `lab` ownership rules.
 
 | Input | Path base |
 | --- | --- |
 | Workspace or catalog path in config | Its own `config_dir`, including inherited values; expand `~`, retain absolute paths. |
-| Explicit CLI path, `@file`, or relative catalog environment override | Captured `process_cwd`, resolved before server/container handoff. This is explicit input, not project discovery. |
-| Runtime fs/shell relative path | The Run's current workdir; never the hosting process's incidental cwd. |
+| Explicit CLI path, `@file`, or relative catalog environment override | Captured `procdir`, resolved before server/container handoff. This is explicit input, not project discovery. |
+| Runtime fs/shell relative path | The Run's current workdir; never the hosting process's incidental process directory. |
 | Input `@file` references | Use the input-origin rules below, separately from Run workdir. |
 | Docker guest root | Remains an absolute guest path. |
 | Service command/arguments or cap references | Keep their existing semantics; do not rebase arbitrary strings or remote references. |
@@ -167,7 +168,7 @@ not a substitute for OS sandboxing.
 
 Capture bindings with Run acceptance. Child Runs inherit them; retry, rerun,
 fork, and resume retain historical bindings and current authorization checks.
-An unavailable binding fails rather than rebinding to the new process cwd.
+An unavailable binding fails rather than rebinding to the new process directory.
 Ordinary calls from different directories now use identical script bindings.
 Temporary grants still require isolated Run bindings and compatible host/guest
 mounts: reuse a server only when its binding map matches; never mutate an active
@@ -182,10 +183,10 @@ its content; it does not grant the containing directory as a workspace.
 
 | Input origin | Relative `@file` base |
 | --- | --- |
-| Terminal Chat input | The Chat client's captured `process_cwd`; changing its selected workspace/workdir does not change this base. |
-| Script CLI arguments, named inputs, or stdin | The invoking client's captured `process_cwd`, including hosted/containerized execution. Piped stdin does not identify an originating file. |
+| Terminal Chat input | The Chat client's captured `procdir`; changing its selected workspace/workdir does not change this base. |
+| Script CLI arguments, named inputs, or stdin | The invoking client's captured `procdir`, including hosted/containerized execution. Piped stdin does not identify an originating file. |
 | Scheduled task/chore body | The authored job file's directory; retain the existing agent-home fallback when no file origin exists. |
-| Server-authored API input without a client attachment context (proposal) | The request's resolved, authorized workdir; never incidental server process cwd. Client-local files must be transferred as attachments. |
+| Server-authored API input without a client attachment context (proposal) | The request's resolved, authorized workdir; never incidental server process directory. Client-local files must be transferred as attachments. |
 | Uploaded/typed attachment | Its explicit resource identity/content; no filesystem-relative lookup. |
 
 For example, from `/repo`, `too /tools/aide.too review '@notes.md'` attaches
@@ -203,7 +204,7 @@ file bytes. Missing/unreadable files reject the input before Run acceptance.
 Agic/flow bodies currently supply no file include resolver; `@file` there is not
 implicitly script-relative. Adding source-relative attachments to authored bodies
 is a separate language decision, outside this scope. The implementation must pass
-an explicit resolver/base, never call process cwd deep inside the shared parser.
+an explicit resolver/base, never read the process directory deep inside the shared parser.
 
 ## Placement comparison and inspection
 
@@ -274,9 +275,9 @@ transaction journal, initialization lock, or automatic recovery.
 | Discovery | Different invocation directories give identical inputs; script/config symlinks, root/subdirectory calls, worktrees, submodules, nested repos, non-Git directories, invalid markers and candidates. |
 | Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; home/script-local workspace ownership; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
 | Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or inherited root/ancestor workspace grants, jobs, schedules, or execution state. Shared catalogs, caps, and policies remain available to multiple agents. |
-| Workspaces | Script-relative fs and shell access; no implicit grants to process cwd or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
+| Workspaces | Script-relative fs and shell access; no implicit grants to process directory or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
 | Input includes | Distinct same-named files in caller, script, job, and server directories; primary/named/stdin input; prompt expansion and escapes; Chat workspace changes and script workdir overrides do not change attachment bases; local/hosted/guest attachment parity; missing files reject input; attaching a file grants no workspace. |
-| Persistence | Config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
+| Persistence | Terminology updates retain historical-record readability; config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
 | Mutations/init | Source-local config edits without ancestor mutations; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
 
 Likely files: `common/layout.py`, `up/{process,mounts,sandbox}.py`,
@@ -296,8 +297,8 @@ intentional placement differences above remain subject to human approval.
 ## References and limits of the analogy
 
 Node.js distinguishes [module location](https://nodejs.org/api/modules.html#__dirname)
-from [process cwd](https://nodejs.org/api/process.html#processcwd); its
+from [process directory](https://nodejs.org/api/process.html); its
 [ordinary relative fs paths](https://nodejs.org/api/fs.html#file-paths) still use
-process cwd. Toolang borrows that separation, but explicitly chooses script-based
+process directory. Toolang borrows that separation, but explicitly chooses script-based
 workdir. Git-bounded discovery is Toolang's own rule, with
 [working-tree root semantics](https://git-scm.com/docs/git-rev-parse).
