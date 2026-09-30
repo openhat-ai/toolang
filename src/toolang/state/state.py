@@ -662,7 +662,7 @@ class AgentState:
     ) -> AgicDecl | FlowDecl | None:
         """Return one Program-local runnable declaration."""
 
-        if local_name in {"<entry>", "entry"}:
+        if local_name == "_":
             program = self.modules.get(module)
             if program is None:
                 return None

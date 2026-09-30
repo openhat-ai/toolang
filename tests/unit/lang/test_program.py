@@ -1007,6 +1007,12 @@ def test_parse_runnable_ref_parts_accepts_module_kind_and_unnamed() -> None:
         parse_runnable_ref_parts("agent:research")
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_underscore_cannot_be_an_authored_runnable_name(kind):
+    with pytest.raises(ToolangError, match="Syntax error"):
+        Program.from_source(f"{kind} _():\n  pass\n")
+
+
 def test_inline_agic_stays_unnamed_and_uses_adhoc_ref() -> None:
     from toolang.lang import Program
 
@@ -1037,7 +1043,7 @@ def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("module", ["", "agent::"])
-@pytest.mark.parametrize("name", ["<entry>", "<entry:3>"])
+@pytest.mark.parametrize("name", ["_", "<entry>", "<entry:3>"])
 def test_entry_display_does_not_change_reference_identity(
     kind: str, module: str, name: str
 ) -> None:
@@ -1047,9 +1053,10 @@ def test_entry_display_does_not_change_reference_identity(
 
     assert display_runnable_ref(reference, surface="chat") == f"{kind}:_"
     assert display_runnable_ref(reference, surface="help") == f"{kind}:_"
-    assert display_runnable_ref(reference, surface="progress") == f"{kind}:{name}"
+    diagnostic = "<entry>" if name == "_" else name
+    assert display_runnable_ref(reference, surface="progress") == f"{kind}:{diagnostic}"
     assert parse_runnable_ref_parts(reference).name == name
-    assert parse_runnable_ref_parts(f"{kind}:_").role is None
+    assert parse_runnable_ref_parts(f"{kind}:_").role == "entry"
     with pytest.raises(ValueError):
         parse_runnable_ref_parts(f"{kind}:-")
 

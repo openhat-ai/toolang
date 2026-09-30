@@ -5,6 +5,12 @@ Both belong in version control. Initialization refuses to overwrite either file,
 including directories and symlinks. A failure during creation may leave partial
 output; remove or complete it before retrying. Add `.toolang/` to Git ignore rules.
 
+For a script with an unnamed entry, omit the runnable or select `_` explicitly:
+`too file.too` and `too file.too _` select the same entry. `agic:_` and `flow:_`
+also check its kind. The former `<entry>` selector is no longer supported;
+`<entry:5>` in help identifies the source line. Input `-` still reads stdin,
+so `too file.too _ -` selects the entry and reads its input from stdin.
+
 ## Directories and configuration
 
 - **procdir** is the directory from which the client was invoked. Explicit CLI

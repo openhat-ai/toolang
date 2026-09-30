@@ -71,7 +71,7 @@ def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
 
 
 def _is_alias_ref(value: str, resolved: object) -> bool:
-    """Accept an unlined <entry> or <adhoc> selector for its lined target."""
+    """Accept an unnamed selector for its concrete lined target."""
 
     from toolang.lang.types import parse_runnable_ref_parts
 

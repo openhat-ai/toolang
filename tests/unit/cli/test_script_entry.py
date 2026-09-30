@@ -287,7 +287,7 @@ def test_script_defaults_to_authored_main(explicit, declaration, monkeypatch):
     assert captured[0]["runnable_kind"] == declaration.split("(")[0].split()[0]
 
 
-@pytest.mark.parametrize("selector", ["<entry>", "agic:<entry>", "runnable:<entry>"])
+@pytest.mark.parametrize("selector", ["_", "agic:_", "runnable:_"])
 def test_explicit_main_selection(selector, monkeypatch):
     path = _source()
     captured = []
@@ -298,7 +298,48 @@ def test_explicit_main_selection(selector, monkeypatch):
     assert captured[0]["runnable"].startswith("<entry:")
 
 
-@pytest.mark.parametrize("name", ["run", "serve", "init", "default"])
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("selector", ["_", "{kind}:_", "runnable:_"])
+def test_underscore_selects_the_same_entry_as_omission(kind, selector, monkeypatch):
+    path = _source(f"{kind}():\n  pass\n\nagic main():\n  Named.\n")
+    captured = []
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
+    )
+    assert cli.main([path]) == 0
+    assert cli.main([path, selector.format(kind=kind)]) == 0
+    assert [call["runnable"] for call in captured] == ["<entry:1>", "<entry:1>"]
+    assert [call["runnable_kind"] for call in captured] == [kind, kind]
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_entry_selector_requires_an_entry_of_the_requested_kind(
+    kind, monkeypatch, capsys
+):
+    path = _source(f"{kind}():\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("ran wrong kind")
+    )
+    other = "flow" if kind == "agic" else "agic"
+    assert cli.main([path, f"{other}:_"]) == 1
+    article = "an" if other == "agic" else "a"
+    assert f"runnable is not {article} {other}" in capsys.readouterr().err
+    Path(path).write_text("agic main():\n  Named.\n")
+    assert cli.main([path, "_"]) != 0
+
+
+@pytest.mark.parametrize(
+    "selector", ["<entry>", "agic:<entry>", "runnable:<entry>", "<entry:1>", "entry"]
+)
+def test_script_rejects_legacy_entry_selectors(selector, monkeypatch):
+    path = _source()
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("ran legacy alias")
+    )
+    assert cli.main([path, selector]) != 0
+
+
+@pytest.mark.parametrize("name", ["run", "serve", "init", "default", "entry"])
 def test_explicit_run_preserves_command_like_runnable_names(name, monkeypatch):
     path = _source(f"agic {name}():\n  Hello.\n")
     captured = []
@@ -310,9 +351,10 @@ def test_explicit_run_preserves_command_like_runnable_names(name, monkeypatch):
 
 
 @pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("selector", [[], ["_"]])
 @pytest.mark.parametrize("primary", [["--", "hello", "--root", "literal"], ["-"]])
 def test_default_main_preserves_options_named_inputs_and_stdin(
-    explicit, primary, monkeypatch
+    explicit, selector, primary, monkeypatch
 ):
     path = _source("agic(_: Part[], topic: Text):\n  {{_}}\n")
     monkeypatch.setattr("sys.stdin", StringIO("from stdin"))
@@ -325,6 +367,7 @@ def test_default_main_preserves_options_named_inputs_and_stdin(
             [
                 *(["run"] if explicit else []),
                 path,
+                *selector,
                 "--model",
                 "--root",
                 "--dev",
@@ -343,7 +386,7 @@ def test_default_main_preserves_options_named_inputs_and_stdin(
     )
 
 
-@pytest.mark.parametrize("arguments", [[], ["--help"], ["<entry>", "--help"]])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["_", "--help"]])
 def test_main_help_and_missing_input_never_execute(arguments, monkeypatch, capsys):
     path = _source("## Handle the request.\nagic:\n  {{_}}\n")
     monkeypatch.setattr(
@@ -399,7 +442,7 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])
 @pytest.mark.parametrize("file_boundary", [[], ["--"]])
-@pytest.mark.parametrize("tail", [[], ["<entry>"], ["--", "literal --help"]])
+@pytest.mark.parametrize("tail", [[], ["_"], ["--", "literal --help"]])
 def test_explicit_run_preserves_arguments_after_option_boundaries(
     root_boundary, file_boundary, tail, monkeypatch
 ):
@@ -428,7 +471,7 @@ def test_explicit_run_preserves_special_filenames(monkeypatch, name):
     assert len(captured) == 1
 
 
-@pytest.mark.parametrize("tail", [["--help"], ["<entry>", "--help"]])
+@pytest.mark.parametrize("tail", [["--help"], ["_", "--help"]])
 def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, capsys):
     path = _source()
     monkeypatch.setattr(
@@ -447,7 +490,7 @@ def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, cap
         ["run", "--help"],
         ["serve", "--help"],
         ["run", "demo.too", "--help"],
-        ["run", "demo.too", "<entry>", "--help"],
+        ["run", "demo.too", "_", "--help"],
     ],
 )
 def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(

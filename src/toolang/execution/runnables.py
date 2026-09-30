@@ -221,16 +221,22 @@ def resolve_state_runnable_query(
 
 
 def resolve_public_runnable_query(
-    state: AgentState,
+    state: AgentState | Program,
     query: str,
 ) -> ResolvedRunnable:
     """Resolve one singular query with its effective public identity."""
 
-    index = getattr(state, "runnables", None)
+    index = (
+        program_runnable_index(state)
+        if isinstance(state, Program)
+        else getattr(state, "runnables", None)
+    )
     if isinstance(index, Mapping):
         key, entry = _lookup_index_item(index, query)
         if key is not None and entry is not None:
-            module = state.runnable_modules[key]
+            module = (
+                "agent" if isinstance(state, Program) else state.runnable_modules[key]
+            )
             return ResolvedRunnable(
                 name=key,
                 module=module,
@@ -363,6 +369,8 @@ def _lookup_index_item(
     except ValueError:
         parsed = None
     if parsed is not None and parsed.role == "entry" and parsed.line is None:
+        if parsed.name != "_":
+            return None, None
         matches = [
             (key, item)
             for key, item in index.items()

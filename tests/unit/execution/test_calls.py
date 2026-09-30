@@ -163,6 +163,45 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
         harness.store.close()
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("selector", ["_", "{kind}:_"])
+def test_entry_selector_resolves_to_a_lined_run_identity(tmp_path, kind, selector):
+    harness = ExecutionHarness.create(
+        tmp_path, source=f"{kind}(_: Part[]):\n  pass\n", responses=[]
+    )
+    try:
+        spec = resolve_run_request(
+            RunRequest(
+                thread_id="term_test",
+                request_id="entry_selector",
+                runnable=RunnableRequest(
+                    selector.format(kind=kind), CallInput({"_": "hello"})
+                ),
+                model=ModelRequest("test/scripted"),
+                policy=RunPolicy(),
+            ),
+            setup=harness.setup,
+            state=harness.state,
+        )
+        assert spec.bindings.runnable == f"{kind}:<entry:1>"
+    finally:
+        harness.store.close()
+
+
+@pytest.mark.parametrize("selector", ["<entry>", "agic:<entry>", "flow:<entry>"])
+def test_runtime_rejects_unlined_entry_selectors(tmp_path, selector):
+    from toolang.execution.runnables import resolve_public_runnable_query
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="agic():\n  pass\n", responses=[]
+    )
+    try:
+        with pytest.raises((ToolangError, ValueError)):
+            resolve_public_runnable_query(harness.state, selector)
+    finally:
+        harness.store.close()
+
+
 def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,

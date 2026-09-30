@@ -41,8 +41,8 @@ Parse in this order. Do not treat `::agic:` or `::flow:` as a special split.
 2. The runnable is `[kind:]name`. Kind is present only when the first
    `:`-segment is exactly `agic` or `flow`. Otherwise the whole runnable is
    `name`.
-3. `name` is an authored ident, `<entry>`, `<entry:N>`, `<adhoc>`, or
-   `<adhoc:N>`.
+3. `name` is an authored ident, `_`, `<entry:N>`, `<adhoc>`, or `<adhoc:N>`.
+   The parser also recognizes historical `<entry>` labels, but selection rejects them.
 
 A first `:` whose left side is not `agic` or `flow` is not a kind tag.
 `agent:research` is a name, not module `agent`. Write `agent::research` or
@@ -51,14 +51,14 @@ A first `:` whose left side is not `agic` or `flow` is not a kind tag.
 Legal:
 
 ```text
-agic:<entry>
+agic:_
 agic:<entry:3>
 agic:chat
-flow:<entry>
+flow:_
 flow:<entry:1>
 flow:research
 chat
-<entry>
+_
 <entry:3>
 agent::agic:<entry:3>
 agent::chat
@@ -79,7 +79,7 @@ agic:<entry:3>
 flows::research::agic:<adhoc:5>
 ```
 
-Unlined `<entry>` / `agic:<entry>` is a selector alias only. It may resolve
+`_` / `agic:_` / `flow:_` is a selector alias only. It may resolve
 when the module has exactly one unnamed top-level export. It is not a map
 key, not a stored run identity, and not a listing name.
 
@@ -105,7 +105,7 @@ agent/Script module.
 **Lookup**
 
 1. Named ident → public key, exact.
-2. `<entry>` / `agic:<entry>` → the unique public `<entry:N>` if exactly
+2. `_` / `agic:_` / `flow:_` → the unique public `<entry:N>` if exactly
    one exists; otherwise not found / ambiguous.
 3. `<entry:N>` / `agic:<entry:N>` / `agent::agic:<entry:N>` → key
    `<entry:N>`, require `decl.span.line == N`. Kind and module must match
@@ -115,7 +115,7 @@ agent/Script module.
    unnamed `AgicDecl` with `span.line == N`.
 
 Static `run name` still keys only authored names. `hands`, `handoffs`, and
-flow `run` cannot target unnamed decls. `<entry>` is a CLI/Chat selector, not
+flow `run` cannot target unnamed decls. `_` is a CLI/Chat selector, not
 an authored runnable name.
 
 `ResolvedRunnable.name` for an unnamed agent/Script entry is `<entry:3>`.
@@ -134,12 +134,13 @@ agic:chat
 flow:research
 ```
 
-Never store `agic:<entry>` or `agic:<adhoc>` for unnamed or adhoc.
+Never store `agic:_`, `agic:<entry>`, or `agic:<adhoc>` for unnamed or adhoc.
 
 ## Selection
 
-- `too FILE` / Chat idle: unique unnamed entry; `agic:<entry>` may be typed
-  as a selector.
+- `too FILE` and `too FILE _` select the unnamed entry. Chat keeps its current
+  session default; `_`, `agic:_`, or `flow:_` explicitly selects the unnamed entry.
+  The former `<entry>` selector is rejected.
 - `agic:<entry:3>` is the exact / standard ref.
 - Adhoc is not a Script/Chat selector.
 - `run <entry>` / `run <adhoc:5>` invalid source.
@@ -181,7 +182,7 @@ Out: CST changes; RunStore migration; filename public names; unnamed as
 ## Acceptance Tests
 
 1. Unnamed/adhoc AST: `name is None`, span line set.
-2. `agic:<entry>` resolves as a selector; public key and stored ref are
+2. `agic:_` resolves as a selector; public key and stored ref are
    `agic:<entry:3>` / `agent::agic:<entry:3>`.
 3. `agic:<entry:3>`, `agic:chat`, `flow:research` parse. Kind is only the
    `agic`/`flow` tag; `agent:research` is not a module prefix.

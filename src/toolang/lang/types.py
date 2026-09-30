@@ -87,6 +87,8 @@ class RunnableRef:
 
     @property
     def role(self) -> str | None:
+        if self.name == "_":
+            return "entry"
         match = _UNNAMED_RUNNABLE_RE.fullmatch(self.name)
         return None if match is None else match.group("role")
 

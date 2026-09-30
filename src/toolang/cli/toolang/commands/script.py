@@ -200,26 +200,9 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             ctx.exit(2)
 
 
-def _resolve_script_command_name(group: TyperGroup, name: str) -> str | None:
-    if name in group.commands:
-        return name
-    if name in {"<entry>", "entry"} or name.startswith("<entry:"):
-        return _entry_command_name(group)
-    return None
-
-
 def _entry_command_name(commands: object) -> str | None:
     names = getattr(commands, "commands", commands)
-    if isinstance(names, Mapping):
-        if "<entry>" in names:
-            return "<entry>"
-        matches = [
-            name
-            for name in names
-            if isinstance(name, str) and name.startswith("<entry:")
-        ]
-        return matches[0] if len(matches) == 1 else None
-    return None
+    return "_" if isinstance(names, Mapping) and "_" in names else None
 
 
 class _ScriptGroup(OptionalValueGroup, CliGroup):
@@ -270,9 +253,6 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
             requested_kind = None if kind == "runnable" else kind
         else:
             lookup = token
-        resolved = _resolve_script_command_name(self, lookup)
-        if resolved is not None:
-            lookup = resolved
         command = self.get_command(ctx, lookup)
         if separator and kind in {"agic", "flow", "runnable"}:
             if not isinstance(command, _RunnableCommand):
@@ -281,8 +261,6 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
                 raise ValueError(f"runnable is not an agic: {lookup}")
             if requested_kind == "flow" and command._flow is None:
                 raise ValueError(f"runnable is not a flow: {lookup}")
-            args = [lookup, *args[1:]]
-        elif resolved is not None:
             args = [lookup, *args[1:]]
         return super().resolve_command(ctx, args)
 
@@ -411,7 +389,7 @@ def _program_command(
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
     for name, runnable in runnables.items():
-        command_name = "<entry>" if name.startswith("<entry:") else name
+        command_name = "_" if name.startswith("<entry:") else name
         group.add_command(
             _runnable_command(
                 runnable,
@@ -635,16 +613,15 @@ def _materialize_script_runnable_override(
 
     if override.runnable in {None, "default"}:
         return override
-    from toolang.state.runnable_collections import runnable_dataset
+    from toolang.execution.runnables import resolve_public_runnable_query
 
-    dataset = runnable_dataset(program)
-    authored = _public_runnables(program)
-    matches = tuple(
-        item for item in dataset.query(override.runnable) if item.name in authored
-    )
-    if len(matches) != 1:
-        raise ValueError(f"runnable query is unknown or ambiguous: {override.runnable}")
-    return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
+    try:
+        resolved = resolve_public_runnable_query(program, override.runnable)
+    except (ToolangError, ValueError) as exc:
+        raise ValueError(
+            f"runnable query is unknown or ambiguous: {override.runnable}"
+        ) from exc
+    return replace(override, runnable=resolved.ref)
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> CallInput[str] | None:

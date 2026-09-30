@@ -1880,6 +1880,16 @@ def test_script_materializes_input_local_runnable_refs() -> None:
     assert override == RunOverride(runnable="agic:demo")
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("selector", ["_", "{kind}:_"])
+def test_script_materializes_input_local_entry_selector(kind, selector) -> None:
+    override = script._materialize_script_runnable_override(
+        RunOverride(runnable=selector.format(kind=kind)),
+        program=script.Program.from_source(f"{kind}():\n  pass\n"),
+    )
+    assert override == RunOverride(runnable=f"{kind}:<entry:1>")
+
+
 def test_script_materializes_input_local_runnable_queries() -> None:
     override = script._materialize_script_runnable_override(
         RunOverride(runnable="*[kind=agic;name=demo]"),

@@ -38,16 +38,16 @@ class _Snapshot:
         return self.value
 
 
-@pytest.mark.parametrize("runnable", ["agic:echo", "agic:<entry>", "flow:<entry>"])
+@pytest.mark.parametrize("runnable", ["agic:echo", "agic:_", "flow:_"])
 def test_remote_script_uses_a_script_thread_and_native_progress(
     tmp_path: Path,
     capsys,
     runnable: str,
 ) -> None:
     source = _SOURCE
-    if runnable == "agic:<entry>":
+    if runnable == "agic:_":
         source = source.replace("agic echo", "agic")
-    elif runnable == "flow:<entry>":
+    elif runnable == "flow:_":
         source += "\nflow(_: Part[]) -> Part[]:\n  run echo\n"
     harness = ExecutionHarness.create(
         tmp_path,
@@ -99,7 +99,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         assert isinstance(control.payload, RunControlPayload)
         if runnable == "agic:echo":
             assert control.payload.runnable == "agic:echo"
-        elif runnable == "agic:<entry>":
+        elif runnable == "agic:_":
             assert control.payload.runnable.startswith("agent::agic:<entry:")
         else:
             assert control.payload.runnable.startswith("agent::flow:<entry:")

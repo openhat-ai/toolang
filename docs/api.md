@@ -271,13 +271,16 @@ Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
 Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
 outline in normal style with blank lines between sibling steps.
-Top-level Script help identifies `agic:<entry>` as the default when an unnamed
+Top-level Script help identifies `_` as the default when an unnamed
 entry exists and marks `[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It
-lists **Runnables** before Options, with `agic:NAME` / `flow:NAME` labels and
-authored descriptions or `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+lists **Runnables** before Options in name, kind, and description columns. An
+unnamed entry shows `_` with its lined identity and any authored comment. Both
+qualified selectors (`agic:_`, `flow:_`) and `_` select that entry; `<entry>` is
+no longer a selector. Named runnables retain their names and descriptions.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
+`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
+`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
 `-h` / `--help`.
 Common options may appear before or after RUNNABLE, before input. Explicit
 runnable-level scalar values override root values; repeated `--allow` and
