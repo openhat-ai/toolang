@@ -1,8 +1,8 @@
 # Portable Script Projects
 
 Status: Proposed for approval. Problem collection and feature definition only;
-no runtime changes are included. Configuration discovery follows the confirmed
-bounded upward-search rule. Other decisions below are proposed defaults.
+no runtime changes are included. Bounded upward configuration discovery and
+best-effort initialization are confirmed. Other decisions below are proposed defaults.
 
 ## Goal and scope
 
@@ -13,7 +13,7 @@ configuration. Local script calls can access their invocation directory without
 manual workspace registration.
 
 Cover discovery, path resolution, catalog selection, invocation workspaces,
-materialization, diagnostics, and transactional `too init DIR`. Keep resident
+materialization, diagnostics, and best-effort `too init DIR`. Keep resident
 configuration locations and public commands. Do not add project dotenv loading,
 secret storage, remote companion-file fetching, or dependency/version locking.
 Equivalent behavior assumes equivalent Toolang versions, catalogs, credentials,
@@ -192,7 +192,7 @@ relative to the authored config directory, preserve TOML comments, and serialize
 mutations under an authored-config lock. Do not remove implicit workspaces.
 Resident mutation commands use the same path rules and retain their destinations.
 
-## Transactional initialization
+## Best-effort initialization
 
 `too init DIR` creates executable `aide.too` and an English, comment-only
 `toolang.toml` explaining automatic `cwd`, relative workspaces, and the optional
@@ -201,20 +201,18 @@ selection, or default runnable. Do not generate a catalog. Print the generated
 paths, useful commands, and a suggestion to ignore `.toolang/`; do not modify an
 existing `.gitignore` automatically.
 
-If either destination already exists, including a directory or dangling symlink,
-refuse without modifying either. Do not add a force-overwrite option in this scope.
-Stage both complete files on the destination filesystem, serialize Toolang init
-processes, and use no-clobber publication. Record a durable transaction journal
-under `.toolang/` before publishing; publish config before the executable. On
-failure roll back only files still owned by that transaction. Preserve concurrent
-external edits and report their paths instead of deleting them. On interruption,
-the next init or script invocation recovers under the same lock before proceeding:
-complete pairs are finalized; partial pairs are rolled back before retrying.
+Before writing any destination, check every file that init will create. If any
+already exists, including a directory or dangling symlink, report the conflict
+and exit without writing any target file. Do not add a force-overwrite option.
 
-Two sibling files cannot be made simultaneously visible with one portable atomic
-rename. The guarantee is transactional all-or-nothing behavior for Toolang callers,
-with crash recovery; unrelated filesystem readers can observe the brief publication
-interval. Lock/journal files may remain in disposable `.toolang/` after failure.
+After all checks pass, create each file exclusively so a file added concurrently
+cannot be overwritten. Write `toolang.toml` before `aide.too`. If creation or writing
+fails, report the failing path and exit with a nonzero status immediately. Preserve
+all existing files and leave any files already created by this invocation in place,
+including an incomplete file if its write failed. Do not roll back, retry, or
+recover automatically; users inspect and clean up partial output before retrying.
+No init transaction journal or cross-process lock is required. This is best effort,
+not an all-or-nothing operation.
 
 ## Implementation touchpoints and acceptance
 
@@ -238,10 +236,12 @@ interval. Lock/journal files may remain in disposable `.toolang/` after failure.
   CLI context/routing,
   templates, and focused usage documentation. Verify effective sources, secret
   redaction, relative persistence, and no writes through materialized symlinks.
-- Init: cover both collision orders, symlinks/directories, failure on each write
-  and publication, concurrent initializers, process termination/recovery, preserved
-  external edits, executable mode, and successful execution after deleting runtime
-  state. Cover read-only source fallback and fresh bindings after copy/move.
+- Init: cover preflight collisions at either destination with no target writes,
+  symlinks/directories, a file appearing after preflight, concurrent initializers,
+  failure on each creation/write, nonzero failure status, and retention of partial
+  output without overwriting existing files. Verify executable mode and successful
+  execution after deleting runtime state. Cover read-only source fallback and fresh
+  bindings after copy/move.
 
 Keep default tests offline and deterministic; use fault injection and guest-mount
 contract tests rather than live model calls. Implementation must pass Ruff lint
@@ -258,9 +258,9 @@ plans remain applicable except for the local-script initial directory and the
 explicit invocation-binding rules above.
 
 Approval is requested for these proposed defaults, especially catalog naming and
-precedence, implicit `cwd`, environment-only roaming credentials, read-only cache
-fallback, and the recoverable initialization guarantee. No implementation is
-approved or included by this document's submission.
+precedence, implicit `cwd`, environment-only roaming credentials, and read-only
+cache fallback. No implementation is approved or included by this document's
+submission.
 
 The lightweight naming and path-origin choices take cues from
 [uv's configuration discovery](https://docs.astral.sh/uv/concepts/configuration-files/)
