@@ -36,7 +36,7 @@ Use a shared agent by its URL or GitHub shorthand, with no agent configuration r
 
 ```bash
 too https://toolang.ai/lex.too chat  # Practice English with Lex
-too briceyan/dev chat              # Write and review code with Dev
+too briceyan/dev chat                # Write and review code with Dev
 ```
 
 Toolang downloads the `.too` source and its declared dependencies and runs the agent locally. This lets you share an agent as a file, without separate installation or configuration instructions.
