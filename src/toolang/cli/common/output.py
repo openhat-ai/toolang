@@ -183,15 +183,18 @@ def echo_pairs_table(
         pad_edge=False,
         collapse_padding=True,
     )
-    table.add_column("FIELD", no_wrap=True, style="bold bright_cyan")
-    table.add_column("VALUE", no_wrap=False, overflow="fold")
+    table.add_column("INFO", no_wrap=False, overflow="fold")
     for key, value in rows:
-        table.add_row(Text(key), Text(value))
+        table.add_row(Text.assemble((f"{key}:", "bold yellow"), f" {value}"))
+    palette = _info_palette()
     if avatar is None:
         typer.echo()
         if title is not None:
             _INFO_CONSOLE.print(_info_title_block(title))
         _INFO_CONSOLE.print(table)
+        if palette is not None:
+            typer.echo()
+            _INFO_CONSOLE.print(palette)
         typer.echo()
     else:
         avatar_text = avatar if isinstance(avatar, Text) else Text(avatar)
@@ -203,7 +206,23 @@ def echo_pairs_table(
             layout.add_row(Text(""), _info_title_block(title))
         layout.add_row(avatar_text, table)
         layout.add_row(Text(""), Text(""))
+        if palette is not None:
+            layout.add_row(Text(""), palette)
+            layout.add_row(Text(""), Text(""))
         _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 3), expand=False))
+
+
+def _info_palette() -> Text | None:
+    """Show the terminal's standard and bright ANSI backgrounds in two rows."""
+
+    if _INFO_CONSOLE.color_system is None or _INFO_CONSOLE.no_color:
+        return None
+    palette = Text(no_wrap=True, overflow="crop")
+    for index in range(16):
+        if index == 8:
+            palette.append("\n")
+        palette.append("   ", style=f"on color({index})")
+    return palette
 
 
 def created_time(path: Path) -> str:
@@ -296,6 +315,6 @@ def _table_cell_text(cell: TableCell) -> Text:
 def _info_title_block(title: str) -> Table:
     block = Table.grid(padding=(0, 0))
     block.add_column(no_wrap=False)
-    block.add_row(Text(title, style="bold bright_cyan"))
+    block.add_row(Text(title, style="bold green"))
     block.add_row(Text("─" * len(title), style="bright_black"))
     return block

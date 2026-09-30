@@ -9,12 +9,8 @@ from toolang.cli.common.workspaces import (
     resolve_workspaces,
     running_workspaces,
 )
-from toolang.common.config_sources import config_sources
-from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 
 import asyncio
-import os
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 import shutil
@@ -38,7 +34,6 @@ from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
-    load_runtime_environ,
     require_runtime_agent,
     resolve_model_catalog_option,
     ui_base_url,
@@ -46,7 +41,6 @@ from ...common.context import (
 )
 from ...common.output import (
     agent_avatar,
-    created_time,
     echo_pairs_table,
     echo_table,
     parse_utc_timestamp,
@@ -54,7 +48,6 @@ from ...common.output import (
     shorten_home_path,
 )
 from ...common.progress import make_cli_progress
-from . import plugin
 
 
 def new_agent(
@@ -216,82 +209,43 @@ def info_agent(
         else SetupWatcher(layout)
     )
     setup = asyncio.run(watcher.refresh())
-    created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
-    updated_at = runtime_value(runtime_state.get("updated_at"))
-    status_value = status.status
+    status_value = "not running" if status.status == "stopped" else status.status
     if status.status == "running" and started_at != "-":
         online = _human_uptime_since(started_at)
         if online is not None:
             status_value = f"{status.status} ({online})"
+    message = runtime_value(status.message)
+    if status.status not in {"running", "stopped"} and message != "-":
+        status_value = f"{status_value}: {message}"
+    workspace_grants = {**state.workspaces, **selection.additions}
+    runtime_workspaces = runtime_state.get("workspace_additions")
+    if status.status == "running" and isinstance(runtime_workspaces, dict):
+        workspace_grants.update(
+            (name, path)
+            for name, path in runtime_workspaces.items()
+            if isinstance(name, str) and isinstance(path, str)
+        )
     rows = [
         ("Home", shorten_home_path(layout.home)),
-        (
-            "Config",
-            ", ".join(
-                str(source.path)
-                for source in config_sources(layout)
-                if source.path.is_file()
-            )
-            or "none",
-        ),
-        (
-            "Catalog",
-            str(
-                resolve_model_catalog_path(
-                    layout,
-                    explicit=model_catalog,
-                    environ=load_runtime_environ(layout, base_environ=os.environ),
-                )
-            ),
-        ),
-        ("Workspaces", ", ".join(["lab", *state.workspaces, *selection.additions])),
-        (
-            "Workdir",
-            selection.workdir
-            or next(
-                (
-                    f"{name}://"
-                    for name, path in reversed(list(state.workspaces.items()))
-                    if Path(path).is_dir()
-                ),
-                "lab://",
-            ),
-        ),
+        ("Tools", _tools_summary(setup)),
+        ("Models", _models_summary(setup)),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Tools", _tools_summary(setup)),
-        (
-            "Models",
-            _models_summary(
-                setup,
-                runtime_state=runtime_state,
-                running=status.status != "stopped",
-            ),
-        ),
+        ("Workspaces", ", ".join(setup.workspace_grants(workspace_grants))),
         ("Status", status_value),
     ]
-    if status.status == "running" and runtime_state.get("workspace_additions"):
-        rows.append(("Server grants", str(runtime_state["workspace_additions"])))
     if status.status == "stopped":
-        rows.append(("Created", created_at))
         echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
-    message = runtime_value(status.message)
     if runtime_identity is not None and status.status != "stopped":
         rows.append(runtime_identity)
     if status.endpoint:
         rows.append(("API", status.endpoint))
     if status.webui_url:
         rows.append(("WebUI", status.webui_url))
-    if status.status == "running" and started_at != "-":
-        rows.append(("Started", started_at))
-    if status.status != "running" and updated_at != "-":
-        rows.append(("Updated", updated_at))
-    if status.status != "running" and message != "-":
-        rows.append(("Message", message))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 
@@ -344,33 +298,20 @@ def _jobs_summary(layout: AgentLayout) -> str:
     )
 
 
-def _models_summary(
-    setup: AgentSetup,
-    *,
-    runtime_state: dict[str, object],
-    running: bool,
-) -> str:
-    queries: Sequence[str] = ()
-    raw_models = runtime_state.get("models")
-    if running and isinstance(raw_models, list):
-        queries = tuple(
-            value.strip()
-            for item in raw_models
-            if isinstance(item, str) and (value := item.strip())
-        )
-    rows = plugin.model_rows(setup, model_queries=queries or None)
-    provider_count = len({provider for _model, provider, _detail in rows})
+def _models_summary(setup: AgentSetup) -> str:
+    model_count = len(setup.models_effective())
+    provider_count = len(setup.providers_effective())
     return (
-        f"{len(rows)} {'model' if len(rows) == 1 else 'models'}, "
+        f"{model_count} {'model' if model_count == 1 else 'models'}, "
         f"{provider_count} {'provider' if provider_count == 1 else 'providers'}"
     )
 
 
 def _tools_summary(setup: AgentSetup) -> str:
-    dataset = plugin.setup_tool_dataset(setup)
-    set_count = len({item.toolset for item in dataset.items})
+    tools = setup.tools()
+    set_count = len({ref.partition("/")[0] for ref in tools.refs()})
     return (
-        f"{len(dataset.items)} {'tool' if len(dataset.items) == 1 else 'tools'}, "
+        f"{len(tools)} {'tool' if len(tools) == 1 else 'tools'}, "
         f"{set_count} {'toolset' if set_count == 1 else 'toolsets'}"
     )
 

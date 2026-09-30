@@ -3238,7 +3238,107 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
-    assert "stopped" in result.stdout
+    assert "not running" in result.stdout
+
+
+@pytest.mark.parametrize("target_first", [False, True])
+@pytest.mark.parametrize("status", ["stopped", "starting", "running", "failed"])
+def test_agent_info_fields_follow_the_compact_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
+) -> None:
+    from toolang.base.types.model import Model, ModelToolang, Provider
+    from toolang.plugin.models import query
+
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    class _SetupWatcher(_EmptySetupWatcher):
+        async def refresh(self) -> AgentSetup:
+            return materialized_setup(
+                layout=self.layout,
+                providers=(Provider(id="test", name="Test"),),
+                adapters={},
+                models=tuple(
+                    Model(
+                        id=name,
+                        name=name,
+                        _toolang=ModelToolang(provider="test", ready=ready),
+                    )
+                    for name, ready in (
+                        ("first", True),
+                        ("second", True),
+                        ("offline", False),
+                    )
+                ),
+                tools=ToolCollection(),
+                envs={},
+            )
+
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr(
+        query,
+        "match_model_branches",
+        lambda *args, **kwargs: pytest.fail("info must use effective setup models"),
+    )
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda self, **kwargs: agents.AgentStatus(
+            name="alice",
+            status=status,
+            endpoint="http://localhost:8123",
+            api_url="http://localhost:8123/api",
+            webui_url="http://localhost:8123/ui",
+            sandbox="host",
+            message="runtime failed" if status == "failed" else None,
+        ),
+    )
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "state",
+        lambda self: {
+            "started_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "models": ["test/first"],
+            "workspace_additions": {
+                "extra": str(tmp_path),
+                "runtime": str(tmp_path),
+                "invalid": None,
+            },
+        },
+    )
+    monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
+    )
+
+    args = ("alice", "info") if target_first else ("info", "alice")
+    invocation = ("-w", f"extra={tmp_path}") if target_first else ()
+    result = _invoke(root, *args, *invocation)
+
+    assert result.exit_code == 0, result.stderr
+    expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
+    if status != "stopped":
+        expected += ["Sandbox", "PID", "API", "WebUI"]
+    assert [key for key, _value in captured] == expected
+    rows = dict(captured)
+    assert rows["Models"] == "2 models, 1 provider"
+    workspace_names = ["lab"]
+    if target_first or status == "running":
+        workspace_names.append("extra")
+    if status == "running":
+        workspace_names.append("runtime")
+    assert rows["Workspaces"] == ", ".join(workspace_names)
+    status_value = rows["Status"]
+    if status == "stopped":
+        assert status_value == "not running"
+    elif status == "running":
+        assert status_value.startswith("running (up ")
+    elif status == "failed":
+        assert status_value == "failed: runtime failed"
+    else:
+        assert status_value == status
 
 
 def test_agent_info_reports_only_state_published_caps(
