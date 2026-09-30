@@ -164,19 +164,19 @@ class _ScriptHelpFormatter(UIHelpFormatter):
     def _command_rows(self, ctx: Context):
         if not isinstance(ctx.command, TyperGroup):
             return
-        for _title, (marker, label, _description) in super()._command_rows(ctx):
+        for _title, (_marker, label, _description) in super()._command_rows(ctx):
             command = ctx.command.get_command(ctx, label.plain)
             if isinstance(command, _RunnableCommand):
                 kind = "flow" if command._flow is not None else "agic"
                 shown = display_runnable_ref(
                     f"{kind}:{label.plain}",
                     surface="help",
-                )
+                ).removeprefix(f"{kind}:")
                 yield (
                     "Runnables",
                     (
-                        marker,
                         Text(shown, style="cli.command.name"),
+                        Text(kind, style="cli.meta"),
                         Text.from_markup(command.short_help or ""),
                     ),
                 )

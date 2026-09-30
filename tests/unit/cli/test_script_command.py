@@ -1423,14 +1423,14 @@ flow pipeline:
     assert "pipeline" in stdout
     assert "Run the pipeline." in stdout
     descriptions = _help_panel(stdout, "Runnables")
-    assert "agic:visible Run the visible command." in descriptions
-    assert "flow:pipeline Run the pipeline." in descriptions
-    assert "agic:undocumented Agic undocumented" in descriptions
-    assert "flow:undocumented_flow Flow undocumented_flow" in descriptions
+    assert "visible agic Run the visible command." in descriptions
+    assert "pipeline flow Run the pipeline." in descriptions
+    assert "undocumented agic Agic undocumented" in descriptions
+    assert "undocumented_flow flow Flow undocumented_flow" in descriptions
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "agic:<entry>" in descriptions
+    assert "<entry> agic" in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 

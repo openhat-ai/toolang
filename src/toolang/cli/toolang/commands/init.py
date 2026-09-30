@@ -6,6 +6,7 @@ import shlex
 from typing import Annotated
 
 import typer
+from typer._click.exceptions import ClickException
 
 from toolang.catalog.templates import load_template
 
@@ -25,7 +26,7 @@ def init_script(
         config = destination.with_name("toolang.toml")
         for target in (config, destination):
             if target.exists() or target.is_symlink():
-                raise FileExistsError(f"destination already exists: {target}")
+                raise ClickException(f"{target.name} already exists")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with config.open("x", encoding="utf-8") as stream:
             stream.write(
@@ -36,20 +37,15 @@ def init_script(
             stream.write(template.rstrip("\n") + "\n")
             stream.flush()
             os.fchmod(stream.fileno(), os.fstat(stream.fileno()).st_mode | 0o111)
+    except FileExistsError as exc:
+        name = Path(exc.filename).name if exc.filename else directory.name
+        raise ClickException(f"{name} already exists") from exc
     except OSError as exc:
-        raise typer.BadParameter(f"could not initialize script: {exc}") from exc
-    typer.echo(f"Created {config}")
-    typer.echo(f"Created {destination}")
-    typer.echo("Add .toolang/ to your project's Git ignore rules.")
+        raise ClickException(str(exc)) from exc
+    typer.echo("Created aide.too and toolang.toml.")
+    typer.echo("Add .toolang/ to .gitignore.")
     executable = ctx.find_root().info_name or "too"
-    script = shlex.join([executable, str(destination)])
-    examples = (
-        (f"{script} info", "show agent details"),
-        (f"{script} --help", "show runnables and options"),
-        (f"{script} whats_for", "explain the current project"),
-        (f"{script} whats_new", "list updates from the past week"),
+    command = shlex.join(
+        [executable, str(directory.expanduser() / "aide.too"), "--help"]
     )
-    width = max(len(command) for command, _description in examples)
-    typer.echo("\nTry:")
-    for command, description in examples:
-        typer.echo(f"  {command:<{width}}  # {description}")
+    typer.echo(f"Try: {command}")

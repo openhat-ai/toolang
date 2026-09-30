@@ -10,6 +10,7 @@ from rich.cells import cell_len
 import typer
 from typer.core import TyperCommand
 from typer._click.utils import strip_ansi
+from typer._click.exceptions import ClickException
 
 from toolang.catalog.templates import load_template
 from toolang.cli.toolang import main as cli
@@ -81,25 +82,18 @@ def test_init_creates_script_and_portable_config(
     ]
     assert program.flows == ()
     output = capsys.readouterr().out
-    commands = output.split("Try:\n", 1)[1].splitlines()
-    assert [shlex.split(command, comments=True) for command in commands] == [
-        [executable, str(destination), "info"],
-        [executable, str(destination), "--help"],
-        [executable, str(destination), "whats_for"],
-        [executable, str(destination), "whats_new"],
+    lines = output.splitlines()
+    assert lines[:2] == [
+        "Created aide.too and toolang.toml.",
+        "Add .toolang/ to .gitignore.",
     ]
-    for command, description in zip(
-        commands,
-        (
-            "show agent details",
-            "show runnables and options",
-            "explain the current project",
-            "list updates from the past week",
-        ),
-        strict=True,
-    ):
-        assert command.endswith(f"  # {description}")
-    assert len({command.rindex("  # ") for command in commands}) == 1
+    assert len(lines) == 3
+    assert lines[2].startswith("Try: ")
+    assert shlex.split(lines[2].removeprefix("Try: ")) == [
+        executable,
+        str(Path(directory) / "aide.too"),
+        "--help",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -115,7 +109,7 @@ def test_initialized_script_help_exposes_project_helpers(entry, monkeypatch, cap
     output = " ".join(capsys.readouterr().out.split())
     if entry is None:
         for name in ("issue", "fix", "review", "whats_for", "whats_new", "update_i18n"):
-            assert f"agic:{name}" in output
+            assert f"{name} agic" in " ".join(output.split())
         assert "agic:<entry>" not in output
     elif entry in {"issue", "fix", "review"}:
         assert "INPUT" in output
@@ -140,7 +134,7 @@ def test_initialized_script_without_runnable_only_shows_help(
     )
 
     assert cli.main([*(["run"] if explicit else []), "aide.too"]) == 0
-    assert "agic:whats_for" in capsys.readouterr().out
+    assert "whats_for agic" in " ".join(capsys.readouterr().out.split())
 
 
 @pytest.mark.parametrize("entry", ["issue", "fix", "review", "update_i18n"])
@@ -166,8 +160,10 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
         if kind == "symlink":
             target.write_text("keep")
         output.symlink_to(target)
-    assert cli.main(["init", "."]) == 2
-    assert "could not initialize script" in capsys.readouterr().err
+    assert cli.main(["init", "."]) == 1
+    message = capsys.readouterr()
+    assert message.err == f"Error: {filename} already exists\n"
+    assert message.out == ""
     other = "toolang.toml" if filename == "aide.too" else "aide.too"
     assert not (tmp_path / other).exists()
     if kind == "file":
@@ -181,9 +177,9 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
 def test_init_rejects_a_file_as_directory(tmp_path, capsys):
     target = tmp_path / "file"
     target.write_text("keep")
-    assert cli.main(["init", str(target)]) == 2
+    assert cli.main(["init", str(target)]) == 1
     assert target.read_text() == "keep"
-    assert "could not initialize script" in capsys.readouterr().err
+    assert capsys.readouterr().err == "Error: file already exists\n"
 
 
 def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
@@ -195,10 +191,31 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", denied)
-    assert cli.main(["init", "."]) == 2
-    assert "permission denied" in capsys.readouterr().err
+    assert cli.main(["init", "."]) == 1
+    assert capsys.readouterr().err == "Error: permission denied\n"
     assert (tmp_path / "toolang.toml").is_file()
     assert not (tmp_path / "aide.too").exists()
+
+
+@pytest.mark.parametrize("filename", ["aide.too", "toolang.toml"])
+def test_init_reports_a_postcheck_collision(filename, tmp_path, monkeypatch, capsys):
+    original = Path.open
+    output = tmp_path / filename
+
+    def create_before_exclusive_open(self, mode="r", *args, **kwargs):
+        if self == output and mode == "x":
+            with original(self, "w", encoding="utf-8") as stream:
+                stream.write("keep")
+        return original(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", create_before_exclusive_open)
+    assert cli.main(["init", "."]) == 1
+    message = capsys.readouterr()
+    assert message.err == f"Error: {filename} already exists\n"
+    assert message.out == ""
+    assert output.read_text() == "keep"
+    assert (tmp_path / "toolang.toml").is_file()
+    assert (tmp_path / "aide.too").exists() == (filename == "aide.too")
 
 
 def test_concurrent_init_has_one_winner(tmp_path):
@@ -206,7 +223,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
         try:
             init_script(typer.Context(TyperCommand("too"), info_name="too"), tmp_path)
             return True
-        except typer.BadParameter:
+        except ClickException:
             return False
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -406,7 +423,7 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert f"Usage: {executable} {page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
-        assert "agic:<entry>" in " ".join(output.split())
+        assert "<entry> agic" in " ".join(output.split())
         assert output.index("Arguments:") < output.index("Runnables:")
         assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
@@ -489,5 +506,5 @@ def test_script_help_allows_unnamed_entry_with_explicit_main(
     )
     assert cli.main(["run", str(source), "--help"]) == 0
     output = capsys.readouterr().out
-    assert "agic:<entry>" in output or "flow:<entry>" in output
-    assert f"{kind}:main" in output
+    assert f"<entry> {kind}" in " ".join(output.split())
+    assert f"main {kind}" in " ".join(output.split())
