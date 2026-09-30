@@ -15,6 +15,7 @@ import tomlkit
 
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
+from toolang.common.config_sources import read_config
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.query import resolve_query_sentinels
 
@@ -45,10 +46,9 @@ class ConfiguredWorkspaces:
     def list(self) -> dict[str, str]:
         """Return configured workspace paths in config insertion order."""
 
-        content = _read_config_text(self.config_path)
-        if content is None:
-            return {}
-        return self.parse(content)
+        if self.config_path.exists() and not self.config_path.is_file():
+            raise ValueError(f"agent config must be a file: {self.config_path}")
+        return configured_workspaces(read_config(self.config_path))
 
     @staticmethod
     def parse(content: str) -> dict[str, str]:
@@ -69,7 +69,7 @@ class ConfiguredWorkspaces:
         default_name = (
             resolved.name if candidate.name in {"", ".", ".."} else candidate.name
         )
-        selected_name = _normalize_workspace_name(
+        selected_name = normalize_workspace_name(
             name if name is not None else default_name
         )
         with self.write_lock():
@@ -81,7 +81,9 @@ class ConfiguredWorkspaces:
             document = _load_config_document(self.config_path)
             table = _workspace_document_table(document, create=True)
             assert table is not None
-            table[selected_name] = str(resolved)
+            table[selected_name] = os.path.relpath(
+                resolved, self.config_path.parent.resolve()
+            )
             atomic_write_text(self.config_path, tomlkit.dumps(document))
         return selected_name, str(resolved)
 
@@ -119,7 +121,7 @@ def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
         raise ValueError("workspaces config must be a table")
     workspaces: dict[str, str] = {}
     for name, path in cast(Mapping[str, object], raw).items():
-        _validate_workspace_name(name)
+        validate_workspace_name(name)
         if not isinstance(path, str) or not path:
             raise ValueError(f"workspace path must be a non-empty string: {name}")
         if not Path(path).is_absolute():
@@ -247,12 +249,12 @@ def _mutable_value(value: object) -> object:
     return value
 
 
-def _validate_workspace_name(name: str) -> None:
+def validate_workspace_name(name: str) -> None:
     if _WORKSPACE_NAME_RE.fullmatch(name) is None:
         raise ValueError(f"workspace name must use kebab case: {name!r}")
 
 
-def _normalize_workspace_name(name: str) -> str:
+def normalize_workspace_name(name: str) -> str:
     decomposed = unicodedata.normalize("NFKD", name)
     ascii_name = "".join(
         character for character in decomposed if not unicodedata.combining(character)

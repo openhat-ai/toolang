@@ -49,7 +49,7 @@ from toolang.common.github import (
     parse_github_url,
 )
 
-from .config import WORKSPACE_ORDER_KEY
+from .config import WORKSPACE_ORDER_KEY, validate_workspace_name
 from .types import (
     EntryKind,
     EntryShape,
@@ -532,6 +532,7 @@ class AgentState:
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
     allow_overrides: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workspaces: Mapping[str, str] = field(init=False)
     caps_by_module: Mapping[str, tuple[StateCap, ...]] = field(init=False, repr=False)
     skills: Mapping[str, StateCap] = field(init=False, repr=False)
@@ -551,6 +552,7 @@ class AgentState:
             self.home_revision,
             name=self.name,
             allow_overrides=self.allow_overrides,
+            workspace_additions=self.workspace_additions,
         ):
             raise ValueError("Agent State revision does not match its layer revisions")
         if self.revision_dir is not None and self.revision_dir.name != self.revision:
@@ -572,6 +574,16 @@ class AgentState:
                     ordered_workspaces.setdefault(name, raw_workspaces[name])
         for name, path in raw_workspaces.items():
             ordered_workspaces.setdefault(name, path)
+        for name, path in self.workspace_additions.items():
+            validate_workspace_name(name)
+            if name == "lab" or name in ordered_workspaces:
+                raise ValueError(f"temporary workspace name already exists: {name}")
+            if not Path(path).is_absolute():
+                raise ValueError(f"temporary workspace path must be absolute: {name}")
+            ordered_workspaces[name] = path
+        object.__setattr__(
+            self, "workspace_additions", freeze_mapping(self.workspace_additions)
+        )
         object.__setattr__(self, "workspaces", freeze_mapping(ordered_workspaces))
         caps_index = dict(self.caps)
         if tuple(sorted(caps_index)) != tuple(caps_index):
@@ -770,6 +782,7 @@ def compose_agent_state(
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
@@ -777,10 +790,15 @@ def compose_agent_state(
     agent_here = module_caps.get("agent", ())
     return AgentState(
         revision=agent_state_revision(
-            root_revision, home_revision, name=name, allow_overrides=allow_overrides
+            root_revision,
+            home_revision,
+            name=name,
+            allow_overrides=allow_overrides,
+            workspace_additions=workspace_additions,
         ),
         name=name,
         allow_overrides=allow_overrides or {},
+        workspace_additions=workspace_additions or {},
         root_revision=root_revision,
         home_revision=home_revision,
         root_config=root_config,
@@ -877,6 +895,7 @@ def agent_layers_document(
     *,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Describe the exact inputs that identify one prepared Agent State."""
 
@@ -888,6 +907,11 @@ def agent_layers_document(
         "name": name,
         "allow_overrides": dict(allow_overrides or {}),
         "schema": AGENT_STATE_SCHEMA,
+        **(
+            {"workspace_additions": list(workspace_additions.items())}
+            if workspace_additions
+            else {}
+        ),
     }
 
 
@@ -897,12 +921,17 @@ def agent_state_revision(
     *,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> str:
     """Identify the layers and frozen policy used to construct a State."""
 
     encoded = json.dumps(
         agent_layers_document(
-            root_revision, home_revision, name=name, allow_overrides=allow_overrides
+            root_revision,
+            home_revision,
+            name=name,
+            allow_overrides=allow_overrides,
+            workspace_additions=workspace_additions,
         ),
         allow_nan=False,
         ensure_ascii=False,

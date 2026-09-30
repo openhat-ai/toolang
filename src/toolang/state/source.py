@@ -261,6 +261,10 @@ def build_source_manifest(
                 entries.append(cached)
                 continue
         content = item.source.read_bytes()
+        if item.path == "config.toml":
+            from toolang.common.config_sources import rebase_config_content
+
+            content = rebase_config_content(content, item.source.parent)
         if _observe_file(item.source, relative_path=item.path) != item:
             raise SourceChangedError(f"source changed while reading: {item.source}")
         entries.append(
@@ -722,6 +726,10 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
+    if category == "config":
+        from toolang.common.config_sources import rebase_config_content
+
+        content = rebase_config_content(content, path.parent)
     after = _observe_file(path, relative_path=before.path)
     if before != after:
         raise SourceChangedError(f"source changed while reading: {path}")

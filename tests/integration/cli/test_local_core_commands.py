@@ -74,14 +74,15 @@ from toolang.base.protocols.tool import Tool
 runner = CliRunner()
 
 
-def test_workspace_list_reports_empty_collection(tmp_path: Path) -> None:
+def test_workspace_list_includes_implicit_lab(tmp_path: Path) -> None:
     root = tmp_path / "toolang-root"
     _create_agent(root)
 
     result = _invoke(root, "alice", "workspace", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout == "No workspaces found.\n"
+    assert "lab" in result.stdout
+    assert "AVAILABLE" in result.stdout
 
 
 def test_workspace_commands_preserve_config_and_never_delete_data(

@@ -18,6 +18,8 @@ from toolang.api.conversion import (
     parse_user_message,
 )
 from toolang.api.schemas import (
+    InputReferencesRequest,
+    InputReferencesResponse,
     AuthoredRerunRequest,
     AuthoredRunRequest,
     AuthoredRetryRequest,
@@ -135,6 +137,8 @@ async def _run_authored_stream(
 ) -> AsyncIterator[_AcceptedRunStream]:
     thread_id = _run_thread(core, payload.thread_id)
     run_request = parse_authored_run(payload)
+    if run_request.attachments is None:
+        run_request = replace(run_request, attachments={})
     try:
         handle = core.executor.run(
             run_request,
@@ -393,6 +397,20 @@ def resolve_run_workdir(
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"workdir": workdir}
+
+
+@router.post("/input-references", summary="Discover Client File Inputs")
+def input_references(
+    core: AgentCoreDep, payload: InputReferencesRequest
+) -> InputReferencesResponse:
+    from toolang.execution.calls import input_file_references
+
+    state = core.state.current()
+    try:
+        references = input_file_references(state, payload.runnable, payload.input)
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return InputReferencesResponse(state=state.revision, references=references)
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)

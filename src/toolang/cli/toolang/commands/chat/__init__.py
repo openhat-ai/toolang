@@ -9,6 +9,12 @@ import typer
 
 from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
 from toolang.cli.common.context import ModelCatalogOption
+from toolang.cli.common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    single_cd,
+)
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
@@ -43,6 +49,9 @@ def chat_command(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -60,4 +69,6 @@ def chat_command(
         sandbox=sandbox,
         dev=dev,
         limits=limits,
+        workspace=workspace,
+        cd=single_cd(cd),
     )

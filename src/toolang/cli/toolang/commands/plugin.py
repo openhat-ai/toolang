@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from toolang.cli.common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    inspect_workspaces,
+)
+
+from toolang.cli.common.context import context_layout
+
 import asyncio
 import json
 from collections.abc import Sequence
@@ -49,11 +58,19 @@ def list_tools(
         bool,
         typer.Option("--all", "-a", help="Include internal and allow-excluded tools"),
     ] = False,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
+    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
     agent = context_agent(ctx)
     setup = asyncio.run(
         load_setup(
-            AgentLayout.resident(context_root(ctx), agent or "default"),
+            (
+                context_layout(ctx)
+                if agent is not None
+                else AgentLayout.resident(context_root(ctx), "default")
+            ),
             agent_context=agent is not None,
             validate_defaults=False,
         )

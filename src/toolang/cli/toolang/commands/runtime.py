@@ -5,8 +5,16 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import os
+import json
 from pathlib import Path
-from typing import Annotated, TYPE_CHECKING
+from typing import Annotated, TYPE_CHECKING, cast, Literal
+from toolang.cli.common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    resolve_workspaces,
+    single_cd,
+)
 
 import typer
 from typer._click.exceptions import ClickException
@@ -92,6 +100,9 @@ def run(
         int | None,
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -134,6 +145,8 @@ def run(
                 endpoint_host=endpoint_host,
                 dev=dev,
                 background=False,
+                workspace_options=workspace,
+                cd=single_cd(cd),
             )
             with progress.suspended():
                 warn_development_package_source(launch.startup)
@@ -217,6 +230,9 @@ def start(
         int | None,
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -257,6 +273,8 @@ def start(
                 endpoint_host=endpoint_host,
                 dev=dev,
                 background=True,
+                workspace_options=workspace,
+                cd=single_cd(cd),
             )
             with progress.suspended():
                 warn_development_package_source(launch.startup)
@@ -356,6 +374,13 @@ def serve(
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
+    placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
+    workspace_bindings: Annotated[
+        str, typer.Option("--workspace-bindings", hidden=True)
+    ] = "{}",
+    initial_workdir: Annotated[
+        str | None, typer.Option("--initial-workdir", hidden=True)
+    ] = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""
 
@@ -363,7 +388,11 @@ def serve(
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 
     launch_id = os.environ.pop(HOST_LAUNCH_ENV, None)
-    layout = AgentLayout.resident(context_root(ctx), agent)
+    layout = AgentLayout(
+        context_root(ctx),
+        agent,
+        cast(Literal["resident", "roaming", "visiting"], placement),
+    )
     sandbox = os.environ.get("TOOLANG_SANDBOX", "host").strip() or "host"
     environ = load_runtime_environ(layout, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(layout.root)
@@ -380,6 +409,8 @@ def serve(
         compact_override=user_call(resolve_compact_override, environ, compact_model),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         log_spec=log_spec,
+        workspace_additions=json.loads(workspace_bindings),
+        workdir=initial_workdir,
     )
     raise typer.Exit(
         user_call(
@@ -406,10 +437,15 @@ def resolve_startup(
     dev: Path | None,
     background: bool,
     compact_model: str | None = None,
+    workspace_options: list[str] | None = None,
+    cd: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
     root, agent = target.root, target.name
+    workspaces = resolve_workspaces(
+        target, procdir=Path.cwd(), paths=workspace_options or (), cd=cd
+    )
     if target.placement == "resident" and not target.home.is_dir():
         raise ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
@@ -461,6 +497,8 @@ def resolve_startup(
             log_path=log_plan.path,
             temporary_port=target.placement == "visiting" and port is None,
             environ=log_plan.environ,
+            workspace_additions=workspaces.additions,
+            workdir=workspaces.workdir,
         ),
     )
     return RuntimeLaunch(target, startup, log_plan.environ, log_plan)

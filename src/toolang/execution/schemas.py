@@ -449,6 +449,9 @@ class RunRequest:
     workdir: str | None = None
     workdir_base: str | None = None
 
+    attachments: dict[str, Part] | None = None
+    source_revision: str | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str):
             raise TypeError("run request thread ID must be a string")

@@ -92,7 +92,10 @@ class LocalChatSession:
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
+        workspace_additions: Mapping[str, str] | None = None,
+        workdir: str | None = None,
     ) -> None:
+        self._invocation_workdir = workdir
         self.layout = layout
         self.executor_metadata = ChatExecutorMetadata(
             sandbox_selector="host",
@@ -118,6 +121,7 @@ class LocalChatSession:
         )
         self.state_watcher = StateWatcher(
             layout,
+            workspace_additions=workspace_additions,
             allow_overrides={
                 name: value
                 for name, value in allow_overrides.items()
@@ -348,6 +352,8 @@ class LocalChatSession:
         )
 
     def initial_workdir(self, thread_id: str | None) -> str:
+        if self._invocation_workdir is not None:
+            return self.resolve_workdir(self._invocation_workdir, None, thread_id)
         return cast(
             str,
             self._submit(self._initial_workdir(thread_id)).result(),

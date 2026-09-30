@@ -21,6 +21,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import read_config
 from toolang.common.query import (
     resolve_query_sentinels,
 )
@@ -54,13 +55,13 @@ _SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"}
 def load_setup_config(layout: AgentLayout) -> dict[str, object]:
     """Load the root-scoped setup configuration."""
 
-    return _load_toml(layout.root_config)
+    return {} if layout.placement == "roaming" else read_config(layout.root_config)
 
 
 def load_agent_config(layout: AgentLayout) -> dict[str, object]:
     """Load the agent-scoped setup policy configuration."""
 
-    return _load_toml(layout.config)
+    return read_config(layout.config)
 
 
 def capture_setup_config(path: Path) -> tuple[dict[str, object], str | None]:
@@ -92,6 +93,8 @@ def load_root_setup_envs(layout: AgentLayout) -> dict[str, str]:
 def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
     """Load the merged root and agent dotenv values without process values."""
 
+    if layout.placement == "roaming":
+        return {}
     envs = _load_dotenv(layout.root_env)
     envs.update(_load_dotenv(layout.env))
     return envs

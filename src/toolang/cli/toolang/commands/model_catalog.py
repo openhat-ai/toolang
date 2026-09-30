@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from toolang.cli.common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    inspect_workspaces,
+)
+
+from toolang.cli.common.context import context_layout
+
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
@@ -55,9 +64,13 @@ def models_command(
         bool,
         typer.Option("--json", help="Write filtered models as JSON"),
     ] = False,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     """List or export model catalog entries."""
 
+    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     models = setup.models() if all_ else setup.models_effective()
     providers = setup.providers() if all_ else setup.providers_effective()
@@ -113,9 +126,13 @@ def providers_command(
         bool,
         typer.Option("--json", help="Write catalog providers as JSON"),
     ] = False,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     """List catalog providers and runtime availability."""
 
+    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     models = setup.models() if all_ else setup.models_effective()
     base_providers = setup.providers() if all_ else setup.providers_effective()
@@ -183,7 +200,11 @@ def providers_command(
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     agent = context_agent(ctx)
     return (
-        AgentLayout.resident(context_root(ctx), agent or "default"),
+        (
+            context_layout(ctx)
+            if agent is not None
+            else AgentLayout.resident(context_root(ctx), "default")
+        ),
         agent is not None,
     )
 

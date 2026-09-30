@@ -43,6 +43,14 @@ from toolang.lang.types import display_runnable_ref
 from toolang.plugin.models.query import first_model_ref
 
 from ...common.context import load_runtime_environ
+from ...common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    resolve_workspaces,
+    running_workspaces,
+    single_cd,
+)
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
 from ...common.parameters import DEVELOPMENT_WHEEL_HELP, AllowOptions, LimitOptions
@@ -475,6 +483,9 @@ def _runnable_command(
             Path | None,
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
         ] = None,
+        workspace: WorkspaceOptions = None,
+        cd: CdOption = None,
+        no_auto_workspace: NoAutoWorkspaceOption = False,
         items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
     ) -> int:
         assert runnable is not None
@@ -492,6 +503,11 @@ def _runnable_command(
             # Group values have not passed through Typer's callback converters.
             root_dev = inherited.get("dev")
             dev = Path(root_dev) if root_dev is not None else dev
+        workspace = [*inherited.get("workspace", ()), *(workspace or ())]
+        selected_cd = single_cd([*(inherited.get("cd") or ()), *(cd or ())])
+        no_auto_workspace = no_auto_workspace or inherited.get(
+            "no_auto_workspace", False
+        )
         override, input, raw_named = _collect_call(
             runnable, items=tuple(items or ()), stdin=stdin
         )
@@ -510,6 +526,9 @@ def _runnable_command(
             dev=dev,
             save=save,
             quiet=quiet,
+            workspace_options=tuple(workspace),
+            cd=selected_cd,
+            no_auto_workspace=no_auto_workspace,
         )
 
     kind = runnable.kind if runnable is not None else "runnable"
@@ -681,6 +700,9 @@ def _run(
     dev: Path | None,
     save: str | None,
     quiet: bool,
+    workspace_options: tuple[str, ...] = (),
+    cd: str | None = None,
+    no_auto_workspace: bool = False,
 ) -> int:
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
@@ -700,16 +722,32 @@ def _run(
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         layout = agents.materialize_roaming_program(source_path)
+        workspaces = resolve_workspaces(
+            layout,
+            procdir=Path.cwd(),
+            paths=workspace_options,
+            cd=cd,
+            srcdir=source_path.resolve().parent,
+            no_auto=no_auto_workspace,
+            existing=running_workspaces(layout) if cd and "://" in cd else None,
+        )
         session_override = _script_session_override(
             model_body=model_body,
             allow_options=allow_options,
             limit_options=limit_options,
         )
+        if workspaces.workdir is not None:
+            session_override = replace(session_override, workdir=workspaces.workdir)
         with acquire_agent_server(
             layout,
             sandbox=sandbox,
             dev=dev,
             show_progress=not quiet,
+            workspace_additions=(
+                None
+                if cd and "://" in cd and not workspaces.additions
+                else workspaces.additions
+            ),
         ) as server:
             if server is None:
                 store = RunStore(layout.run_store)
@@ -726,6 +764,7 @@ def _run(
                     state = prepare_agent_state(
                         layout,
                         progress=progress.sink,
+                        workspace_additions=workspaces.additions,
                     )
                 result = asyncio.run(
                     _execute(
@@ -906,18 +945,22 @@ async def _execute_remote(
                     ref=materialize_model_selection(models, model.ref),
                 )
             thread = await _create_remote_script_thread(http, client.endpoint)
+            request = RunRequest(
+                thread_id=thread,
+                request_id=f"term_{uuid4().hex}",
+                runnable=RunnableRequest(effective.runnable or runnable, request_input),
+                model=model,
+                policy=RunPolicy(allow=ceilings, limits=effective.limits),
+                workdir=effective.workdir,
+                workdir_base=effective.workdir_base,
+            )
+            from ...common.attachments import capture_attachments
+
+            request = await capture_attachments(
+                http, client.endpoint, request, procdir=Path.cwd()
+            )
             handle = await client.run(
-                RunRequest(
-                    thread_id=thread,
-                    request_id=f"term_{uuid4().hex}",
-                    runnable=RunnableRequest(
-                        effective.runnable or runnable, request_input
-                    ),
-                    model=model,
-                    policy=RunPolicy(allow=ceilings, limits=effective.limits),
-                    workdir=effective.workdir,
-                    workdir_base=effective.workdir_base,
-                ),
+                request,
                 tracer=tracer,
             )
             if on_accept is not None:
@@ -1196,6 +1239,7 @@ async def _execute(
             if name in {"psyches", "skills", "services", "prompts"}
         },
         initial_state=state,
+        workspace_additions=state.workspace_additions,
     )
     setup = await setup_watcher.refresh()
     state = await state_watcher.refresh()

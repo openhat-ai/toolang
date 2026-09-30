@@ -109,9 +109,14 @@ def load_runtime_environ(
 ) -> dict[str, str]:
     """Load root and agent dotenv defaults below explicit process values."""
 
-    merged = _load_dotenv(layout.root_env)
-    merged.update(_load_dotenv(layout.env))
+    merged = {} if layout.placement == "roaming" else _load_dotenv(layout.root_env)
+    if layout.placement != "roaming":
+        merged.update(_load_dotenv(layout.env))
     merged.update(base_environ)
+    if merged.get("TOOLANG_MODEL_CATALOG"):
+        merged["TOOLANG_MODEL_CATALOG"] = str(
+            Path(merged["TOOLANG_MODEL_CATALOG"]).expanduser().resolve()
+        )
     return merged
 
 

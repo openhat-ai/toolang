@@ -30,6 +30,12 @@ from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_write_lock
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import config_sources
+from toolang.plugin.catalogs.models_dev.path import (
+    resolve_model_catalog_path,
+    MODEL_CATALOG_ENV,
+)
+from toolang.base.types.sandbox import SandboxMount
 from toolang.catalog.agent import LocalAgents
 from toolang.plugin.sandboxes.host import process_ref
 from toolang.plugin.config import (
@@ -38,8 +44,6 @@ from toolang.plugin.config import (
 )
 from toolang.plugin.loading import create_sandbox
 from toolang.setup.config import (
-    load_agent_config,
-    load_setup_config,
     load_setup_dotenvs,
 )
 from toolang.up.mounts import (
@@ -112,11 +116,13 @@ async def resolve_launch(
     output: SandboxOutput = "inherit",
     log_path: Path | None = None,
     temporary_port: bool = False,
+    workspace_additions: Mapping[str, str] | None = None,
+    workdir: str | None = None,
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
 
     selected, config = _select_sandbox_configs(
-        (load_setup_config(layout), load_agent_config(layout)),
+        tuple(source.config for source in config_sources(layout)),
         explicit=sandbox,
     )
     artifact = _resolve_dev_artifact(dev, sandbox=selected)
@@ -131,6 +137,8 @@ async def resolve_launch(
         compact_override=compact_override,
         log_spec=log_spec,
         temporary_port=temporary_port,
+        workspace_additions=workspace_additions,
+        workdir=workdir,
     )
     return LaunchSpec(
         serve=serve,
@@ -152,7 +160,7 @@ def resolve_selection(
     """Resolve one explicit or configured sandbox selector without preparing state."""
 
     selected, _config = _select_sandbox_configs(
-        (load_setup_config(layout), load_agent_config(layout)),
+        tuple(source.config for source in config_sources(layout)),
         explicit=explicit,
     )
     return selected
@@ -203,8 +211,25 @@ async def _launch_locked(
         workspace_mounts, workspace_mapping = (
             ((), {})
             if on_host
-            else prepare_workspace_mounts(spec.serve.layout.home, hosted_home)
+            else prepare_workspace_mounts(
+                spec.serve.layout.home,
+                hosted_home,
+                additions=spec.serve.workspace_additions,
+            )
         )
+        catalog_mounts: tuple[SandboxMount, ...] = ()
+        catalog_env: dict[str, str] = {}
+        if not on_host:
+            catalog_path = resolve_model_catalog_path(
+                spec.serve.layout, environ=spec.environ
+            )
+            guest_catalog = hosted_home / ".runtime" / "model-catalog.json"
+            catalog_mounts = (
+                SandboxMount(
+                    local_path=catalog_path, hosted_path=guest_catalog, read_only=True
+                ),
+            )
+            catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
         request = SandboxRequest(
             local_root=spec.serve.layout.root,
             local_home=spec.serve.layout.home,
@@ -228,6 +253,7 @@ async def _launch_locked(
             log_path=spec.log_path,
             envs={
                 **spec.environ,
+                **catalog_env,
                 "TOOLANG_ROOT": str(hosted_root),
                 "TOOLANG_SANDBOX": spec.sandbox,
                 "TOOLANG_WORKSPACE_MOUNTS": json.dumps(workspace_mapping),
@@ -240,6 +266,7 @@ async def _launch_locked(
                 else (
                     *prepare_root_mounts(spec.serve.layout.root, hosted_root),
                     *workspace_mounts,
+                    *catalog_mounts,
                     *prepare_linked_state_source_mounts(
                         spec.serve.layout.root,
                         spec.serve.layout.name,
@@ -688,7 +715,7 @@ def load_state_sandbox(
 
     name, _ = _split_sandbox(state.sandbox)
     configs = merge_plugin_configs(
-        (load_setup_config(layout), load_agent_config(layout)),
+        tuple(source.config for source in config_sources(layout)),
         family="sandbox",
     )
     return create_sandbox(name, config=configs.get(name, {}))

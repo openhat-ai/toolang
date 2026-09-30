@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+from toolang.cli.common.workspaces import (
+    WorkspaceOptions,
+    CdOption,
+    NoAutoWorkspaceOption,
+    resolve_workspaces,
+    running_workspaces,
+)
+from toolang.common.config_sources import config_sources
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
+
 import asyncio
+import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +38,7 @@ from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
+    load_runtime_environ,
     require_runtime_agent,
     resolve_model_catalog_option,
     ui_base_url,
@@ -168,10 +180,25 @@ def info_agent(
         None, help="Agent name, .too file, reference, or URL", hidden=True
     ),
     model_catalog: ModelCatalogOption = None,
+    workspace: WorkspaceOptions = None,
+    cd: CdOption = None,
+    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
+    selection = user_call(
+        resolve_workspaces,
+        layout,
+        procdir=Path.cwd(),
+        paths=workspace or (),
+        cd=cd,
+        srcdir=layout.program.resolve().parent
+        if layout.placement == "roaming"
+        else None,
+        no_auto=no_auto_workspace,
+        existing=running_workspaces(layout) if cd else None,
+    )
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
@@ -199,6 +226,38 @@ def info_agent(
             status_value = f"{status.status} ({online})"
     rows = [
         ("Home", shorten_home_path(layout.home)),
+        (
+            "Config",
+            ", ".join(
+                str(source.path)
+                for source in config_sources(layout)
+                if source.path.is_file()
+            )
+            or "none",
+        ),
+        (
+            "Catalog",
+            str(
+                resolve_model_catalog_path(
+                    layout,
+                    explicit=model_catalog,
+                    environ=load_runtime_environ(layout, base_environ=os.environ),
+                )
+            ),
+        ),
+        ("Workspaces", ", ".join(["lab", *state.workspaces, *selection.additions])),
+        (
+            "Workdir",
+            selection.workdir
+            or next(
+                (
+                    f"{name}://"
+                    for name, path in reversed(list(state.workspaces.items()))
+                    if Path(path).is_dir()
+                ),
+                "lab://",
+            ),
+        ),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
         ("Tools", _tools_summary(setup)),
@@ -212,6 +271,8 @@ def info_agent(
         ),
         ("Status", status_value),
     ]
+    if status.status == "running" and runtime_state.get("workspace_additions"):
+        rows.append(("Server grants", str(runtime_state["workspace_additions"])))
     if status.status == "stopped":
         rows.append(("Created", created_at))
         echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())

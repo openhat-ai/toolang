@@ -69,6 +69,7 @@ from toolang.cli.common.tmux import (
     resolve_launcher,
     resolve_marks,
 )
+from toolang.cli.common.workspaces import resolve_workspaces, running_workspaces
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -110,6 +111,8 @@ def chat_command(
     dev: Path | None = None,
     limits: list[str] | None = None,
     compact_model: str | None = None,
+    workspace: list[str] | None = None,
+    cd: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     if sys.stdin.isatty() and sys.stdout.isatty():
@@ -130,6 +133,8 @@ def chat_command(
                 dev=dev,
                 limits=limits,
                 compact_model=compact_model,
+                workspace=workspace,
+                cd=cd,
             )
             try:
                 run_here = launcher.place_chat(
@@ -149,6 +154,8 @@ def chat_command(
         default_options=defaults,
         limit_options=limits,
         compact_model=compact_model,
+        workspace=workspace,
+        cd=cd,
     )
 
 
@@ -194,6 +201,8 @@ def _chat_argv(
     dev: Path | None,
     limits: list[str] | None,
     compact_model: str | None,
+    workspace: list[str] | None = None,
+    cd: str | None = None,
 ) -> list[str]:
     """Re-enter Chat for the prepared layout using already parsed CLI options."""
 
@@ -223,6 +232,10 @@ def _chat_argv(
     ):
         for value in values or ():
             argv.append(f"{option}={value}")
+    for value in workspace or ():
+        argv.extend(["--workspace", value])
+    if cd is not None:
+        argv.extend(["--cd", cd])
     return argv
 
 
@@ -237,6 +250,8 @@ def _chat_interactive(
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
     compact_model: str | None = None,
+    workspace: list[str] | None = None,
+    cd: str | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
@@ -244,6 +259,8 @@ def _chat_interactive(
         sandbox=sandbox,
         dev=dev,
         compact_model=compact_model,
+        workspace=workspace,
+        cd=cd,
     ) as client:
         setting = client.initial_setting()
         initial_update, clear_runnable = _chat_session_override(
@@ -289,10 +306,20 @@ def _chat_runtime(
     sandbox: str | None,
     dev: Path | None = None,
     compact_model: str | None = None,
+    workspace: list[str] | None = None,
+    cd: str | None = None,
 ) -> Iterator[ChatClient]:
     """Own one local, attached, or temporary-remote Chat session."""
 
     layout = context_layout(ctx)
+    workspaces = user_call(
+        resolve_workspaces,
+        layout,
+        procdir=Path.cwd(),
+        paths=workspace or (),
+        cd=cd,
+        existing=running_workspaces(layout) if cd and "://" in cd else None,
+    )
     compact_override = user_call(resolve_compact_override, {}, compact_model)
     try:
         server_context = acquire_agent_server(
@@ -302,6 +329,11 @@ def _chat_runtime(
             model_catalog=resolve_model_catalog_option(model_catalog),
             ui_base_url=ui_base_url(),
             compact_override=compact_override,
+            **(
+                {"workspace_additions": workspaces.additions}
+                if workspaces.additions
+                else {}
+            ),
         )
         with server_context as server:
             if server is not None:
@@ -310,6 +342,11 @@ def _chat_runtime(
                     remote = RemoteChatSession(
                         server.endpoint,
                         expected_sandbox=server.sandbox,
+                        **(
+                            {"workdir": workspaces.workdir}
+                            if workspaces.workdir
+                            else {}
+                        ),
                     )
                 except (RemoteChatError, ValueError) as exc:
                     if remote is not None:
@@ -325,6 +362,12 @@ def _chat_runtime(
             local = LocalChatSession(
                 layout,
                 sandbox="host",
+                **(
+                    {"workspace_additions": workspaces.additions}
+                    if workspaces.additions
+                    else {}
+                ),
+                **({"workdir": workspaces.workdir} if workspaces.workdir else {}),
                 compact_override=compact_override
                 or user_call(resolve_compact_override, environ),
                 **(

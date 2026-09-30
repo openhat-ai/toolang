@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Mapping
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.common.layout import (
@@ -77,7 +78,7 @@ def prepare_linked_state_source_mounts(
 
 
 def prepare_workspace_mounts(
-    local_home: Path, hosted_home: Path
+    local_home: Path, hosted_home: Path, *, additions: Mapping[str, str] | None = None
 ) -> tuple[tuple[SandboxMount, ...], dict[str, tuple[str, str]]]:
     """Capture mounted grants at sandbox startup; never mount later State additions."""
     scratch_root = ensure_scratch_workspace(local_home)
@@ -88,6 +89,12 @@ def prepare_workspace_mounts(
         for name, source in configured.items()
         if name != IMPLICIT_WORKSPACE_NAME
     )
+    for name, path in (additions or {}).items():
+        if name in grants:
+            raise ValueError(f"temporary workspace name already exists: {name}")
+        if not Path(path).is_dir():
+            raise ValueError(f"temporary workspace is unavailable: {path}")
+        grants[name] = path
     available = sorted(
         (
             (name, source, Path(source).resolve())
@@ -111,6 +118,7 @@ def prepare_workspace_mounts(
             guest = guest_parent / root.relative_to(parent)
         else:
             guest = hosted_home / ".workspaces" / name
-        mounts.append(SandboxMount(local_path=root, hosted_path=guest))
+        if not any(mount.local_path == root for mount in mounts):
+            mounts.append(SandboxMount(local_path=root, hosted_path=guest))
         mapping[name] = (source, str(guest))
     return tuple(mounts), mapping

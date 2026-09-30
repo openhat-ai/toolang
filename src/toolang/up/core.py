@@ -38,6 +38,8 @@ class AgentCore:
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | float | None] | None = None,
         compact_override: ModelOverride | None = None,
+        workspace_additions: Mapping[str, str] | None = None,
+        workdir: str | None = None,
     ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
@@ -59,6 +61,7 @@ class AgentCore:
         )
         self.state = StateWatcher(
             layout,
+            workspace_additions=workspace_additions,
             allow_overrides={
                 name: value
                 for name, value in allow_overrides.items()
@@ -72,6 +75,7 @@ class AgentCore:
             state=lambda: self.state.current(),
             load_state=lambda revision: self.state.load(revision),
             refresh_state=self.state.refresh_result,
+            default_workdir=workdir,
         )
         self.executor.start()
 

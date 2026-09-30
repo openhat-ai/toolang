@@ -52,7 +52,7 @@ def test_init_without_directory_only_shows_help(
     "directory", [".", "existing", "new/nested", "hello world/你好"]
 )
 @pytest.mark.parametrize("executable", ["too", "toolang"])
-def test_init_creates_only_a_packaged_script(
+def test_init_creates_script_and_portable_config(
     directory, executable, tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setattr("sys.argv", [executable])
@@ -64,7 +64,10 @@ def test_init_creates_only_a_packaged_script(
     destination = (tmp_path / directory / "aide.too").resolve()
     assert destination.read_text() == load_template("script").raw_text
     assert destination.read_text().startswith("#!/usr/bin/env too\n")
-    assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {destination}
+    assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {
+        destination,
+        destination.with_name("toolang.toml"),
+    }
     assert neighbor.read_text() == "keep"
     assert destination.stat().st_mode & 0o111 == 0o111
     program = Program.from_source(destination.read_text())
@@ -151,8 +154,9 @@ def test_initialized_script_requires_its_input(entry, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])
-def test_init_never_overwrites_existing_output(kind, tmp_path, capsys):
-    output = tmp_path / "aide.too"
+@pytest.mark.parametrize("filename", ["aide.too", "toolang.toml"])
+def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys):
+    output = tmp_path / filename
     target = tmp_path / "target"
     if kind == "file":
         output.write_text("keep")
@@ -164,6 +168,8 @@ def test_init_never_overwrites_existing_output(kind, tmp_path, capsys):
         output.symlink_to(target)
     assert cli.main(["init", "."]) == 2
     assert "could not initialize script" in capsys.readouterr().err
+    other = "toolang.toml" if filename == "aide.too" else "aide.too"
+    assert not (tmp_path / other).exists()
     if kind == "file":
         assert output.read_text() == "keep"
     elif kind == "symlink":
@@ -191,6 +197,8 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(Path, "open", denied)
     assert cli.main(["init", "."]) == 2
     assert "permission denied" in capsys.readouterr().err
+    assert (tmp_path / "toolang.toml").is_file()
+    assert not (tmp_path / "aide.too").exists()
 
 
 def test_concurrent_init_has_one_winner(tmp_path):

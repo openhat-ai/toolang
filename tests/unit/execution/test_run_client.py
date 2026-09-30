@@ -119,6 +119,8 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
         "policy",
         "workdir",
         "workdir_base",
+        "attachments",
+        "source_revision",
     }
 
 

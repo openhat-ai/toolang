@@ -66,8 +66,10 @@ class StateWatcher:
         *,
         allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         initial_state: AgentState | None = None,
+        workspace_additions: Mapping[str, str] | None = None,
     ) -> None:
         self.layout = layout
+        self._workspace_additions = dict(workspace_additions or {})
         self._allow_overrides = normalize_cap_overrides(allow_overrides)
         self._states: dict[str, AgentState] = {}
         self._state: AgentState | None = None
@@ -79,6 +81,7 @@ class StateWatcher:
         if (
             initial_state is not None
             and initial_state.allow_overrides == self._allow_overrides
+            and initial_state.workspace_additions == self._workspace_additions
         ):
             self._state = self._remember(initial_state)
             self._record_persisted_baseline(initial_state)
@@ -88,7 +91,10 @@ class StateWatcher:
             except (FileNotFoundError, KeyError, TypeError, ValueError):
                 pass
             else:
-                if state.allow_overrides == self._allow_overrides:
+                if (
+                    state.allow_overrides == self._allow_overrides
+                    and state.workspace_additions == self._workspace_additions
+                ):
                     self._state = self._remember(state)
                     self._record_persisted_baseline(state)
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
@@ -267,6 +273,7 @@ class StateWatcher:
                 force=force,
                 allow_overrides=self._allow_overrides,
                 previous=self._state,
+                workspace_additions=self._workspace_additions,
             )
         except StatePreparationError as exc:
             self._record_checked_candidate(

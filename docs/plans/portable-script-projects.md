@@ -1,7 +1,6 @@
 # Portable Script Projects
 
-Status: Definition only; no implementation. Confirmed rules are recorded below.
-Proposals and remaining decisions are listed at the end, before implementation.
+Status: Approved in #640; implemented by the accompanying implementation PR.
 
 ## Goal
 
@@ -73,7 +72,7 @@ Inheritance follows ownership, not merely the existence of an outer TOML field:
 | Shared | Catalogs, reusable caps, plugins, defaults and policies | Root may supply them; agent layers specialize them. |
 | Run | Temporary grants and workdir overrides | Accepted for one Run; never persisted as authored configuration. |
 
-For roaming, the proposed equivalent is script-local agent configuration and
+For roaming, the equivalent is script-local agent configuration and
 shared ancestor configuration. This means ancestor workspace entries do not grant
 access to descendant scripts. No ancestor job discovery or roaming job commands
 are added. Future settings must specify their ownership before joining inheritance.
@@ -141,8 +140,7 @@ Download caches are not authored source workspaces.
 When no workdir has otherwise been selected, retain the existing fallback to the
 last usable workspace. Appending srcdir makes it the default for a fresh script
 call; with repeated `-w`, the last addition supplies the fallback. `--cd` explicitly
-selects its target even when other `-w` options follow it. Proposed validation:
-allow only one `--cd` rather than introduce selection precedence. No separate
+selects its target even when other `-w` options follow it. Allow only one `--cd` rather than introduce selection precedence. No separate
 `--workdir` option or `-C` / `-d` aliases are needed.
 
 ```sh
@@ -197,10 +195,10 @@ This scope does not prescribe new multi-runtime lifecycle infrastructure.
 
 | Behavior | Resident | Roaming | Visiting |
 | --- | --- | --- | --- |
-| Config sources | Shared root + agent home | Shared ancestors + script-local config (proposal) | Existing explicit visiting context; no discovery above download cache |
+| Config sources | Shared root + agent home | Shared ancestors + script-local config | Existing explicit visiting context; no discovery above download cache |
 | Default workdir | Explicit invocation selection, otherwise existing workspace/`lab` default | Local script source by default; explicit `-w` or `--cd` replaces automatic source inclusion | Explicit invocation selection, otherwise existing authorized workspace/`lab` default |
 | Inspection | Same commands, options, and meanings in all placements | Same | Same |
-| Persistent workspace edits | Agent config | Script-local TOML (proposal) | Unavailable without a durable authored project |
+| Persistent workspace edits | Agent config | Script-local TOML | Unavailable without a durable authored project |
 
 Unify `info`, `models`, `providers`, `tools`, and `workspace list` through the
 selected layout, not reconstructed resident paths. Show effective sources, config
@@ -274,23 +272,21 @@ at loading/CLI boundaries and core schemas independent of runtime orchestration.
 Tests stay offline. Implementation requires Ruff, type checks, and the full suite;
 this definition requires source/reference verification and `git diff --check`.
 
-## Remaining decisions and review risks
+## Implementation decisions
 
-1. Confirm the proposed roaming local/shared boundary.
-2. Workspace option forms, source-replacement behavior, last-workspace fallback,
-   directory-based naming, both `--cd` path/URI forms, and support across resident,
-   roaming, and visiting are confirmed. Review
-   repeated-`--cd` rejection. The disable option is `--no-auto-workspace`. Existing history-based
-   selection must not unexpectedly redirect a new script call away from its default
-   source workspace; define that call-site boundary before implementation.
-   Read-only cache fallback remains an optional follow-up;
-   no new multi-runtime lifecycle infrastructure is required.
-3. Finish the attachment transport contract before implementing hosted parity.
-   Existing authored requests carry source/workdir; the typed-input route does not
-   preserve the same workdir/provenance contract. Define transport of client-read
-   Parts without losing prompt expansion, coercion, accepted source revision, or
-   restart behavior. Raw API input without a client context also needs an explicit
-   resource policy; do not silently reinterpret it under a server directory.
+- Reject repeated `--cd`. A fresh script invocation supplies its resolved workdir
+  as an explicit session override, so thread history cannot redirect it.
+- Hosted clients ask `POST /api/v1/runs/input-references` to expand prompts and
+  enumerate file references against one State revision. The client reads those
+  files from procdir and sends typed attachment Parts with that revision in the
+  authored Run request. Run acceptance checks the revision and resolves Content
+  against only those Parts, retaining coercion and prompt provenance. Missing
+  attachments fail; raw HTTP callers receive no implicit server-file resolver.
+  Accepted input is materialized in the existing Run record for restart.
+- Script-local workspace ownership and shared ancestor settings mirror resident
+  home/root ownership. Persistent roaming edits target source-local TOML.
+- Read-only cache fallback and additional runtime lifecycle infrastructure remain
+  outside this change. Guest mount and transport checks use offline fixtures.
 
 Node.js distinguishes [module location](https://nodejs.org/api/modules.html#__dirname)
 from [process directory](https://nodejs.org/api/process.html), while its

@@ -233,6 +233,8 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
 
     assert layout == AgentLayout.roaming(source)
     assert layout.program.is_symlink()
-    assert layout.config.is_symlink()
+    assert layout.config.is_file()
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
-    assert (layout.config.parent / os.readlink(layout.config)).resolve() == config
+    from toolang.common.config_sources import config_sources
+
+    assert config_sources(layout)[-1].path == config

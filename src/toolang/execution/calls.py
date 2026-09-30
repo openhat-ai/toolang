@@ -95,6 +95,23 @@ def resolve_run_request(
 ) -> RunSpec:
     """Resolve one caller request against one setup and state snapshot pair."""
 
+    if (
+        request.source_revision is not None
+        and request.source_revision != state.revision
+    ):
+        raise ValueError(
+            "input source changed; capture attachments again before running"
+        )
+    attachments = request.attachments
+    if attachments is not None:
+
+        def captured_include(reference: str):
+            try:
+                return attachments[reference]
+            except KeyError as exc:
+                raise ValueError(f"client attachment is missing: {reference}") from exc
+
+        include = captured_include
     model_request = require_exact_model_request(
         request.model,
         setup=setup,
@@ -534,3 +551,25 @@ def _strip_final_line_break(source: str) -> str:
     if source.endswith("\n"):
         return source[:-1]
     return source
+
+
+def input_file_references(
+    state: AgentState, runnable_ref: str, input: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Expand authored prompts and enumerate includes without opening any files."""
+    from toolang.base.types.message import TextPart
+
+    resolved = resolve_public_runnable_query(state, runnable_ref)
+    program = state.modules[resolved.module]
+    definitions = prompt_definitions(state, module=resolved.module, program=program)
+    references: dict[str, None] = {}
+
+    def collect(reference: str) -> TextPart:
+        references[reference] = None
+        return TextPart("")
+
+    for source in input.values():
+        resolve_input_parts_with_provenance(
+            source, program=program, include=collect, prompt_definitions=definitions
+        )
+    return tuple(references)

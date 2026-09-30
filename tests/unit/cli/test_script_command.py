@@ -1646,7 +1646,14 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     )
 
     assert result == 0
-    assert captured["runtime"] == {
+    runtime_options = cast(dict[str, object], captured["runtime"])
+    assert isinstance(runtime_options, dict)
+    assert runtime_options.get("workspace_additions")
+    assert {
+        key: value
+        for key, value in runtime_options.items()
+        if key != "workspace_additions"
+    } == {
         "sandbox": "docker",
         "dev": tmp_path / "dist",
         "show_progress": False,
@@ -1669,7 +1676,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
     def embedded_server(_layout: AgentLayout, **_kwargs):
         yield None
 
-    def fail_prepare(_layout: AgentLayout, *, progress) -> None:
+    def fail_prepare(_layout: AgentLayout, *, progress, workspace_additions) -> None:
         progress(
             ProgressEvent(
                 id="agent:demo:home",

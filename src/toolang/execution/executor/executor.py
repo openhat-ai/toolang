@@ -312,6 +312,7 @@ class RunExecutor:
         load_state: StateLoad | None = None,
         refresh_state: StateRefreshSource | None = None,
         include: IncludeSource | None = None,
+        default_workdir: str | None = None,
     ) -> None:
         if (setup is None) != (state is None) or (setup is None) != (
             load_state is None
@@ -326,6 +327,7 @@ class RunExecutor:
         self._load_state = load_state
         self._refresh_state = refresh_state
         self._include = include
+        self._default_workdir_override = default_workdir
         self._persist = _PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
@@ -360,6 +362,14 @@ class RunExecutor:
         names = available_workspaces(setup, state)
         if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
             raise ToolangError("implicit lab workspace is unavailable")
+        if self._default_workdir_override is not None:
+            target, name, relative = resolve_input_path(
+                self._default_workdir_override,
+                self._workdir_context(setup, state, workspace_uri(names[-1])),
+            )
+            if not target.is_dir():
+                raise ToolangError(f"workdir is not a directory: {target}")
+            return workspace_uri(name, relative)
         return workspace_uri(names[-1])
 
     def _valid_workdir(
