@@ -672,11 +672,11 @@ def _help_panel(output: str, title: str) -> str:
 def _assert_common_options(output: str) -> None:
     panel = _help_panel(output, "Options")
     options = (
+        "--quiet",
+        "--out",
         "--model",
         "--workspace",
         "--workdir",
-        "--out",
-        "--quiet",
         "--sandbox",
         "--allow",
         "--limit",
@@ -1429,16 +1429,25 @@ flow pipeline:
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "<entry> agic" in descriptions
+    assert "<entry> agic <entry:2>" in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
 
-@pytest.mark.parametrize("entry_kind", [None, "agic", "flow"])
+@pytest.mark.parametrize(
+    "entry_kind,entry_doc",
+    [
+        (None, ""),
+        ("agic", ""),
+        ("flow", ""),
+        ("agic", "## Entry description.\n"),
+        ("flow", "## Entry description.\n"),
+    ],
+)
 def test_script_help_orders_entry_then_agics_and_flows(
-    tmp_path, monkeypatch, capsys, entry_kind
+    tmp_path, monkeypatch, capsys, entry_kind, entry_doc
 ):
-    entry = f"{entry_kind}:\n  pass\n" if entry_kind else ""
+    entry = f"{entry_doc}{entry_kind}:\n  pass\n" if entry_kind else ""
     source = _write_source(
         tmp_path,
         "flow zebra_flow():\n  pass\n"
@@ -1457,6 +1466,11 @@ def test_script_help_orders_entry_then_agics_and_flows(
     ]
     positions = [panel.index(label) for label in labels]
     assert positions == sorted(positions)
+    if entry_kind:
+        line = 6 if entry_doc else 5
+        description = " Entry description." if entry_doc else ""
+        assert f"<entry> {entry_kind} <entry:{line}>{description}" in panel
+        assert f"{entry_kind.capitalize()} <entry>" not in panel
 
 
 @pytest.mark.parametrize("width", [44, 80])

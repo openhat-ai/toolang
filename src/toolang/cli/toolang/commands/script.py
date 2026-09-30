@@ -438,6 +438,19 @@ def _runnable_command(
 
     def callback(
         ctx: typer.Context,
+        quiet: Annotated[
+            bool,
+            typer.Option("--quiet", "-q", help="Hide run progress"),
+        ] = False,
+        save: Annotated[
+            str | None,
+            typer.Option(
+                "--out",
+                "-o",
+                metavar="FILE",
+                help="Save output to FILE; - for stdout",
+            ),
+        ] = None,
         model: Annotated[
             str | None,
             typer.Option(
@@ -448,19 +461,6 @@ def _runnable_command(
         ] = None,
         workspace: WorkspaceOptions = None,
         workdir: WorkdirOption = None,
-        save: Annotated[
-            str | None,
-            typer.Option(
-                "--out",
-                "-o",
-                metavar="FILE",
-                help="Save output to FILE; - for stdout",
-            ),
-        ] = None,
-        quiet: Annotated[
-            bool,
-            typer.Option("--quiet", "-q", help="Hide run progress"),
-        ] = False,
         sandbox: Annotated[
             str | None,
             typer.Option(
@@ -525,13 +525,16 @@ def _runnable_command(
 
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
+    short_help = doc or f"{kind.capitalize()} {name}"
+    if runnable is not None and runnable.name is None:
+        short_help = f"{identity} {doc}".rstrip()
     command = get_command_from_info(
         CommandInfo(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
             help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}",
-            short_help=doc or f"{kind.capitalize()} {name}",
+            short_help=short_help,
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",
