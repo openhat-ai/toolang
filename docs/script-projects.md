@@ -7,9 +7,13 @@ output; remove or complete it before retrying. Add `.toolang/` to Git ignore rul
 
 For a script with an unnamed entry, omit the runnable or select `_` explicitly:
 `too file.too` and `too file.too _` select the same entry. `agic:_` and `flow:_`
-also check its kind. The former `<entry>` selector is no longer supported;
-`<entry:5>` in help identifies the source line. Input `-` still reads stdin,
+also check its kind. `<entry:5>` in help identifies the source line. Input `-` reads stdin,
 so `too file.too _ -` selects the entry and reads its input from stdin.
+
+Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
+command. Otherwise, `run` can be omitted: `too aide.too whats_for`.
+Add `--help` after the file or runnable for details. File help lists the unnamed
+entry first, then named agics and flows in their source order within each kind.
 
 ## Directories and configuration
 
@@ -47,8 +51,8 @@ or settings from the resident `~/.toolang` root.
 ## Temporary workspaces
 
 Script calls automatically add srcdir as a workspace and select it as workdir.
-Other modes do not add it automatically. These options are available for resident,
-roaming, and visiting agents:
+Other execution modes do not add it automatically. `-w` and `-d` are available for
+resident, roaming, and visiting agents:
 
 ```sh
 ./aide.too whats_for
@@ -62,7 +66,9 @@ roaming, and visiting agents:
 `-d / --workdir [NAME=]<DIR>` adds a grant and selects its root. `--workdir NAME://[SUBDIR]`
 selects an existing grant without adding access. Only one `--workdir` is allowed.
 Any `-w` or `--workdir` suppresses automatic srcdir inclusion; configured grants and
-`lab` remain. Without an explicit selection, the last usable workspace wins.
+`lab` remain. `--no-auto-workspace` disables automatic inclusion for script calls
+and their inspection commands. Without an explicit selection, the last usable
+workspace wins.
 
 Names are inferred from the directory basename and normalized to kebab case:
 `project.v2` becomes `project-v2`. For `.` and `..`, the resolved directory supplies

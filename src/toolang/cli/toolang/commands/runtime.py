@@ -11,7 +11,6 @@ from typing import Annotated, TYPE_CHECKING, cast, Literal
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
-    NoAutoWorkspaceOption,
     resolve_workspaces,
     single_workdir,
 )
@@ -102,7 +101,6 @@ def run(
     ] = None,
     workspace: WorkspaceOptions = None,
     workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -232,7 +230,6 @@ def start(
     ] = None,
     workspace: WorkspaceOptions = None,
     workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),

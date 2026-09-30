@@ -192,6 +192,16 @@ def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
         resolve_model_catalog_path(layout)
 
 
+def test_empty_catalog_path_does_not_become_the_config_directory(tmp_path):
+    source = tmp_path / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    (tmp_path / "toolang.toml").write_text(
+        '[plugin.model_catalog.models_dev]\npath = ""\n'
+    )
+    with pytest.raises(ValueError, match="model catalog path must be nonempty"):
+        materialize_roaming_program(source)
+
+
 def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     import shutil
 

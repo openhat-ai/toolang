@@ -771,3 +771,17 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     assert capsys.readouterr().out == ""
     port_row = next(line for line in help_text.splitlines() if "--port" in line.split())
     assert "<PORT>" in port_row.split()
+
+
+@pytest.mark.parametrize("command", ["chat", "serve", "start"])
+def test_non_script_execution_exposes_only_effective_workspace_options(command):
+    root = typer.main.get_command(app)
+    assert isinstance(root, TyperGroup)
+    lazy = root.commands[command]
+    assert isinstance(lazy, LazyCommand)
+    loaded = lazy.load()
+    options = {
+        option for param in loaded.get_params(Context(loaded)) for option in param.opts
+    }
+    assert {"-w", "--workspace", "-d", "--workdir"} <= options
+    assert "--no-auto-workspace" not in options

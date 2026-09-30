@@ -49,7 +49,7 @@ def rebase_config(config: Mapping[str, object], directory: Path) -> dict[str, ob
             if isinstance(path, str) and path:
                 workspaces[name] = str(resolve_path(path, directory))
     catalog = catalog_config(result)
-    if catalog is not None and isinstance(catalog.get("path"), str):
+    if catalog is not None and isinstance(catalog.get("path"), str) and catalog["path"]:
         catalog["path"] = str(resolve_path(str(catalog["path"]), directory))
     return result
 

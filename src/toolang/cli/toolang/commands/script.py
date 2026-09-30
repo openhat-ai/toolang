@@ -200,9 +200,8 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             ctx.exit(2)
 
 
-def _entry_command_name(commands: object) -> str | None:
-    names = getattr(commands, "commands", commands)
-    return "_" if isinstance(names, Mapping) and "_" in names else None
+def _entry_command_name(group: TyperGroup) -> str | None:
+    return "_" if "_" in group.commands else None
 
 
 class _ScriptGroup(OptionalValueGroup, CliGroup):

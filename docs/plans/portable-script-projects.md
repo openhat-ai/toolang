@@ -9,11 +9,6 @@ Version `.too`, `toolang.toml`, and optional `toolang.catalog.json`. Keep genera
 its source, independently of the directory from which it is invoked. Execution
 still depends on the installed Toolang version, credentials, and external services.
 
-Current gaps: roaming discovers only sibling TOML; a materialized regular config
-can shadow it; workspace paths require absolute values; authored catalog paths
-are overwritten; inspection commands assume resident layouts. Client file inputs
-also resolve differently when execution moves to a server or container.
-
 ## Directory and input rules
 
 | Term | Meaning |
@@ -48,6 +43,14 @@ and one-pass inclusion; included bytes are not recursively parsed.
 Local and hosted calls must use the same client attachment contents. Neither
 workdir changes nor server procdir may reinterpret them. Agic/flow bodies currently
 have no file resolver; adding source-relative attachments there is outside scope.
+
+Hosted clients ask `POST /api/v1/runs/input-references` to expand prompts and
+enumerate file references against one State revision. The client reads those
+files from procdir and sends typed attachment Parts with that revision in the
+authored Run request. Run acceptance checks the revision and resolves Content
+against only those Parts, retaining coercion and prompt provenance. Missing
+attachments fail; raw HTTP callers receive no implicit server-file resolver.
+Accepted input is materialized in the existing Run record for restart.
 
 ## Discovery and ownership
 
@@ -135,6 +138,7 @@ Build grants in order: `lab`, configured entries, then invocation additions.
 Local script calls with neither `-w` nor `--workdir` append srcdir automatically unless
 disabled. Other execution modes never add srcdir automatically. Any `-w` or `--workdir`
 suppresses that automatic addition only; configured grants and `lab` remain.
+Expose `--no-auto-workspace` for script calls and their inspection commands only.
 Download caches are not authored source workspaces.
 
 When no workdir has otherwise been selected, retain the existing fallback to the
@@ -142,6 +146,8 @@ last usable workspace. Appending srcdir makes it the default for a fresh script
 call; with repeated `-w`, the last addition supplies the fallback. `--workdir` explicitly
 selects its target even when other `-w` options follow it. `-d` is its short alias.
 Allow only one workdir option, including mixed `-d` / `--workdir` spellings.
+A fresh script invocation supplies its resolved workdir as an explicit session
+override, so thread history cannot redirect it.
 
 ```sh
 ./aide.too whats_for                         # Default: srcdir
@@ -271,22 +277,6 @@ input parsing and execution/API transport; job input resolution. Keep path resol
 at loading/CLI boundaries and core schemas independent of runtime orchestration.
 Tests stay offline. Implementation requires Ruff, type checks, and the full suite;
 this definition requires source/reference verification and `git diff --check`.
-
-## Implementation decisions
-
-- Reject repeated `--workdir`. A fresh script invocation supplies its resolved workdir
-  as an explicit session override, so thread history cannot redirect it.
-- Hosted clients ask `POST /api/v1/runs/input-references` to expand prompts and
-  enumerate file references against one State revision. The client reads those
-  files from procdir and sends typed attachment Parts with that revision in the
-  authored Run request. Run acceptance checks the revision and resolves Content
-  against only those Parts, retaining coercion and prompt provenance. Missing
-  attachments fail; raw HTTP callers receive no implicit server-file resolver.
-  Accepted input is materialized in the existing Run record for restart.
-- Script-local workspace ownership and shared ancestor settings mirror resident
-  home/root ownership. Persistent roaming edits target source-local TOML.
-- Read-only cache fallback and additional runtime lifecycle infrastructure remain
-  outside this change. Guest mount and transport checks use offline fixtures.
 
 Node.js distinguishes [module location](https://nodejs.org/api/modules.html#__dirname)
 from [process directory](https://nodejs.org/api/process.html), while its

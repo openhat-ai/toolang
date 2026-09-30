@@ -5,11 +5,9 @@ from __future__ import annotations
 import math
 import os
 import re
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
-from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -62,16 +60,6 @@ def load_agent_config(layout: AgentLayout) -> dict[str, object]:
     """Load the agent-scoped setup policy configuration."""
 
     return read_config(layout.config)
-
-
-def capture_setup_config(path: Path) -> tuple[dict[str, object], str | None]:
-    """Parse and fingerprint the same bytes for a persistent catalog identity."""
-
-    try:
-        payload = path.read_bytes()
-    except FileNotFoundError:
-        return {}, None
-    return tomllib.loads(payload.decode("utf-8")), sha256(payload).hexdigest()
 
 
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
@@ -372,12 +360,6 @@ def _default_text(name: str, value: object) -> str:
     if not normalized:
         raise ValueError(f"default {name} must not be empty")
     return normalized
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:

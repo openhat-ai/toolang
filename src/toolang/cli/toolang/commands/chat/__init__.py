@@ -14,7 +14,6 @@ from toolang.common.layout import AgentPlacement
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
-    NoAutoWorkspaceOption,
     single_workdir,
 )
 from toolang.cli.common.parameters import (
@@ -53,7 +52,6 @@ def chat_command(
     compact_model: CompactModelOption = None,
     workspace: WorkspaceOptions = None,
     workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
     placement: Annotated[
         AgentPlacement | None, typer.Option("--placement", hidden=True)
     ] = None,
