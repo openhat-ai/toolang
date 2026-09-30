@@ -119,8 +119,8 @@ selected-workspace field.
 | Option | Meaning |
 | --- | --- |
 | Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace. Each name may be omitted independently. |
-| `--cd PATH` | Add PATH as a temporary workspace and select its root as workdir. |
-| `--workdir URI` (proposal) | Select an existing workspace or subdirectory without adding access. |
+| `--cd [NAME=]PATH` | Add PATH as a temporary workspace and select its root as workdir. |
+| `--cd NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
 | `--no-src-workspace` (proposed spelling) | Disable automatic source inclusion. |
 
 CLI paths resolve from procdir, support home expansion, and must name existing
@@ -138,34 +138,43 @@ When no workdir has otherwise been selected, retain the existing fallback to the
 last usable workspace. Appending srcdir makes it the default for a fresh script
 call; with repeated `-w`, the last addition supplies the fallback. `--cd` explicitly
 selects its target even when other `-w` options follow it. Proposed validation:
-allow one `--cd`, and reject combining it with `--workdir` rather than introduce
-selection precedence. Do not add `-C` or `-d` aliases in this definition.
+allow only one `--cd` rather than introduce selection precedence. No separate
+`--workdir` option or `-C` / `-d` aliases are needed.
 
 ```sh
 ./aide.too whats_for                         # Default: srcdir
 ./module1/file.too whats_for --cd module2    # From their common parent
 ./aide.too whats_for -w another_dir -w .     # Fallback: procdir
-./aide.too whats_for -w target=another_dir   # Explicit workspace name
+./aide.too whats_for --cd target=another_dir # Add and select a named workspace
+./aide.too whats_for --cd repo://src         # Select an existing workspace subdir
 ```
 
-`-w .` grants procdir; it re-adds srcdir only when invoked from there. `--cd`
-accepts a filesystem path, not a workspace name or URI. It uses the same grant
-validation and inferred naming as `-w PATH`. Resolve its convenience behavior at
-the CLI boundary into concrete grants and a canonical workdir URI; the executor
-and sandbox need no `--cd`-specific branch. Pass that same result to inspection,
-Run acceptance, server compatibility checks, and mount preparation.
+`-w .` grants procdir; it re-adds srcdir only when invoked from there. For `--cd`,
+a workspace URI selects an existing grant; otherwise parse `[NAME=]PATH` using the
+same rules as `-w`. A bare name always means a filesystem path. Never infer intent
+from directory/workspace existence or retry failed URI lookup as a path. Resolve
+all invocation grants before selecting a URI, so it may reference any `-w` entry.
+Reject unknown workspace names, missing directories, and URI paths escaping their
+authorized root.
 
-Default naming remains open. Proposed inference reuses the workspace command's
-existing directory-name normalization: use the supplied final component, or the
-resolved final component for `.` and `..`, then normalize to kebab case. Explicit
-names must be valid; an unnameable directory requires `NAME=PATH`. Split the named
-form at the first `=`. `--cd` treats its entire argument as a path. Names must not
-depend on argument count/order or use automatic numeric suffixes.
+Resolve these conveniences at the CLI boundary into concrete grants and a
+canonical workdir URI; the executor and sandbox need no `--cd`-specific branch.
+Pass that same result to inspection, Run acceptance, server compatibility checks,
+and mount preparation.
+
+Infer names from directory basenames, including automatic srcdir; no special
+friendly default is needed. Reuse the workspace command's normalization: use the
+supplied final component, or the resolved final component for `.` and `..`, then
+normalize to kebab case. Use the complete basename, not a file stem that removes
+suffixes: `project.v2` becomes `project-v2`, and `another_dir` becomes `another-dir`.
+Srcdir is already the real source directory. Explicit names must be valid; an
+unnameable directory requires `NAME=PATH` (replace automatic inclusion explicitly
+if necessary). Split named paths at the first `=`; paths containing `=` use that
+form. Names never depend on argument count/order or receive numeric suffixes.
 
 Validate all grants before accepting a Run or starting a new runtime. Duplicate
 names, including configured and implicit grants, fail with both origins even if
-the paths match; the user supplies distinct names. The source workspace's friendly
-name remains undecided and must not overlap cap scope names. Distinct names may
+the paths match; the user supplies distinct names. Distinct names may
 alias a root without duplicating mounts; preserve URI names, nested-root behavior,
 and authored duplicate-root validation. Inspection reports effective grants and
 workdir. Persisted Run restart/resume semantics remain separate.
@@ -230,8 +239,9 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
 - Workspace options: both aliases/forms, multiple omitted names, stable inference,
   normalization collisions, conflicts with configured/implicit names, all-or-nothing
   preflight, source inclusion/disable/replacement, and `.` interpreted from procdir.
-  Verify last-workspace fallback, automatic source appended last, `--cd` adding and
-  selecting its target, selection-only override, option combinations, other modes,
+  Verify basename inference for srcdir, dotted names and `.`/`..`, last-workspace
+  fallback, automatic source appended last, both `--cd` path forms, URI-only
+  selection, unknown/escaping URIs, option combinations, other modes,
   and absence of persistent configuration or procdir changes.
 - Workspaces: source-relative tools, aliases/nesting, equal source stems, relocation,
   recorded bindings, incompatible-server rejection, and host/guest parity. Runtime
@@ -254,11 +264,10 @@ this definition requires source/reference verification and `git diff --check`.
 
 ## Remaining decisions and review risks
 
-1. Confirm the proposed roaming local/shared boundary. Choose the implicit-source
-   workspace name separately; it must not be confused with cap scope names.
+1. Confirm the proposed roaming local/shared boundary.
 2. Workspace option forms, source-replacement behavior, last-workspace fallback,
-   and `--cd PATH` convenience are confirmed. Review inference details, combined
-   selection options, and spelling `--no-src-workspace`. Existing history-based
+   directory-based naming, and both `--cd` path/URI forms are confirmed. Review
+   repeated-`--cd` rejection and spelling `--no-src-workspace`. Existing history-based
    selection must not unexpectedly redirect a new script call away from its default
    source workspace; define that call-site boundary before implementation.
    Read-only cache fallback remains an optional follow-up;
