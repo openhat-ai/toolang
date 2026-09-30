@@ -32,16 +32,14 @@ Download updated or full model catalogs from [openhat-ai/models](https://github.
 
 ## Shared agents
 
-Open a chat with a shared agent using its URL or GitHub shorthand:
+Use a shared agent by its URL or GitHub shorthand, with no agent configuration required:
 
 ```bash
 too https://toolang.ai/lex.too chat  # Practice English with Lex
-too briceyan/dev chat              # Code with dev
+too briceyan/dev chat              # Use dev as your coding assistant
 ```
 
-Lex offers conversation practice and brief corrections. Dev helps implement, explain, and review code, with Python, Rust, and Vocs skills.
-
-Toolang downloads the `.too` source and its declared dependencies and runs the agent locally. To give dev access to the current project, use `too briceyan/dev chat -w .`; otherwise, it uses its `lab` workspace. You can download and review the source before running it.
+Toolang downloads the `.too` source and its declared dependencies and runs the agent locally. This lets you share an agent as a file, without separate installation or configuration instructions.
 
 ## Local agents
 
@@ -49,6 +47,7 @@ Create an agent from scratch, or clone a shared one as a starting point:
 
 ```bash
 too new NAME
+too clone https://toolang.ai/lex.too NAME
 too clone briceyan/dev NAME
 ```
 
