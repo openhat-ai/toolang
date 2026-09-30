@@ -244,3 +244,30 @@ def test_content_store_rejects_corrupted_bytes(tmp_path: Path) -> None:
         assert reopened.get_content(ContentRef("sha256_" + "0" * 64)) is None
     finally:
         reopened.close()
+
+
+def test_run_store_concurrent_first_open(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    connect = sqlite3.connect
+    barrier = threading.Barrier(8)
+
+    def simultaneous_connect(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        barrier.wait(timeout=10)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", simultaneous_connect)
+
+    def open_store(path):
+        store = RunStore(path)
+        try:
+            assert store.list_threads() == []
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for index in range(4):
+            path = tmp_path / f"runs-{index}.db"
+            list(pool.map(open_store, [path] * 8))

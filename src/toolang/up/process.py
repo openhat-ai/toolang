@@ -460,7 +460,12 @@ def _replace_relative_symlink(
         link_path.unlink()
     link_path.parent.mkdir(parents=True, exist_ok=True)
     relative_target = os.path.relpath(target_path, start=link_path.parent)
-    link_path.symlink_to(relative_target)
+    try:
+        link_path.symlink_to(relative_target)
+    except FileExistsError:
+        # Another invocation may have just installed the identical owned link.
+        if not link_path.is_symlink() or link_path.resolve() != target_path.resolve():
+            raise
 
 
 def materialize_visiting_program(

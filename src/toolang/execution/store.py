@@ -23,6 +23,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
+from toolang.common.files import file_write_lock
 from toolang.lang.input import PromptInvocation, CallInput
 from toolang.lang.types import is_agic_ref
 from toolang.lang.types import Array, Struct, Value
@@ -151,7 +152,15 @@ class RunStore:
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         try:
-            self._init_schema()
+            if read_only:
+                self._init_schema()
+            else:
+                # WAL activation and the initial schema check must not race
+                # another opener before SQLite's write transaction begins.
+                with file_write_lock(
+                    db_path.with_name(db_path.name + ".init.lock"), inherit_owner=True
+                ):
+                    self._init_schema()
         except BaseException:
             self._conn.close()
             raise
