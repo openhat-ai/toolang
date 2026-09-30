@@ -229,6 +229,12 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     optional_values = {"dev": OptionalValue(bare_value=".")}
     parser_class = _ScriptParser
 
+    def list_commands(self, ctx: Context) -> list[str]:
+        """Put the entry first; named agics and flows retain their source order."""
+        names = super().list_commands(ctx)
+        entry = _entry_command_name(self)
+        return [entry, *(name for name in names if name != entry)] if entry else names
+
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         rest = super().parse_args(ctx, args)
         if not ctx._protected_args and not ctx.resilient_parsing:

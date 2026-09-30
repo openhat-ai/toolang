@@ -1432,6 +1432,31 @@ flow pipeline:
     assert "The flow proceeds as follows:" not in stdout
 
 
+@pytest.mark.parametrize("entry_kind", [None, "agic", "flow"])
+def test_script_help_orders_entry_then_agics_and_flows(
+    tmp_path, monkeypatch, capsys, entry_kind
+):
+    entry = f"{entry_kind}:\n  pass\n" if entry_kind else ""
+    source = _write_source(
+        tmp_path,
+        "flow zebra_flow():\n  pass\n"
+        "agic zebra_agic():\n  Hello.\n" + entry + "flow alpha_flow():\n  pass\n"
+        "agic alpha_agic():\n  Hello.\n",
+    )
+    monkeypatch.setenv("COLUMNS", "100")
+    assert script.dispatch([], [str(source), "--help"], prog_name="too") == 0
+    panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
+    labels = [
+        *([f"<entry> {entry_kind}"] if entry_kind else []),
+        "zebra_agic agic",
+        "alpha_agic agic",
+        "zebra_flow flow",
+        "alpha_flow flow",
+    ]
+    positions = [panel.index(label) for label in labels]
+    assert positions == sorted(positions)
+
+
 @pytest.mark.parametrize("width", [44, 80])
 def test_script_long_runnable_names_keep_descriptions_visible(
     tmp_path: Path,
