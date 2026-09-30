@@ -122,3 +122,37 @@ def prepare_workspace_mounts(
             mounts.append(SandboxMount(local_path=root, hosted_path=guest))
         mapping[name] = (source, str(guest))
     return tuple(mounts), mapping
+
+
+def prepare_source_mounts(
+    local_root: Path, agent_name: str, hosted_root: Path
+) -> tuple[SandboxMount, ...]:
+    """Mount authored inputs with host-relative configuration paths already bound."""
+    from toolang.common.config_sources import rebase_config_content
+    from toolang.common.files import atomic_write_text
+
+    mounts = {
+        mount.hosted_path: mount
+        for mount in (
+            *prepare_root_mounts(local_root, hosted_root),
+            *prepare_linked_state_source_mounts(local_root, agent_name, hosted_root),
+        )
+    }
+    local_home = local_root / "agents" / agent_name
+    hosted_home = hosted_root / "agents" / agent_name
+    for scope, local, hosted in (
+        ("root", local_root, hosted_root),
+        ("home", local_home, hosted_home),
+    ):
+        config = local / "config.toml"
+        if not config.is_file():
+            continue
+        original = config.read_bytes()
+        resolved = rebase_config_content(original, local)
+        if resolved == original:
+            continue
+        captured = local_home / ".runtime" / "config-inputs" / f"{scope}.toml"
+        atomic_write_text(captured, resolved.decode("utf-8"))
+        target = hosted / "config.toml"
+        mounts[target] = SandboxMount(captured, target, read_only=True)
+    return tuple(mounts.values())

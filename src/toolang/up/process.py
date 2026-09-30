@@ -377,14 +377,32 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
     catalog_target = home / "catalog.json"
     with file_write_lock(home / ".project.lock"):
         previous_catalog = None
+        previous_source = None
         if (
             target.is_file()
             and not target.is_symlink()
             and target.read_text().startswith(PROJECTION_HEADER)
         ):
-            previous_catalog = read_config(target).get("__toolang_catalog__")
+            previous = read_config(target)
+            previous_catalog = previous.get("__toolang_catalog__")
+            previous_source = previous.get("__toolang_source__")
         for path in (target, catalog_target):
             if path.is_symlink():
+                # Relative generated links remain owned when the project moves,
+                # even if the old absolute catalog origin no longer matches.
+                if (
+                    path == catalog_target
+                    and isinstance(previous_catalog, str)
+                    and isinstance(previous_source, str)
+                ):
+                    old_source = Path(previous_source)
+                    old_home = (
+                        old_source.parent / ".toolang" / "agents" / old_source.stem
+                    )
+                    if os.readlink(path) == os.path.relpath(
+                        previous_catalog, start=old_home
+                    ):
+                        continue
                 expected = (
                     (source.with_name("toolang.toml"),)
                     if path == target

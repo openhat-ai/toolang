@@ -47,8 +47,7 @@ from toolang.setup.config import (
     load_setup_dotenvs,
 )
 from toolang.up.mounts import (
-    prepare_linked_state_source_mounts,
-    prepare_root_mounts,
+    prepare_source_mounts,
     prepare_workspace_mounts,
 )
 from toolang.up.records import SandboxState
@@ -264,10 +263,9 @@ async def _launch_locked(
                 ()
                 if on_host
                 else (
-                    *prepare_root_mounts(spec.serve.layout.root, hosted_root),
                     *workspace_mounts,
                     *catalog_mounts,
-                    *prepare_linked_state_source_mounts(
+                    *prepare_source_mounts(
                         spec.serve.layout.root,
                         spec.serve.layout.name,
                         hosted_root,

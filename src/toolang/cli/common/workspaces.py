@@ -72,8 +72,12 @@ def resolve_workspaces(
     """Validate the whole invocation before preparing state or starting a runtime."""
     cd = single_cd(cd)
     configured = ConfiguredWorkspaces(layout.config).list()
-    grants = {"lab": str(layout.home / "lab"), **configured, **(existing or {})}
+    configured.pop("lab", None)  # The implicit grant owns this reserved name.
+    grants = {"lab": str(layout.home / "lab"), **configured}
     origins = {name: f"configuration ({path})" for name, path in grants.items()}
+    # Existing bindings are a selection context, not new declarations. The server
+    # acquisition boundary checks compatibility with explicit invocation grants.
+    grants.update(existing or {})
     additions: dict[str, str] = {}
 
     def add(value: str, origin: str) -> str:

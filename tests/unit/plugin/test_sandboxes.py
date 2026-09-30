@@ -1478,3 +1478,31 @@ def _link_guest_utilities(directory: Path) -> None:
         assert source is not None
         (directory / name).symlink_to(source)
     _write_executable(directory / "uname", "#!/bin/sh\nprintf 'Linux\\n'\n")
+
+
+@pytest.mark.parametrize("shadowed", [False, True])
+def test_docker_preserves_already_mounted_catalog_input(tmp_path, shadowed):
+    request = _request(tmp_path)
+    catalog = tmp_path / "selected.json"
+    catalog.write_text("{}")
+    mounted = SandboxMount(
+        catalog, request.hosted_home / ".runtime/model-catalog.json", read_only=True
+    )
+    request = replace(
+        request,
+        envs={MODEL_CATALOG_ENV: str(mounted.hosted_path)},
+        mounts=(*request.mounts, mounted),
+        dotenv_envs={MODEL_CATALOG_ENV: str(tmp_path / "unused-missing.json")}
+        if shadowed
+        else {},
+    )
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    assert plan.mounts.count(mounted) == 1
+    env_mount = next(
+        mount
+        for mount in plan.mounts
+        if mount.hosted_path == request.hosted_home / ".env"
+    )
+    assert dotenv_values(env_mount.local_path, interpolate=False)[
+        MODEL_CATALOG_ENV
+    ] == str(mounted.hosted_path)

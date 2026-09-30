@@ -166,3 +166,26 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
     assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
     if layout.placement != "resident":
         assert argv[argv.index("--placement") + 1] == layout.placement
+
+
+def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
+    layout, tmp_path
+):
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    selected = resolve_workspaces(
+        layout,
+        procdir=tmp_path,
+        paths=["repo=repo"],
+        cd="repo://src",
+        existing={"repo": str(root)},
+    )
+    assert selected.additions == {"repo": str(root)}
+    assert selected.workdir == "repo://src"
+
+
+def test_configured_lab_does_not_replace_the_implicit_workspace(layout, tmp_path):
+    layout.config.write_text('[workspaces]\nlab = "/unavailable-authored-lab"\n')
+    (layout.home / "lab" / "src").mkdir(parents=True)
+    selected = resolve_workspaces(layout, procdir=tmp_path, cd="lab://src")
+    assert selected.workdir == "lab://src"

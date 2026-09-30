@@ -63,7 +63,9 @@ Names are inferred from the directory basename and normalized to kebab case:
 the name. Duplicate names fail; use `NAME=PATH` to choose another name. Split only
 at the first `=`; `=./foo=bar` infers a name for the path `./foo=bar`.
 
-Grants are fixed for each accepted Run and inherited by its children. An existing
+Grants are fixed for each accepted Run and inherited by its children. Guest startup
+resolves relative configuration paths on the host and mounts the resulting
+snapshots. Restart the guest to refresh those captured configuration files. An existing
 server cannot be rebound to different local directories; stop it before changing
 its grants. Use `--cd NAME://SUBDIR` to select an existing server workspace.
 

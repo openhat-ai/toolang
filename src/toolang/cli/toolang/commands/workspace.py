@@ -83,6 +83,7 @@ def list_workspaces(
 ) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
+    existing = running_workspaces(layout) if cd else {}
     selection = user_call(
         resolve_workspaces,
         layout,
@@ -93,11 +94,14 @@ def list_workspaces(
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto_workspace,
-        existing=running_workspaces(layout) if cd else None,
+        existing=existing,
     )
+    configured = user_call(ConfiguredWorkspaces(layout.config).list)
+    configured.pop("lab", None)
     workspaces = {
         "lab": str(layout.home / "lab"),
-        **user_call(ConfiguredWorkspaces(layout.config).list),
+        **configured,
+        **existing,
         **selection.additions,
     }
     echo_table(

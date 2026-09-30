@@ -190,3 +190,20 @@ def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
     assert resolve_model_catalog_path(layout, explicit=explicit) == explicit
     with pytest.raises(ValueError, match="not a file"):
         resolve_model_catalog_path(layout)
+
+
+def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
+    import shutil
+
+    original = tmp_path / "original"
+    original.mkdir()
+    source = original / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    (original / "toolang.catalog.json").write_text("{}")
+    materialize_roaming_program(source)
+    copied = tmp_path / "copied"
+    shutil.copytree(original, copied, symlinks=True)
+    (copied / "toolang.catalog.json").unlink()
+    layout = materialize_roaming_program(copied / "aide.too")
+    assert not (layout.home / "catalog.json").is_symlink()
+    assert (original / "toolang.catalog.json").is_file()
