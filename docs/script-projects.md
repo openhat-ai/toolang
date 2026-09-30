@@ -47,15 +47,15 @@ roaming, and visiting agents:
 ```sh
 ./aide.too whats_for
 ./aide.too whats_for -w another_dir -w .
-./aide.too whats_for --cd project=../project
-./aide.too whats_for --cd repo://src
+./aide.too whats_for --workdir project=../project
+./aide.too whats_for --workdir repo://src
 ./aide.too whats_for --no-auto-workspace
 ```
 
 `-w` / `--workspace [NAME=]PATH` adds a temporary grant and can be repeated.
-`--cd [NAME=]PATH` adds a grant and selects its root. `--cd NAME://[SUBDIR]`
-selects an existing grant without adding access. Only one `--cd` is allowed.
-Any `-w` or `--cd` suppresses automatic srcdir inclusion; configured grants and
+`-d / --workdir [NAME=]PATH` adds a grant and selects its root. `--workdir NAME://[SUBDIR]`
+selects an existing grant without adding access. Only one `--workdir` is allowed.
+Any `-w` or `--workdir` suppresses automatic srcdir inclusion; configured grants and
 `lab` remain. Without an explicit selection, the last usable workspace wins.
 
 Names are inferred from the directory basename and normalized to kebab case:
@@ -67,7 +67,7 @@ Grants are fixed for each accepted Run and inherited by its children. Guest star
 resolves relative configuration paths on the host and mounts the resulting
 snapshots. Restart the guest to refresh those captured configuration files. An existing
 server cannot be rebound to different local directories; stop it before changing
-its grants. Use `--cd NAME://SUBDIR` to select an existing server workspace.
+its grants. Use `--workdir NAME://SUBDIR` to select an existing server workspace.
 
 `too ./aide.too info` and `too ./aide.too workspace list` show configuration and
 workspace information. Workspace listing reports the current invocation's workdir

@@ -33,7 +33,7 @@ def layout(request, tmp_path):
 def test_paths_names_and_first_equals(layout, tmp_path, argument, expected):
     path = argument.partition("=")[2] if "=" in argument else argument
     (tmp_path / path).mkdir()
-    invocation = resolve_workspaces(layout, procdir=tmp_path, cd=argument)
+    invocation = resolve_workspaces(layout, procdir=tmp_path, workdir=argument)
     assert invocation.workdir == f"{expected}://"
     assert invocation.additions == {expected: str(tmp_path / path)}
     assert not layout.config.exists()
@@ -63,11 +63,11 @@ def test_uri_selection_and_last_workspace_fallback(layout, tmp_path):
         resolve_workspaces(layout, procdir=tmp_path, paths=paths).workdir == "last://"
     )
     selected = resolve_workspaces(
-        layout, procdir=tmp_path, paths=paths, cd="first://src"
+        layout, procdir=tmp_path, paths=paths, workdir="first://src"
     )
     assert selected.workdir == "first://src"
     layout.config.write_text('[workspaces]\nrepo = "../../../first"\n')
-    existing = resolve_workspaces(layout, procdir=tmp_path, cd="repo://src")
+    existing = resolve_workspaces(layout, procdir=tmp_path, workdir="repo://src")
     assert existing.additions == {}
     assert existing.workdir == "repo://src"
 
@@ -83,10 +83,10 @@ def test_conflicts_fail_without_writing_config(layout, tmp_path, paths):
     assert not layout.config.exists()
 
 
-@pytest.mark.parametrize("cd", ["missing://", "lab://../escape", "=", "name=", ""])
-def test_invalid_selection_rejected(layout, tmp_path, cd):
+@pytest.mark.parametrize("workdir", ["missing://", "lab://../escape", "=", "name=", ""])
+def test_invalid_selection_rejected(layout, tmp_path, workdir):
     with pytest.raises((ValueError, ToolangError)):
-        resolve_workspaces(layout, procdir=tmp_path, cd=cd)
+        resolve_workspaces(layout, procdir=tmp_path, workdir=workdir)
 
 
 def test_temporary_bindings_survive_independent_runs_and_reload(layout, tmp_path):
@@ -120,7 +120,7 @@ def test_existing_server_grant_can_be_selected_without_adding(layout, tmp_path):
     selected = resolve_workspaces(
         layout,
         procdir=tmp_path,
-        cd="repo://src",
+        workdir="repo://src",
         existing={"repo": str(root)},
         srcdir=tmp_path,
     )
@@ -128,11 +128,11 @@ def test_existing_server_grant_can_be_selected_without_adding(layout, tmp_path):
     assert selected.workdir == "repo://src"
 
 
-def test_repeated_cd_is_rejected(layout, tmp_path):
+def test_repeated_workdir_is_rejected(layout, tmp_path):
     import typer
 
     with pytest.raises(typer.BadParameter, match="only be specified once"):
-        resolve_workspaces(layout, procdir=tmp_path, cd=["lab://", "lab://"])
+        resolve_workspaces(layout, procdir=tmp_path, workdir=["lab://", "lab://"])
 
 
 def test_copied_config_rebases_relative_workspaces_in_cached_state(tmp_path):
@@ -177,7 +177,7 @@ def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
         layout,
         procdir=tmp_path,
         paths=["repo=repo"],
-        cd="repo://src",
+        workdir="repo://src",
         existing={"repo": str(root)},
     )
     assert selected.additions == {"repo": str(root)}
@@ -187,5 +187,5 @@ def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
 def test_configured_lab_does_not_replace_the_implicit_workspace(layout, tmp_path):
     layout.config.write_text('[workspaces]\nlab = "/unavailable-authored-lab"\n')
     (layout.home / "lab" / "src").mkdir(parents=True)
-    selected = resolve_workspaces(layout, procdir=tmp_path, cd="lab://src")
+    selected = resolve_workspaces(layout, procdir=tmp_path, workdir="lab://src")
     assert selected.workdir == "lab://src"

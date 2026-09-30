@@ -112,7 +112,7 @@ def chat_command(
     limits: list[str] | None = None,
     compact_model: str | None = None,
     workspace: list[str] | None = None,
-    cd: str | None = None,
+    workdir: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     if sys.stdin.isatty() and sys.stdout.isatty():
@@ -134,7 +134,7 @@ def chat_command(
                 limits=limits,
                 compact_model=compact_model,
                 workspace=workspace,
-                cd=cd,
+                workdir=workdir,
             )
             try:
                 run_here = launcher.place_chat(
@@ -155,7 +155,7 @@ def chat_command(
         limit_options=limits,
         compact_model=compact_model,
         workspace=workspace,
-        cd=cd,
+        workdir=workdir,
     )
 
 
@@ -202,7 +202,7 @@ def _chat_argv(
     limits: list[str] | None,
     compact_model: str | None,
     workspace: list[str] | None = None,
-    cd: str | None = None,
+    workdir: str | None = None,
 ) -> list[str]:
     """Re-enter Chat for the prepared layout using already parsed CLI options."""
 
@@ -236,8 +236,8 @@ def _chat_argv(
             argv.append(f"{option}={value}")
     for value in workspace or ():
         argv.extend(["--workspace", value])
-    if cd is not None:
-        argv.extend(["--cd", cd])
+    if workdir is not None:
+        argv.extend(["--workdir", workdir])
     return argv
 
 
@@ -253,7 +253,7 @@ def _chat_interactive(
     limit_options: list[str] | None = None,
     compact_model: str | None = None,
     workspace: list[str] | None = None,
-    cd: str | None = None,
+    workdir: str | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
@@ -262,7 +262,7 @@ def _chat_interactive(
         dev=dev,
         compact_model=compact_model,
         workspace=workspace,
-        cd=cd,
+        workdir=workdir,
     ) as client:
         setting = client.initial_setting()
         initial_update, clear_runnable = _chat_session_override(
@@ -309,7 +309,7 @@ def _chat_runtime(
     dev: Path | None = None,
     compact_model: str | None = None,
     workspace: list[str] | None = None,
-    cd: str | None = None,
+    workdir: str | None = None,
 ) -> Iterator[ChatClient]:
     """Own one local, attached, or temporary-remote Chat session."""
 
@@ -319,8 +319,8 @@ def _chat_runtime(
         layout,
         procdir=Path.cwd(),
         paths=workspace or (),
-        cd=cd,
-        existing=running_workspaces(layout) if cd and "://" in cd else None,
+        workdir=workdir,
+        existing=running_workspaces(layout) if workdir and "://" in workdir else None,
     )
     compact_override = user_call(resolve_compact_override, {}, compact_model)
     try:

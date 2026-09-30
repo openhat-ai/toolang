@@ -782,7 +782,7 @@ def test_chat_reentry_preserves_placement_and_config_rules(
         observed["sources"] = config_sources(current)
         observed["env"] = load_runtime_environ(current, base_environ={})
         observed["workspace"] = kwargs["workspace"]
-        observed["cd"] = kwargs["cd"]
+        observed["workdir"] = kwargs["workdir"]
 
     monkeypatch.setattr(chat, "chat_command", reentered)
     argv = chat._chat_argv(
@@ -796,11 +796,11 @@ def test_chat_reentry_preserves_placement_and_config_rules(
         limits=None,
         compact_model=None,
         workspace=["repo=."],
-        cd="repo://",
+        workdir="repo://",
     )
     assert cli.main(argv[3:]) == 0
     assert observed["layout"] == layout
     assert observed["sources"] == config_sources(layout)
     assert observed["workspace"] == ["repo=."]
-    assert observed["cd"] == "repo://"
+    assert observed["workdir"] == "repo://"
     assert ("TEST_REENTRY_DOTENV" in observed["env"]) == (placement != "roaming")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     inspect_workspaces,
 )
@@ -65,12 +65,12 @@ def models_command(
         typer.Option("--json", help="Write filtered models as JSON"),
     ] = False,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     """List or export model catalog entries."""
 
-    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
+    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     models = setup.models() if all_ else setup.models_effective()
     providers = setup.providers() if all_ else setup.providers_effective()
@@ -127,12 +127,12 @@ def providers_command(
         typer.Option("--json", help="Write catalog providers as JSON"),
     ] = False,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
+    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     models = setup.models() if all_ else setup.models_effective()
     base_providers = setup.providers() if all_ else setup.providers_effective()

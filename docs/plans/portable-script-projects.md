@@ -118,41 +118,41 @@ selected-workspace field.
 | Option | Meaning |
 | --- | --- |
 | Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace; `=PATH` also infers its name. |
-| `--cd [NAME=]PATH` | Add PATH and select its root as workdir; `=PATH` also infers its name. |
-| `--cd NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
+| `-d / --workdir [NAME=]PATH` | Add PATH and select its root as workdir; `=PATH` also infers its name. |
+| `--workdir NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
 | `--no-auto-workspace` | Do not automatically add the script directory as a workspace. |
 
 CLI paths resolve from procdir, support home expansion, and must name existing
 directories. These options never change procdir, attachment origins, or authored
-configuration. Support `-w` and all `--cd` forms for resident, roaming, and visiting
+configuration. Support `-w` and all `--workdir` forms for resident, roaming, and visiting
 placements through local execution/Chat/hosting entry points, with identical
 parsing and validation. This scope is confirmed, not limited to script calls.
-For an already running remote server, `--cd NAME://[SUBDIR]` may select an existing
+For an already running remote server, `--workdir NAME://[SUBDIR]` may select an existing
 authorized workspace; reject client-local path grants with an actionable error
 rather than treating them as remote paths.
 
 Build grants in order: `lab`, configured entries, then invocation additions.
-Local script calls with neither `-w` nor `--cd` append srcdir automatically unless
-disabled. Other execution modes never add srcdir automatically. Any `-w` or `--cd`
+Local script calls with neither `-w` nor `--workdir` append srcdir automatically unless
+disabled. Other execution modes never add srcdir automatically. Any `-w` or `--workdir`
 suppresses that automatic addition only; configured grants and `lab` remain.
 Download caches are not authored source workspaces.
 
 When no workdir has otherwise been selected, retain the existing fallback to the
 last usable workspace. Appending srcdir makes it the default for a fresh script
-call; with repeated `-w`, the last addition supplies the fallback. `--cd` explicitly
-selects its target even when other `-w` options follow it. Allow only one `--cd` rather than introduce selection precedence. No separate
-`--workdir` option or `-C` / `-d` aliases are needed.
+call; with repeated `-w`, the last addition supplies the fallback. `--workdir` explicitly
+selects its target even when other `-w` options follow it. `-d` is its short alias.
+Allow only one workdir option, including mixed `-d` / `--workdir` spellings.
 
 ```sh
 ./aide.too whats_for                         # Default: srcdir
-./module1/file.too whats_for --cd module2    # From their common parent
+./module1/file.too whats_for --workdir module2    # From their common parent
 ./aide.too whats_for -w another_dir -w .     # Fallback: procdir
-./aide.too whats_for --cd target=another_dir # Add and select a named workspace
-./aide.too whats_for --cd repo://src         # Select an existing workspace subdir
-./aide.too whats_for --cd =./foo=bar         # Path ./foo=bar; infer its name
+./aide.too whats_for --workdir target=another_dir # Add and select a named workspace
+./aide.too whats_for --workdir repo://src         # Select an existing workspace subdir
+./aide.too whats_for --workdir =./foo=bar         # Path ./foo=bar; infer its name
 ```
 
-`-w .` grants procdir; it re-adds srcdir only when invoked from there. For `--cd`,
+`-w .` grants procdir; it re-adds srcdir only when invoked from there. For `--workdir`,
 an argument starting with a workspace URI (`NAME://`) selects an existing grant;
 otherwise parse `[NAME=]PATH` using the same rules as `-w`. A leading `=` forces
 path interpretation with an inferred name, even if the path contains `://`. A bare name always means a filesystem path. Never infer intent
@@ -162,7 +162,7 @@ Reject unknown workspace names, missing directories, and URI paths escaping thei
 authorized root.
 
 Resolve these conveniences at the CLI boundary into concrete grants and a
-canonical workdir URI; the executor and sandbox need no `--cd`-specific branch.
+canonical workdir URI; the executor and sandbox need no `--workdir`-specific branch.
 Pass that same result to inspection, Run acceptance, server compatibility checks,
 and mount preparation.
 
@@ -196,7 +196,7 @@ This scope does not prescribe new multi-runtime lifecycle infrastructure.
 | Behavior | Resident | Roaming | Visiting |
 | --- | --- | --- | --- |
 | Config sources | Shared root + agent home | Shared ancestors + script-local config | Existing explicit visiting context; no discovery above download cache |
-| Default workdir | Explicit invocation selection, otherwise existing workspace/`lab` default | Local script source by default; explicit `-w` or `--cd` replaces automatic source inclusion | Explicit invocation selection, otherwise existing authorized workspace/`lab` default |
+| Default workdir | Explicit invocation selection, otherwise existing workspace/`lab` default | Local script source by default; explicit `-w` or `--workdir` replaces automatic source inclusion | Explicit invocation selection, otherwise existing authorized workspace/`lab` default |
 | Inspection | Same commands, options, and meanings in all placements | Same | Same |
 | Persistent workspace edits | Agent config | Script-local TOML | Unavailable without a durable authored project |
 
@@ -249,7 +249,7 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
   normalization collisions, conflicts with configured/implicit names, all-or-nothing
   preflight, source inclusion/disable/replacement, and `.` interpreted from procdir.
   Verify basename inference for srcdir, dotted names and `.`/`..`, last-workspace
-  fallback, automatic source appended last, both `--cd` path forms, URI-only
+  fallback, automatic source appended last, both `--workdir` path forms, URI-only
   selection, unknown/escaping URIs, option combinations, all three placements,
   script-only automatic source inclusion, remote URI selection versus local-path rejection,
   and absence of persistent configuration or procdir changes.
@@ -274,7 +274,7 @@ this definition requires source/reference verification and `git diff --check`.
 
 ## Implementation decisions
 
-- Reject repeated `--cd`. A fresh script invocation supplies its resolved workdir
+- Reject repeated `--workdir`. A fresh script invocation supplies its resolved workdir
   as an explicit session override, so thread history cannot redirect it.
 - Hosted clients ask `POST /api/v1/runs/input-references` to expand prompts and
   enumerate file references against one State revision. The client reads those

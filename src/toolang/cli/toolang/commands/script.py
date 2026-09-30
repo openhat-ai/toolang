@@ -18,7 +18,7 @@ from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _ParsingState
-from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -45,11 +45,11 @@ from toolang.plugin.models.query import first_model_ref
 from ...common.context import load_runtime_environ
 from ...common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
     running_workspaces,
-    single_cd,
+    single_workdir,
 )
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
@@ -135,20 +135,6 @@ class _ScriptHelpFormatter(UIHelpFormatter):
                 description.append(".")
             self.write_text(description)
             self.write_paragraph()
-
-    def write_commands(self, ctx: Context) -> None:
-        if isinstance(ctx.command, _ScriptGroup):
-            has_main = _entry_command_name(ctx.command) is not None
-            argument = TyperArgument(
-                param_decls=["runnable"],
-                metavar="RUNNABLE",
-                help="Runnable name",
-                required=not has_main,
-                default=_entry_command_name(ctx.command) if has_main else None,
-                show_default=True,
-            )
-            self._sections(((None, self._argument_row(argument, ctx)),), "Arguments")
-        super().write_commands(ctx)
 
     def write_epilog(self, ctx: Context) -> None:
         super().write_epilog(ctx)
@@ -484,7 +470,7 @@ def _runnable_command(
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
         ] = None,
         workspace: WorkspaceOptions = None,
-        cd: CdOption = None,
+        workdir: WorkdirOption = None,
         no_auto_workspace: NoAutoWorkspaceOption = False,
         items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
     ) -> int:
@@ -504,7 +490,9 @@ def _runnable_command(
             root_dev = inherited.get("dev")
             dev = Path(root_dev) if root_dev is not None else dev
         workspace = [*inherited.get("workspace", ()), *(workspace or ())]
-        selected_cd = single_cd([*(inherited.get("cd") or ()), *(cd or ())])
+        selected_workdir = single_workdir(
+            [*(inherited.get("workdir") or ()), *(workdir or ())]
+        )
         no_auto_workspace = no_auto_workspace or inherited.get(
             "no_auto_workspace", False
         )
@@ -527,7 +515,7 @@ def _runnable_command(
             save=save,
             quiet=quiet,
             workspace_options=tuple(workspace),
-            cd=selected_cd,
+            workdir=selected_workdir,
             no_auto_workspace=no_auto_workspace,
         )
 
@@ -701,7 +689,7 @@ def _run(
     save: str | None,
     quiet: bool,
     workspace_options: tuple[str, ...] = (),
-    cd: str | None = None,
+    workdir: str | None = None,
     no_auto_workspace: bool = False,
 ) -> int:
     from toolang.common.ids import IdIssuer
@@ -726,10 +714,12 @@ def _run(
             layout,
             procdir=Path.cwd(),
             paths=workspace_options,
-            cd=cd,
+            workdir=workdir,
             srcdir=source_path.resolve().parent,
             no_auto=no_auto_workspace,
-            existing=running_workspaces(layout) if cd and "://" in cd else None,
+            existing=running_workspaces(layout)
+            if workdir and "://" in workdir
+            else None,
         )
         session_override = _script_session_override(
             model_body=model_body,
@@ -745,7 +735,7 @@ def _run(
             show_progress=not quiet,
             workspace_additions=(
                 None
-                if cd and "://" in cd and not workspaces.additions
+                if workdir and "://" in workdir and not workspaces.additions
                 else workspaces.additions
             ),
         ) as server:

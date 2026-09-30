@@ -49,6 +49,33 @@ def test_init_without_directory_only_shows_help(
     assert output.endswith("Show this message and exit")
 
 
+@pytest.mark.parametrize("option", ["-d", "--workdir"])
+@pytest.mark.parametrize("before_runnable", [False, True])
+def test_workdir_option_aliases_reach_script_invocation(
+    option, before_runnable, monkeypatch
+):
+    path = _source("agic explain():\n  Explain.\n")
+    captured = {}
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **kwargs: captured.update(kwargs) or 0
+    )
+    args = [option, "repo=."]
+    args = [*args, "explain"] if before_runnable else ["explain", *args]
+
+    assert cli.main([path, *args]) == 0
+    assert captured["workdir"] == "repo=."
+
+
+def test_mixed_workdir_aliases_are_rejected(monkeypatch, capsys):
+    path = _source("agic explain():\n  Explain.\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("accepted two workdirs")
+    )
+
+    assert cli.main([path, "-d", ".", "explain", "--workdir", "."]) == 2
+    assert "--workdir may only be specified once" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "directory", [".", "existing", "new/nested", "hello world/你好"]
 )
@@ -424,7 +451,7 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
         assert "<entry> agic" in " ".join(output.split())
-        assert output.index("Arguments:") < output.index("Runnables:")
+        assert "Arguments:" not in output
         assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
 
@@ -462,7 +489,8 @@ def test_file_help_without_main_marks_runnable_required(explicit, capsys):
     assert cli.main([*(["run"] if explicit else []), path, "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     assert "demo.too [OPTIONS] <RUNNABLE>" in output
-    assert "Arguments: * RUNNABLE Runnable name" in output
+    assert "Arguments:" not in output
+    assert "Runnables:" in output
     assert "[default: main]" not in output
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     inspect_workspaces,
 )
@@ -59,10 +59,10 @@ def list_tools(
         typer.Option("--all", "-a", help="Include internal and allow-excluded tools"),
     ] = False,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
-    inspect_workspaces(ctx, workspace, cd, no_auto=no_auto_workspace)
+    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     agent = context_agent(ctx)
     setup = asyncio.run(
         load_setup(

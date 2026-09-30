@@ -32,10 +32,11 @@ WorkspaceOptions = Annotated[
         help="Add a temporary workspace. Repeat to add more; omit NAME or use =PATH to infer its name",
     ),
 ]
-CdOption = Annotated[
+WorkdirOption = Annotated[
     list[str] | None,
     typer.Option(
-        "--cd",
+        "--workdir",
+        "-d",
         metavar="PATH|URI",
         help="Set the working directory. A path adds a workspace; a URI selects an existing one",
     ),
@@ -64,13 +65,13 @@ def resolve_workspaces(
     *,
     procdir: Path,
     paths: Sequence[str] = (),
-    cd: str | Sequence[str] | None = None,
+    workdir: str | Sequence[str] | None = None,
     srcdir: Path | None = None,
     no_auto: bool = False,
     existing: Mapping[str, str] | None = None,
 ) -> InvocationWorkspaces:
     """Validate the whole invocation before preparing state or starting a runtime."""
-    cd = single_cd(cd)
+    workdir = single_workdir(workdir)
     configured = ConfiguredWorkspaces(layout.config).list()
     configured.pop("lab", None)  # The implicit grant owns this reserved name.
     grants = {"lab": str(layout.home / "lab"), **configured}
@@ -110,9 +111,9 @@ def resolve_workspaces(
     selected = None
     for value in paths:
         selected = add(value, f"-w {value}")
-    if cd is not None:
-        if _URI.match(cd):
-            name, relative = parse_cwd(cd)
+    if workdir is not None:
+        if _URI.match(workdir):
+            name, relative = parse_cwd(workdir)
             if name not in grants:
                 raise ValueError(f"workspace is not available: {name}")
             root = Path(grants[name]).resolve()
@@ -120,9 +121,9 @@ def resolve_workspaces(
             # lab is created by state preparation, after this preflight.
             if not target.is_dir() and not (name == "lab" and not relative):
                 raise ValueError(f"workdir is not a directory: {target}")
-            selected = cd
+            selected = workdir
         else:
-            selected = add(cd, f"--cd {cd}")
+            selected = add(workdir, f"--workdir {workdir}")
     elif not paths and srcdir is not None and not no_auto:
         selected = add(f"={srcdir}", "automatic source workspace")
     return InvocationWorkspaces(additions, selected)
@@ -131,14 +132,14 @@ def resolve_workspaces(
 def inspect_workspaces(
     ctx: typer.Context,
     paths: Sequence[str] | None,
-    cd: str | Sequence[str] | None,
+    workdir: str | Sequence[str] | None,
     *,
     no_auto: bool = False,
 ) -> InvocationWorkspaces | None:
     """Validate optional inspection grants without changing global inspection."""
     from .context import context_agent, context_layout, user_call
 
-    if context_agent(ctx) is None and not paths and cd is None:
+    if context_agent(ctx) is None and not paths and workdir is None:
         return None
     if context_agent(ctx) is None:
         raise typer.BadParameter("workspace options require an agent target")
@@ -148,20 +149,22 @@ def inspect_workspaces(
         layout,
         procdir=Path.cwd(),
         paths=paths or (),
-        cd=cd,
+        workdir=workdir,
         srcdir=layout.program.resolve().parent
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto,
-        existing=running_workspaces(layout) if cd else None,
+        existing=running_workspaces(layout) if workdir else None,
     )
 
 
-def single_cd(values: str | Sequence[str] | None) -> str | None:
+def single_workdir(values: str | Sequence[str] | None) -> str | None:
     if values is None or isinstance(values, str):
         return values
     if len(values) > 1:
-        raise typer.BadParameter("--cd may only be specified once", param_hint="--cd")
+        raise typer.BadParameter(
+            "--workdir may only be specified once", param_hint="--workdir"
+        )
     return values[0] if values else None
 
 

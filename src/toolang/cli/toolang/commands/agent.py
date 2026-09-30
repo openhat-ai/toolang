@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
     running_workspaces,
@@ -181,7 +181,7 @@ def info_agent(
     ),
     model_catalog: ModelCatalogOption = None,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
@@ -192,12 +192,12 @@ def info_agent(
         layout,
         procdir=Path.cwd(),
         paths=workspace or (),
-        cd=cd,
+        workdir=workdir,
         srcdir=layout.program.resolve().parent
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto_workspace,
-        existing=running_workspaces(layout) if cd else None,
+        existing=running_workspaces(layout) if workdir else None,
     )
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())

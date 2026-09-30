@@ -13,7 +13,7 @@ from toolang.cli.common.parameters import PathType, TextType
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
     running_workspaces,
@@ -78,19 +78,19 @@ def add_workspace(
 def list_workspaces(
     ctx: typer.Context,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
     server_grants = running_workspaces(layout)
-    existing = server_grants if cd else {}
+    existing = server_grants if workdir else {}
     selection = user_call(
         resolve_workspaces,
         layout,
         procdir=Path.cwd(),
         paths=workspace or (),
-        cd=cd,
+        workdir=workdir,
         srcdir=layout.program.resolve().parent
         if layout.placement == "roaming"
         else None,
@@ -114,7 +114,7 @@ def list_workspaces(
             for name, path in workspaces.items()
         ),
     )
-    workdir = selection.workdir or next(
+    selected_workdir = selection.workdir or next(
         (
             f"{name}://"
             for name, path in reversed(workspaces.items())
@@ -122,7 +122,7 @@ def list_workspaces(
         ),
         "lab://",
     )
-    typer.echo(f"Workdir: {workdir}")
+    typer.echo(f"Workdir: {selected_workdir}")
     if server_grants:
         typer.echo("Server grants:")
         echo_table(
@@ -134,7 +134,7 @@ def list_workspaces(
 def _authored_config(layout: AgentLayout) -> Path:
     if layout.placement == "visiting":
         raise typer.BadParameter(
-            "visiting agents have no durable workspace configuration; use -w or --cd"
+            "visiting agents have no durable workspace configuration; use -w or --workdir"
         )
     if layout.placement == "roaming":
         return layout.program.resolve(strict=True).parent / "toolang.toml"

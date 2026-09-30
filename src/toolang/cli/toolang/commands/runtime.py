@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Annotated, TYPE_CHECKING, cast, Literal
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
-    CdOption,
+    WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
-    single_cd,
+    single_workdir,
 )
 
 import typer
@@ -101,7 +101,7 @@ def run(
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
@@ -146,7 +146,7 @@ def run(
                 dev=dev,
                 background=False,
                 workspace_options=workspace,
-                cd=single_cd(cd),
+                workdir=single_workdir(workdir),
             )
             with progress.suspended():
                 warn_development_package_source(launch.startup)
@@ -231,7 +231,7 @@ def start(
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
     workspace: WorkspaceOptions = None,
-    cd: CdOption = None,
+    workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
     dev: Annotated[
         Path | None,
@@ -274,7 +274,7 @@ def start(
                 dev=dev,
                 background=True,
                 workspace_options=workspace,
-                cd=single_cd(cd),
+                workdir=single_workdir(workdir),
             )
             with progress.suspended():
                 warn_development_package_source(launch.startup)
@@ -438,13 +438,13 @@ def resolve_startup(
     background: bool,
     compact_model: str | None = None,
     workspace_options: list[str] | None = None,
-    cd: str | None = None,
+    workdir: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
     root, agent = target.root, target.name
     workspaces = resolve_workspaces(
-        target, procdir=Path.cwd(), paths=workspace_options or (), cd=cd
+        target, procdir=Path.cwd(), paths=workspace_options or (), workdir=workdir
     )
     if target.placement == "resident" and not target.home.is_dir():
         raise ClickException(f"Agent {agent} not found")
