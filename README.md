@@ -35,7 +35,7 @@ Download updated or full model catalogs from [openhat-ai/models](https://github.
 Open a chat with a shared agent using its URL or GitHub shorthand:
 
 ```bash
-too https://openhat.ai/lex.too chat  # Practice English with Lex
+too https://toolang.ai/lex.too chat  # Practice English with Lex
 too briceyan/dev chat              # Code with dev
 ```
 
