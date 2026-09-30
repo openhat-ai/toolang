@@ -41,7 +41,7 @@ absolute guest paths; service command strings and remote cap references are not
 host filesystem paths to rebase. Shared parsers receive explicit path context.
 
 For example, from `/repo`, `too /tools/aide.too review '@notes.md'` attaches
-`/repo/notes.md` while the proposed script workdir is `/tools`. An attachment
+`/repo/notes.md` while the default script workdir is `/tools`. An attachment
 supplies file content, not workspace access. Missing files reject input before
 Run acceptance. Preserve Content escaping, fences, prompt expansion/provenance,
 and one-pass inclusion; included bytes are not recursively parsed.
@@ -112,11 +112,63 @@ discovery alone changes neither workdir nor access.
 
 ## Workspaces and placement
 
-Propose implicit `script://` for roaming, rooted at `srcdir`, as its initial
-workdir unless explicitly selected otherwise. Keep `lab` and configured workspaces;
-reject conflicting authored use of `script`. No implicit procdir or Git-root grant.
-Keep existing duplicate/nested-root rules; allow an implicit-root alias without
-duplicating mounts, retain explicit URI names, and use `script` for an exact tie.
+Workspace grants define accessible directories; workdir selects a location within
+those grants. Keep one ordered grant list and one workdir, without a separate
+selected-workspace field.
+
+| Option | Meaning |
+| --- | --- |
+| Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace. Each name may be omitted independently. |
+| `--cd PATH` | Add PATH as a temporary workspace and select its root as workdir. |
+| `--workdir URI` (proposal) | Select an existing workspace or subdirectory without adding access. |
+| `--no-src-workspace` (proposed spelling) | Disable automatic source inclusion. |
+
+CLI paths resolve from procdir, support home expansion, and must name existing
+directories. These options never change procdir, attachment origins, or authored
+configuration. They apply to local execution/Chat/hosting across placements;
+a client path cannot become a grant on an already running remote server.
+
+Build grants in order: `lab`, configured entries, then invocation additions.
+Local script calls with neither `-w` nor `--cd` append srcdir automatically unless
+disabled. Other execution modes never add srcdir automatically. Any `-w` or `--cd`
+suppresses that automatic addition only; configured grants and `lab` remain.
+Download caches are not authored source workspaces.
+
+When no workdir has otherwise been selected, retain the existing fallback to the
+last usable workspace. Appending srcdir makes it the default for a fresh script
+call; with repeated `-w`, the last addition supplies the fallback. `--cd` explicitly
+selects its target even when other `-w` options follow it. Proposed validation:
+allow one `--cd`, and reject combining it with `--workdir` rather than introduce
+selection precedence. Do not add `-C` or `-d` aliases in this definition.
+
+```sh
+./aide.too whats_for                         # Default: srcdir
+./module1/file.too whats_for --cd module2    # From their common parent
+./aide.too whats_for -w another_dir -w .     # Fallback: procdir
+./aide.too whats_for -w target=another_dir   # Explicit workspace name
+```
+
+`-w .` grants procdir; it re-adds srcdir only when invoked from there. `--cd`
+accepts a filesystem path, not a workspace name or URI. It uses the same grant
+validation and inferred naming as `-w PATH`. Resolve its convenience behavior at
+the CLI boundary into concrete grants and a canonical workdir URI; the executor
+and sandbox need no `--cd`-specific branch. Pass that same result to inspection,
+Run acceptance, server compatibility checks, and mount preparation.
+
+Default naming remains open. Proposed inference reuses the workspace command's
+existing directory-name normalization: use the supplied final component, or the
+resolved final component for `.` and `..`, then normalize to kebab case. Explicit
+names must be valid; an unnameable directory requires `NAME=PATH`. Split the named
+form at the first `=`. `--cd` treats its entire argument as a path. Names must not
+depend on argument count/order or use automatic numeric suffixes.
+
+Validate all grants before accepting a Run or starting a new runtime. Duplicate
+names, including configured and implicit grants, fail with both origins even if
+the paths match; the user supplies distinct names. The source workspace's friendly
+name remains undecided and must not overlap cap scope names. Distinct names may
+alias a root without duplicating mounts; preserve URI names, nested-root behavior,
+and authored duplicate-root validation. Inspection reports effective grants and
+workdir. Persisted Run restart/resume semantics remain separate.
 
 Capture concrete bindings at Run acceptance. Children inherit them; restart and
 resume retain recorded bindings and authorization checks. Never rebind historical
@@ -127,7 +179,7 @@ This scope does not prescribe new multi-runtime lifecycle infrastructure.
 | Behavior | Resident | Roaming | Visiting |
 | --- | --- | --- | --- |
 | Config sources | Shared root + agent home | Shared ancestors + script-local config (proposal) | Existing explicit visiting context; no discovery above download cache |
-| Default workdir | Existing workspace selection, otherwise `lab` | Script directory | Existing authorized selection, otherwise `lab` |
+| Default workdir | Explicit invocation selection, otherwise existing workspace/`lab` default | Local script source by default; explicit `-w` or `--cd` replaces automatic source inclusion | Explicit invocation selection, otherwise existing authorized workspace/`lab` default |
 | Inspection | Same commands, options, and meanings in all placements | Same | Same |
 | Persistent workspace edits | Agent config | Script-local TOML (proposal) | Unavailable without a durable authored project |
 
@@ -175,7 +227,13 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
   submodules, non-Git distributions, and invalid boundaries/candidates.
 - Scope/merge: three layers with special defaults, lists and different path bases;
   no inherited agent-only resources; nearest catalog and explicit-path precedence.
-- Workspaces: script-relative tools, aliases/nesting, equal script stems, relocation,
+- Workspace options: both aliases/forms, multiple omitted names, stable inference,
+  normalization collisions, conflicts with configured/implicit names, all-or-nothing
+  preflight, source inclusion/disable/replacement, and `.` interpreted from procdir.
+  Verify last-workspace fallback, automatic source appended last, `--cd` adding and
+  selecting its target, selection-only override, option combinations, other modes,
+  and absence of persistent configuration or procdir changes.
+- Workspaces: source-relative tools, aliases/nesting, equal source stems, relocation,
   recorded bindings, incompatible-server rejection, and host/guest parity. Runtime
   data stays beside the source even when configuration/catalogs come from ancestors;
   the resident root remains independent.
@@ -196,11 +254,15 @@ this definition requires source/reference verification and `git diff --check`.
 
 ## Remaining decisions and review risks
 
-1. Confirm the proposed roaming local/shared boundary and `script` workspace name. Source-local `.toolang/` placement is confirmed; the remaining proposals
-   are not implementation approval.
-2. Temporary workspace convenience may use `--workspace NAME=PATH` plus
-   `--workdir URI`; syntax and read-only-project cache fallback are optional
-   follow-ups, not reasons to add lifecycle infrastructure to the core change.
+1. Confirm the proposed roaming local/shared boundary. Choose the implicit-source
+   workspace name separately; it must not be confused with cap scope names.
+2. Workspace option forms, source-replacement behavior, last-workspace fallback,
+   and `--cd PATH` convenience are confirmed. Review inference details, combined
+   selection options, and spelling `--no-src-workspace`. Existing history-based
+   selection must not unexpectedly redirect a new script call away from its default
+   source workspace; define that call-site boundary before implementation.
+   Read-only cache fallback remains an optional follow-up;
+   no new multi-runtime lifecycle infrastructure is required.
 3. Finish the attachment transport contract before implementing hosted parity.
    Existing authored requests carry source/workdir; the typed-input route does not
    preserve the same workdir/provenance contract. Define transport of client-read
