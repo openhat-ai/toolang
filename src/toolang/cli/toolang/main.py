@@ -129,8 +129,8 @@ class _ScriptEntryCommand(CliCommand):
         super().format_help(ctx, formatter)
         formatter.write_paragraph()
         formatter.write_text(
-            f"The run command is optional: {ctx.find_root().command_path} "
-            "FILE [RUNNABLE] [ARGUMENTS]."
+            "Omit run if RUNNABLE is not a Toolang command, e.g. "
+            f"{ctx.find_root().command_path} aide.too whats_for."
         )
 
 
@@ -592,10 +592,10 @@ _registered_command(
 _registered_command(
     "run",
     "toolang.cli.toolang.commands.script:run_script",
-    help="Execute a runnable from a .too file",
+    help="Execute a .too file",
     cls=_ScriptEntryCommand,
     context_settings={"allow_interspersed_args": False},
-    epilog="For script-specific help, add --help after FILE or RUNNABLE.",
+    epilog="Add --help after FILE or RUNNABLE for details.",
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 

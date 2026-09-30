@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import logging
+import json
 import os
 from pathlib import Path
 import signal
@@ -71,8 +72,15 @@ class ServeSpec:
     limit_overrides: Mapping[str, int | float | None] = field(default_factory=dict)
     compact_override: ModelOverride | None = None
     log_spec: str | None = None
+    workspace_additions: Mapping[str, str] = field(default_factory=dict)
+    workdir: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "workspace_additions",
+            MappingProxyType(dict(self.workspace_additions)),
+        )
         object.__setattr__(
             self,
             "ceiling_overrides",
@@ -106,11 +114,15 @@ def resolve_serve(
     compact_override: ModelOverride | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
+    workspace_additions: Mapping[str, str] | None = None,
+    workdir: str | None = None,
 ) -> ServeSpec:
     """Resolve explicit CLI values without constructing runtime snapshots."""
 
     return ServeSpec(
         layout=layout,
+        workspace_additions=dict(workspace_additions or {}),
+        workdir=workdir,
         host=host,
         endpoint_host=endpoint_host or _default_endpoint_host(host),
         port=resolve_runtime_port(
@@ -149,6 +161,14 @@ def build_serve_argv(
         "--port",
         str(spec.port),
     ]
+    if spec.layout.placement != "resident":
+        command.extend(["--placement", spec.layout.placement])
+    if spec.workspace_additions:
+        command.extend(
+            ["--workspace-bindings", json.dumps(dict(spec.workspace_additions))]
+        )
+    if spec.workdir is not None:
+        command.extend(["--initial-workdir", spec.workdir])
     for name, selectors in spec.ceiling_overrides.items():
         command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
     for name, value in spec.default_overrides.items():
@@ -199,6 +219,8 @@ def serve(
         default_overrides=spec.default_overrides,
         limit_overrides=spec.limit_overrides,
         compact_override=spec.compact_override,
+        workspace_additions=spec.workspace_additions,
+        workdir=spec.workdir,
     )
     asyncio.run(_refresh_core(core))
     state = core.state.current()
@@ -238,6 +260,7 @@ def serve(
                 pid=os.getpid(),
                 models=tuple(model.ref for model in current_setup().models_effective()),
                 sandbox=sandbox,
+                workspace_additions=spec.workspace_additions,
                 process_created=host_ref.meta.get("created")
                 if host_ref is not None
                 else None,

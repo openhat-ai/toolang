@@ -233,6 +233,32 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
 
     assert layout == AgentLayout.roaming(source)
     assert layout.program.is_symlink()
-    assert layout.config.is_symlink()
+    assert layout.config.is_file()
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
-    assert (layout.config.parent / os.readlink(layout.config)).resolve() == config
+    from toolang.common.config_sources import config_sources
+
+    assert config_sources(layout)[-1].path == config
+
+
+def test_concurrent_roaming_materialization_accepts_the_same_program_link(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    from toolang.up.process import materialize_roaming_program
+
+    source = tmp_path / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    barrier = threading.Barrier(2)
+    symlink_to = Path.symlink_to
+
+    def simultaneous_symlink(path, target, **kwargs):
+        if path.name == "agent.too":
+            barrier.wait(timeout=10)
+        return symlink_to(path, target, **kwargs)
+
+    monkeypatch.setattr(Path, "symlink_to", simultaneous_symlink)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        layouts = list(pool.map(materialize_roaming_program, [source, source]))
+    assert layouts[0] == layouts[1]
+    assert layouts[0].program.resolve() == source

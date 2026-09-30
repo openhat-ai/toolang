@@ -271,17 +271,21 @@ Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
 Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
 outline in normal style with blank lines between sibling steps.
-Top-level Script help identifies `agic:<entry>` as the default when an unnamed
+Top-level Script help identifies `_` as the default when an unnamed
 entry exists and marks `[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It
-lists **Runnables** before Options, with `agic:NAME` / `flow:NAME` labels and
-authored descriptions or `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+lists **Runnables** before Options in name, kind, and description columns. An
+unnamed entry shows `_` with its lined identity and any authored comment. Both
+qualified selectors (`agic:_`, `flow:_`) and `_` select that entry; `<entry>` is
+no longer a selector. Named runnables retain their names and descriptions.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
+`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
+`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
 `-h` / `--help`.
 Common options may appear before or after RUNNABLE, before input. Explicit
-runnable-level scalar values override root values; repeated `--allow` and
-`--limit` values accumulate in command-line order. Quiet mode is enabled at
+runnable-level scalar values override root values; repeated `--workspace`,
+`--allow`, and `--limit` values accumulate in command-line order. `--workdir`
+may appear only once across both levels. Quiet mode is enabled at
 either level. `--help` describes the level where it appears.
 
 Script mode parses policy prefixes but does not accept chat quick commands.
@@ -298,14 +302,14 @@ Behavior:
 - TTY progress uses color and live replacement; non-TTY progress is stable,
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
-- `--out PATH` or `-o PATH` writes the Run result to a file; `--out -` or `-o -`
+- `--out FILE` or `-o FILE` writes the Run result to a file; `--out -` or `-o -`
   writes it to stdout. Without this option, the result remains stored without
   being copied to stdout. This replaces the removed `--save` option.
-- `--sandbox SANDBOX_SPEC` selects the execution sandbox for this invocation; an
+- `--sandbox SANDBOX` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
 - `--dev [PATH]` installs Toolang in a newly started guest from one wheel; a
   directory selects its newest Toolang wheel recursively. Bare `--dev` uses `.`
-- `--model MODEL_SPEC` supplies an invocation model identity and typed
+- `--model MODEL` supplies an invocation model identity and typed
   parameters, for example `--model 'openai/gpt-5 effort=high'`
 - `--limit LIMIT=VALUE` overrides one run limit; it may be repeated
 - `--allow RESOURCE=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
@@ -599,7 +603,7 @@ Both commands accept repeatable `--allow RESOURCE=QUERY`,
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
 
-`--compact-model MODEL_SPEC` selects the new runtime's compaction model,
+`--compact-model MODEL` selects the new runtime's compaction model,
 using the same model expression as `--model`, without a `model=` prefix.
 
 Setup policy uses the following TOML shape in root and agent-home `config.toml`
@@ -1123,9 +1127,9 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang AGENT chat [--thread [THREAD]]
-[--sandbox SANDBOX_SPEC] [--default SETTING=VALUE]
+[--sandbox SANDBOX] [--default SETTING=VALUE]
 [--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
-[--compact-model MODEL_SPEC]`.
+[--compact-model MODEL]`.
 The `--thread` option has a short alias, `-t`, and accepts an optional value:
 
 - Omit the option to start a new session; its terminal thread is created on

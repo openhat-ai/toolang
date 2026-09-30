@@ -99,11 +99,11 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("shell", {"none", "before"}, {"resident"}),
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
-        ("workspace", {"before"}, {"resident"}),
+        ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
         ("skill", {"none", "before"}, {"resident"}),
-        ("models", {"none", "before"}, {"resident"}),
-        ("tools", {"none", "before"}, {"resident"}),
-        ("providers", {"none", "before"}, {"resident"}),
+        ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
+        ("tools", {"none", "before"}, {"resident", "roaming", "visiting"}),
+        ("providers", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("adapters", {"none"}, set()),
         ("sandboxes", {"none"}, set()),
         ("channel", {"none"}, set()),
@@ -156,8 +156,6 @@ def test_cli_normalize_routes_resident_models(target: str) -> None:
     (
         ["models", "alice"],
         ["models", "agent:alice"],
-        ["alice.too", "models"],
-        ["briceyan/dev", "models"],
     ),
 )
 def test_cli_models_rejects_unsupported_target_forms(

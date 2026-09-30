@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import ConfigSource, config_sources, source_catalog
 
 MODEL_CATALOG_ENV = "TOOLANG_MODEL_CATALOG"
 DEFAULT_MAX_CATALOG_BYTES = 32 * 1024 * 1024
 PACKAGED_MODEL_CATALOG = Path(__file__).parent / "data" / "catalog.json"
-
-_CATALOG_FILENAME = "catalog.json"
 
 
 def resolve_model_catalog_path(
@@ -20,6 +19,7 @@ def resolve_model_catalog_path(
     explicit: Path | None = None,
     environ: Mapping[str, str] | None = None,
     include_agent: bool = True,
+    sources: Sequence[ConfigSource] | None = None,
 ) -> Path:
     """Resolve one complete catalog using explicit, home, root, package precedence."""
 
@@ -33,14 +33,14 @@ def resolve_model_catalog_path(
         path = Path(configured).expanduser().resolve(strict=False)
         _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
         return path
-    catalog_candidates = (
-        (layout.home / _CATALOG_FILENAME, layout.root / _CATALOG_FILENAME)
-        if include_agent
-        else (layout.root / _CATALOG_FILENAME,)
+    selected = source_catalog(
+        sources
+        if sources is not None
+        else config_sources(layout, include_agent=include_agent),
+        roaming=layout.placement == "roaming",
     )
-    for path in catalog_candidates:
-        if path.is_file() or path.is_symlink():
-            return path.resolve(strict=False)
+    if selected is not None:
+        return selected.resolve(strict=False)
     _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")
     return PACKAGED_MODEL_CATALOG.resolve(strict=False)
 

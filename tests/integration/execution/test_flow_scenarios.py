@@ -1359,7 +1359,7 @@ def test_research_pipeline_reshapes_filters_and_sorts(
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
-                    runnable="<entry>",
+                    runnable="_",
                     primary=resolve_input_parts(topic),
                 )
             )

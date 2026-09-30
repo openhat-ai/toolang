@@ -161,8 +161,8 @@ print(json.dumps("toolang.up.core" in sys.modules))
         # The unnamed flow is the script's default runnable, so a bare
         # invocation runs it instead of printing group help.
         ([], 2, "The flow proceeds as follows:"),
-        (["<entry>", "--help"], 0, "The flow proceeds as follows:"),
-        (["<entry>"], 2, "The flow proceeds as follows:"),
+        (["_", "--help"], 0, "The flow proceeds as follows:"),
+        (["_"], 2, "The flow proceeds as follows:"),
     ],
 )
 def test_script_help_does_not_load_execution_dependencies(

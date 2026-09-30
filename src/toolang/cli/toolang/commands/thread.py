@@ -190,7 +190,7 @@ def rerun_command(
         str | None,
         typer.Option(
             "--sandbox",
-            metavar="SANDBOX_SPEC",
+            metavar="SANDBOX",
             help="Execute the new run in this sandbox",
         ),
     ] = None,
@@ -201,7 +201,7 @@ def rerun_command(
         typer.Option(
             "--model",
             help="Replace the persisted model identity or parameters",
-            metavar="MODEL_SPEC",
+            metavar="MODEL",
         ),
     ] = None,
     dev: Annotated[

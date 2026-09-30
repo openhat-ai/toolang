@@ -12,7 +12,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from toolang.common.github import (
@@ -354,25 +354,105 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
     _replace_relative_symlink(
         layout.program,
         resolved_source,
+        replace_regular_file=False,
     )
-    _sync_roaming_config_link(layout.home, resolved_source.parent / "toolang.toml")
+    _sync_roaming_project(layout.home, resolved_source)
     return layout
 
 
-def _sync_roaming_config_link(home: Path, source_config: Path) -> None:
+def _sync_roaming_project(home: Path, source: Path) -> None:
+    from toolang.common.config_sources import (
+        PROJECTION_HEADER,
+        project_sources,
+        read_config,
+        script_sources,
+        source_catalog,
+    )
+    from toolang.common.files import atomic_write_text, file_write_lock
+
+    sources = script_sources(source)
+    catalog = source_catalog(sources, roaming=True, validate=False)
+    projected = project_sources(sources, source=source, catalog=catalog)
     target = home / "config.toml"
-    if source_config.is_file():
-        _replace_relative_symlink(target, source_config, replace_regular_file=False)
-    elif target.is_symlink():
-        target.unlink()
+    catalog_target = home / "catalog.json"
+    with file_write_lock(home / ".project.lock"):
+        previous_catalog = None
+        previous_source = None
+        if (
+            target.is_file()
+            and not target.is_symlink()
+            and target.read_text().startswith(PROJECTION_HEADER)
+        ):
+            previous = read_config(target)
+            previous_catalog = previous.get("__toolang_catalog__")
+            previous_source = previous.get("__toolang_source__")
+        for path in (target, catalog_target):
+            if path.is_symlink():
+                # Relative generated links remain owned when the project moves,
+                # even if the old absolute catalog origin no longer matches.
+                if (
+                    path == catalog_target
+                    and isinstance(previous_catalog, str)
+                    and isinstance(previous_source, str)
+                ):
+                    old_source = Path(previous_source)
+                    old_home = (
+                        old_source.parent / ".toolang" / "agents" / old_source.stem
+                    )
+                    if os.readlink(path) == os.path.relpath(
+                        previous_catalog, start=old_home
+                    ):
+                        continue
+                expected = (
+                    (source.with_name("toolang.toml"),)
+                    if path == target
+                    else tuple(
+                        value
+                        for value in (
+                            catalog,
+                            Path(previous_catalog)
+                            if isinstance(previous_catalog, str)
+                            else None,
+                        )
+                        if value is not None
+                    )
+                )
+                if any(path.resolve() == value.resolve() for value in expected):
+                    continue
+                raise ValueError(
+                    f"generated project symlink conflicts with existing entry: {path}"
+                )
+            if not path.exists():
+                continue
+            if (
+                path == target
+                and path.is_file()
+                and path.read_text().startswith(PROJECTION_HEADER)
+            ):
+                continue
+            raise ValueError(
+                f"generated project file conflicts with existing file: {path}"
+            )
+        if target.is_symlink():
+            target.unlink()
+        if not target.exists() or target.read_text() != projected:
+            atomic_write_text(target, projected)
+        if catalog is not None:
+            _replace_relative_symlink(
+                catalog_target, catalog, replace_regular_file=False
+            )
+        elif catalog_target.is_symlink():
+            catalog_target.unlink()
 
 
 def _replace_relative_symlink(
     link_path: Path, target_path: Path, *, replace_regular_file: bool = True
 ) -> None:
+    if link_path.is_symlink() and link_path.resolve() == target_path.resolve():
+        return
     if link_path.exists() or link_path.is_symlink():
         if not link_path.is_symlink() and not replace_regular_file:
-            return
+            raise FileExistsError(f"cannot replace authored file: {link_path}")
         if link_path.is_dir() and not link_path.is_symlink():
             raise IsADirectoryError(
                 f"cannot replace directory with symlink: {link_path}"
@@ -380,7 +460,12 @@ def _replace_relative_symlink(
         link_path.unlink()
     link_path.parent.mkdir(parents=True, exist_ok=True)
     relative_target = os.path.relpath(target_path, start=link_path.parent)
-    link_path.symlink_to(relative_target)
+    try:
+        link_path.symlink_to(relative_target)
+    except FileExistsError:
+        # Another invocation may have just installed the identical owned link.
+        if not link_path.is_symlink() or link_path.resolve() != target_path.resolve():
+            raise
 
 
 def materialize_visiting_program(
@@ -610,6 +695,7 @@ def write_runtime_state(
     sandbox_description: str | None = None,
     sandbox_instance: str | None = None,
     models: Sequence[str] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
     status: str = "running",
     message: str | None = None,
 ) -> Path:
@@ -626,6 +712,7 @@ def write_runtime_state(
         "process_created": process_created,
         "sandbox": sandbox,
         "models": list(models or ()),
+        "workspace_additions": dict(workspace_additions or {}),
         "message": message,
     }
     if sandbox_instance is not None:

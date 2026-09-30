@@ -139,10 +139,7 @@ def test_unnamed_flow_export_is_locally_entry(tmp_path):
     source.write_text("flow:\n  pass\n")
     state = prepare_agent_state(layout)
     assert state.runnables["research"].name is None
-    assert (
-        state.module_runnable("flows::research", "<entry>")
-        is state.runnables["research"]
-    )
+    assert state.module_runnable("flows::research", "_") is state.runnables["research"]
 
 
 def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):

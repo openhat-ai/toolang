@@ -138,9 +138,21 @@ def _hosted_model_catalog_mounts(
     mounts: dict[tuple[Path, Path], SandboxMount] = {}
     local_root = request.local_root.resolve()
     local_home = request.local_home.resolve()
+    if MODEL_CATALOG_ENV in process_envs:
+        dotenv_envs.pop(MODEL_CATALOG_ENV, None)
     for section in (dotenv_envs, process_envs):
         raw_path = section.get(MODEL_CATALOG_ENV)
         if raw_path is None or not raw_path.strip():
+            continue
+        captured = next(
+            (mount for mount in request.mounts if str(mount.hosted_path) == raw_path),
+            None,
+        )
+        if captured is not None:
+            if not captured.local_path.is_file():
+                raise ValueError(
+                    f"model catalog is not a regular file: {captured.local_path}"
+                )
             continue
         local_path = Path(raw_path).expanduser().resolve(strict=True)
         if not local_path.is_file():

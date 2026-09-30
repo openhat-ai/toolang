@@ -235,6 +235,7 @@ def build_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
+    include_workspaces: bool = True,
 ) -> SourceManifest:
     """Hash changed files and reuse unchanged facts from one prior observation."""
 
@@ -261,6 +262,12 @@ def build_source_manifest(
                 entries.append(cached)
                 continue
         content = item.source.read_bytes()
+        if item.path == "config.toml":
+            from toolang.common.config_sources import rebase_config_content
+
+            content = rebase_config_content(
+                content, item.source.parent, include_workspaces=include_workspaces
+            )
         if _observe_file(item.source, relative_path=item.path) != item:
             raise SourceChangedError(f"source changed while reading: {item.source}")
         entries.append(
@@ -305,6 +312,7 @@ def root_source_manifest(
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
+        include_workspaces=False,
     )
 
 
@@ -722,6 +730,12 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
+    if category == "config":
+        from toolang.common.config_sources import rebase_config_content
+
+        content = rebase_config_content(
+            content, path.parent, include_workspaces=origin == "agent"
+        )
     after = _observe_file(path, relative_path=before.path)
     if before != after:
         raise SourceChangedError(f"source changed while reading: {path}")

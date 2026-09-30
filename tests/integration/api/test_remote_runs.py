@@ -65,10 +65,12 @@ def _authored_request(
     arguments: dict[str, str] | None = None,
     allow: list[dict[str, object]] | None = None,
     limits: dict[str, object] | None = None,
+    attachments: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "thread_id": thread_id,
         "request_id": request_id,
+        "attachments": attachments,
         "runnable": {
             "ref": runnable,
             "input": {
@@ -346,7 +348,7 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
         asyncio.run(core.close())
 
 
-def test_authored_run_stream_resolves_fallback_policy_and_server_include(
+def test_authored_run_stream_resolves_fallback_policy_and_client_include(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -413,8 +415,10 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     source="$review focus=security -\n@note.txt",
                     arguments={"tone": "brief"},
                     limits={"cost": "2.50"},
+                    attachments={"note.txt": {"type": "text", "text": "included"}},
                 ),
             )
+            assert fallback.status_code == 200, fallback.text
             fallback_events = _sse_events(fallback.text)
             fallback_id = str(fallback_events[0][1]["run"])
             fallback_detail_response = client.get(f"/api/v1/runs/{fallback_id}")
@@ -558,7 +562,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert "missing.txt" in invalid_include.json()["detail"]
         assert invalid_home_include.status_code == 422
         assert invalid_home_include.json()["detail"] == (
-            "included file not found: ~toolang_user_that_does_not_exist/file.txt"
+            "client attachment is missing: ~toolang_user_that_does_not_exist/file.txt"
         )
         assert missing_thread.status_code == 404
         assert missing_thread.json()["detail"] == "thread not found: term_missing"
@@ -795,3 +799,43 @@ def _sse_events(source: str) -> list[tuple[str, dict[str, Any]]]:
             event_name = None
             data_lines = []
     return events
+
+
+def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat(_: Text):\n  user: {{_}}\n",
+        responses=[],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    try:
+        with TestClient(app) as client:
+            references = client.post(
+                "/api/v1/runs/input-references",
+                json={"runnable": "agic:chat", "input": {"_": "@note.txt"}},
+            )
+            assert references.status_code == 200
+            assert references.json() == {
+                "state": harness.state.revision,
+                "references": ["note.txt"],
+            }
+            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
+                "thread"
+            ]["id"]
+            payload = _authored_request(
+                thread,
+                "changed_state",
+                source="@note.txt",
+                attachments={"note.txt": {"type": "text", "text": "client bytes"}},
+            )
+            payload["source_revision"] = "0" * 64
+            response = client.post("/api/v1/runs/authored/stream", json=payload)
+            assert response.status_code == 422
+            assert "source changed" in response.json()["detail"]
+            assert core.store.list_runs(thread_id=thread, limit=None) == []
+    finally:
+        asyncio.run(core.close())

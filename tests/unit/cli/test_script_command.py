@@ -638,9 +638,11 @@ def test_script_uses_typer_help_and_authored_docs(
     for option, metavar in (
         ("--allow", "<RESOURCE>=<QUERY>"),
         ("--limit", "<LIMIT>=<VALUE>"),
-        ("--model", "<MODEL_SPEC>"),
-        ("--sandbox", "<SANDBOX_SPEC>"),
-        ("--out", "<PATH>"),
+        ("--model", "<MODEL>"),
+        ("--sandbox", "<SANDBOX>"),
+        ("--out", "<FILE>"),
+        ("--workspace", "[NAME=]<DIR>"),
+        ("--workdir", "[NAME=]<DIR>|<URI>"),
     ):
         row = next(line for line in stdout.splitlines() if option in line.split())
         assert metavar in row.split()
@@ -651,7 +653,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save the Run result to PATH, or use - for stdout" in " ".join(
+    assert "Save output to FILE; - for stdout" in " ".join(
         stdout.replace("│", " ").split()
     )
     assert "stdout" in stdout
@@ -672,10 +674,13 @@ def _assert_common_options(output: str) -> None:
     options = (
         "--quiet",
         "--out",
+        "--model",
+        "--workspace",
+        "--workdir",
         "--sandbox",
         "--allow",
         "--limit",
-        "--model",
+        "--no-auto-workspace",
         "--dev",
         "--help",
     )
@@ -710,9 +715,7 @@ def test_script_help_after_common_options_never_reads_or_runs(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    assert "Arguments:" in output
-    if not child:
-        assert "RUNNABLE" in _help_panel(output, "Arguments")
+    assert ("Arguments:" in output) is child
     assert ("Runnables:" in output) is not child
     _assert_common_options(output)
 
@@ -1408,13 +1411,9 @@ flow pipeline:
     assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
     assert f"Execute a runnable from {filename}" in stdout
-    assert "default: <entry>" in " ".join(stdout.split())
     assert "Omit RUNNABLE" not in stdout
-    assert (
-        stdout.index("Arguments:")
-        < stdout.index("Runnables:")
-        < stdout.index("Options:")
-    )
+    assert "Arguments:" not in stdout
+    assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout
@@ -1423,16 +1422,55 @@ flow pipeline:
     assert "pipeline" in stdout
     assert "Run the pipeline." in stdout
     descriptions = _help_panel(stdout, "Runnables")
-    assert "agic:visible Run the visible command." in descriptions
-    assert "flow:pipeline Run the pipeline." in descriptions
-    assert "agic:undocumented Agic undocumented" in descriptions
-    assert "flow:undocumented_flow Flow undocumented_flow" in descriptions
+    assert "visible agic Run the visible command." in descriptions
+    assert "pipeline flow Run the pipeline." in descriptions
+    assert "undocumented agic Agic undocumented" in descriptions
+    assert "undocumented_flow flow Flow undocumented_flow" in descriptions
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "agic:<entry>" in descriptions
+    assert "_ agic <entry:2>" in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
+
+
+@pytest.mark.parametrize(
+    "entry_kind,entry_doc",
+    [
+        (None, ""),
+        ("agic", ""),
+        ("flow", ""),
+        ("agic", "## Entry description.\n"),
+        ("flow", "## Entry description.\n"),
+    ],
+)
+def test_script_help_orders_entry_then_agics_and_flows(
+    tmp_path, monkeypatch, capsys, entry_kind, entry_doc
+):
+    entry = f"{entry_doc}{entry_kind}:\n  pass\n" if entry_kind else ""
+    source = _write_source(
+        tmp_path,
+        "flow zebra_flow():\n  pass\n"
+        "agic zebra_agic():\n  Hello.\n" + entry + "flow alpha_flow():\n  pass\n"
+        "agic alpha_agic():\n  Hello.\n",
+    )
+    monkeypatch.setenv("COLUMNS", "100")
+    assert script.dispatch([], [str(source), "--help"], prog_name="too") == 0
+    panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
+    labels = [
+        *([f"_ {entry_kind}"] if entry_kind else []),
+        "zebra_agic agic",
+        "alpha_agic agic",
+        "zebra_flow flow",
+        "alpha_flow flow",
+    ]
+    positions = [panel.index(label) for label in labels]
+    assert positions == sorted(positions)
+    if entry_kind:
+        line = 6 if entry_doc else 5
+        description = " Entry description." if entry_doc else ""
+        assert f"_ {entry_kind} <entry:{line}>{description}" in panel
+        assert f"{entry_kind.capitalize()} <entry>" not in panel
 
 
 @pytest.mark.parametrize("width", [44, 80])
@@ -1646,7 +1684,14 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     )
 
     assert result == 0
-    assert captured["runtime"] == {
+    runtime_options = cast(dict[str, object], captured["runtime"])
+    assert isinstance(runtime_options, dict)
+    assert runtime_options.get("workspace_additions")
+    assert {
+        key: value
+        for key, value in runtime_options.items()
+        if key != "workspace_additions"
+    } == {
         "sandbox": "docker",
         "dev": tmp_path / "dist",
         "show_progress": False,
@@ -1669,7 +1714,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
     def embedded_server(_layout: AgentLayout, **_kwargs):
         yield None
 
-    def fail_prepare(_layout: AgentLayout, *, progress) -> None:
+    def fail_prepare(_layout: AgentLayout, *, progress, workspace_additions) -> None:
         progress(
             ProgressEvent(
                 id="agent:demo:home",
@@ -1833,6 +1878,16 @@ def test_script_materializes_input_local_runnable_refs() -> None:
     )
 
     assert override == RunOverride(runnable="agic:demo")
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("selector", ["_", "{kind}:_"])
+def test_script_materializes_input_local_entry_selector(kind, selector) -> None:
+    override = script._materialize_script_runnable_override(
+        RunOverride(runnable=selector.format(kind=kind)),
+        program=script.Program.from_source(f"{kind}():\n  pass\n"),
+    )
+    assert override == RunOverride(runnable=f"{kind}:<entry:1>")
 
 
 def test_script_materializes_input_local_runnable_queries() -> None:

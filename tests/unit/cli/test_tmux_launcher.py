@@ -753,3 +753,54 @@ def test_window_lookup_failure_does_not_create_a_duplicate_chat() -> None:
     with pytest.raises(TmuxPlacementError, match="window lookup failed"):
         launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
     assert not session.opened
+
+
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+def test_chat_reentry_preserves_placement_and_config_rules(
+    tmp_path, monkeypatch, placement
+):
+    from toolang.cli.common.context import context_layout, load_runtime_environ
+    from toolang.cli.toolang import main as cli
+    from toolang.common.config_sources import config_sources
+    from toolang.up.process import materialize_roaming_program
+
+    source = tmp_path / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    if placement == "roaming":
+        (tmp_path / "toolang.toml").write_text('[default]\nmodel = "test/model"\n')
+        layout = materialize_roaming_program(source)
+    else:
+        layout = AgentLayout(tmp_path / "runtime", "aide", placement)
+        layout.home.mkdir(parents=True)
+        layout.program.write_text(source.read_text())
+    layout.env.write_text("TEST_REENTRY_DOTENV=must-not-load-for-roaming\n")
+    observed = {}
+
+    def reentered(ctx, **kwargs):
+        current = context_layout(ctx)
+        observed["layout"] = current
+        observed["sources"] = config_sources(current)
+        observed["env"] = load_runtime_environ(current, base_environ={})
+        observed["workspace"] = kwargs["workspace"]
+        observed["workdir"] = kwargs["workdir"]
+
+    monkeypatch.setattr(chat, "chat_command", reentered)
+    argv = chat._chat_argv(
+        layout,
+        thread_id="term_test",
+        model_catalog=None,
+        allows=None,
+        defaults=None,
+        sandbox=None,
+        dev=None,
+        limits=None,
+        compact_model=None,
+        workspace=["repo=."],
+        workdir="repo://",
+    )
+    assert cli.main(argv[3:]) == 0
+    assert observed["layout"] == layout
+    assert observed["sources"] == config_sources(layout)
+    assert observed["workspace"] == ["repo=."]
+    assert observed["workdir"] == "repo://"
+    assert ("TEST_REENTRY_DOTENV" in observed["env"]) == (placement != "roaming")

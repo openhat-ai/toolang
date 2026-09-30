@@ -18,7 +18,7 @@ from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _ParsingState
-from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -43,6 +43,14 @@ from toolang.lang.types import display_runnable_ref
 from toolang.plugin.models.query import first_model_ref
 
 from ...common.context import load_runtime_environ
+from ...common.workspaces import (
+    WorkspaceOptions,
+    WorkdirOption,
+    NoAutoWorkspaceOption,
+    resolve_workspaces,
+    running_workspaces,
+    single_workdir,
+)
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
 from ...common.parameters import DEVELOPMENT_WHEEL_HELP, AllowOptions, LimitOptions
@@ -128,20 +136,6 @@ class _ScriptHelpFormatter(UIHelpFormatter):
             self.write_text(description)
             self.write_paragraph()
 
-    def write_commands(self, ctx: Context) -> None:
-        if isinstance(ctx.command, _ScriptGroup):
-            has_main = _entry_command_name(ctx.command) is not None
-            argument = TyperArgument(
-                param_decls=["runnable"],
-                metavar="RUNNABLE",
-                help="Runnable name",
-                required=not has_main,
-                default=_entry_command_name(ctx.command) if has_main else None,
-                show_default=True,
-            )
-            self._sections(((None, self._argument_row(argument, ctx)),), "Arguments")
-        super().write_commands(ctx)
-
     def write_epilog(self, ctx: Context) -> None:
         super().write_epilog(ctx)
         command = ctx.command
@@ -156,19 +150,19 @@ class _ScriptHelpFormatter(UIHelpFormatter):
     def _command_rows(self, ctx: Context):
         if not isinstance(ctx.command, TyperGroup):
             return
-        for _title, (marker, label, _description) in super()._command_rows(ctx):
+        for _title, (_marker, label, _description) in super()._command_rows(ctx):
             command = ctx.command.get_command(ctx, label.plain)
             if isinstance(command, _RunnableCommand):
                 kind = "flow" if command._flow is not None else "agic"
                 shown = display_runnable_ref(
                     f"{kind}:{label.plain}",
                     surface="help",
-                )
+                ).removeprefix(f"{kind}:")
                 yield (
                     "Runnables",
                     (
-                        marker,
                         Text(shown, style="cli.command.name"),
+                        Text(kind, style="cli.meta"),
                         Text.from_markup(command.short_help or ""),
                     ),
                 )
@@ -206,26 +200,8 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             ctx.exit(2)
 
 
-def _resolve_script_command_name(group: TyperGroup, name: str) -> str | None:
-    if name in group.commands:
-        return name
-    if name in {"<entry>", "entry"} or name.startswith("<entry:"):
-        return _entry_command_name(group)
-    return None
-
-
-def _entry_command_name(commands: object) -> str | None:
-    names = getattr(commands, "commands", commands)
-    if isinstance(names, Mapping):
-        if "<entry>" in names:
-            return "<entry>"
-        matches = [
-            name
-            for name in names
-            if isinstance(name, str) and name.startswith("<entry:")
-        ]
-        return matches[0] if len(matches) == 1 else None
-    return None
+def _entry_command_name(group: TyperGroup) -> str | None:
+    return "_" if "_" in group.commands else None
 
 
 class _ScriptGroup(OptionalValueGroup, CliGroup):
@@ -234,6 +210,12 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     context_class = _ScriptHelpContext
     optional_values = {"dev": OptionalValue(bare_value=".")}
     parser_class = _ScriptParser
+
+    def list_commands(self, ctx: Context) -> list[str]:
+        """Put the entry first; named agics and flows retain their source order."""
+        names = super().list_commands(ctx)
+        entry = _entry_command_name(self)
+        return [entry, *(name for name in names if name != entry)] if entry else names
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         rest = super().parse_args(ctx, args)
@@ -270,9 +252,6 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
             requested_kind = None if kind == "runnable" else kind
         else:
             lookup = token
-        resolved = _resolve_script_command_name(self, lookup)
-        if resolved is not None:
-            lookup = resolved
         command = self.get_command(ctx, lookup)
         if separator and kind in {"agic", "flow", "runnable"}:
             if not isinstance(command, _RunnableCommand):
@@ -281,8 +260,6 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
                 raise ValueError(f"runnable is not an agic: {lookup}")
             if requested_kind == "flow" and command._flow is None:
                 raise ValueError(f"runnable is not a flow: {lookup}")
-            args = [lookup, *args[1:]]
-        elif resolved is not None:
             args = [lookup, *args[1:]]
         return super().resolve_command(ctx, args)
 
@@ -321,7 +298,7 @@ def run_script(
     ] = None,
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGUMENTS", help="Runnable-specific arguments"),
+        typer.Argument(metavar="ARGUMENTS", help="Runnable arguments"),
     ] = None,
 ) -> None:
     """Forward the file and its untouched argument tail to Script dispatch."""
@@ -411,7 +388,7 @@ def _program_command(
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
     for name, runnable in runnables.items():
-        command_name = "<entry>" if name.startswith("<entry:") else name
+        command_name = "_" if name.startswith("<entry:") else name
         group.add_command(
             _runnable_command(
                 runnable,
@@ -440,37 +417,38 @@ def _runnable_command(
         ctx: typer.Context,
         quiet: Annotated[
             bool,
-            typer.Option(
-                "--quiet", "-q", help="Suppress prepare and execution progress"
-            ),
+            typer.Option("--quiet", "-q", help="Hide run progress"),
         ] = False,
         save: Annotated[
             str | None,
             typer.Option(
                 "--out",
                 "-o",
-                metavar="PATH",
-                help="Save the Run result to PATH, or use - for stdout",
+                metavar="FILE",
+                help="Save output to FILE; - for stdout",
             ),
         ] = None,
-        sandbox: Annotated[
-            str | None,
-            typer.Option(
-                "--sandbox",
-                metavar="SANDBOX_SPEC",
-                help="Execute this run in the selected sandbox",
-            ),
-        ] = None,
-        allow: AllowOptions = None,
-        limit: LimitOptions = None,
         model: Annotated[
             str | None,
             typer.Option(
                 "--model",
-                metavar="MODEL_SPEC",
-                help="Set the model identity and parameters for this run",
+                metavar="MODEL",
+                help="Set model and parameters",
             ),
         ] = None,
+        workspace: WorkspaceOptions = None,
+        workdir: WorkdirOption = None,
+        sandbox: Annotated[
+            str | None,
+            typer.Option(
+                "--sandbox",
+                metavar="SANDBOX",
+                help="Select the execution sandbox",
+            ),
+        ] = None,
+        allow: AllowOptions = None,
+        limit: LimitOptions = None,
+        no_auto_workspace: NoAutoWorkspaceOption = False,
         dev: Annotated[
             Path | None,
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -492,6 +470,13 @@ def _runnable_command(
             # Group values have not passed through Typer's callback converters.
             root_dev = inherited.get("dev")
             dev = Path(root_dev) if root_dev is not None else dev
+        workspace = [*inherited.get("workspace", ()), *(workspace or ())]
+        selected_workdir = single_workdir(
+            [*(inherited.get("workdir") or ()), *(workdir or ())]
+        )
+        no_auto_workspace = no_auto_workspace or inherited.get(
+            "no_auto_workspace", False
+        )
         override, input, raw_named = _collect_call(
             runnable, items=tuple(items or ()), stdin=stdin
         )
@@ -510,17 +495,23 @@ def _runnable_command(
             dev=dev,
             save=save,
             quiet=quiet,
+            workspace_options=tuple(workspace),
+            workdir=selected_workdir,
+            no_auto_workspace=no_auto_workspace,
         )
 
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
+    short_help = doc or f"{kind.capitalize()} {name}"
+    if runnable is not None and runnable.name is None:
+        short_help = f"{identity} {doc}".rstrip()
     command = get_command_from_info(
         CommandInfo(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
             help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}",
-            short_help=doc or f"{kind.capitalize()} {name}",
+            short_help=short_help,
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",
@@ -621,16 +612,15 @@ def _materialize_script_runnable_override(
 
     if override.runnable in {None, "default"}:
         return override
-    from toolang.state.runnable_collections import runnable_dataset
+    from toolang.execution.runnables import resolve_public_runnable_query
 
-    dataset = runnable_dataset(program)
-    authored = _public_runnables(program)
-    matches = tuple(
-        item for item in dataset.query(override.runnable) if item.name in authored
-    )
-    if len(matches) != 1:
-        raise ValueError(f"runnable query is unknown or ambiguous: {override.runnable}")
-    return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
+    try:
+        resolved = resolve_public_runnable_query(program, override.runnable)
+    except (ToolangError, ValueError) as exc:
+        raise ValueError(
+            f"runnable query is unknown or ambiguous: {override.runnable}"
+        ) from exc
+    return replace(override, runnable=resolved.ref)
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> CallInput[str] | None:
@@ -681,6 +671,9 @@ def _run(
     dev: Path | None,
     save: str | None,
     quiet: bool,
+    workspace_options: tuple[str, ...] = (),
+    workdir: str | None = None,
+    no_auto_workspace: bool = False,
 ) -> int:
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
@@ -700,16 +693,34 @@ def _run(
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         layout = agents.materialize_roaming_program(source_path)
+        workspaces = resolve_workspaces(
+            layout,
+            procdir=Path.cwd(),
+            paths=workspace_options,
+            workdir=workdir,
+            srcdir=source_path.resolve().parent,
+            no_auto=no_auto_workspace,
+            existing=running_workspaces(layout)
+            if workdir and "://" in workdir
+            else None,
+        )
         session_override = _script_session_override(
             model_body=model_body,
             allow_options=allow_options,
             limit_options=limit_options,
         )
+        if workspaces.workdir is not None:
+            session_override = replace(session_override, workdir=workspaces.workdir)
         with acquire_agent_server(
             layout,
             sandbox=sandbox,
             dev=dev,
             show_progress=not quiet,
+            workspace_additions=(
+                None
+                if workdir and "://" in workdir and not workspaces.additions
+                else workspaces.additions
+            ),
         ) as server:
             if server is None:
                 store = RunStore(layout.run_store)
@@ -726,6 +737,7 @@ def _run(
                     state = prepare_agent_state(
                         layout,
                         progress=progress.sink,
+                        workspace_additions=workspaces.additions,
                     )
                 result = asyncio.run(
                     _execute(
@@ -906,18 +918,22 @@ async def _execute_remote(
                     ref=materialize_model_selection(models, model.ref),
                 )
             thread = await _create_remote_script_thread(http, client.endpoint)
+            request = RunRequest(
+                thread_id=thread,
+                request_id=f"term_{uuid4().hex}",
+                runnable=RunnableRequest(effective.runnable or runnable, request_input),
+                model=model,
+                policy=RunPolicy(allow=ceilings, limits=effective.limits),
+                workdir=effective.workdir,
+                workdir_base=effective.workdir_base,
+            )
+            from ...common.attachments import capture_attachments
+
+            request = await capture_attachments(
+                http, client.endpoint, request, procdir=Path.cwd()
+            )
             handle = await client.run(
-                RunRequest(
-                    thread_id=thread,
-                    request_id=f"term_{uuid4().hex}",
-                    runnable=RunnableRequest(
-                        effective.runnable or runnable, request_input
-                    ),
-                    model=model,
-                    policy=RunPolicy(allow=ceilings, limits=effective.limits),
-                    workdir=effective.workdir,
-                    workdir_base=effective.workdir_base,
-                ),
+                request,
                 tracer=tracer,
             )
             if on_accept is not None:
@@ -1196,6 +1212,7 @@ async def _execute(
             if name in {"psyches", "skills", "services", "prompts"}
         },
         initial_state=state,
+        workspace_additions=state.workspace_additions,
     )
     setup = await setup_watcher.refresh()
     state = await state_watcher.refresh()

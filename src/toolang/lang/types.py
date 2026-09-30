@@ -87,6 +87,8 @@ class RunnableRef:
 
     @property
     def role(self) -> str | None:
+        if self.name == "_":
+            return "entry"
         match = _UNNAMED_RUNNABLE_RE.fullmatch(self.name)
         return None if match is None else match.group("role")
 
@@ -147,8 +149,8 @@ def display_runnable_ref(value: str, *, surface: str) -> str:
         kind = f"{parsed.kind}:" if parsed.kind else ""
         return f"{kind}{parsed.name}"
     kind = parsed.kind or "agic"
-    if surface == "chat" and parsed.role == "entry":
-        return f"{kind}:-"
+    if surface in {"help", "chat"} and parsed.role == "entry":
+        return f"{kind}:_"
     if surface in {"help", "chat"}:
         return f"{kind}:<{parsed.role}>"
     if surface == "progress":

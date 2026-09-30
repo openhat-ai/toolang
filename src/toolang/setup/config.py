@@ -5,11 +5,9 @@ from __future__ import annotations
 import math
 import os
 import re
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
-from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +19,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import read_config
 from toolang.common.query import (
     resolve_query_sentinels,
 )
@@ -54,23 +53,17 @@ _SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"}
 def load_setup_config(layout: AgentLayout) -> dict[str, object]:
     """Load the root-scoped setup configuration."""
 
-    return _load_toml(layout.root_config)
+    return (
+        {}
+        if layout.placement == "roaming"
+        else read_config(layout.root_config, include_workspaces=False)
+    )
 
 
 def load_agent_config(layout: AgentLayout) -> dict[str, object]:
     """Load the agent-scoped setup policy configuration."""
 
-    return _load_toml(layout.config)
-
-
-def capture_setup_config(path: Path) -> tuple[dict[str, object], str | None]:
-    """Parse and fingerprint the same bytes for a persistent catalog identity."""
-
-    try:
-        payload = path.read_bytes()
-    except FileNotFoundError:
-        return {}, None
-    return tomllib.loads(payload.decode("utf-8")), sha256(payload).hexdigest()
+    return read_config(layout.config)
 
 
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
@@ -92,6 +85,8 @@ def load_root_setup_envs(layout: AgentLayout) -> dict[str, str]:
 def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
     """Load the merged root and agent dotenv values without process values."""
 
+    if layout.placement == "roaming":
+        return {}
     envs = _load_dotenv(layout.root_env)
     envs.update(_load_dotenv(layout.env))
     return envs
@@ -369,12 +364,6 @@ def _default_text(name: str, value: object) -> str:
     if not normalized:
         raise ValueError(f"default {name} must not be empty")
     return normalized
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:

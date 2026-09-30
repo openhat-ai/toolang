@@ -1159,3 +1159,48 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
     finally:
         asyncio.run(sandbox.stop(spec.serve.layout, force=True))
     assert handle.state.sandbox == "fake:value:with:colons"
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, linked):
+    import tomllib
+    from toolang.common.config_sources import rebase_config
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if linked:
+        authored = tmp_path / "shared.toml"
+        authored.write_text('[workspaces]\nrepo = "../../repo"\n')
+        spec.serve.layout.config.symlink_to(authored)
+    else:
+        spec.serve.layout.config.write_text('[workspaces]\nrepo = "../../repo"\n')
+    asyncio.run(sandbox.launch(spec))
+    prepared = implementation.calls[0]
+    assert isinstance(prepared, tuple)
+    request = cast(SandboxRequest, prepared[2])
+    config_mount = next(
+        (
+            mount
+            for mount in request.mounts
+            if mount.hosted_path == request.hosted_home / "config.toml"
+        ),
+        None,
+    )
+    content = (
+        config_mount.local_path if config_mount else spec.serve.layout.config
+    ).read_text()
+    guest_config = rebase_config(tomllib.loads(content), request.hosted_home)
+    assert len({mount.hosted_path for mount in request.mounts}) == len(request.mounts)
+    assert config_mount is not None and config_mount.read_only
+    captured = json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])
+    assert guest_config["workspaces"] == {"repo": captured["repo"][0]}

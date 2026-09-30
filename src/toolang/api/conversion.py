@@ -38,6 +38,8 @@ def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
             policy=payload.policy,
             workdir=payload.workdir,
             workdir_base=payload.workdir_base,
+            attachments=payload.attachments,
+            source_revision=payload.source_revision,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

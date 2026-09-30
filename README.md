@@ -75,7 +75,7 @@ EOF
 too hello-world.too
 ```
 
-To start from a template, use `too init` to create `aide.too` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
+To start from a template, use `too init` to create `aide.too` and `toolang.toml` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
 
 ```bash
 too init DIR
@@ -122,7 +122,7 @@ too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background
 too stop <agent>                      # Stop a running agent
 
-too init <dir>                        # Create aide.too in a directory
+too init <dir>                        # Create aide.too and toolang.toml
 too [run] <file.too> [runnable]       # Execute a .too file; run is optional
 
 too caps                              # List available caps

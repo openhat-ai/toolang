@@ -37,7 +37,7 @@ def test_research_pipeline_stops_before_gather_when_no_evidence_is_relevant(
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
-                    runnable="<entry>",
+                    runnable="_",
                     primary=(TextPart("research topic"),),
                 )
             )

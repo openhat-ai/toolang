@@ -529,7 +529,15 @@ def _valid_endpoint_host(host: str) -> bool:
 def _run_request_data(request: RunRequest) -> dict[str, object]:
     return cast(
         dict[str, object],
-        _RUN_REQUEST_ADAPTER.dump_python(request, mode="json"),
+        _RUN_REQUEST_ADAPTER.dump_python(
+            request,
+            mode="json",
+            exclude={
+                name
+                for name in ("attachments", "source_revision")
+                if getattr(request, name) is None
+            },
+        ),
     )
 
 

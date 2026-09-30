@@ -109,6 +109,7 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
         home_revision,
         layout.name,
         {},
+        {},
     )
     layers = layout.agent_state / "revs" / revision / "layers.json"
     assert sha256(layers.read_bytes()).hexdigest() == revision

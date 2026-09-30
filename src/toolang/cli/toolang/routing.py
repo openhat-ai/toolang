@@ -98,7 +98,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             placements=_RESIDENT,
             prepare="layout",
         ),
-        _command("workspace", "before", placements=_RESIDENT, prepare="layout"),
+        _command("workspace", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("task", "before", placements=_RESIDENT, prepare="program"),
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
         _command("chat", "before", placements=_ALL_PLACEMENTS, prepare="program"),
@@ -119,9 +119,15 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             )
             for name in ("caps", *CAP_KINDS)
         ),
-        _command("models", "none", "before", placements=_RESIDENT, prepare="layout"),
-        _command("providers", "none", "before", placements=_RESIDENT, prepare="layout"),
-        _command("tools", "none", "before", placements=_RESIDENT, prepare="layout"),
+        _command(
+            "models", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+        ),
+        _command(
+            "providers", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+        ),
+        _command(
+            "tools", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+        ),
         _command("catalogs", "none"),
         _command("adapters", "none"),
         _command("toolsets", "none"),

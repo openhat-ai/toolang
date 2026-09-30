@@ -8,6 +8,7 @@ from typing import Annotated, Literal, Self, cast
 
 from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, model_validator
 
+from toolang.base.types.message import Part
 from toolang.base.money import reject_boolean_cost
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
 from toolang.base.types.model import ModelOverride, ModelRequest
@@ -51,6 +52,8 @@ def _reject_materialized_run_unknowns(value: object) -> None:
             "policy",
             "workdir",
             "workdir_base",
+            "attachments",
+            "source_revision",
         },
         "run request",
     )
@@ -324,6 +327,9 @@ class AuthoredRunRequest(ApiRequest):
     workdir: StrictText | None = None
     workdir_base: StrictText | None = None
 
+    attachments: dict[str, Part] | None = None
+    source_revision: StrictText | None = None
+
     @model_validator(mode="before")
     @classmethod
     def reject_unknown_request_fields(cls, value: object) -> object:
@@ -407,3 +413,15 @@ class RunCommandResult(BaseModel):
 
     run: RunDetail
     command: ControlInfo
+
+
+class InputReferencesRequest(ApiRequest):
+    """Discover includes in source Content without reading server files."""
+
+    runnable: StrictText
+    input: dict[StrictText, StrictText]
+
+
+class InputReferencesResponse(BaseModel):
+    state: str
+    references: tuple[str, ...]

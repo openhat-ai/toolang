@@ -201,8 +201,9 @@ too run app.too topic=demo -- "Handle this request"
 too run app.too review -- "Review this request"
 ```
 
-`too run FILE --help` shows file help; `too run FILE main --help` shows the
-main signature. Help does not read stdin or prepare an agent. Explicit `run`
+`too run FILE --help` shows file help; `too run FILE _ --help` shows the
+unnamed entry's signature. `_`, `agic:_`, and `flow:_` select that entry explicitly;
+`-` remains stdin input. Help does not read stdin or prepare an agent. Explicit `run`
 can select a runnable whose name is a CLI command, such as `serve`.
 Global `--root` / `-r` overrides are not supported in Script mode.
 
@@ -243,18 +244,22 @@ supplied in any order, interspersed with command options, before input.
 
 When primary input is forbidden, its row and instructions are absent. Empty
 signatures omit Arguments entirely. **Options** follows Arguments. Top-level
-Script file help says `Execute a runnable from SCRIPT.` and shows RUNNABLE in
-**Arguments**, with `[default: main]` when available or a required marker otherwise.
-It then lists **Runnables** before Options, using `agic:NAME` and `flow:NAME`
-labels with authored descriptions or
-`Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names are
-valid runnable selectors.
+Script file help says `Execute a runnable from FILE.` and lists **Runnables** before
+Options, without a redundant Arguments panel. Its three columns are name, kind,
+and description. The unnamed `_` comes first with its `<entry:LINE>` identity and
+authored comment, then named agics and flows in source order within each kind.
+Named entries use authored descriptions or `Agic NAME` / `Flow NAME` fallbacks.
+Qualified selectors and bare names are both accepted. RUNNABLE is optional in
+Usage only when the file has an unnamed entry.
 
 Root and runnable help show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
+`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
+`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
 `-h` / `--help`. Common options may appear on either side of RUNNABLE, before
 input. Runnable-level scalar values override root values when explicitly set;
-repeated `--allow` and `--limit` values accumulate in command-line order.
+repeated `--workspace`, `--allow`, and `--limit` values accumulate in command-line
+order. `--workdir` may be specified only once across both levels. See
+[Script Projects](script-projects.md) for workspace and path rules.
 `--quiet` at either level enables quiet mode, and `--help` describes that level.
 
 Both line forms accept the same text:

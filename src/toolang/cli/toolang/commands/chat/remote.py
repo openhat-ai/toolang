@@ -7,6 +7,8 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 import json
+from pathlib import Path
+from toolang.cli.common.attachments import capture_attachments
 import threading
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -100,7 +102,10 @@ class RemoteChatSession:
         *,
         expected_sandbox: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        workdir: str | None = None,
     ) -> None:
+        self._invocation_workdir = workdir
+        self._procdir = Path.cwd().resolve()
         self._endpoint = endpoint
         self._expected_sandbox = expected_sandbox.strip()
         if not self._expected_sandbox or self._expected_sandbox != expected_sandbox:
@@ -231,6 +236,8 @@ class RemoteChatSession:
         return resolved
 
     def initial_workdir(self, thread_id: str | None) -> str:
+        if self._invocation_workdir is not None:
+            return self.resolve_workdir(self._invocation_workdir, None, thread_id)
         if thread_id is None:
             workdir = self._session_defaults().workdir
             if workdir is None:
@@ -742,7 +749,9 @@ class RemoteChatSession:
                     ),
                 ),
             )
-        return request
+        return await capture_attachments(
+            self._http_client(), self._endpoint, request, procdir=self._procdir
+        )
 
     async def _run(
         self,

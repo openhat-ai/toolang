@@ -48,6 +48,7 @@ def acquire_agent_server(
     base_environ: Mapping[str, str] | None = None,
     show_progress: bool = True,
     compact_override: ModelOverride | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an existing or temporary AgentServer, or select host embedding."""
 
@@ -57,6 +58,12 @@ def acquire_agent_server(
             f"agent {layout.name} is {status.status}; wait for it to become ready"
         )
     if status is not None and status.status == "running":
+        if workspace_additions is not None:
+            captured = agents.AgentProcess(layout).state() or {}
+            if captured.get("workspace_additions", {}) != dict(workspace_additions):
+                raise AgentServerAcquisitionError(
+                    "workspace bindings differ from the running server; stop it before adding local directories"
+                )
         if compact_override is not None:
             raise AgentServerAcquisitionError(
                 "--compact-model only applies when starting a runtime; stop the agent first"
@@ -107,6 +114,7 @@ def acquire_agent_server(
         model_catalog=model_catalog,
         base_environ=base_environ,
         compact_override=compact_override,
+        workspace_additions=workspace_additions,
     )
     warn_development_package_source(launch)
 
@@ -240,6 +248,7 @@ def _resolve_inactive_launch(
     model_catalog: Path | None,
     base_environ: Mapping[str, str] | None,
     compact_override: ModelOverride | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
         environ = load_runtime_environ(
@@ -268,6 +277,7 @@ def _resolve_inactive_launch(
                 default_overrides=resolve_default_overrides(environ),
                 limit_overrides=resolve_limit_overrides(environ),
                 compact_override=compact_override or resolve_compact_override(environ),
+                workspace_additions=workspace_additions,
             )
         )
     except (

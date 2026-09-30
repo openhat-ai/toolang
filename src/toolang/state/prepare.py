@@ -86,6 +86,7 @@ def prepare_agent_state(
     progress: ProgressSink | None = None,
     allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     previous: AgentState | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
@@ -100,7 +101,11 @@ def prepare_agent_state(
             progress=progress,
         )
         revision = agent_state_revision(
-            root.revision, home.revision, name=layout.name, allow_overrides=overrides
+            root.revision,
+            home.revision,
+            name=layout.name,
+            allow_overrides=overrides,
+            workspace_additions=workspace_additions,
         )
         revision_dir = agent_revision_dir(layout, revision)
         state = (
@@ -113,6 +118,7 @@ def prepare_agent_state(
                 home,
                 name=layout.name,
                 allow_overrides=overrides,
+                workspace_additions=workspace_additions,
                 revision_dir=revision_dir,
             )
         )
@@ -121,6 +127,7 @@ def prepare_agent_state(
             root_revision=root.revision,
             home_revision=home.revision,
             allow_overrides=overrides,
+            workspace_additions=workspace_additions,
         )
         return state
 
@@ -132,12 +139,14 @@ def compose_layer_state(
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
     return compose_agent_state(
         name=name,
         allow_overrides=allow_overrides,
+        workspace_additions=workspace_additions,
         root_revision=root.revision,
         home_revision=home.revision,
         root_config=root.config,
@@ -158,8 +167,8 @@ def load_agent_state(
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
-    effective, root_revision, home_revision, name, overrides = load_agent_revisions(
-        layout, revision
+    (effective, root_revision, home_revision, name, overrides, workspace_additions) = (
+        load_agent_revisions(layout, revision)
     )
     root = load_root_layer(layout, root_revision)
     home = load_home_layer(layout, home_revision)
@@ -173,6 +182,7 @@ def load_agent_state(
         revision_dir=agent_revision_dir(layout, effective),
         name=name,
         allow_overrides=overrides,
+        workspace_additions=workspace_additions,
     )
     if state.revision != effective:
         raise ValueError("Agent State composition revision mismatch")

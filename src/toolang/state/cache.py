@@ -264,6 +264,7 @@ def _persist_agent_revision(
     root_revision: str,
     home_revision: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> str:
     """Persist and publish one composition while the agent check lock is held."""
 
@@ -272,6 +273,7 @@ def _persist_agent_revision(
         home_revision=home_revision,
         name=layout.name,
         allow_overrides=allow_overrides,
+        workspace_additions=workspace_additions,
     )
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
@@ -299,7 +301,7 @@ def _persist_agent_revision(
 def load_agent_revisions(
     layout: AgentLayout,
     revision: str | None = None,
-) -> tuple[str, str, str, str, dict[str, tuple[str, ...]]]:
+) -> tuple[str, str, str, str, dict[str, tuple[str, ...]], dict[str, str]]:
     """Load one trusted Agent State composition without integrity validation."""
 
     effective = load_current_agent_revision(layout) if revision is None else revision
@@ -316,6 +318,7 @@ def load_agent_revisions(
         home_revision,
         str(document["name"]),
         {key: tuple(value) for key, value in overrides.items()},
+        dict(cast(list[tuple[str, str]], document.get("workspace_additions", []))),
     )
 
 
@@ -577,7 +580,7 @@ def _validate_agent_dir(
     document = _canonical_object(encoded, label="layers.json")
     if sha256(encoded).hexdigest() != revision:
         raise ValueError("Agent State revision does not match layers.json")
-    if set(document) != {
+    if set(document) - {"workspace_additions"} != {
         "home_revision",
         "root_revision",
         "name",

@@ -722,6 +722,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "agent_log_path": layout.runtime_log,
     }
     assert captured["launch"] == {
+        "workspace_additions": None,
         "layout": layout,
         "sandbox": "docker",
         "dev": development,
@@ -747,3 +748,40 @@ def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
     )
     assert not agent_server.sandbox_matches("host", "docker:python:3.13-slim")
     assert not agent_server.sandbox_matches("docker:other", "docker:python:3.13-slim")
+
+
+@pytest.mark.parametrize(
+    "requested,compatible",
+    [(None, True), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
+)
+def test_running_server_cannot_rebind_workspace_names(
+    tmp_path, monkeypatch, requested, compatible
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    class Process:
+        def __init__(self, selected):
+            assert selected == layout
+
+        def status(self, **_kwargs):
+            return _status(
+                value="running", endpoint="http://localhost:7001", sandbox="host"
+            )
+
+        def state(self):
+            return {"workspace_additions": {"repo": "/one"}}
+
+    monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+    if compatible:
+        with agent_server.acquire_agent_server(
+            layout, sandbox=None, workspace_additions=requested
+        ) as server:
+            assert server is not None
+    else:
+        with pytest.raises(
+            agent_server.AgentServerAcquisitionError, match="bindings differ"
+        ):
+            with agent_server.acquire_agent_server(
+                layout, sandbox=None, workspace_additions=requested
+            ):
+                pytest.fail("must not rebind running workspace roots")

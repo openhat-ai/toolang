@@ -14,6 +14,7 @@ from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
+from toolang.common.config_sources import ConfigSource, config_sources
 from toolang.plugin.loading import (
     load_model_adapters,
     load_model_catalogs,
@@ -40,7 +41,6 @@ from .revisions import (
 )
 from .catalog import assemble_catalog, merge_catalog_snapshots
 from .config import (
-    capture_setup_config,
     load_root_setup_envs,
     load_setup_envs,
     project_model_setup_config,
@@ -68,15 +68,15 @@ _LOCAL_CATALOG_ENV = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class _LoadedInputs:
-    root_config: dict[str, object]
-    agent_config: dict[str, object]
+    sources: tuple[ConfigSource, ...]
+    configs: tuple[dict[str, object], ...]
     envs: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     inputs: _LoadedInputs
-    config_value: tuple[dict[str, object], dict[str, object]]
+    config_value: tuple[dict[str, object], ...]
     adapter_configs: dict[str, dict[str, object]]
     toolset_configs: dict[str, dict[str, object]]
     catalog_configs: dict[str, dict[str, object]]
@@ -118,7 +118,7 @@ class SetupWatcher:
         self._default_overrides = dict(default_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
         self._compact_override = compact_override
-        self._config: tuple[dict[str, object], dict[str, object]] | None = None
+        self._config: tuple[dict[str, object], ...] | None = None
         self._adapter_configs: dict[str, dict[str, object]] | None = None
         self._toolset_configs: dict[str, dict[str, object]] | None = None
         self._catalog_configs: dict[str, dict[str, object]] | None = None
@@ -180,11 +180,8 @@ class SetupWatcher:
 
     async def _perform_refresh(self) -> AgentSetup:
         inputs = self._load_inputs()
-        configs = (inputs.root_config, inputs.agent_config)
-        config_value = (
-            project_setup_config(inputs.root_config),
-            project_setup_config(inputs.agent_config),
-        )
+        configs = inputs.configs
+        config_value = tuple(project_setup_config(config) for config in configs)
         allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
         defaults = resolve_run_defaults(configs, overrides=self._default_overrides)
         compact = resolve_compact_config(configs, override=self._compact_override)
@@ -197,6 +194,7 @@ class SetupWatcher:
             explicit=self._model_catalog_override,
             environ=inputs.envs,
             include_agent=self._agent_context,
+            sources=inputs.sources,
         )
         catalog_configs = self._runtime_catalog_configs(
             configs, inputs.envs, catalog_path=catalog_path
@@ -283,14 +281,10 @@ class SetupWatcher:
         return setup
 
     def _load_inputs(self) -> _LoadedInputs:
-        paths = (
-            self.layout.root_config,
-            *((self.layout.config,) if self._agent_context else ()),
-        )
-        captured = tuple(capture_setup_config(path) for path in paths)
+        sources = config_sources(self.layout, include_agent=self._agent_context)
         return _LoadedInputs(
-            root_config=captured[0][0],
-            agent_config=captured[1][0] if self._agent_context else {},
+            sources=sources,
+            configs=tuple(source.config for source in sources),
             envs=dict(
                 load_setup_envs(self.layout)
                 if self._agent_context
