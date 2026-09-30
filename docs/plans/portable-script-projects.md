@@ -20,9 +20,7 @@ also resolve differently when execution moves to a server or container.
 | Term | Meaning |
 | --- | --- |
 | `procdir` | Captured client process directory; base for explicit CLI paths and Chat/script input attachments. |
-| `script_dir` | Parent of the real `.too` file, after resolving script symlinks. |
-| `git_root` | Nearest containing Git working-tree root; only a configuration-search boundary. |
-| `config_dir` | Parent of each authored configuration pathname; the base for that file's relative paths. |
+| `sourcedir` | Parent of the real `.too` source file, after resolving symlinks. |
 | `workspace` | A named authorized directory. |
 | `workdir` | Run location such as `repo://src`; identifies both workspace and directory within it. |
 
@@ -34,7 +32,7 @@ aligning existing fields; do not introduce a second workspace-selection setting.
 | --- | --- |
 | Chat or script `@file`, including named input and stdin | Client `procdir`; piped input has no originating filename. |
 | `@file` in `task.md` or `chore.md` | That authored file's directory; retain agent-home fallback for fileless jobs. |
-| Workspace/catalog path in configuration | Its originating `config_dir`, before merging layers. |
+| Workspace/catalog path in configuration | The authored configuration file's directory, before merging layers. |
 | Other explicit CLI paths or catalog environment override | Client `procdir`, before process/container handoff. |
 | Runtime fs/shell paths | Run `workdir`. |
 
@@ -54,10 +52,11 @@ have no file resolver; adding source-relative attachments there is outside scope
 
 ## Discovery and ownership
 
-Search both companion names independently from `script_dir` through `git_root`,
-inclusive. A worktree, submodule, or nested repository stops at its own working-tree
-root, not a metadata directory or outer repository. Without a working tree, inspect
-only `script_dir`. Do not use procdir, inherit Git relocation environment overrides,
+Search both companion names independently from `sourcedir` through the nearest
+Git working-tree root, inclusive. Only directories containing a companion file
+contribute configuration layers; empty ancestors are not runtime locations.
+A worktree, submodule, or nested repository stops at its own working-tree root, not a metadata directory or outer repository. Without a working tree, inspect
+only `sourcedir`. Do not use procdir, inherit Git relocation environment overrides,
 or cross a broken nearest Git marker. Git-backed discovery must diagnose an
 unresolvable boundary rather than silently change its configuration inputs.
 
@@ -99,10 +98,11 @@ selected catalog fails rather than falling back; unused outer catalogs are not
 loaded. Configuration and catalog discovery do not depend on one another.
 
 ```text
-repo/                         # git_root
+repo/                         # Git working-tree boundary
   toolang.toml                # shared settings
   toolang.catalog.json
   scripts/
+    .toolang/                 # generated runtime data for sources here
     toolang.toml              # local [workspaces] project = "..", if needed
     aide.too                  # default workdir: repo/scripts
 ```
@@ -112,7 +112,7 @@ discovery alone changes neither workdir nor access.
 
 ## Workspaces and placement
 
-Propose implicit `script://` for roaming, rooted at `script_dir`, as its initial
+Propose implicit `script://` for roaming, rooted at `sourcedir`, as its initial
 workdir unless explicitly selected otherwise. Keep `lab` and configured workspaces;
 reject conflicting authored use of `script`. No implicit procdir or Git-root grant.
 Keep existing duplicate/nested-root rules; allow an implicit-root alias without
@@ -145,9 +145,12 @@ project/generated dotenv discovery or implicit `~/.toolang` inheritance.
 
 ## Generated files and initialization
 
-Propose `.toolang/` at Git root, otherwise script directory. Keep canonical runtime
-names `agent.too`, `config.toml`, and `catalog.json`. A layered config cannot be a
-single source symlink: retain its ordered origins and generate any required runtime
+Roaming runtime data belongs at `sourcedir/.toolang/`, matching the existing
+source-local layout. Ancestor configuration/catalog files and the Git boundary do
+not relocate it. This generated directory is distinct from the resident root
+(default `~/.toolang`); do not merge their configuration or state. Keep canonical
+runtime names `agent.too`, `config.toml`, and `catalog.json`. A layered config cannot
+be a single source symlink: retain its ordered origins and generate any required runtime
 projection from them. All consumers use one captured input set; do not generically
 flatten special merge rules or apply layers twice. Derived files are never authored
 overrides. Identify scripts and revisions using source identity, origins, and
@@ -173,7 +176,9 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
 - Scope/merge: three layers with special defaults, lists and different path bases;
   no inherited agent-only resources; nearest catalog and explicit-path precedence.
 - Workspaces: script-relative tools, aliases/nesting, equal script stems, relocation,
-  recorded bindings, incompatible-server rejection, and host/guest parity.
+  recorded bindings, incompatible-server rejection, and host/guest parity. Runtime
+  data stays beside the source even when configuration/catalogs come from ancestors;
+  the resident root remains independent.
 - Input: distinct same-named files in client/script/job/server directories; Chat,
   script, named and piped input; prompt expansion; workdir changes; missing files;
   identical attachments across transports without granting directory access.
@@ -191,8 +196,8 @@ this definition requires source/reference verification and `git diff --check`.
 
 ## Remaining decisions and review risks
 
-1. Confirm the proposed roaming local/shared boundary, `script` workspace name,
-   and generated-root location above. These are not yet implementation approval.
+1. Confirm the proposed roaming local/shared boundary and `script` workspace name. Source-local `.toolang/` placement is confirmed; the remaining proposals
+   are not implementation approval.
 2. Temporary workspace convenience may use `--workspace NAME=PATH` plus
    `--workdir URI`; syntax and read-only-project cache fallback are optional
    follow-ups, not reasons to add lifecycle infrastructure to the core change.
