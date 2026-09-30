@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Barrier
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -877,6 +878,7 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
     class Session:
         def __init__(self, layout: AgentLayout, **_kwargs: object) -> None:
             captured["layout"] = layout
+            self.state_watcher = SimpleNamespace(diagnostics=lambda: ())
 
         def close(self) -> None:
             captured["closed"] = True
@@ -1155,6 +1157,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     class Session:
         def __init__(self, selected: AgentLayout, **_kwargs: object) -> None:
             captured["layout"] = selected
+            self.state_watcher = SimpleNamespace(diagnostics=lambda: ())
 
         def close(self) -> None:
             captured["closed"] = True

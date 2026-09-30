@@ -200,6 +200,9 @@ State. A valid changed candidate is fully persisted before it replaces that
 State. An invalid candidate records structured diagnostics and keeps the prior
 revision available; startup fails only when neither a valid candidate nor a
 loadable new-format published State exists.
+Local Chat reports rejected startup candidates before opening the session,
+including the reason it is using the previous State. That State retains its
+previous runnable definitions and resource selections.
 
 The watcher permits one filesystem monitor and one serialized check/publication
 path. It retains process-local path and stat observations separately from the
