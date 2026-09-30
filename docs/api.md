@@ -283,8 +283,9 @@ Both levels show the same common options, ordered as `-q` / `--quiet`,
 `--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
 `-h` / `--help`.
 Common options may appear before or after RUNNABLE, before input. Explicit
-runnable-level scalar values override root values; repeated `--allow` and
-`--limit` values accumulate in command-line order. Quiet mode is enabled at
+runnable-level scalar values override root values; repeated `--workspace`,
+`--allow`, and `--limit` values accumulate in command-line order. `--workdir`
+may appear only once across both levels. Quiet mode is enabled at
 either level. `--help` describes the level where it appears.
 
 Script mode parses policy prefixes but does not accept chat quick commands.

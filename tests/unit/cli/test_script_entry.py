@@ -275,7 +275,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
 
 @pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("declaration", ["agic()", "flow()"])
-def test_script_defaults_to_authored_main(explicit, declaration, monkeypatch):
+def test_script_defaults_to_unnamed_entry(explicit, declaration, monkeypatch):
     path = _source(f"{declaration}:\n  pass\n")
     captured = []
     monkeypatch.setattr(
@@ -288,7 +288,7 @@ def test_script_defaults_to_authored_main(explicit, declaration, monkeypatch):
 
 
 @pytest.mark.parametrize("selector", ["_", "agic:_", "runnable:_"])
-def test_explicit_main_selection(selector, monkeypatch):
+def test_explicit_unnamed_entry_selection(selector, monkeypatch):
     path = _source()
     captured = []
     monkeypatch.setattr(
@@ -353,7 +353,7 @@ def test_explicit_run_preserves_command_like_runnable_names(name, monkeypatch):
 @pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("selector", [[], ["_"]])
 @pytest.mark.parametrize("primary", [["--", "hello", "--root", "literal"], ["-"]])
-def test_default_main_preserves_options_named_inputs_and_stdin(
+def test_unnamed_entry_preserves_options_named_inputs_and_stdin(
     explicit, selector, primary, monkeypatch
 ):
     path = _source("agic(_: Part[], topic: Text):\n  {{_}}\n")
@@ -387,7 +387,7 @@ def test_default_main_preserves_options_named_inputs_and_stdin(
 
 
 @pytest.mark.parametrize("arguments", [[], ["--help"], ["_", "--help"]])
-def test_main_help_and_missing_input_never_execute(arguments, monkeypatch, capsys):
+def test_entry_help_and_missing_input_never_execute(arguments, monkeypatch, capsys):
     path = _source("## Handle the request.\nagic:\n  {{_}}\n")
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("executed help")
@@ -409,7 +409,7 @@ def test_main_help_and_missing_input_never_execute(arguments, monkeypatch, capsy
     "arguments",
     [[], ["--help"], ["--model", "test/model"], ["--dev", "--", "helper"], ["unknown"]],
 )
-def test_no_main_shows_help_or_requires_an_explicit_runnable(arguments, monkeypatch):
+def test_no_entry_shows_help_or_requires_an_explicit_runnable(arguments, monkeypatch):
     path = _source("agic helper():\n  Hello.\n")
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("selected helper")
@@ -543,7 +543,7 @@ def test_run_reports_invalid_files_without_hosting_advice(
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-def test_file_help_without_main_marks_runnable_required(explicit, capsys):
+def test_file_help_without_entry_marks_runnable_required(explicit, capsys):
     path = _source("agic helper():\n  Hello.\n")
     assert cli.main([*(["run"] if explicit else []), path, "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())

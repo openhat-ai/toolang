@@ -1,5 +1,9 @@
 # Initialize Scripts and Expose Explicit Script Execution
 
+Historical design. The final init, workspace, selection, and help rules are in
+[Portable Script Projects](portable-script-projects.md); unnamed identity is
+specified in [Unnamed Runnable Identity](unnamed-runnable-identity.md).
+
 ## Goal and Approval
 
 Create a small Script with `too init DIR` and execute it with

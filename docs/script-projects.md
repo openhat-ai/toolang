@@ -7,8 +7,8 @@ output; remove or complete it before retrying. Add `.toolang/` to Git ignore rul
 
 For a script with an unnamed entry, omit the runnable or select `_` explicitly:
 `too file.too` and `too file.too _` select the same entry. `agic:_` and `flow:_`
-also check its kind. `<entry:5>` in help identifies the source line. Input `-` reads stdin,
-so `too file.too _ -` selects the entry and reads its input from stdin.
+also check its kind. `<entry:5>` in help identifies the source line. Input `-`
+reads stdin, so `too file.too _ -` selects the entry and reads from stdin.
 
 Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
 command. Otherwise, `run` can be omitted: `too aide.too whats_for`.
@@ -29,7 +29,7 @@ paths resolve relative to the file that declares them.
 
 Shared settings merge from outer to inner configurations using the existing
 field-specific rules. Workspace grants come only from source-local TOML; ancestor
-configuration does not grant filesystem access. For example:
+workspace declarations are ignored before resolving their paths. For example:
 
 ```toml
 # scripts/toolang.toml
@@ -51,8 +51,8 @@ or settings from the resident `~/.toolang` root.
 ## Temporary workspaces
 
 Script calls automatically add srcdir as a workspace and select it as workdir.
-Other execution modes do not add it automatically. `-w` and `-d` are available for
-resident, roaming, and visiting agents:
+Chat and hosting commands do not add it automatically, including for roaming
+agents. `-w` and `-d` are available in all three placements:
 
 ```sh
 ./aide.too whats_for

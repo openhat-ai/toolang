@@ -148,7 +148,9 @@ def prepare_source_mounts(
         if not config.is_file():
             continue
         original = config.read_bytes()
-        resolved = rebase_config_content(original, local)
+        resolved = rebase_config_content(
+            original, local, include_workspaces=scope == "home"
+        )
         if resolved == original:
             continue
         captured = local_home / ".runtime" / "config-inputs" / f"{scope}.toml"

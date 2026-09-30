@@ -27,21 +27,27 @@ class ConfigSource:
     config: dict[str, object]
 
 
-def read_config(path: Path) -> dict[str, object]:
+def read_config(path: Path, *, include_workspaces: bool = True) -> dict[str, object]:
     """Read one optional TOML file, preserving its discovered path as origin."""
     if not path.exists() and not path.is_symlink():
         return {}
     try:
         return rebase_config(
-            tomllib.loads(path.read_text(encoding="utf-8")), path.parent
+            tomllib.loads(path.read_text(encoding="utf-8")),
+            path.parent,
+            include_workspaces=include_workspaces,
         )
     except (OSError, ValueError) as exc:
         raise ValueError(f"could not read configuration {path}: {exc}") from exc
 
 
-def rebase_config(config: Mapping[str, object], directory: Path) -> dict[str, object]:
+def rebase_config(
+    config: Mapping[str, object], directory: Path, *, include_workspaces: bool = True
+) -> dict[str, object]:
     """Resolve known host paths; plugin commands and guest paths remain opaque."""
     result = deepcopy(dict(config))
+    if not include_workspaces:
+        result.pop("workspaces", None)
     workspaces = result.get("workspaces")
     if isinstance(workspaces, dict):
         workspaces = cast(dict[str, object], workspaces)
@@ -54,10 +60,12 @@ def rebase_config(config: Mapping[str, object], directory: Path) -> dict[str, ob
     return result
 
 
-def rebase_config_content(content: bytes, directory: Path) -> bytes:
+def rebase_config_content(
+    content: bytes, directory: Path, *, include_workspaces: bool = True
+) -> bytes:
     """Bind relative paths into captured bytes without changing unrelated files."""
     parsed = tomllib.loads(content.decode("utf-8"))
-    resolved = rebase_config(parsed, directory)
+    resolved = rebase_config(parsed, directory, include_workspaces=include_workspaces)
     return content if parsed == resolved else tomlkit.dumps(resolved).encode("utf-8")
 
 
@@ -111,9 +119,7 @@ def script_sources(source: Path) -> tuple[ConfigSource, ...]:
         companion = directory / "toolang.catalog.json"
         if not any(item.exists() or item.is_symlink() for item in (path, companion)):
             continue
-        config = read_config(path)
-        if directory != directories[0]:
-            config.pop("workspaces", None)
+        config = read_config(path, include_workspaces=directory == directories[0])
         # Catalog-only layers retain their position without requiring TOML.
         sources.append(ConfigSource(path, config))
     return tuple(sources)
@@ -135,7 +141,10 @@ def config_sources(
             )
         return (ConfigSource(layout.config, config),)
     paths = (layout.root_config, *((layout.config,) if include_agent else ()))
-    return tuple(ConfigSource(path, read_config(path)) for path in paths)
+    return tuple(
+        ConfigSource(path, read_config(path, include_workspaces=path == layout.config))
+        for path in paths
+    )
 
 
 def merge_mappings(layers: Sequence[Mapping[str, object]]) -> dict[str, object]:

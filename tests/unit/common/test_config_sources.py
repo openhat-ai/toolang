@@ -9,10 +9,52 @@ from toolang.common.config_sources import (
     script_directories,
     source_catalog,
 )
+from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
-from toolang.setup.config import resolve_run_defaults
+from toolang.setup.config import (
+    resolve_run_defaults,
+    resolve_compact_config,
+    resolve_setup_allow,
+)
+from toolang.plugin.config import merge_plugin_configs
+from toolang.up.sandbox import resolve_selection
 from toolang.state.prepare import prepare_agent_state
 from toolang.up.process import materialize_roaming_program
+from toolang.up.mounts import prepare_source_mounts
+
+
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placement):
+    shared = '[workspaces]\nignored = "~toolang-nonexistent-user/repo"\n'
+    if placement == "roaming":
+        git_init(tmp_path)
+        source = tmp_path / "module" / "aide.too"
+        source.parent.mkdir()
+        source.write_text("flow run():\n  pass\n")
+        (tmp_path / "toolang.toml").write_text(shared)
+        (source.parent / "toolang.toml").write_text('[workspaces]\nrepo = "."\n')
+        layout = materialize_roaming_program(source)
+        expected = str(source.parent)
+    else:
+        layout = AgentLayout(tmp_path, "helper", placement)
+        layout.home.mkdir(parents=True)
+        layout.program.write_text("flow run():\n  pass\n")
+        layout.root_config.write_text(shared)
+        layout.config.write_text('[workspaces]\nrepo = "."\n')
+        expected = str(layout.home)
+
+    sources = config_sources(layout)
+    assert "workspaces" not in sources[0].config
+    assert prepare_agent_state(layout).workspaces == {"repo": expected}
+    # Guest snapshots must obey the same ownership rule as host loading.
+    mounts = prepare_source_mounts(layout.root, layout.name, tmp_path / "guest")
+    root_mount = next(
+        m
+        for m in mounts
+        if m.hosted_path.name == "config.toml"
+        and m.hosted_path.parent == tmp_path / "guest"
+    )
+    assert "ignored" not in root_mount.local_path.read_text()
 
 
 def git_init(path):
@@ -133,7 +175,8 @@ def test_real_script_and_discovered_config_symlinks_keep_distinct_origins(tmp_pa
     assert prepare_agent_state(layout).workspaces == {"repo": str(tmp_path)}
 
 
-def test_git_worktree_boundary_does_not_inherit_parent(tmp_path):
+@pytest.mark.parametrize("kind", ["worktree", "submodule"])
+def test_git_boundary_does_not_inherit_parent(tmp_path, kind):
     repo = tmp_path / "repo"
     git_init(repo)
     subprocess.run(
@@ -152,16 +195,84 @@ def test_git_worktree_boundary_does_not_inherit_parent(tmp_path):
         ],
         check=True,
     )
-    worktree = tmp_path / "linked"
-    subprocess.run(
-        ["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)],
-        check=True,
-    )
+    parent = tmp_path / "parent"
+    git_init(parent)
+    (parent / "toolang.toml").write_text("[broken")
+    worktree = parent / "linked"
+    if kind == "worktree":
+        command = [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            str(worktree),
+        ]
+    else:
+        command = [
+            "git",
+            "-C",
+            str(parent),
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(repo),
+            str(worktree),
+        ]
+    subprocess.run(command, check=True)
     inner = worktree / "module"
     inner.mkdir()
     source = inner / "aide.too"
     source.touch()
     assert script_directories(source) == (inner, worktree)
+    assert config_sources(materialize_roaming_program(source)) == ()
+
+
+def test_three_project_layers_preserve_field_specific_merges(tmp_path):
+    git_init(tmp_path)
+    middle = tmp_path / "project"
+    inner = middle / "module"
+    inner.mkdir(parents=True)
+    source = inner / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    (tmp_path / "toolang.toml").write_text(
+        '[default]\nmodel = "test/base"\n'
+        '[compact]\nmodel = "test/old effort=high"\n'
+        '[allow]\ntools = ["fs/*"]\n'
+        '[sandbox]\ndriver = "docker"\ntarget = "old-image"\n'
+        "[plugin.toolset.fs]\nvalues = [1, 2]\n"
+        "[plugin.toolset.fs.options]\nouter = true\n"
+    )
+    (middle / "toolang.toml").write_text(
+        '[default]\nmodel = "effort=high"\n'
+        '[sandbox]\ndriver = "host"\n'
+        "[plugin.toolset.fs.options]\ninner = true\n"
+    )
+    (inner / "toolang.toml").write_text(
+        '[compact]\nmodel = "test/new"\n'
+        '[allow]\ntools = ["shell/*"]\n'
+        "[plugin.toolset.fs]\nvalues = [3]\n"
+    )
+    layout = materialize_roaming_program(source)
+    configs = [item.config for item in config_sources(layout)]
+    defaults = resolve_run_defaults(configs)
+    assert defaults.model is not None
+    assert defaults.model.ref == "test/base"
+    assert defaults.model.reasoning is not None
+    assert defaults.model.reasoning.effort == "high"
+    compact = resolve_compact_config(configs)
+    assert compact.model is not None
+    assert compact.model.identity == "test/new" and compact.model.effort is None
+    assert resolve_setup_allow(configs).tools == ("shell/*",)
+    assert resolve_selection(layout) == "host"
+    assert merge_plugin_configs(configs, family="toolset")["fs"] == {
+        "values": [3],
+        "options": {"outer": True, "inner": True},
+    }
 
 
 def test_unowned_symlink_is_not_replaced(tmp_path):

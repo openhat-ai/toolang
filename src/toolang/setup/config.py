@@ -53,7 +53,11 @@ _SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"}
 def load_setup_config(layout: AgentLayout) -> dict[str, object]:
     """Load the root-scoped setup configuration."""
 
-    return {} if layout.placement == "roaming" else read_config(layout.root_config)
+    return (
+        {}
+        if layout.placement == "roaming"
+        else read_config(layout.root_config, include_workspaces=False)
+    )
 
 
 def load_agent_config(layout: AgentLayout) -> dict[str, object]:
