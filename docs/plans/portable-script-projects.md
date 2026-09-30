@@ -121,7 +121,7 @@ selected-workspace field.
 | Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace; `=PATH` also infers its name. |
 | `--cd [NAME=]PATH` | Add PATH and select its root as workdir; `=PATH` also infers its name. |
 | `--cd NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
-| `--no-src-workspace` (proposed spelling) | Disable automatic source inclusion. |
+| `--no-auto-workspace` | Do not automatically add the script directory as a workspace. |
 
 CLI paths resolve from procdir, support home expansion, and must name existing
 directories. These options never change procdir, attachment origins, or authored
@@ -280,7 +280,7 @@ this definition requires source/reference verification and `git diff --check`.
 2. Workspace option forms, source-replacement behavior, last-workspace fallback,
    directory-based naming, both `--cd` path/URI forms, and support across resident,
    roaming, and visiting are confirmed. Review
-   repeated-`--cd` rejection and spelling `--no-src-workspace`. Existing history-based
+   repeated-`--cd` rejection. The disable option is `--no-auto-workspace`. Existing history-based
    selection must not unexpectedly redirect a new script call away from its default
    source workspace; define that call-site boundary before implementation.
    Read-only cache fallback remains an optional follow-up;
