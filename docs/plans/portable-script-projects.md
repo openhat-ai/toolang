@@ -40,9 +40,17 @@ equivalent Toolang versions, credentials, catalogs, and external services.
 | `script_dir` | Parent of the real `.too` file after resolving script symlinks. Default roaming workdir and discovery starting point. |
 | `git_root` | Root of the nearest Git working tree containing `script_dir`. A configuration-search boundary, not an automatic workspace grant or workdir. |
 | `config_dir` | Directory of each discovered authored configuration pathname; every layer has its own path base. |
-| `invocation_dir` | Captured process cwd. Used only to interpret explicit CLI paths, never to discover project settings or choose default workspaces. |
+| `process_cwd` | The submitting client's OS working directory, captured at the invocation boundary. Base for explicit CLI paths and Chat/script input files; never an implicit project or workspace selection. |
 | `runtime_dir` | Generated `.toolang/`, under `git_root` when present, otherwise `script_dir`. Never an authored path base. |
-| `workdir` | A Run's current location within an authorized workspace. Initially the script directory for roaming; explicit selection can change it. |
+| `workspace` | A named authorized directory, such as `repo`; it does not by itself identify the current position. |
+| `workdir` | A Run's current workspace location, such as `repo://src`. Identifies both the selected workspace and the relative directory within it. Initially the script directory for roaming. |
+
+Use `process_cwd` for the OS directory and `workdir` for the Run location;
+avoid bare `cwd` when either could be meant. The selected workspace is derived
+from `workdir`, not another independently mutable setting. Chat `/cd` and Run
+workdir overrides change `workdir`, not `process_cwd` or the base of client file
+attachments. Existing internal/persisted `cwd` fields can retain their names;
+where they store a workspace URI, their meaning is `workdir`, not OS cwd.
 
 `git_root` means the working-tree top level, not the `.git` metadata directory,
 a remote repository, or the outermost repository. A linked worktree has its own
@@ -136,7 +144,7 @@ or `git` workspaces. Keep existing `lab` ownership rules.
 | Input | Path base |
 | --- | --- |
 | Workspace or catalog path in config | Its own `config_dir`, including inherited values; expand `~`, retain absolute paths. |
-| Explicit CLI path, `@file`, or relative catalog environment override | Captured `invocation_dir`, resolved before server/container handoff. This is explicit input, not project discovery. |
+| Explicit CLI path, `@file`, or relative catalog environment override | Captured `process_cwd`, resolved before server/container handoff. This is explicit input, not project discovery. |
 | Runtime fs/shell relative path | The Run's current workdir; never the hosting process's incidental cwd. |
 | Input `@file` references | Use the input-origin rules below, separately from Run workdir. |
 | Docker guest root | Remains an absolute guest path. |
@@ -168,15 +176,16 @@ execution contexts, while keeping run inspection and control addressable.
 
 ## Input file references
 
-Proposed rule: resolve `@file` against the input's origin, not automatically
+Resolve `@file` against the input's origin, not automatically
 against the script directory or Run workdir. Explicitly including one file supplies
 its content; it does not grant the containing directory as a workspace.
 
 | Input origin | Relative `@file` base |
 | --- | --- |
-| CLI arguments, named inputs, stdin, and terminal Chat input | The submitting client's captured `invocation_dir`, including when execution is hosted or containerized. Piped stdin does not identify an originating file. |
+| Terminal Chat input | The Chat client's captured `process_cwd`; changing its selected workspace/workdir does not change this base. |
+| Script CLI arguments, named inputs, or stdin | The invoking client's captured `process_cwd`, including hosted/containerized execution. Piped stdin does not identify an originating file. |
 | Scheduled task/chore body | The authored job file's directory; retain the existing agent-home fallback when no file origin exists. |
-| Server-authored API input without a client attachment context | The request's resolved, authorized workdir; never incidental server process cwd. Client-local files must be transferred as attachments. |
+| Server-authored API input without a client attachment context (proposal) | The request's resolved, authorized workdir; never incidental server process cwd. Client-local files must be transferred as attachments. |
 | Uploaded/typed attachment | Its explicit resource identity/content; no filesystem-relative lookup. |
 
 For example, from `/repo`, `too /tools/aide.too review '@notes.md'` attaches
@@ -266,7 +275,7 @@ transaction journal, initialization lock, or automatic recovery.
 | Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; home/script-local workspace ownership; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
 | Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or inherited root/ancestor workspace grants, jobs, schedules, or execution state. Shared catalogs, caps, and policies remain available to multiple agents. |
 | Workspaces | Script-relative fs and shell access; no implicit grants to process cwd or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
-| Input includes | Distinct same-named files in caller, script, job, and server directories; primary/named/stdin input; prompt expansion and escapes; explicit workdir overrides; local/hosted/guest attachment parity; missing files reject input; attaching a file grants no workspace. |
+| Input includes | Distinct same-named files in caller, script, job, and server directories; primary/named/stdin input; prompt expansion and escapes; Chat workspace changes and script workdir overrides do not change attachment bases; local/hosted/guest attachment parity; missing files reject input; attaching a file grants no workspace. |
 | Persistence | Config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
 | Mutations/init | Source-local config edits without ancestor mutations; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
 
