@@ -1,269 +1,238 @@
 # Portable Script Projects
 
-Status: Proposed for approval. Problem collection and feature definition only;
-no runtime changes are included. Bounded upward configuration discovery and
-best-effort initialization are confirmed. Other decisions below are proposed defaults.
+Status: Feature definition; no runtime implementation. Confirmed: script-based
+configuration discovery, layered TOML, nearest catalog, script-directory workdir,
+no implicit caller-cwd workspace, and best-effort initialization. Remaining choices
+are proposals for approval, including temporary-workspace CLI syntax.
 
 ## Goal and scope
 
-A project can version its `.too` files, `toolang.toml`, and optional
-`toolang.catalog.json`, move or clone them, and execute with equivalent authored
-behavior. Generated `.toolang/` contents must not be required to reconstruct
-configuration. Local script calls can access their invocation directory without
-manual workspace registration.
+Version `.too`, `toolang.toml`, and optional `toolang.catalog.json`; keep generated
+`.toolang/` disposable. Moving a project or launching its script from another
+directory must not change its authored configuration or default workspace.
+Cover discovery, relative paths, workspace bindings, inspection, materialization,
+and `too init DIR`. Do not add secret storage, project dotenv loading, automatic
+remote companion downloads, or dependency locking. Equivalent behavior assumes
+equivalent Toolang versions, credentials, catalogs, and external services.
 
-Cover discovery, path resolution, catalog selection, invocation workspaces,
-materialization, diagnostics, and best-effort `too init DIR`. Keep resident
-configuration locations and public commands. Do not add project dotenv loading,
-secret storage, remote companion-file fetching, or dependency/version locking.
-Equivalent behavior assumes equivalent Toolang versions, catalogs, credentials,
-and external services; it does not promise identical model output.
+## Current implementation
 
-## Verified gaps
+- `up/process.py` links only the real script's sibling `toolang.toml`; an existing
+  regular materialized config can silently shadow it.
+- Resident Setup reads root then agent config using field-specific resolvers;
+  plugins recursively merge mappings, and nearer scalar/list values replace older
+  ones. Agent State workspaces currently come only from agent-home config.
+- Catalog selection uses CLI, environment, home file, root file, then bundled
+  data. `setup/watcher.py` overwrites authored `models_dev.path`.
+- Workspace roots must be absolute. `info` accepts all placements, but
+  `models/providers/tools/workspace` accept only resident targets. Model/tool
+  listing code also constructs resident layouts internally; routing alone is
+  insufficient to enable these commands elsewhere.
 
-- `up/process.py` discovers only the real script's sibling `toolang.toml`.
-  An existing regular materialized `config.toml` silently shadows that source.
-- `state/config.py` requires absolute workspace paths. `workspace add` persists
-  absolute paths, and listing shows only authored grants.
-- `setup/watcher.py` overwrites the authored `models_dev.path`. Catalog selection
-  sees runtime home/root `catalog.json`, not a project companion.
-- Script execution supplies no invocation workspace. Setup captures a process
-  directory, which can be the server's directory rather than the caller's.
-- Workspace/model/provider/tool commands reject roaming targets. Initialization
-  creates only `aide.too`.
+## Directories and Git boundary
 
-## Directory vocabulary and discovery
-
-| Name | Definition and role |
+| Term | Meaning |
 | --- | --- |
-| `invocation_dir` | Canonical process working directory captured once at the CLI boundary, before any directory changes. Base for CLI-relative paths. |
-| `source_dir` | Parent of the real `.too` file, after resolving script symlinks. Starting point for configuration discovery. |
-| `config_dir` | Parent of the selected authored configuration pathname, before materialization. Base for relative values in that file. |
-| `project_dir` | Selected configuration's directory, or `source_dir` when no configuration exists. Groups project companions and generated state; grants no workspace access by itself. |
-| `runtime_dir` | Disposable generated root, normally `project_dir/.toolang`. Never a base for authored relative paths. |
-| `workdir` | A Run's current location inside an authorized workspace. Can change without changing any of the above directories. |
+| `script_dir` | Parent of the real `.too` file after resolving script symlinks. Default roaming workdir and discovery starting point. |
+| `git_root` | Root of the nearest Git working tree containing `script_dir`. A configuration-search boundary, not an automatic workspace grant or workdir. |
+| `config_dir` | Directory of each discovered authored configuration pathname; every layer has its own path base. |
+| `invocation_dir` | Captured process cwd. Used only to interpret explicit CLI paths, never to discover project settings or choose default workspaces. |
+| `runtime_dir` | Generated `.toolang/`, under `git_root` when present, otherwise `script_dir`. Never an authored path base. |
+| `workdir` | A Run's current location within an authorized workspace. Initially the script directory for roaming; explicit selection can change it. |
 
-Starting at `source_dir`, select the nearest `toolang.toml`, including the nearest
-Git working-tree root, and stop at that root. Recognize both `.git` directories
-and worktree/submodule `.git` files. Never cross an enclosing repository boundary.
-Without a Git working tree, inspect only `source_dir`. Do not start discovery at
-`invocation_dir`, merge multiple ancestor configs, or fall through an invalid
-candidate. A directory, unreadable file, dangling link, or malformed selected
-config is an error identifying its path. A script symlink uses its real target's
-project, not the symlink's containing project.
+`git_root` means the working-tree top level, not the `.git` metadata directory,
+a remote repository, or the outermost repository. A linked worktree has its own
+root; a submodule or nested repository stops at its own root, not its parent.
+Determine it from `script_dir`, with semantics equivalent to
+`git -C <script_dir> rev-parse --show-toplevel`; ignore inherited Git directory
+and worktree relocation overrides. Recognize both `.git` directories and gitfiles.
+An invalid nearest Git marker is an error; it must not expose an outer project's
+configuration. Without a working tree, search only `script_dir`. Bare repositories
+supply no working-tree boundary. Support ordinary directories without requiring
+Git to be installed; Git-backed discovery must fail clearly if it cannot establish
+the boundary instead of silently using different configuration.
 
-A user-authored config symlink keeps the selected pathname's parent as its base;
-following its bytes must not accidentally substitute the target directory.
-Generated runtime symlinks carry that original configuration origin explicitly.
-Every layer of resident configuration uses its own authored origin in the same
-way. Placement changes discovery locations, not path interpretation.
+Both companion filenames are searched independently from `script_dir` through
+`git_root`, inclusive. Never search from process cwd or above that boundary.
+Script symlinks follow their real target's project. A configuration symlink keeps
+its discovered pathname's directory as its base; generated aliases retain that
+origin rather than rebasing relative values under `.toolang/`.
 
-A Git clone with `scripts/aide.too` can inherit root configuration. An archive
-without `.git` must keep the config beside its entry script, or put the entry
-script beside the root config. This is the explicit limit of bounded discovery.
+## Configuration and catalog selection
 
-## Authored files, catalogs, and generated state
+Load every discovered `toolang.toml` from outermost to innermost. Resolve each
+layer's relative filesystem values before combining it with other layers. Reuse
+resident field semantics rather than applying one generic merge to every field:
 
-Keep the existing `toolang.toml` name; do not add a `toolang.config.toml` alias.
-Use two lightweight project companions, without another authored directory:
+- `default`, `compact`, `limit`, `allow`, and `sandbox` use their existing ordered
+  resolvers, including model-override, allow-sentinel, and sandbox-reset behavior.
+- Plugin mappings and authored cap tables merge recursively; nearer scalar and
+  array values replace older values. Arrays are not concatenated.
+- For roaming project layers, merge `[workspaces]` by name, with nearer definitions
+  overriding that name and preserving the declared ordering. Validate the resulting
+  grants. These are all project-authored agent inputs. Preserve resident's existing
+  agent-only workspace grants; do not turn user-level root settings into grants
+  for every resident agent as a side effect of this work.
+
+Select only the nearest `toolang.catalog.json`; never merge catalog files or read
+a project's generic `catalog.json`. Its discovery does not depend on where TOML
+files exist. Preserve explicit catalog overrides with this shared precedence:
+CLI `--catalog`, then `TOOLANG_MODEL_CATALOG`, then authored layers from nearest
+to farthest, then bundled data. At each layer, an explicitly declared
+`plugin.model_catalog.models_dev.path` precedes its companion catalog. An inherited
+outer path must not override a nearer companion. Resident layers are agent home
+then Toolang root, using their existing `catalog.json` filenames.
+
+A directory, unreadable file, dangling link, or invalid TOML in the configuration
+chain fails with its path. An invalid selected catalog fails; do not fall back to
+an outer catalog. Unselected outer catalog files need not be loaded.
 
 ```text
-project/
-  aide.too
-  toolang.toml
-  toolang.catalog.json   # optional; one complete catalog
-  .toolang/             # generated, ignored by Git
+repo/                         # git_root; contains .git
+  toolang.toml                # outer policy, e.g. [workspaces] project = "."
+  toolang.catalog.json
+  scripts/
+    toolang.toml              # overrides matching outer settings
+    toolang.catalog.json      # selected catalog, if present
+    aide.too                  # script_dir and default workdir: repo/scripts
 ```
 
-Discover `toolang.catalog.json` only in `project_dir`; do not independently search
-ancestors or consume the project's generic `catalog.json`. The catalog can exist
-without a TOML file, in which case `project_dir` is `source_dir`.
+Running this script from `/tmp` changes neither configuration nor workdir. The
+outer `project = "."` explicitly grants repository access; discovering the Git
+root alone does not. A non-Git archive needs config beside its entry script to
+retain this behavior. Keep root entry scripts for projects intended for both Git
+and archive distribution without additional configuration.
 
-Materialize `agent.too`, `config.toml`, and `catalog.json` as relative links to their
-selected sources. Record source origins separately from those canonical runtime
-names. Identify scripts by their relative source paths, not only their stems, so
-`a/aide.too` and `b/aide.too` cannot share agent state. Runtime identity must detect
-hash collisions rather than treating two sources as one agent.
+## Workspaces and path handling
 
-Use this catalog precedence across placements, selecting one complete catalog:
+For roaming scripts, propose implicit `script://` bound to `script_dir`, alongside
+`lab` and configured workspaces. Initial workdir is `script://`, regardless of
+workspace insertion order, unless explicitly selected otherwise. Reserve `script`
+against conflicting authored grants for this placement. Do not add implicit `cwd`
+or `git` workspaces. Keep existing `lab` ownership rules.
 
-1. Explicit CLI `--catalog`.
-2. `TOOLANG_MODEL_CATALOG` from the invoking environment.
-3. Agent configuration's `plugin.model_catalog.models_dev.path`.
-4. Agent companion catalog (`toolang.catalog.json` for a project).
-5. Root configuration's catalog path, then root `catalog.json`, where that root
-   is an authored configuration location.
-6. Bundled catalog.
-
-The generated roaming root is not an authored root: its `config.toml`,
-`catalog.json`, or `.env` must not introduce hidden policy. Report nonempty legacy authored files there
-as migration conflicts rather than silently ignoring them. Do not implicitly
-inherit `~/.toolang` settings for project scripts. Preserve resident root/agent
-layers and their existing dotenv behavior. For roaming scripts, credentials come
-from the supplied process/container environment; do not load project or generated
-dotenv files, or serialize credentials into companions or provenance metadata.
-
-A selected invalid catalog fails with its source and reason; never silently use
-a lower-priority catalog. Preserve explicit configured paths instead of overwriting
-them with automatic selection.
-
-Synchronize links under a materialization lock with atomic individual replacement.
-Remove only owned stale links after source deletion. An unexpected regular file,
-directory, or unowned link at a managed destination is an actionable error, never
-an override or an automatic deletion. Explain how to back up legacy authored
-settings outside `.toolang/` before rebuilding it. New invocations must reject
-invalid current inputs; a running invocation may retain its accepted snapshot,
-with refresh errors visible instead of silently claiming the new config applied.
-
-Runtime data includes caches, history, logs, and `lab` contents. Deletion while
-stopped loses those records and scratch outputs, but not authored settings. Do not
-promise history recovery or permit cleanup while executions are active. On a
-read-only project filesystem, use a per-user cache root keyed by canonical project
-path: `$XDG_CACHE_HOME/toolang/roaming` on Linux (default `~/.cache`), or
-`~/Library/Caches/toolang/roaming` on macOS. Require an absolute XDG override.
-Only an absent, uncreatable local runtime root triggers this fallback; corruption
-or conflicts in an existing root must remain visible. Report the selected root.
-Moving a project starts fresh runtime bindings; copied old bindings must not be
-reused merely because source bytes match.
-
-## Path rules and workspace behavior
-
-| Input | Resolution |
+| Input | Path base |
 | --- | --- |
-| Configuration workspace roots and catalog paths | Relative to that field's originating `config_dir`; expand `~`, retain absolute paths. |
-| CLI paths, CLI `@file` inputs, relative catalog environment override | Relative to captured `invocation_dir`. Resolve before server/container handoff. |
-| Language-owned includes | Keep the owning parser's explicit source base; do not reinterpret them as configuration paths. |
-| Docker guest `root` | Remains an absolute guest path, never rebased against a host config directory. |
-| Service command/argument strings and cap references | Retain their existing semantics; do not treat arbitrary strings or remote references as filesystem paths. |
+| Workspace or catalog path in config | Its own `config_dir`, including inherited values; expand `~`, retain absolute paths. |
+| Explicit CLI path, `@file`, or relative catalog environment override | Captured `invocation_dir`, resolved before server/container handoff. This is explicit input, not project discovery. |
+| Runtime fs/shell relative path | The Run's current workdir; never the hosting process's incidental cwd. |
+| Source-language include | Its owning parser's explicit base; preserve existing include semantics. |
+| Docker guest root | Remains an absolute guest path. |
+| Service command/arguments or cap references | Keep their existing semantics; do not rebase arbitrary strings or remote references. |
 
-Resolve filesystem paths at loading/CLI boundaries, then pass concrete values to
-State, Setup, and hosting. Preserve original spelling and origin for diagnostics.
-Resolve each config layer before merging. Prepared-state and catalog identities
-must account for resolved bindings/origins, including project moves and link
-retargeting, not just unchanged file bytes.
+Proposed convenience: repeatable `--workspace NAME=PATH` for temporary grants and
+`--workdir URI` to explicitly select an initial workdir on a local script call.
+For example, `too /path/aide.too whats_for --workspace here=. --workdir here://`
+would operate on the caller's directory deliberately. These flags are proposed,
+not existing commands. A grant alone does not change the default workdir. Never
+persist it to TOML; reject duplicate names or replacements of existing grants.
+The inspection commands must accept the same temporary workspace options.
 
-For a local `.too` script invocation, add `cwd` bound to `invocation_dir`, alongside
-`lab` and configured workspaces. Initialize its workdir to `cwd://` unless the
-caller supplies an authorized workdir. Do not automatically grant the script or
-config directory: invoking a utility stored elsewhere should operate on the
-caller's project. Persistent servers, scheduled jobs, and remote API requests must
-not infer grants from a server process's working directory. The distinction is
-whether there is a local script invocation, not a different path-resolution rule.
-Existing resident/visiting workspace defaults otherwise stay unchanged.
+Configured duplicate roots keep their existing validation. A configured or
+explicit temporary workspace may alias an implicit root; preserve its name and
+avoid duplicate mounts. Allow nested roots and preserve most-specific-root
+selection. Prefer `script` for an exact implicit/configured tie; explicit URIs
+retain their names. A parent grant includes descendants, and workspace checks are
+not a substitute for OS sandboxing.
 
-Reserve `cwd` for invocation binding wherever that binding is supplied; reject a
-configured collision with a rename diagnostic, without silently overriding it.
-Keep existing `lab` ownership rules. Configured duplicate roots retain their
-existing validation. A configured root may equal implicit `cwd`: retain its name
-as an alias without duplicating the host mount. Allow nested roots, preserving
-existing confinement and most-specific-root selection; use `cwd` to break exact
-implicit/configured ties for absolute paths. Explicit workspace URIs retain their
-chosen name. A grant to a parent includes its descendants; aliases are not
-isolation boundaries.
+Capture bindings with Run acceptance. Child Runs inherit them; retry, rerun,
+fork, and resume retain historical bindings and current authorization checks.
+An unavailable binding fails rather than rebinding to the new process cwd.
+Ordinary calls from different directories now use identical script bindings.
+Temporary grants still require isolated Run bindings and compatible host/guest
+mounts: reuse a server only when its binding map matches; never mutate an active
+server's grants from another caller. Separate lifecycle ownership for incompatible
+execution contexts, while keeping run inspection and control addressable.
 
-Persist invocation bindings with Run acceptance, separate from shared authored
-configuration. Child Runs inherit them; retries, reruns, forks, and resumed threads
-retain the original binding and current authorization checks. Never rebind old
-`cwd://` history to a new caller's directory. Fail when the original binding is
-unavailable or no longer authorized; legacy Runs without a binding retain legacy
-behavior, rather than gaining access from the retry process's directory.
+## Placement comparison and inspection
 
-Both host execution and Docker use this captured map. An existing server can be
-reused only when its mounted bindings match; it must not acquire new mounts from
-an arbitrary API request. Different local invocation maps use isolated execution
-contexts and separate guest lifecycle/status files, with a stable binding identity
-under the script's generated runtime directory. Concurrent callers must not stop
-one another's guest or change one another's roots. Preserve shared run inspection
-and route control/retry operations to the owning context.
+| Behavior | Resident | Roaming | Visiting |
+| --- | --- | --- | --- |
+| Authored inputs | Explicit Toolang root and agent home | Script-to-Git-root project layers | Downloaded source and existing visiting setup; no traversal of cache parents or implicit companion fetch |
+| Default workdir | Existing configured workspace selection, otherwise `lab` | `script://` | Existing authorized-workspace selection, otherwise `lab`; a download cache is not a project workspace |
+| Relative config values | Each authored file's directory | Each authored file's directory | Origin of any explicitly supplied local config; never infer a remote base from a temporary cache |
+| `info`, `models`, `providers`, `tools`, `workspace list` | Supported | Support identically | Support identically |
+| Persistent workspace edits | Agent config | Script-local `toolang.toml` | Reject: no durable local authored project; download the source to edit it |
+| Credentials | Existing root/agent dotenv and process environment | Process/container environment; no project/generated dotenv | Preserve existing visiting environment behavior; no new credential discovery |
 
-## Inspection and mutation commands
+Use one inspection pipeline against the selected layout and ordered sources, with
+the same options, filtering, and output fields for all placements. `info` shows
+source, boundary, config layers, catalog selection and provenance, runtime root,
+and effective workdir/workspaces. `workspace list` includes implicit and temporary
+grants, availability, and origins. No model Run or secret values are needed.
+Distinguish newly resolved settings from an existing server's mounted bindings;
+historical inspection uses recorded Run bindings. Targetless global listings keep
+their existing root-level meaning. Placement differences follow source ownership
+and workspace authorization, not different inspection capabilities.
 
-Enable `./aide.too models`, `providers`, `tools`, and `workspace list` using the
-same selected sources as execution. Listings must not start a model Run. Extend
-`info` with source/config/catalog provenance, invocation directory, runtime root,
-and selected catalog precedence. `workspace list` includes implicit grants, aliases,
-and availability; distinguish the current invocation from an already running
-context. Historical inspection reports the stored Run binding. Never print secrets.
+Roaming `workspace add/remove` edits only script-local `toolang.toml`, creating it
+exclusively when absent. Preserve comments and write relative paths against that
+file. An inherited entry cannot be removed locally without a masking mechanism;
+report its defining file rather than silently editing an ancestor or deleting a
+local override and unexpectedly exposing the inherited grant. General masking is
+outside this scope. Resident mutations retain their destination and use the same
+CLI/config path-base rules. Do not mutate implicit or temporary grants persistently.
 
-Enable roaming `workspace add/remove` as edits to the selected authored
-`toolang.toml`, never to its generated alias. With no config, create a minimal
-sibling config exclusively. CLI input paths use `invocation_dir`; persist paths
-relative to the authored config directory, preserve TOML comments, and serialize
-mutations under an authored-config lock. Do not remove implicit workspaces.
-Resident mutation commands use the same path rules and retain their destinations.
+## Materialization, portability, and init
 
-## Best-effort initialization
+Keep `toolang.toml` and optional `toolang.catalog.json`; add no alternate filename.
+The generated home keeps canonical `agent.too`, `config.toml`, and `catalog.json`
+names. Link source/catalog files; layered config may require a generated projection
+instead of a single link. Preserve every layer's origin and field-specific resolved
+meaning. All runtime consumers must use the same captured inputs, including State,
+Setup, sandbox selection, mounts, and inspection. Generated projections are not
+authored overrides or edit targets. Identity includes origins and bindings, not
+only file bytes; scripts with equal stems in different directories remain distinct.
 
-`too init DIR` creates executable `aide.too` and an English, comment-only
-`toolang.toml` explaining automatic `cwd`, relative workspaces, and the optional
-catalog companion. It contains no credentials, machine-specific paths, model
-selection, or default runnable. Do not generate a catalog. Print the generated
-paths, useful commands, and a suggestion to ignore `.toolang/`; do not modify an
-existing `.gitignore` automatically.
+Synchronize owned materialized entries safely. Unexpected files must produce a
+migration/conflict diagnostic rather than shadow sources or be deleted. Never
+load hidden policy from a generated roaming root or implicitly inherit `~/.toolang`.
+Deleting `.toolang/` while stopped loses history, logs, caches, and `lab` output,
+but authored behavior is reconstructible. A project move starts fresh bindings.
+For read-only projects, retain the proposed per-user cache fallback: Linux
+`$XDG_CACHE_HOME/toolang/roaming` (default `~/.cache`) or macOS
+`~/Library/Caches/toolang/roaming`, keyed by canonical project path. An existing
+corrupt/conflicting runtime root is an error, not a reason to silently fall back.
+Report the selected runtime root; never serialize credentials into project files.
 
-Before writing any destination, check every file that init will create. If any
-already exists, including a directory or dangling symlink, report the conflict
-and exit without writing any target file. Do not add a force-overwrite option.
+`too init DIR` creates executable `aide.too` plus comment-only `toolang.toml`,
+explaining the script workspace, config-relative paths, and optional catalog.
+Generate no catalog, credentials, absolute machine paths, or default runnable.
+Suggest ignoring `.toolang/`, without automatically editing `.gitignore`.
+Check all target paths before writing any; existing files, directories, and
+symlinks fail preflight. Then create config followed by script exclusively.
+A concurrent collision or write failure stops immediately with a nonzero status
+and failing path. Keep already-created or partial files; no overwrite, rollback,
+transaction journal, initialization lock, or automatic recovery.
 
-After all checks pass, create each file exclusively so a file added concurrently
-cannot be overwritten. Write `toolang.toml` before `aide.too`. If creation or writing
-fails, report the failing path and exit with a nonzero status immediately. Preserve
-all existing files and leave any files already created by this invocation in place,
-including an incomplete file if its write failed. Do not roll back, retry, or
-recover automatically; users inspect and clean up partial output before retrying.
-No init transaction journal or cross-process lock is required. This is best effort,
-not an all-or-nothing operation.
+## Acceptance and implementation touchpoints
 
-## Implementation touchpoints and acceptance
+| Area | Required offline checks |
+| --- | --- |
+| Discovery | Different invocation directories give identical inputs; script/config symlinks, root/subdirectory calls, worktrees, submodules, nested repos, non-Git directories, invalid markers and candidates. |
+| Layering/catalogs | Three TOML layers with conflicting scalars/lists/model settings and different relative bases; inherited workspaces; independent nearest catalog; explicit path precedence; no catalog merging or generic project `catalog.json`. |
+| Placement inspection | Same commands/filters/provenance for all three placements; use selected layout; no parent-cache discovery, secret output, model Run, or new resident root workspace grants. |
+| Workspaces | Script-relative fs and shell access; no implicit grants to process cwd or Git root; explicit temporary workspace/workdir; aliases, nesting, collisions, concurrency, historical authorization, and host/guest parity. |
+| Persistence | Config-origin changes and equal-byte relocation/retargeting invalidate bindings; equal script stems stay distinct; stale materialization errors; delete/recreate runtime data; read-only fallback. |
+| Mutations/init | Source-local config edits and inherited-removal errors; either init target preexists; a file appears after preflight; creation/write failures and concurrent init preserve existing/partial files and return failure. |
 
-- Discovery/materialization: `common/layout.py`, `up/process.py`,
-  `cli/toolang/routing.py`; carry source origins explicitly rather than infer them
-  from generated links. Cover adjacent/ancestor discovery, Git worktrees,
-  submodules, non-Git directories, script/config symlinks, nested configs, sibling
-  scripts with equal stems, malformed candidates, deletion, and stale destinations.
-- Paths/catalogs: `state/config.py`, `state/source.py`, `state/prepare.py`,
-  `setup/config.py`, `setup/watcher.py`, and
-  `plugin/catalogs/models_dev/path.py`. Verify relative paths across placements,
-  per-layer bases, every precedence pair, invalid selected files, ordinary project
-  `catalog.json` being ignored, and relocation/retargeting with identical bytes.
-- Invocation binding: `cli/toolang/commands/script.py`,
-  `cli/common/agent_server.py`, `execution/records.py`, `execution/executor/`,
-  `setup/types.py`, `up/mounts.py`, and sandbox launch/control types. An offline
-  scripted model must read a fixture in the invocation directory via fs and shell.
-  Exercise concurrent calls from two projects, aliases/nesting, resumed history,
-  retry authorization, service reuse, and equivalent host/guest mappings.
-- CLI: `cli/toolang/commands/{init,workspace,agent,model_catalog,plugin}.py`,
-  CLI context/routing,
-  templates, and focused usage documentation. Verify effective sources, secret
-  redaction, relative persistence, and no writes through materialized symlinks.
-- Init: cover preflight collisions at either destination with no target writes,
-  symlinks/directories, a file appearing after preflight, concurrent initializers,
-  failure on each creation/write, nonzero failure status, and retention of partial
-  output without overwriting existing files. Verify executable mode and successful
-  execution after deleting runtime state. Cover read-only source fallback and fresh
-  bindings after copy/move.
+Likely files: `common/layout.py`, `up/{process,mounts,sandbox}.py`,
+`setup/{config,watcher,types}.py`, `state/{config,source,prepare,state}.py`,
+`plugin/{config,catalogs/models_dev/path}.py`, `cli/common/agent_server.py`,
+`cli/toolang/routing.py`, relevant CLI commands, execution records/binding logic,
+and their unit/integration tests. Resolve paths at loading/CLI boundaries; core
+schemas receive concrete values and remain independent of runtime orchestration.
 
-Keep default tests offline and deterministic; use fault injection and guest-mount
-contract tests rather than live model calls. Implementation must pass Ruff lint
-and formatting, `ty check`, and the full offline suite. This definition PR requires
-source accuracy, link validation, and `git diff --check` only.
+Implementation requires the standard Ruff, type, and offline test checks. This
+PR only updates the definition; validate source accuracy, references, and
+`git diff --check`. Proposed workspace names/flags, cache fallback, and the
+intentional placement differences above remain subject to human approval.
 
-## Tradeoffs and approval
+## References and limits of the analogy
 
-The largest compatibility changes are abandoning hidden roaming-root policy,
-rejecting authored `cwd` collisions during script invocation, and including
-configuration origins in prepared bindings. Preserve legacy settings by diagnosing
-conflicts, not silently migrating or deleting them. Existing workspace/workdir
-plans remain applicable except for the local-script initial directory and the
-explicit invocation-binding rules above.
-
-Approval is requested for these proposed defaults, especially catalog naming and
-precedence, implicit `cwd`, environment-only roaming credentials, and read-only
-cache fallback. No implementation is approved or included by this document's
-submission.
-
-The lightweight naming and path-origin choices take cues from
-[uv's configuration discovery](https://docs.astral.sh/uv/concepts/configuration-files/)
-and [Compose's source-relative includes](https://docs.docker.com/reference/compose-file/include/).
-Toolang deliberately bounds ancestor discovery rather than adopting either tool's
-whole configuration or environment model.
+Node.js distinguishes [module location](https://nodejs.org/api/modules.html#__dirname)
+from [process cwd](https://nodejs.org/api/process.html#processcwd); its
+[ordinary relative fs paths](https://nodejs.org/api/fs.html#file-paths) still use
+process cwd. Toolang borrows that separation, but explicitly chooses script-based
+workdir. Git-bounded discovery is Toolang's own rule, with
+[working-tree root semantics](https://git-scm.com/docs/git-rev-parse).
