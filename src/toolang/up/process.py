@@ -478,8 +478,7 @@ def materialize_visiting_program(
 
     agent_name = ref.default_name()
     layout = AgentLayout.visiting(source or ref.render(), agent_name)
-    layout.home.mkdir(parents=True, exist_ok=True)
-    layout.program.write_text(source_text, encoding="utf-8")
+    atomic_write_text(layout.program, source_text)
     return layout
 
 
