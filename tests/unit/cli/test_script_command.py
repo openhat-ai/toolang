@@ -651,7 +651,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save the Run result to PATH, or use - for stdout" in " ".join(
+    assert "Save output to PATH; - for stdout" in " ".join(
         stdout.replace("│", " ").split()
     )
     assert "stdout" in stdout
@@ -670,12 +670,15 @@ def _help_panel(output: str, title: str) -> str:
 def _assert_common_options(output: str) -> None:
     panel = _help_panel(output, "Options")
     options = (
-        "--quiet",
+        "--model",
+        "--workspace",
+        "--workdir",
         "--out",
+        "--quiet",
         "--sandbox",
         "--allow",
         "--limit",
-        "--model",
+        "--no-auto-workspace",
         "--dev",
         "--help",
     )

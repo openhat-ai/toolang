@@ -29,7 +29,7 @@ WorkspaceOptions = Annotated[
         "--workspace",
         "-w",
         metavar="[NAME=]PATH",
-        help="Add a temporary workspace. Repeat to add more; omit NAME or use =PATH to infer its name",
+        help="Add a temporary workspace (repeatable)",
     ),
 ]
 WorkdirOption = Annotated[
@@ -38,14 +38,14 @@ WorkdirOption = Annotated[
         "--workdir",
         "-d",
         metavar="PATH|URI",
-        help="Set the working directory. A path adds a workspace; a URI selects an existing one",
+        help="Set workdir; a path also adds a workspace",
     ),
 ]
 NoAutoWorkspaceOption = Annotated[
     bool,
     typer.Option(
         "--no-auto-workspace",
-        help="Do not automatically add the script directory as a workspace",
+        help="Skip the automatic source workspace",
     ),
 ]
 _URI = re.compile(r"^[^/=]+://")

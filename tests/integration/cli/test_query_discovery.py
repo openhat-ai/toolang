@@ -179,5 +179,5 @@ def test_allow_help_uses_resource_query_vocabulary() -> None:
 
     assert result.exit_code == 0, result.stderr
     output = strip_ansi(result.stdout)
-    assert "RESOURCE=QUERY" in output
+    assert "<RESOURCE>=<QUERY>" in output
     assert "SELECTORS" not in output

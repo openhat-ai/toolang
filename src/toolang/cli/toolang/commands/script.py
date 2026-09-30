@@ -432,46 +432,44 @@ def _runnable_command(
 
     def callback(
         ctx: typer.Context,
-        quiet: Annotated[
-            bool,
+        model: Annotated[
+            str | None,
             typer.Option(
-                "--quiet", "-q", help="Suppress prepare and execution progress"
+                "--model",
+                metavar="MODEL_SPEC",
+                help="Set model and parameters",
             ),
-        ] = False,
+        ] = None,
+        workspace: WorkspaceOptions = None,
+        workdir: WorkdirOption = None,
         save: Annotated[
             str | None,
             typer.Option(
                 "--out",
                 "-o",
                 metavar="PATH",
-                help="Save the Run result to PATH, or use - for stdout",
+                help="Save output to PATH; - for stdout",
             ),
         ] = None,
+        quiet: Annotated[
+            bool,
+            typer.Option("--quiet", "-q", help="Hide run progress"),
+        ] = False,
         sandbox: Annotated[
             str | None,
             typer.Option(
                 "--sandbox",
                 metavar="SANDBOX_SPEC",
-                help="Execute this run in the selected sandbox",
+                help="Select the execution sandbox",
             ),
         ] = None,
         allow: AllowOptions = None,
         limit: LimitOptions = None,
-        model: Annotated[
-            str | None,
-            typer.Option(
-                "--model",
-                metavar="MODEL_SPEC",
-                help="Set the model identity and parameters for this run",
-            ),
-        ] = None,
+        no_auto_workspace: NoAutoWorkspaceOption = False,
         dev: Annotated[
             Path | None,
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
         ] = None,
-        workspace: WorkspaceOptions = None,
-        workdir: WorkdirOption = None,
-        no_auto_workspace: NoAutoWorkspaceOption = False,
         items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
     ) -> int:
         assert runnable is not None

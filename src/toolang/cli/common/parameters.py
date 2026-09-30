@@ -42,7 +42,7 @@ AllowOptions = Annotated[
     typer.Option(
         "--allow",
         metavar="<RESOURCE>=<QUERY>",
-        help="Set RESOURCE=QUERY. Repeat by resource category",
+        help="Select allowed resources (repeatable)",
     ),
 ]
 LimitOptions = Annotated[
@@ -50,7 +50,7 @@ LimitOptions = Annotated[
     typer.Option(
         "--limit",
         metavar="<LIMIT>=<VALUE>",
-        help="Set a run limit, e.g. tokens=10000. Repeat for another limit",
+        help="Set a run limit (repeatable)",
     ),
 ]
 DefaultOptions = Annotated[
