@@ -11,7 +11,6 @@ from toolang.cli.common.workspaces import (
 )
 
 import asyncio
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 import shutil
@@ -49,7 +48,6 @@ from ...common.output import (
     shorten_home_path,
 )
 from ...common.progress import make_cli_progress
-from . import plugin
 
 
 def new_agent(
@@ -220,28 +218,21 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
-    workspace_names = dict.fromkeys(["lab", *state.workspaces, *selection.additions])
+    workspace_grants = {**state.workspaces, **selection.additions}
     runtime_workspaces = runtime_state.get("workspace_additions")
     if status.status == "running" and isinstance(runtime_workspaces, dict):
-        workspace_names.update(
-            (name, None)
+        workspace_grants.update(
+            (name, path)
             for name, path in runtime_workspaces.items()
             if isinstance(name, str) and isinstance(path, str)
         )
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),
-        (
-            "Models",
-            _models_summary(
-                setup,
-                runtime_state=runtime_state,
-                running=status.status != "stopped",
-            ),
-        ),
+        ("Models", _models_summary(setup)),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Workspaces", ", ".join(workspace_names)),
+        ("Workspaces", ", ".join(setup.workspace_grants(workspace_grants))),
         ("Status", status_value),
     ]
     if status.status == "stopped":
@@ -307,33 +298,20 @@ def _jobs_summary(layout: AgentLayout) -> str:
     )
 
 
-def _models_summary(
-    setup: AgentSetup,
-    *,
-    runtime_state: dict[str, object],
-    running: bool,
-) -> str:
-    queries: Sequence[str] = ()
-    raw_models = runtime_state.get("models")
-    if running and isinstance(raw_models, list):
-        queries = tuple(
-            value.strip()
-            for item in raw_models
-            if isinstance(item, str) and (value := item.strip())
-        )
-    rows = plugin.model_rows(setup, model_queries=queries or None)
-    provider_count = len({provider for _model, provider, _detail in rows})
+def _models_summary(setup: AgentSetup) -> str:
+    model_count = len(setup.models_effective())
+    provider_count = len(setup.providers_effective())
     return (
-        f"{len(rows)} {'model' if len(rows) == 1 else 'models'}, "
+        f"{model_count} {'model' if model_count == 1 else 'models'}, "
         f"{provider_count} {'provider' if provider_count == 1 else 'providers'}"
     )
 
 
 def _tools_summary(setup: AgentSetup) -> str:
-    dataset = plugin.setup_tool_dataset(setup)
-    set_count = len({item.toolset for item in dataset.items})
+    tools = setup.tools()
+    set_count = len({ref.partition("/")[0] for ref in tools.refs()})
     return (
-        f"{len(dataset.items)} {'tool' if len(dataset.items) == 1 else 'tools'}, "
+        f"{len(tools)} {'tool' if len(tools) == 1 else 'tools'}, "
         f"{set_count} {'toolset' if set_count == 1 else 'toolsets'}"
     )
 

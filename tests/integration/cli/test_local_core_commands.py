@@ -3246,9 +3246,40 @@ def test_agent_info_builds_state_and_setup_without_server(
 def test_agent_info_fields_follow_the_compact_layout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
 ) -> None:
+    from toolang.base.types.model import Model, ModelToolang, Provider
+    from toolang.plugin.models import query
+
     root = tmp_path / "toolang"
     _create_agent(root)
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+
+    class _SetupWatcher(_EmptySetupWatcher):
+        async def refresh(self) -> AgentSetup:
+            return materialized_setup(
+                layout=self.layout,
+                providers=(Provider(id="test", name="Test"),),
+                adapters={},
+                models=tuple(
+                    Model(
+                        id=name,
+                        name=name,
+                        _toolang=ModelToolang(provider="test", ready=ready),
+                    )
+                    for name, ready in (
+                        ("first", True),
+                        ("second", True),
+                        ("offline", False),
+                    )
+                ),
+                tools=ToolCollection(),
+                envs={},
+            )
+
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr(
+        query,
+        "match_model_branches",
+        lambda *args, **kwargs: pytest.fail("info must use effective setup models"),
+    )
     monkeypatch.setattr(
         agents.AgentProcess,
         "status",
@@ -3268,6 +3299,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         lambda self: {
             "started_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-02T00:00:00Z",
+            "models": ["test/first"],
             "workspace_additions": {
                 "extra": str(tmp_path),
                 "runtime": str(tmp_path),
@@ -3291,6 +3323,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
     rows = dict(captured)
+    assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
     if target_first or status == "running":
         workspace_names.append("extra")
