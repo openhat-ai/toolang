@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -151,6 +153,58 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     assert first == second == AgentLayout.visiting(source, "researcher")
     assert first.program.read_text(encoding="utf-8") == "# Agent researcher\n"
     assert fetches == [source]
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_visiting_cache_survives_interrupted_write(
+    tmp_path: Path, cached: bool
+) -> None:
+    layout = AgentLayout(tmp_path, "researcher", "visiting")
+    layout.home.mkdir(parents=True)
+    if cached:
+        layout.program.write_text("agic:\n  Original source.\n", encoding="utf-8")
+        os.utime(layout.program, (1, 1))
+    before = layout.program.read_bytes() if cached else None
+
+    # Limit only the child process: a real partial write must not publish a
+    # truncated source or make an old cache look fresh.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import resource
+import signal
+import sys
+from pathlib import Path
+from toolang.common.layout import AgentLayout
+from toolang.up import process as agents
+
+AgentLayout.visiting = classmethod(
+    lambda cls, source, name: cls(Path(sys.argv[1]), name, "visiting")
+)
+signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+resource.setrlimit(resource.RLIMIT_FSIZE, (128, 128))
+try:
+    agents.materialize_visiting_program(
+        agents.HttpAgentRef("https://example.com/researcher.too"),
+        "agic:\\n  " + "Long source. " * 1000,
+    )
+except OSError:
+    sys.exit(0)
+sys.exit("expected a partial-write failure")
+""",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (layout.program.read_bytes() if layout.program.exists() else None) == before
+    assert not agents._visiting_program_cache_fresh(layout.program)
+    assert set(layout.home.iterdir()) == ({layout.program} if cached else set())
 
 
 def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
