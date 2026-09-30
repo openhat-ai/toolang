@@ -125,8 +125,12 @@ selected-workspace field.
 
 CLI paths resolve from procdir, support home expansion, and must name existing
 directories. These options never change procdir, attachment origins, or authored
-configuration. They apply to local execution/Chat/hosting across placements;
-a client path cannot become a grant on an already running remote server.
+configuration. Support `-w` and all `--cd` forms for resident, roaming, and visiting
+placements through local execution/Chat/hosting entry points, with identical
+parsing and validation. This scope is confirmed, not limited to script calls.
+For an already running remote server, `--cd NAME://[SUBDIR]` may select an existing
+authorized workspace; reject client-local path grants with an actionable error
+rather than treating them as remote paths.
 
 Build grants in order: `lab`, configured entries, then invocation additions.
 Local script calls with neither `-w` nor `--cd` append srcdir automatically unless
@@ -248,7 +252,8 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
   preflight, source inclusion/disable/replacement, and `.` interpreted from procdir.
   Verify basename inference for srcdir, dotted names and `.`/`..`, last-workspace
   fallback, automatic source appended last, both `--cd` path forms, URI-only
-  selection, unknown/escaping URIs, option combinations, other modes,
+  selection, unknown/escaping URIs, option combinations, all three placements,
+  script-only automatic source inclusion, remote URI selection versus local-path rejection,
   and absence of persistent configuration or procdir changes.
 - Workspaces: source-relative tools, aliases/nesting, equal source stems, relocation,
   recorded bindings, incompatible-server rejection, and host/guest parity. Runtime
@@ -273,7 +278,8 @@ this definition requires source/reference verification and `git diff --check`.
 
 1. Confirm the proposed roaming local/shared boundary.
 2. Workspace option forms, source-replacement behavior, last-workspace fallback,
-   directory-based naming, and both `--cd` path/URI forms are confirmed. Review
+   directory-based naming, both `--cd` path/URI forms, and support across resident,
+   roaming, and visiting are confirmed. Review
    repeated-`--cd` rejection and spelling `--no-src-workspace`. Existing history-based
    selection must not unexpectedly redirect a new script call away from its default
    source workspace; define that call-site boundary before implementation.
