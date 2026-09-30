@@ -118,8 +118,8 @@ selected-workspace field.
 
 | Option | Meaning |
 | --- | --- |
-| Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace. Each name may be omitted independently. |
-| `--cd [NAME=]PATH` | Add PATH as a temporary workspace and select its root as workdir. |
+| Repeatable `-w / --workspace [NAME=]PATH` | Add a temporary workspace; `=PATH` also infers its name. |
+| `--cd [NAME=]PATH` | Add PATH and select its root as workdir; `=PATH` also infers its name. |
 | `--cd NAME://[SUBDIR]` | Select an existing workspace or subdirectory without adding access. |
 | `--no-src-workspace` (proposed spelling) | Disable automatic source inclusion. |
 
@@ -147,11 +147,13 @@ allow only one `--cd` rather than introduce selection precedence. No separate
 ./aide.too whats_for -w another_dir -w .     # Fallback: procdir
 ./aide.too whats_for --cd target=another_dir # Add and select a named workspace
 ./aide.too whats_for --cd repo://src         # Select an existing workspace subdir
+./aide.too whats_for --cd =./foo=bar         # Path ./foo=bar; infer its name
 ```
 
 `-w .` grants procdir; it re-adds srcdir only when invoked from there. For `--cd`,
-a workspace URI selects an existing grant; otherwise parse `[NAME=]PATH` using the
-same rules as `-w`. A bare name always means a filesystem path. Never infer intent
+an argument starting with a workspace URI (`NAME://`) selects an existing grant;
+otherwise parse `[NAME=]PATH` using the same rules as `-w`. A leading `=` forces
+path interpretation with an inferred name, even if the path contains `://`. A bare name always means a filesystem path. Never infer intent
 from directory/workspace existence or retry failed URI lookup as a path. Resolve
 all invocation grants before selecting a URI, so it may reference any `-w` entry.
 Reject unknown workspace names, missing directories, and URI paths escaping their
@@ -169,8 +171,12 @@ normalize to kebab case. Use the complete basename, not a file stem that removes
 suffixes: `project.v2` becomes `project-v2`, and `another_dir` becomes `another-dir`.
 Srcdir is already the real source directory. Explicit names must be valid; an
 unnameable directory requires `NAME=PATH` (replace automatic inclusion explicitly
-if necessary). Split named paths at the first `=`; paths containing `=` use that
-form. Names never depend on argument count/order or receive numeric suffixes.
+if necessary). Split path arguments only at the first `=`: a nonempty left side
+supplies the name; an empty left side requests inference. Preserve the entire
+right side as the path and reject an empty path. Thus both `repo=./foo=bar` and
+`=./foo=bar` refer to `./foo=bar`, with explicit and inferred names respectively.
+Without `=`, infer the name from the whole path. Names never depend on argument
+count/order or receive numeric suffixes.
 
 Validate all grants before accepting a Run or starting a new runtime. Duplicate
 names, including configured and implicit grants, fail with both origins even if
@@ -236,7 +242,8 @@ output. No overwrite, rollback, transaction journal, lock, or automatic recovery
   submodules, non-Git distributions, and invalid boundaries/candidates.
 - Scope/merge: three layers with special defaults, lists and different path bases;
   no inherited agent-only resources; nearest catalog and explicit-path precedence.
-- Workspace options: both aliases/forms, multiple omitted names, stable inference,
+- Workspace options: both aliases, named/unnamed/`=PATH` forms, first-`=` splitting,
+  preserved later `=` characters, empty-path rejection, multiple omitted names, stable inference,
   normalization collisions, conflicts with configured/implicit names, all-or-nothing
   preflight, source inclusion/disable/replacement, and `.` interpreted from procdir.
   Verify basename inference for srcdir, dotted names and `.`/`..`, last-workspace
