@@ -65,7 +65,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     expected_status: int,
     expected_stdout: str,
 ) -> None:
-    source_text = _SOURCE if entry == "echo" else load_template("script").raw_text
+    source_text = _SOURCE if entry == "echo" else "agic():\n  Say hello.\n"
     source = tmp_path / "echo.too"
     source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
@@ -172,21 +172,39 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert False, entry
 
 
-@pytest.mark.parametrize("entry", ["chat", "rewrite", "polish"])
-def test_template_examples_bind_arguments_and_flow_results(
-    tmp_path: Path, monkeypatch, capsys, entry: str
+@pytest.mark.parametrize(
+    ("entry", "arguments", "expected_input"),
+    [
+        ("issue", ["--", "Handle empty input files."], "Handle empty input files."),
+        ("fix", ["--", "#123"], "#123"),
+        (
+            "review",
+            ["--", "https://github.com/acme/project/pull/123"],
+            "https://github.com/acme/project/pull/123",
+        ),
+        ("whats_for", [], "main components"),
+        ("whats_new", [], "when omitted, use the past week"),
+        ("whats_new", ["since=2026-09-23"], "since 2026-09-23"),
+        ("whats_new", ["since=v0.2.0"], "since v0.2.0"),
+        ("update_i18n", ["locale=zh-CN"], "for zh-CN"),
+    ],
+)
+def test_template_helpers_bind_arguments(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    entry: str,
+    arguments: list[str],
+    expected_input: str,
 ) -> None:
     source_text = load_template("script").raw_text
     source = tmp_path / "work.too"
     source.write_text(source_text, encoding="utf-8")
     layout = agents.materialize_roaming_program(source)
-    responses = ["Draft text.", "done"] if entry == "polish" else ["done"]
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,
-        responses=[
-            ModelCallResult(message=Message.assistant(text)) for text in responses
-        ],
+        responses=[ModelCallResult(message=Message.assistant("done"))],
     )
     setup = replace(harness.setup, layout=layout)
 
@@ -218,27 +236,20 @@ def test_template_examples_bind_arguments_and_flow_results(
                     "--quiet",
                     "--out",
                     "-",
-                    *(["tone=professional"] if entry != "chat" else []),
-                    "--",
-                    "Can you send the notes?",
+                    *arguments,
                 ]
             )
             == 0
         )
         assert capsys.readouterr().out == "done"
         calls = harness.adapter.invocations
-        assert len(calls) == len(responses)
+        assert len(calls) == 1
         first_input = "\n".join(
             message_text(message.parts) for message in calls[0].call.messages
         )
-        assert "Can you send the notes?" in first_input
-        if entry != "chat":
-            assert "professional" in first_input
-        if entry == "polish":
-            final_input = "\n".join(
-                message_text(message.parts) for message in calls[1].call.messages
-            )
-            assert "Draft text." in final_input
+        assert expected_input in first_input
+        assert "{{since}}" not in first_input
+        assert "{{locale}}" not in first_input
     finally:
         asyncio.run(harness.close())
 
