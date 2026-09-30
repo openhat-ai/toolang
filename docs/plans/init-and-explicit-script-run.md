@@ -143,13 +143,14 @@ too run work.too review -- "text"
 
 - Help never executes, prepares State, or reads stdin. File help identifies `main`
   when present and makes RUNNABLE optional only then. Static help explains FILE,
-  RUNNABLE, forwarded arguments, and where to request Script-specific help.
+  RUNNABLE, forwarded arguments, and where to request file or runnable help.
   Use `[ARGUMENTS]` without an ellipsis, `Path to a .too file`, `Runnable name`,
-  and `Runnable-specific arguments`. Display `[default: main]` using native
+  and `Runnable arguments`. Display `[default: main]` using native
   argument metadata; file help shows RUNNABLE in Arguments, required if main is
   absent. Explain the `too FILE [RUNNABLE] [ARGUMENTS]` shorthand using the actual
-  executable name. Command summaries are `Serve an agent in the foreground`,
-  `Initialize Toolang in a directory`, and `Execute a runnable from a .too file`.
+  executable name, explaining that the runnable name must not match a Toolang
+  command (for example, `too aide.too whats_for`). Command summaries are `Serve an agent in the foreground`,
+  `Initialize Toolang in a directory`, and `Execute a .too file`.
   Root help starts with `Toolang is a language and runtime for agents and humans.`
   followed by the actual source version in parentheses; dim the version and
   parentheses together.

@@ -429,15 +429,17 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     assert "* FILE" in output
     assert "Path to a .too file" in output
     assert "RUNNABLE" in output
-    assert "Runnable-specific arguments" in output
+    assert "Execute a .too file." in output
+    assert "Runnable arguments" in output
+    assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
     assert "ARGUMENTS..." not in output
     assert (
-        f"The run command is optional: {executable} FILE [RUNNABLE] [ARGUMENTS]."
-        in output
+        "Omit run if RUNNABLE is not a Toolang command, e.g. "
+        f"{executable} aide.too whats_for." in output
     )
-    assert "add --help after FILE or RUNNABLE" in output
+    assert "Add --help after FILE or RUNNABLE for details." in output
 
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])

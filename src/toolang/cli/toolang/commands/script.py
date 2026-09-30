@@ -299,7 +299,7 @@ def run_script(
     ] = None,
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGUMENTS", help="Runnable-specific arguments"),
+        typer.Argument(metavar="ARGUMENTS", help="Runnable arguments"),
     ] = None,
 ) -> None:
     """Forward the file and its untouched argument tail to Script dispatch."""
