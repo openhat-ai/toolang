@@ -464,7 +464,7 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert f"Usage: {executable} {page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
-        assert "<entry> agic <entry:1>" in " ".join(output.split())
+        assert "_ agic <entry:1>" in " ".join(output.split())
         assert "Arguments:" not in output
         assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
@@ -548,5 +548,5 @@ def test_script_help_allows_unnamed_entry_with_explicit_main(
     )
     assert cli.main(["run", str(source), "--help"]) == 0
     output = capsys.readouterr().out
-    assert f"<entry> {kind} <entry:1>" in " ".join(output.split())
+    assert f"_ {kind} <entry:1>" in " ".join(output.split())
     assert f"main {kind}" in " ".join(output.split())

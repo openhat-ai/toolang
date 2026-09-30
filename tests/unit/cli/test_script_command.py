@@ -1429,7 +1429,7 @@ flow pipeline:
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "<entry> agic <entry:2>" in descriptions
+    assert "_ agic <entry:2>" in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
@@ -1458,7 +1458,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
     assert script.dispatch([], [str(source), "--help"], prog_name="too") == 0
     panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
     labels = [
-        *([f"<entry> {entry_kind}"] if entry_kind else []),
+        *([f"_ {entry_kind}"] if entry_kind else []),
         "zebra_agic agic",
         "alpha_agic agic",
         "zebra_flow flow",
@@ -1469,7 +1469,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
     if entry_kind:
         line = 6 if entry_doc else 5
         description = " Entry description." if entry_doc else ""
-        assert f"<entry> {entry_kind} <entry:{line}>{description}" in panel
+        assert f"_ {entry_kind} <entry:{line}>{description}" in panel
         assert f"{entry_kind.capitalize()} <entry>" not in panel
 
 
