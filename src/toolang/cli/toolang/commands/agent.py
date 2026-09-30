@@ -217,6 +217,17 @@ def info_agent(
         online = _human_uptime_since(started_at)
         if online is not None:
             status_value = f"{status.status} ({online})"
+    message = runtime_value(status.message)
+    if status.status not in {"running", "stopped"} and message != "-":
+        status_value = f"{status_value}: {message}"
+    workspace_names = dict.fromkeys(["lab", *state.workspaces, *selection.additions])
+    runtime_workspaces = runtime_state.get("workspace_additions")
+    if status.status == "running" and isinstance(runtime_workspaces, dict):
+        workspace_names.update(
+            (name, None)
+            for name, path in runtime_workspaces.items()
+            if isinstance(name, str) and isinstance(path, str)
+        )
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),
@@ -230,7 +241,7 @@ def info_agent(
         ),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Workspaces", ", ".join(["lab", *state.workspaces, *selection.additions])),
+        ("Workspaces", ", ".join(workspace_names)),
         ("Status", status_value),
     ]
     if status.status == "stopped":

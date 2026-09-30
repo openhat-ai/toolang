@@ -3259,7 +3259,7 @@ def test_agent_info_fields_follow_the_compact_layout(
             api_url="http://localhost:8123/api",
             webui_url="http://localhost:8123/ui",
             sandbox="host",
-            message="runtime failed",
+            message="runtime failed" if status == "failed" else None,
         ),
     )
     monkeypatch.setattr(
@@ -3268,7 +3268,11 @@ def test_agent_info_fields_follow_the_compact_layout(
         lambda self: {
             "started_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-02T00:00:00Z",
-            "workspace_additions": {"extra": str(tmp_path)},
+            "workspace_additions": {
+                "extra": str(tmp_path),
+                "runtime": str(tmp_path),
+                "invalid": None,
+            },
         },
     )
     monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
@@ -3278,18 +3282,28 @@ def test_agent_info_fields_follow_the_compact_layout(
     )
 
     args = ("alice", "info") if target_first else ("info", "alice")
-    result = _invoke(root, *args)
+    invocation = ("-w", f"extra={tmp_path}") if target_first else ()
+    result = _invoke(root, *args, *invocation)
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
-    status_value = dict(captured)["Status"]
+    rows = dict(captured)
+    workspace_names = ["lab"]
+    if target_first or status == "running":
+        workspace_names.append("extra")
+    if status == "running":
+        workspace_names.append("runtime")
+    assert rows["Workspaces"] == ", ".join(workspace_names)
+    status_value = rows["Status"]
     if status == "stopped":
         assert status_value == "not running"
     elif status == "running":
         assert status_value.startswith("running (up ")
+    elif status == "failed":
+        assert status_value == "failed: runtime failed"
     else:
         assert status_value == status
 
