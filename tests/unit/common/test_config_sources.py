@@ -207,3 +207,21 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     layout = materialize_roaming_program(copied / "aide.too")
     assert not (layout.home / "catalog.json").is_symlink()
     assert (original / "toolang.catalog.json").is_file()
+
+
+def test_only_companion_directories_contribute_layers(tmp_path):
+    git_init(tmp_path)
+    middle = tmp_path / "empty" / "catalog-only"
+    srcdir = middle / "empty" / "source"
+    srcdir.mkdir(parents=True)
+    source = srcdir / "aide.too"
+    source.write_text("flow run():\n  pass\n")
+    (tmp_path / "toolang.toml").write_text("# Shared settings\n")
+    catalog = middle / "toolang.catalog.json"
+    catalog.write_text("{}")
+
+    layout = materialize_roaming_program(source)
+
+    assert [item.path.parent for item in config_sources(layout)] == [tmp_path, middle]
+    assert resolve_model_catalog_path(layout) == catalog
+    assert prepare_agent_state(layout).workspaces == {}

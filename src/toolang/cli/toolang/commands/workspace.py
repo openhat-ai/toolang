@@ -83,7 +83,8 @@ def list_workspaces(
 ) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    existing = running_workspaces(layout) if cd else {}
+    server_grants = running_workspaces(layout)
+    existing = server_grants if cd else {}
     selection = user_call(
         resolve_workspaces,
         layout,
@@ -104,6 +105,8 @@ def list_workspaces(
         **existing,
         **selection.additions,
     }
+    if server_grants:
+        typer.echo("Current invocation:")
     echo_table(
         ("NAME", "PATH", "AVAILABLE"),
         tuple(
@@ -111,8 +114,21 @@ def list_workspaces(
             for name, path in workspaces.items()
         ),
     )
-    if selection.workdir:
-        typer.echo(f"Workdir: {selection.workdir}")
+    workdir = selection.workdir or next(
+        (
+            f"{name}://"
+            for name, path in reversed(workspaces.items())
+            if Path(path).is_dir()
+        ),
+        "lab://",
+    )
+    typer.echo(f"Workdir: {workdir}")
+    if server_grants:
+        typer.echo("Server grants:")
+        echo_table(
+            ("NAME", "PATH"),
+            tuple(server_grants.items()),
+        )
 
 
 def _authored_config(layout: AgentLayout) -> Path:

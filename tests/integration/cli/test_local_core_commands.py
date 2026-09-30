@@ -3509,3 +3509,29 @@ def test_tools_help_and_missing_agent_need_no_setup(
     assert missing.exit_code != 0
     assert "Agent missing not found" in missing.stderr
     assert not (tmp_path / "agents" / "missing").exists()
+
+
+def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monkeypatch):
+    import toolang.cli.toolang.commands.workspace as workspace_commands
+
+    root = tmp_path / "toolang-root"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    project = tmp_path / "project"
+    project.mkdir()
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    layout.config.write_text(f'[workspaces]\nproject = "{project}"\n')
+    monkeypatch.setattr(
+        workspace_commands,
+        "running_workspaces",
+        lambda _layout: {"temporary": str(temporary)},
+    )
+
+    result = _invoke(root, "alice", "workspace", "list")
+
+    assert result.exit_code == 0, result.stderr
+    assert "Workdir: project://" in result.stdout
+    assert "Server grants" in result.stdout
+    assert "temporary" in result.stdout
+    assert str(temporary) in result.stdout

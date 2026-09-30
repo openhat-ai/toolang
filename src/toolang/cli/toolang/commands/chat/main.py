@@ -217,6 +217,8 @@ def _chat_argv(
         "--thread",
         thread_id,
     ]
+    if layout.placement != "resident":
+        argv.extend(["--placement", layout.placement])
     for option, value in (
         ("--catalog", model_catalog),
         ("--sandbox", sandbox),

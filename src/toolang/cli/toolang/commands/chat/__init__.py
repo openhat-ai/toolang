@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
-from toolang.cli.common.context import ModelCatalogOption
+from toolang.cli.common.context import ModelCatalogOption, cli_context, context_layout
+from toolang.common.layout import AgentPlacement
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     CdOption,
@@ -52,6 +54,9 @@ def chat_command(
     workspace: WorkspaceOptions = None,
     cd: CdOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
+    placement: Annotated[
+        AgentPlacement | None, typer.Option("--placement", hidden=True)
+    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -59,6 +64,8 @@ def chat_command(
 ) -> None:
     from .main import chat_command as run
 
+    if placement is not None:
+        cli_context(ctx).layout = replace(context_layout(ctx), placement=placement)
     run(
         ctx,
         thread=thread,

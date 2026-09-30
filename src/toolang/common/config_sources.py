@@ -108,10 +108,13 @@ def script_sources(source: Path) -> tuple[ConfigSource, ...]:
     sources: list[ConfigSource] = []
     for directory in reversed(directories):
         path = directory / "toolang.toml"
+        companion = directory / "toolang.catalog.json"
+        if not any(item.exists() or item.is_symlink() for item in (path, companion)):
+            continue
         config = read_config(path)
         if directory != directories[0]:
             config.pop("workspaces", None)
-        # Empty layers still carry catalog discovery and path provenance.
+        # Catalog-only layers retain their position without requiring TOML.
         sources.append(ConfigSource(path, config))
     return tuple(sources)
 
