@@ -2,19 +2,11 @@
 
 from __future__ import annotations
 
-from toolang.cli.common.workspaces import (
-    WorkspaceOptions,
-    WorkdirOption,
-    NoAutoWorkspaceOption,
-    resolve_workspaces,
-    running_workspace_inspection,
-    validate_running_workspace_additions,
-)
+from toolang.cli.common.workspaces import running_workspace_inspection
 
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Mapping
 import shutil
 from typing import Annotated, cast
 
@@ -175,24 +167,10 @@ def info_agent(
         None, help="Agent name, .too file, reference, or URL", hidden=True
     ),
     model_catalog: ModelCatalogOption = None,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
-    selection = user_call(
-        resolve_workspaces,
-        layout,
-        procdir=Path.cwd(),
-        paths=workspace or (),
-        workdir=workdir,
-        srcdir=layout.program.resolve().parent
-        if layout.placement == "roaming"
-        else None,
-        no_auto=no_auto_workspace,
-    )
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
@@ -202,9 +180,7 @@ def info_agent(
         runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
     except (OSError, ValueError):
         runtime_state, runtime_identity = {}, None
-    state = _prepare_state(
-        layout, {} if status.status == "running" else selection.additions
-    )
+    state = _prepare_state(layout)
     model_catalog = resolve_model_catalog_option(model_catalog)
     watcher = (
         SetupWatcher(layout, model_catalog=model_catalog)
@@ -223,18 +199,9 @@ def info_agent(
         status_value = f"{status_value}: {message}"
     workspace_names = tuple(setup.workspace_grants(state.workspaces))
     if status.status == "running":
-        inspection = user_call(
-            running_workspace_inspection,
-            layout,
-            workdir=None if selection.automatic else selection.workdir,
-        )
+        inspection = user_call(running_workspace_inspection, layout)
         if inspection is not None:
-            user_call(validate_running_workspace_additions, inspection, selection)
             workspace_names = tuple(item.name for item in inspection.items)
-    else:
-        from toolang.execution.executor.resources import workspace_inspection
-
-        user_call(workspace_inspection, setup, state, workdir=selection.workdir)
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),
@@ -278,7 +245,7 @@ def _caps_summary(state: AgentState) -> str:
     )
 
 
-def _prepare_state(layout: AgentLayout, additions: Mapping[str, str]) -> AgentState:
+def _prepare_state(layout: AgentLayout) -> AgentState:
     progress = make_cli_progress()
     try:
         with progress:
@@ -288,7 +255,6 @@ def _prepare_state(layout: AgentLayout, additions: Mapping[str, str]) -> AgentSt
                     prepare_agent_state,
                     layout,
                     progress=progress.sink,
-                    workspace_additions=additions,
                 ),
             )
             return state

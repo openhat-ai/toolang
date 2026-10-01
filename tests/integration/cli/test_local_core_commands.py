@@ -3328,8 +3328,7 @@ def test_agent_info_fields_follow_the_compact_layout(
     )
 
     args = ("alice", "info") if target_first else ("info", "alice")
-    invocation = ("-w", f"extra={tmp_path}") if target_first else ()
-    result = _invoke(root, *args, *invocation)
+    result = _invoke(root, *args)
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
@@ -3339,10 +3338,8 @@ def test_agent_info_fields_follow_the_compact_layout(
     rows = dict(captured)
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
-    if target_first or status == "running":
-        workspace_names.append("extra")
     if status == "running":
-        workspace_names.append("runtime")
+        workspace_names.extend(("extra", "runtime"))
     assert rows["Workspaces"] == ", ".join(workspace_names)
     status_value = rows["Status"]
     if status == "stopped":
@@ -3438,6 +3435,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [AgentLayout.roaming(source).home]
     assert rows["Home"] == "compact home"
+    assert rows["Workspaces"] == "lab"
 
 
 def test_visiting_agent_info_uses_the_materialized_layout(
@@ -3661,17 +3659,16 @@ def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monke
     assert str(temporary) in result.stdout
 
 
-@pytest.mark.parametrize("workdir", ["missing://", "lab://missing"])
-def test_offline_agent_info_validates_workdir(tmp_path, monkeypatch, workdir):
+@pytest.mark.parametrize("option", ["--workdir", "--workspace", "--no-auto-workspace"])
+def test_agent_info_rejects_execution_workspace_options(tmp_path, monkeypatch, option):
     _create_agent(tmp_path)
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
 
-    result = _invoke(tmp_path, "alice", "info", "--workdir", workdir)
+    value = () if option == "--no-auto-workspace" else (str(tmp_path),)
+    result = _invoke(tmp_path, "alice", "info", option, *value)
 
-    assert result.exit_code == 1
-    assert "workspace is not available" in result.stderr or (
-        "workdir is not a directory" in result.stderr
-    )
+    assert result.exit_code == 2
+    assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
 @pytest.mark.parametrize("command", [("workspace", "list"), ("info",)])
