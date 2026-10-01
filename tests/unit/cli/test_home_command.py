@@ -335,14 +335,15 @@ def test_home_prepares_nonresident_home_and_reuses_it(
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "unrelated"))
     monkeypatch.setenv("SHELL", "/custom/shell")
-    monkeypatch.setattr(home_command, "_require_interactive_terminal", lambda *_: None)
     monkeypatch.setattr(home_command.subprocess, "run", run)
 
     assert not layout.home.exists()
     assert cli.main([selector, "home"]) == 0
-    assert cli.main([selector, "home"]) == 0
+    assert cli.main([selector, "home", "--"]) == 0
 
     assert (
         calls == [(["/custom/shell", "-i"], {"cwd": layout.home, "check": False})] * 2
@@ -370,6 +371,8 @@ def test_home_reports_remote_preparation_failure_without_launching(
         raise OSError("remote source unavailable")
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         home_command.subprocess,
         "run",
@@ -398,3 +401,82 @@ def test_home_resident_name_is_available_through_explicit_selector(
     assert cli.main(["agent:home", "home"]) == 0
     assert working_directories == [expected_home]
     assert "shell" not in cli.routing.COMMAND_SPECS
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+@pytest.mark.parametrize(
+    ("tail", "stdin_tty", "stdout_tty", "exit_code", "message"),
+    [
+        (["--help"], False, False, 0, "Open a shell in agent home"),
+        (["-h"], True, True, 0, "Open a shell in agent home"),
+        (["--unknown"], True, True, 2, "No such option"),
+        (["extra"], True, True, 2, "unexpected extra argument"),
+        ([], False, True, 1, "home requires an interactive terminal"),
+        ([], True, False, 1, "home requires an interactive terminal"),
+    ],
+)
+def test_home_does_not_prepare_targets_for_help_or_invalid_invocations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    placement: str,
+    tail: list[str],
+    stdin_tty: bool,
+    stdout_tty: bool,
+    exit_code: int,
+    message: str,
+) -> None:
+    if placement == "roaming":
+        source = tmp_path / "alice.too"
+        source.write_text("agic:\n  Reply directly.\n")
+        layout = AgentLayout.roaming(source)
+        selector = str(source)
+    else:
+        layout = AgentLayout(tmp_path / "visiting", "alice", "visiting")
+        selector = "https://agents.example/alice.too"
+        monkeypatch.setattr(
+            AgentLayout, "visiting", classmethod(lambda _cls, source, name: layout)
+        )
+
+    fetches: list[str] = []
+
+    def fetch(ref: agents.AgentRef, **_kwargs: Any) -> str:
+        fetches.append(ref.render())
+        return "agic:\n  Reply directly.\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: stdin_tty)
+    monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: stdout_tty)
+    monkeypatch.setattr(
+        home_command.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("invalid invocation started a shell"),
+    )
+
+    assert cli.main([selector, "home", *tail]) == exit_code
+    output = capsys.readouterr()
+    assert message in strip_ansi(output.out + output.err)
+    assert fetches == []
+    assert not layout.root.exists()
+
+
+def test_home_reports_roaming_filesystem_errors_without_launching(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "alice.too"
+    source.write_text("agic:\n  Reply directly.\n")
+    root = tmp_path / ".toolang"
+    root.write_text("existing file")
+    monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        home_command.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("failed preparation started a shell"),
+    )
+
+    assert cli.main([str(source), "home"]) == 1
+    assert "Not a directory" in capsys.readouterr().err
+    assert root.read_text() == "existing file"
