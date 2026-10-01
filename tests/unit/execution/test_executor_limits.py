@@ -9,7 +9,6 @@ from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
 from toolang.execution.accounting import build_model_accounting, selected_usd_cost
 from toolang.execution.records import run_limits_to_data
-from toolang.setup import ModelCollection
 
 
 def test_run_limits_have_one_compact_stable_shape() -> None:
@@ -69,9 +68,6 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
         cost={"input": 1, "output": 2},
         provider="test",
     )
-    models = ModelCollection((model,))
-    assert models.contains(model.ref)
-
     accounting = build_model_accounting(
         model,
         ModelUsage(

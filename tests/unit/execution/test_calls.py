@@ -31,7 +31,7 @@ from toolang.execution.schemas import (
 from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadPrefix
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
-from toolang.setup import ModelCollection, ToolCollection
+from toolang.setup import ToolCollection
 from toolang.state.state import CapSource, StateCap, agent_state_revision
 from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
@@ -596,7 +596,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         layout=harness.setup.layout,
         providers={},
         adapters={},
-        models=ModelCollection(),
+        models=(),
         tools=ToolCollection(),
         envs={},
         environment=harness.setup.environment,

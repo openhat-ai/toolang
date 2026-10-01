@@ -76,7 +76,6 @@ from toolang.execution.types import (
     ToolStepNoted,
 )
 from toolang.lang.input import resolve_input_parts
-from toolang.setup import ModelCollection
 
 
 def test_agic_executes_perceived_text_and_typed_arguments(
@@ -314,21 +313,19 @@ agic reply(_: Part[]) -> Part[]:
             harness.setup.defaults,
             model=ModelRequest(TEST_MODEL_REF, reasoning=Reasoning("medium")),
         ),
-        models=ModelCollection(
-            tuple(
-                replace(
-                    model,
-                    reasoning_options=(
-                        {"type": "toggle"},
-                        {
-                            "type": "effort",
-                            "values": ["medium", "high", "low"],
-                            "exhaustive": True,
-                        },
-                    ),
-                )
-                for model in harness.setup.models_effective()
+        models=tuple(
+            replace(
+                model,
+                reasoning_options=(
+                    {"type": "toggle"},
+                    {
+                        "type": "effort",
+                        "values": ["medium", "high", "low"],
+                        "exhaustive": True,
+                    },
+                ),
             )
+            for model in harness.setup.models_effective()
         ),
     )
     harness.executor._setup = lambda: harness.setup
@@ -1783,14 +1780,12 @@ agic reply(_: Text) -> Text:
     )
     harness.setup = replace_materialized_setup(
         harness.setup,
-        models=ModelCollection(
-            tuple(
-                replace(
-                    model,
-                    cost={"input": 10000, "output": 20000},
-                )
-                for model in harness.setup.models_effective()
+        models=tuple(
+            replace(
+                model,
+                cost={"input": 10000, "output": 20000},
             )
+            for model in harness.setup.models_effective()
         ),
     )
 

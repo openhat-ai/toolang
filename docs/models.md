@@ -233,7 +233,7 @@ first use and memoize them only for that setup instance:
   adapters and source snapshots without loading toolsets.
 
 Inspection filters and runnable model directives use `tq-json` transiently on
-these records. The setup does not retain a `ModelCollection` or matcher cache.
+these records. Setup stores model sequences without a collection wrapper or matcher cache.
 A source or setup change causes the watcher to publish a new generation;
 existing references keep their captured inputs and memoized views. The watcher
 retains the last good setup when source validation or dynamic probes fail.

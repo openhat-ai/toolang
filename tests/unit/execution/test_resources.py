@@ -30,7 +30,6 @@ from toolang.execution.types import (
     AgentToolResource,
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
-from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModels
@@ -81,7 +80,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers=providers,
         adapters={},
-        models=build_model_collection(provider.list_models(environ={})),
+        models=provider.list_models(environ={}),
         tools=ToolCollection.from_tools(tools),
         envs={},
     )

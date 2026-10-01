@@ -18,8 +18,11 @@ from toolang.base.types.model import (
 )
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
-from toolang.plugin.models.collections import ModelCollection
-from toolang.plugin.models.query import filter_models, order_and_allow_models
+from toolang.plugin.models.query import (
+    filter_models,
+    order_and_allow_models,
+    subset_models,
+)
 from toolang.plugin.models.records import model_record, provider_record
 from toolang.plugin.toolsets.collections import ToolCollection, tool_record
 from toolang.setup.catalog import merge_catalog_snapshots
@@ -181,7 +184,7 @@ def test_local_origin_survives_merge_policy_route_and_provider_projection():
         updated = replace(
             item, _toolang=item._toolang.with_allowed(False).with_route(READY)
         )
-        selected = ModelCollection((updated,)).subset((updated.ref,)).entries[0]
+        selected = subset_models((updated,), (updated.ref,))[0]
         assert selected._toolang.local is local
         provider = provider_record(merged.providers[item.provider])
         assert model_record(selected)["tags"] == [

@@ -12,7 +12,6 @@ from toolang.cli.common.workspaces import (
 from toolang.cli.common.context import context_layout
 
 import asyncio
-from collections.abc import Sequence
 from typing import Annotated
 
 import typer
@@ -28,8 +27,6 @@ from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
     tool_record,
 )
-from toolang.plugin.models.query import filter_models
-from toolang.setup import AgentSetup
 from toolang.setup.watcher import load_setup
 
 channel_app = typer.Typer(
@@ -152,24 +149,6 @@ def _list_plugins(
     if rows:
         echo_table(("NAME", "PACKAGE"), rows)
     echo_collection_summary(len(rows), noun)
-
-
-def model_rows(
-    setup: AgentSetup,
-    *,
-    model_queries: Sequence[str] | None = None,
-) -> list[tuple[str, str, str]]:
-    from toolang.plugin.models.views import model_target_profile
-
-    models = filter_models(setup.models_effective(), model_queries or None)
-    return [
-        (
-            model.ref,
-            model.provider,
-            model_target_profile(model),
-        )
-        for model in models
-    ]
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:

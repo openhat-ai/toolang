@@ -211,15 +211,6 @@ def resolve_state_runnable(
     return state.runnable_modules[key], entry
 
 
-def resolve_state_runnable_reference(
-    state: AgentState,
-    reference: str,
-) -> tuple[str, Runnable]:
-    """Resolve one exact runnable reference."""
-    resolved = resolve_runnable_reference(state, reference)
-    return resolved.module, resolved.executable
-
-
 def resolve_runnable_reference(
     state: AgentState | Program,
     reference: str,

@@ -12,7 +12,7 @@ from toolang.base.protocols.tool import Tool
 from tq import Query
 from toolang.common.types import SetOperator
 
-from .registry import ToolRef, tool_ref_for_model_tool
+from .registry import tool_ref_for_model_tool
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +24,6 @@ class ToolQueryView:
     toolset: str
     name: str
     plugin: str
-    source: str
     description: str
     parameters: tuple[str, ...]
 
@@ -93,17 +92,11 @@ class ToolCollection(Mapping[str, Tool]):
     def from_tools(
         cls,
         tools: Mapping[str, Tool],
-        *,
-        plugin_sources: Mapping[str, str] | None = None,
     ) -> ToolCollection:
         """Build one deterministic collection from installed model-facing tools."""
 
-        sources = plugin_sources or {}
         views = sorted(
-            (
-                _tool_view(model_name, tool, plugin_sources=sources)
-                for model_name, tool in tools.items()
-            ),
+            (_tool_view(model_name, tool) for model_name, tool in tools.items()),
             key=lambda item: (item.toolset, item.name, item.plugin, item.model_name),
         )
         entries = tuple(
@@ -278,21 +271,8 @@ def _validate_tool_entries(
 def _tool_view(
     model_name: str,
     tool: Tool,
-    *,
-    plugin_sources: Mapping[str, str] | None = None,
 ) -> ToolQueryView:
-    plugin_sources = plugin_sources or {}
     ref = tool_ref_for_model_tool(model_name, tool)
-    plugin = ref.plugin
-    if plugin == "-" and ref.toolset in plugin_sources:
-        plugin = ref.toolset
-    normalized = ToolRef(plugin=plugin, toolset=ref.toolset, name=ref.name)
-    tool_source = getattr(tool, "source", None)
-    source = (
-        tool_source
-        if isinstance(tool_source, str) and tool_source
-        else plugin_sources.get(normalized.plugin, "-")
-    )
     definition = tool.definition()
     properties = definition.parameters.get("properties")
     parameter_names = (
@@ -303,10 +283,9 @@ def _tool_view(
     return ToolQueryView(
         model_name=model_name,
         record=tool,
-        toolset=normalized.toolset,
-        name=normalized.name,
-        plugin=normalized.plugin,
-        source=source,
+        toolset=ref.toolset,
+        name=ref.name,
+        plugin=ref.plugin,
         description=" ".join(definition.description.split()),
         parameters=parameter_names,
     )

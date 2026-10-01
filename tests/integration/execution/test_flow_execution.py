@@ -72,8 +72,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import CallInput, RunnableInput, resolve_runnable_input
 from toolang.lang.types import Array
-from toolang.plugin.models.resolution import build_model_collection
-from toolang.setup import AgentEnvironment, AgentSetup, ModelCollection, ToolCollection
+from toolang.setup import AgentEnvironment, AgentSetup, ToolCollection
 
 
 class _RecordingTracer(RunTracer):
@@ -141,7 +140,7 @@ def _setup(tmp_path: Path) -> AgentSetup:
         layout=layout,
         providers={},
         adapters={},
-        models=ModelCollection(),
+        models=(),
         tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),
@@ -158,7 +157,7 @@ def _model_setup(tmp_path: Path) -> AgentSetup:
         layout=layout,
         providers=providers,
         adapters={},
-        models=build_model_collection(provider.list_models(environ={})),
+        models=provider.list_models(environ={}),
         tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),

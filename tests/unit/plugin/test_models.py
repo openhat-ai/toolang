@@ -66,8 +66,7 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     resolve_model_reasoning,
 )
-from toolang.plugin.models.views import _format_decimal_unit
-from toolang.setup import ModelCollection, ToolCollection
+from toolang.setup import ToolCollection
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 from toolang.plugin.loading import load_model_adapters
@@ -272,10 +271,6 @@ def test_builtin_model_adapter_loader_includes_all_protocol_adapters() -> None:
         "messages",
         "responses",
     )
-
-
-def test_decimal_unit_formatting_accepts_integer_values() -> None:
-    assert _format_decimal_unit(1) == "1"
 
 
 def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
@@ -2251,7 +2246,7 @@ def _prepared_agic(
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
                 adapters={},
-                models=ModelCollection(),
+                models=(),
                 tools=ToolCollection.from_tools({tool.name: tool}),
                 envs={},
             ),

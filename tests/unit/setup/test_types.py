@@ -21,7 +21,6 @@ def test_setup_facade_exposes_no_catalog_projection_cache() -> None:
     assert setup_package.__all__ == [
         "AgentEnvironment",
         "AgentSetup",
-        "ModelCollection",
         "RunDefaults",
         "SetupWatcher",
         "ToolCollection",

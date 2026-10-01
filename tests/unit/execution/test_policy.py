@@ -29,7 +29,7 @@ from toolang.execution.types import (
     SessionSetting,
 )
 from toolang.lang.input import CallInput
-from toolang.setup import AgentSetup, ModelCollection, ToolCollection
+from toolang.setup import AgentSetup, ToolCollection
 
 
 def _setup() -> AgentSetup:
@@ -37,7 +37,7 @@ def _setup() -> AgentSetup:
         layout=AgentLayout.resident(Path("/tmp/toolang"), "alice"),
         providers={},
         adapters={},
-        models=ModelCollection(),
+        models=(),
         tools=ToolCollection(),
         envs={},
         defaults=RunDefaults(model=ModelRequest("root/model"), runnable="agic:chat"),

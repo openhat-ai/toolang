@@ -5,7 +5,12 @@ import pytest
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import Model, ModelToolang, ModelRoute
 from toolang.common.errors import ToolangError
-from toolang.plugin.models.query import apply_model_operations, filter_models
+from toolang.plugin.models.query import (
+    apply_model_operations,
+    filter_models,
+    resolve_model,
+    subset_models,
+)
 from toolang.setup.config import resolve_compact_config, resolve_setup_allow
 from toolang.setup.models import order_models, select_compact_model
 from toolang.setup.types import CompactConfig
@@ -104,7 +109,28 @@ def test_model_queries_use_tq_and_keep_branch_order():
         "openai/c",
     )
     assert refs(filter_models(models, ("*[tool_call]",))) == refs(models)
+    assert refs(filter_models(models, ("openai/*", "*/c"))) == ("openai/a", "openai/c")
     assert refs(filter_models(models, ())) == ()
+
+
+def test_exact_model_lookup_and_subsets_do_not_parse_queries(monkeypatch):
+    from tq import Query
+
+    nested = model("gateway/vendor/model")
+    other = model("other/model")
+
+    def reject_query(*args, **kwargs):
+        pytest.fail("Exact model lookup must not parse queries")
+
+    monkeypatch.setattr(Query, "parse", reject_query)
+    assert resolve_model((nested, other), nested.ref) is nested
+    assert subset_models((nested, other), (other.ref, nested.ref)) == (other, nested)
+    for lookup in (
+        lambda: resolve_model((nested,), "missing/model"),
+        lambda: subset_models((nested,), ("missing/model",)),
+    ):
+        with pytest.raises(ToolangError, match="model ref is unavailable"):
+            lookup()
 
 
 def test_compact_config_layers_are_independent_complete_model_requests():
@@ -215,8 +241,6 @@ def test_tq_queries_expose_routability_allow_and_effective_ready():
 
 
 def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators():
-    from toolang.plugin.models.collections import ModelCollection
-
     models = (
         Model(
             id="a",
@@ -240,11 +264,9 @@ def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators
             provider="test",
         ),
     )
-    legacy = ModelCollection(models)
-    for query in ("*[modalities.input=image]", "*[modalities.input!=image]"):
-        assert refs(filter_models(models, (query,))) == refs(
-            legacy.match(query).entries
-        )
+    assert refs(filter_models(models, ("*[modalities.input has image]",))) == (
+        "test/a",
+    )
     assert refs(
         filter_models(models, ("*[modalities.input has no image]", "test/c"))
     ) == (
@@ -257,10 +279,7 @@ def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators
     )
 
 
-def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields():
-    """Selected legacy semantics survive the TQ switch without a setup index."""
-    from toolang.plugin.models.collections import ModelCollection
-
+def test_tq_model_queries_match_identity_scalar_predicates_and_missing_fields():
     models = (
         Model(
             id="gpt-5",
@@ -288,20 +307,18 @@ def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields
             provider="local",
         ),
     )
-    legacy = ModelCollection(models)
-    for query in (
-        "gpt-*",
-        "openrouter/model/*",
-        '"openrouter/model/nested"',
-        '"*/gpt-5"',
-        "*[family=null]",
-        "*[limit.context>=200000]",
-        "*[tool_call=true]",
-        "*[available=false]",
+    for query, expected in (
+        ("gpt-*", ()),
+        ("openrouter/model/*", ("openrouter/model/nested",)),
+        ('"openrouter/model/nested"', ("openrouter/model/nested",)),
+        ('"*/gpt-5"', ()),
+        ("*[family=null]", ()),
+        ("*[context=null]", ("openrouter/model/nested", "local/gpt-mini")),
+        ("*[limit.context>=200000]", ("openai/gpt-5",)),
+        ("*[tool_call=true]", ("openai/gpt-5", "local/gpt-mini")),
+        ("*[unknown=false]", ()),
     ):
-        assert refs(filter_models(models, (query,))) == refs(
-            legacy.match(query).entries
-        )
+        assert refs(filter_models(models, (query,))) == expected
     assert refs(filter_models(models, ("local/*", "openai/*", "gpt-*"))) == (
         "local/gpt-mini",
         "openai/gpt-5",
@@ -311,11 +328,7 @@ def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields
             models,
             (("=", ("gpt-*",)), ("-=", ("local/*",)), ("+=", ("local/*",))),
         )
-    ) == refs(
-        legacy.apply(
-            (("=", ("gpt-*",)), ("-=", ("local/*",)), ("+=", ("local/*",)))
-        ).entries
-    )
+    ) == ("local/gpt-mini",)
 
 
 def test_compact_fields_layer_independently():

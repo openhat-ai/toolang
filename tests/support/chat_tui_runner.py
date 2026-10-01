@@ -9,7 +9,6 @@ from dataclasses import replace
 from toolang.base.types.model import ModelRequest
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
-from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.models.query import resolve_model
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
@@ -30,8 +29,8 @@ def run_chat_tui(
     if models:
         setup = replace_materialized_setup(
             setup,
-            models=ModelCollection(
-                tuple(resolve_model(setup.models_effective(), ref) for ref in models)
+            models=tuple(
+                resolve_model(setup.models_effective(), ref) for ref in models
             ),
         )
 

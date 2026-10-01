@@ -65,7 +65,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import resolve_input_parts
 from toolang.lang.types import Array
-from toolang.setup import AgentSetup, ModelCollection, ToolCollection
+from toolang.setup import AgentSetup, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
@@ -2784,7 +2784,7 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers={},
         adapters={},
-        models=ModelCollection(),
+        models=(),
         tools=ToolCollection.from_tools(load_tools(toolsets=("shell",))),
         envs={},
     )
@@ -3224,7 +3224,7 @@ def test_agent_info_builds_state_and_setup_without_server(
                 layout=self.layout,
                 providers={},
                 adapters={},
-                models=ModelCollection(),
+                models=(),
                 tools=ToolCollection(),
                 envs={},
             )
@@ -3381,7 +3381,7 @@ def test_agent_info_reports_only_state_published_caps(
                 layout=self.layout,
                 providers={},
                 adapters={},
-                models=ModelCollection(),
+                models=(),
                 tools=ToolCollection(),
                 envs={},
             )
@@ -3536,7 +3536,7 @@ class _EmptySetupWatcher:
             layout=self.layout,
             providers={},
             adapters={},
-            models=ModelCollection(),
+            models=(),
             tools=ToolCollection(),
             envs={},
         )
