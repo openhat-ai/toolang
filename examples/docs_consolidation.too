@@ -128,7 +128,9 @@ agic inspect(_: Text, repo: Text, out: Text) -> Review:
 agic organize(_: Review[], repo: Text, out: Text) -> Plan:
   Repository: {{repo}}://; output: {{out}}://; source reviews: {{_}}.
 
-  Reconcile all reviews against the inventory, investigating conflicts and gaps.
+  Define jobs for write to produce the final documentation in the output workspace.
+  This documentation work is authorized; repository files stay unchanged.
+  Use all supplied reviews, investigating conflicts and gaps against the inventory.
   Plan document jobs and one keep/rewrite/merge/remove/defer decision for every
   source file. Link the plan and relevant jobs to their source reviews.
   Each job owns a unique path, purpose, concepts, and acceptance checks.
@@ -137,8 +139,8 @@ agic organize(_: Review[], repo: Text, out: Text) -> Plan:
   evidence, and links to detailed explanations. Include an entry index. Choose
   document count by scope; link shared definitions instead of repeating them.
 
-  Write migration.md from the decisions. Reserve records/ and reviews.json for
-  provenance, not authored documents. Record unresolved decisions as blockers.
+  Only draft migration.md here; write handles the document jobs. Reserve records/
+  and reviews.json for provenance. Record unresolved decisions as blockers.
 
 agic assign(plan: Plan, out: Text) -> Job[]:
   Output: {{out}}://; plan: {{plan}}.
