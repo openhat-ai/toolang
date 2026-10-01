@@ -426,12 +426,8 @@ def runnable_binding_defaults(
 
     if binding is None:
         binding = runnable_fallback(program, preferred=fallback_agic)
-    if isinstance(program, AgentState):
-        resolved = resolve_runnable_reference(program, binding)
-        name, runnable = resolved.name, resolved.executable
-    else:
-        name, kind = parse_runnable_ref(binding)
-        runnable = resolve_runnable(program, name, kind=kind)
+    resolved = resolve_runnable_reference(program, binding)
+    name, runnable = resolved.name, resolved.executable
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
 
 

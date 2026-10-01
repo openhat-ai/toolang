@@ -176,13 +176,13 @@ def apply_agent_ceiling(
         models = subset_models(setup.models_effective(), resources.models)
     elif not ceiling.models:
         models = ()
-    elif not resources.models:
-        raise ToolangError("model ceiling matched no available models")
     else:
         models = filter_models(
             subset_models(setup.models_effective(), resources.models),
             ceiling.models,
         )
+        if not resources.models:
+            raise ToolangError("model ceiling matched no available models")
 
     available_tools = _resource_tool_collection(setup, resources)
     if ceiling.tools is None:

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tq import QueryError
 
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
@@ -252,6 +253,17 @@ def test_agent_ceiling_cannot_expand_empty_agent_resources(
             agent,
             AgentCeiling(models=("test/scripted",)),
         )
+
+
+@pytest.mark.parametrize("query", ["*[", "*[ref=test/scripted]"])
+def test_empty_model_ceiling_still_validates_native_query(
+    tmp_path: Path, query: str
+) -> None:
+    setup, state, _selection = _snapshots(tmp_path)
+    agent = resolve_agent_resources(setup, state, AgentCeiling(models=()))
+
+    with pytest.raises(QueryError):
+        apply_agent_ceiling(setup, state, agent, AgentCeiling(models=(query,)))
 
 
 def test_flow_resets_resources_while_agics_use_current_flow(
