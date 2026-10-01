@@ -25,10 +25,6 @@ context provenance:
   Current stage: {{runnable.name}}
   Record path: records/{{runnable.name}}/{{run.id}}.json
 
-struct Document:
-  path: Text
-  sources: Text[]
-
 struct Finding:
   issue: Text
   change: Text
@@ -86,7 +82,7 @@ struct Result:
 flow(repo: Text, out: Text) -> Result:
   recall = none
   context = provenance
-  lanes = 3
+  lanes = 8
   tools = fs/*, shell/*
 
   scatter using discover
@@ -106,21 +102,27 @@ flow(repo: Text, out: Text) -> Result:
 
   gather using finish
 
-agic discover(repo: Text, out: Text) -> Document[]:
+agic discover(repo: Text, out: Text) -> Text[]:
   Repository: {{repo}}://; output: {{out}}://.
 
   Verify granted, non-overlapping roots and empty output before writing records.
 
-  Inventory README and all documentation, including plans and drafts. Include each
-  source file once, with related implementation and test paths. Keep missing or
-  unreadable sources in the inventory.
+  Inventory documentation paths, including README, plans, and drafts. Prefer the
+  Git file list; exclude dependencies and generated files before listing. Generate
+  the inventory as JSON with a script: one distinct file path per item, never a
+  batch or newline-separated list. Defer reading and code lookup to inspect.
+  Treat runtime prompts and test fixtures as implementation evidence, not targets.
 
-agic inspect(_: Document, repo: Text, out: Text) -> Review:
+  Read truncated listings in smaller batches until complete. Found documents must
+  remain in the inventory; missing references or incomplete scans do not mean empty.
+
+agic inspect(_: Text, repo: Text, out: Text) -> Review:
   Repository: {{repo}}://; output: {{out}}://; document: {{_}}.
 
-  Review this source file against code and tests. Identify concept ownership and
-  definitions, stale claims, duplicates, conflicts, and omissions. Cite supporting
-  path:line evidence even when no issue is found. Give specific changes for findings.
+  Read this source file and locate related implementation and tests. Identify
+  concept ownership and definitions, stale claims, duplicates, conflicts, and
+  omissions. Cite path:line evidence even when no issue is found, and give specific
+  changes for findings.
   Mark uncertainty and failed or unperformed checks explicitly.
 
 agic organize(_: Review[], repo: Text, out: Text) -> Plan:
