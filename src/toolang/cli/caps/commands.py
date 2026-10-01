@@ -216,13 +216,14 @@ def list_caps(
     selected = user_call(
         query_cap_views,
         entries if all_ else allowed,
+        root=context_root(ctx),
         agent_name=agent_name,
         queries=query,
         allowed=_allowed_cap_keys(allowed),
     )
     echo_records(
         [view.data for view in selected],
-        ("ref", "description", "source", "tags"),
+        ("ref", "description", "location", "tags"),
         json_=json_,
     )
     if not json_:
@@ -268,6 +269,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         dataset = cap_collection(
             entries if all_ else allowed,
+            root=context_root(ctx),
             agent_name=agent_name,
             kind=kind,
             allowed=_allowed_cap_keys(allowed),
@@ -275,7 +277,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected = user_call(dataset.query, query)
         echo_records(
             [view.data for view in selected],
-            ("ref", "description", "source", "tags"),
+            ("ref", "description", "location", "tags"),
             json_=json_,
         )
         if not json_:

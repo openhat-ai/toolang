@@ -2640,12 +2640,11 @@ def test_tools_visibility_queries_and_counts(
     if not visible:
         assert result.stdout.strip() == "0 tools"
         return
-    header = next(line for line in result.stdout.splitlines() if "description" in line)
+    header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
     assert header.split() == [
-        "ref",
-        "description",
-        "source",
-        "tags",
+        "REF",
+        "DESCRIPTION",
+        "TAGS",
     ]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
@@ -2656,7 +2655,7 @@ def test_tools_visibility_queries_and_counts(
         + (f", {toolset_count} toolset{toolset_plural}" if tool_count > 1 else "")
     )
     assert "Echo text." in result.stdout
-    assert "source" in header
+    assert "SOURCE" not in header
 
 
 @pytest.mark.parametrize(
@@ -2798,7 +2797,7 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
 
     monkeypatch.setattr(plugin_commands, "load_setup", load_published)
     monkeypatch.setattr("toolang.plugin.loading.entry_points", reject_discovery)
-    result = _invoke(tmp_path, "tools", "--query", "*[source=built-in]")
+    result = _invoke(tmp_path, "tools", "--query", "*[toolset=shell]")
 
     assert result.exit_code == 0, result.stderr
     assert "shell/exec" in result.stdout
@@ -2816,8 +2815,9 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
     monkeypatch.setattr(
         record_output,
         "echo_table",
-        lambda headers, values: rows.extend(
-            dict(zip(headers, row, strict=True)) for row in values
+        lambda headers, values, **kwargs: rows.extend(
+            dict(zip((key.lower() for key in headers), row, strict=True))
+            for row in values
         ),
     )
 
@@ -2831,8 +2831,8 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
         assert by_tool["me/echo"]["tags"] == "not_allowed"
         assert by_tool["_toolang/echo"]["tags"] == "ready"
         assert "INTERNAL" not in by_tool["_toolang/echo"]
-        assert "source" in by_tool["shell/echo"]
-        assert tuple(by_tool["shell/echo"]) == ("ref", "description", "source", "tags")
+        assert "source" not in by_tool["shell/echo"]
+        assert tuple(by_tool["shell/echo"]) == ("ref", "description", "tags")
     else:
         assert set(by_tool) == {"shell/echo"}
         assert by_tool["shell/echo"]["tags"] == "ready"
@@ -2883,8 +2883,9 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     monkeypatch.setattr(
         record_output,
         "echo_table",
-        lambda headers, values: rows.extend(
-            dict(zip(headers, row, strict=True)) for row in values
+        lambda headers, values, **kwargs: rows.extend(
+            dict(zip((key.lower() for key in headers), row, strict=True))
+            for row in values
         ),
     )
 
@@ -2912,7 +2913,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         assert ("not_allowed" in tags) is not allowed
         assert "local" in tags
         assert ("home" if name == "private_cap" else "root") in tags
-        assert tuple(row) == ("ref", "description", "source", "tags")
+        assert tuple(row) == ("ref", "description", "location", "tags")
 
 
 @pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
@@ -3171,10 +3172,10 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
 
     assert result.exit_code == 0
     output = strip_ansi(result.stdout)
-    assert header in output
-    assert "SOURCE" in output
+    assert "NAME" in output and "PACKAGE" in output
+    assert header not in output and "SOURCE" not in output
     assert plugin_name in output
-    assert "external" in output
+    assert "external-package" in output
     assert requested == [group]
 
     monkeypatch.setattr(loading, "entry_points", lambda **_kwargs: [])
@@ -3261,7 +3262,8 @@ def test_agent_info_fields_follow_the_compact_layout(
                     Model(
                         id=name,
                         name=name,
-                        _toolang=ModelToolang(provider="test", ready=ready),
+                        _toolang=ModelToolang(ready=ready),
+                        provider="test",
                     )
                     for name, ready in (
                         ("first", True),
@@ -3586,7 +3588,7 @@ def test_standalone_caps_all_preserves_scope_and_query(
 
     assert result == 0, output.err
     if all_:
-        assert "tags" in output.out
+        assert "TAGS" in output.out
         row = next(line for line in output.out.splitlines() if "shared_cap" in line)
         assert "home" in row
         assert "not_allowed" in row
@@ -3769,15 +3771,22 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     monkeypatch.setattr(
         record_output,
         "echo_table",
-        lambda headers, values: rows.extend(
-            dict(zip(headers, row, strict=True)) for row in values
+        lambda headers, values, **kwargs: rows.extend(
+            dict(zip((key.lower() for key in headers), row, strict=True))
+            for row in values
         ),
     )
     human = _invoke(tmp_path, *command, *options, "--query", query, "--human")
     assert human.exit_code == 0, human.stderr
     assert [row["ref"] for row in rows] == [record["ref"] for record in records]
-    assert all(tuple(row) == ("ref", "description", "source", "tags") for row in rows)
+    expected_columns = (
+        ("ref", "description", "tags")
+        if command == ("tools",)
+        else ("ref", "description", "location", "tags")
+    )
+    assert all(tuple(row) == expected_columns for row in rows)
     for row, record in zip(rows, records, strict=True):
         assert row["tags"] == ",".join(record["tags"])
-        assert row["source"] == record["source"]
+        if "location" in row:
+            assert row["location"] == record["location"]
         assert "id" not in record

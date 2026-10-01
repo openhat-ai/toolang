@@ -168,7 +168,7 @@ class LocalChatSession:
                 {
                     "ref": model.ref,
                     "name": model.name,
-                    "provider": model._toolang.provider,
+                    "provider": model.provider,
                     "parameters": {
                         "reasoning": {
                             "effort": list(model_reasoning_efforts(model)),
@@ -218,6 +218,7 @@ class LocalChatSession:
             matched = (
                 query_cap_views(
                     entries,
+                    root=self.layout.root,
                     agent_name=self.layout.name,
                     queries=queries,
                 )
@@ -233,6 +234,7 @@ class LocalChatSession:
         elif kind in {"psyche", "skill", "service", "prompt"}:
             dataset = cap_collection(
                 entries,
+                root=self.layout.root,
                 agent_name=self.layout.name,
                 kind=cast(EntryKind, kind),
             )

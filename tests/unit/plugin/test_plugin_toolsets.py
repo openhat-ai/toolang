@@ -140,7 +140,7 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
     ]
 
 
-def test_plugin_infos_include_source(monkeypatch) -> None:
+def test_plugin_infos_include_package_without_loading(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_toolset
     from toolang.plugin.toolsets.fs import (
         create_toolset as create_filesystem_tool,
@@ -168,9 +168,9 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
     )
 
     assert list_plugin_infos(group="toolang.toolset") == [
-        PluginInfo(name="echo", source="external"),
-        PluginInfo(name="fs", source="built-in"),
-        PluginInfo(name="spoof", source="external"),
+        PluginInfo(name="echo", package=None),
+        PluginInfo(name="fs", package="toolang"),
+        PluginInfo(name="spoof", package=None),
     ]
 
 
@@ -254,11 +254,13 @@ def test_canonical_user_tool_identities_remain_selectable(monkeypatch) -> None:
         validate_tool_queries(tools, ("filesystem/*",))
 
 
-def test_tool_source_queries_use_loaded_plugin_metadata(monkeypatch) -> None:
+def test_tool_queries_use_toolset_identity_without_exposing_plugin_sources(
+    monkeypatch,
+) -> None:
     _patch_tool_entry_points(monkeypatch)
 
-    built_in = load_tools(queries=("*[source=built-in]",))
-    external = load_tools(queries=("*[source=external]",))
+    built_in = load_tools(queries=("*[toolset=fs]",))
+    external = load_tools(queries=("*[toolset=echo]",))
 
     assert built_in
     assert external

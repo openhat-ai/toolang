@@ -91,9 +91,10 @@ def _reasoning_model(options: list[dict[str, object]]) -> Model:
     return Model(
         id="m",
         name="m",
-        _toolang=ModelToolang(provider="p", ready=True),
+        _toolang=ModelToolang(ready=True),
         reasoning=True,
         reasoning_options=tuple(options),
+        provider="p",
     )
 
 
@@ -223,10 +224,11 @@ def _model(
     return Model(
         id=model_id,
         name=name or model_id,
-        _toolang=ModelToolang(provider=provider, ready=True),
+        _toolang=ModelToolang(ready=True),
         tool_call=tool_call,
         structured_output=structured_output,
         reasoning=reasoning,
+        provider=provider,
     )
 
 
@@ -2310,9 +2312,10 @@ def test_missing_reasoning_controls_allow_explicit_attempts(options, control):
     model = Model(
         id="m",
         name="M",
-        _toolang=ModelToolang(provider="third_party"),
+        _toolang=ModelToolang(),
         reasoning=True,
         reasoning_options=options,
+        provider="third_party",
     )
     assert resolve_model_reasoning(model, control) == control
 

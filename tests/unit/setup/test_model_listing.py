@@ -18,7 +18,6 @@ def _model(ref: str, *, ready: bool) -> Model:
         name=model_id,
         tool_call=True,
         _toolang=ModelToolang(
-            provider=provider,
             ready=ready,
             route=ModelRoute(
                 adapter="responses" if ready else None,
@@ -26,6 +25,7 @@ def _model(ref: str, *, ready: bool) -> Model:
                 env=() if ready else None,
             ),
         ),
+        provider=provider,
     )
 
 

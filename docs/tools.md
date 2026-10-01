@@ -26,8 +26,8 @@ are loaded on first accessor use and memoized within that setup revision.
 `me/*` follows normal allow policy in the default view and appears with `--all`.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
-not guessed tools from an unloadable plugin. Both views show `ref`, `description`,
-`source`, and `tags`. Tags are `ready` or `not_allowed`; internal tools retain
+not guessed tools from an unloadable plugin. Both views show `REF`, `DESCRIPTION`, and `TAGS`, taken directly from the
+record fields `ref`, `description`, and `tags`. Tags are `ready` or `not_allowed`; internal tools retain
 copyable `_toolang/name` refs. `--json` emits the same public records used for
 native TQ matching. `--human` explicitly selects the default table; the flags
 cannot combine. See [Resource Queries](queries.md) for fields and syntax.

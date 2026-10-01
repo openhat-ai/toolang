@@ -27,7 +27,7 @@ def log_model_target(
         run_id,
         step_index,
         model.ref,
-        model._toolang.provider,
+        model.provider,
         model.id,
         model._toolang.route.adapter,
         f" base_url={model._toolang.route.api}" if model._toolang.route.api else "",

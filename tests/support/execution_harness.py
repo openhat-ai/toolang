@@ -222,13 +222,13 @@ class FakeModels:
             name="scripted",
             _toolang=ModelToolang(
                 ready=True,
-                provider=self.name,
                 route=ModelRoute(
                     adapter="scripted", api="https://example.invalid/v1", env=()
                 ),
             ),
             tool_call=True,
             structured_output=True,
+            provider=self.name,
         )
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[Model, ...]:

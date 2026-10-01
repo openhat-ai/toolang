@@ -202,9 +202,9 @@ def _selected_rates(
 
 
 def _model_mode(model: Model) -> str | None:
-    """Return the catalog mode declared on one model's provider block."""
+    """Return the catalog mode declared on one model's override block."""
 
-    value = model.provider.mode if model.provider is not None else None
+    value = model.override.mode if model.override is not None else None
     return value if isinstance(value, str) and value.strip() else None
 
 

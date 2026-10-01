@@ -25,9 +25,7 @@ from toolang.plugin.models.budget import (
 
 
 MODEL = Model(
-    id="model",
-    name="model",
-    _toolang=ModelToolang(provider="test", ready=True),
+    id="model", name="model", _toolang=ModelToolang(ready=True), provider="test"
 )
 
 

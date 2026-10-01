@@ -24,7 +24,6 @@ def model(
         id=name,
         name=name,
         _toolang=ModelToolang(
-            provider=provider,
             ready=routable,
             allowed=allowed,
             route=ModelRoute(
@@ -33,6 +32,7 @@ def model(
         ),
         tool_call=tools,
         structured_output=structured,
+        provider=provider,
     )
 
 
@@ -201,8 +201,9 @@ def test_tq_queries_expose_routability_allow_and_effective_ready():
     month_model = Model(
         id="month",
         name="Month",
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         release_date="2025-04",
+        provider="test",
     )
     assert refs(
         filter_models((month_model,), ("test/month[release_date=2025-04]",))
@@ -220,20 +221,23 @@ def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators
         Model(
             id="a",
             name="A",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ("image", "text")},
+            provider="test",
         ),
         Model(
             id="b",
             name="B",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ("text",)},
+            provider="test",
         ),
         Model(
             id="c",
             name="C",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ()},
+            provider="test",
         ),
     )
     legacy = ModelCollection(models)
@@ -261,24 +265,27 @@ def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields
         Model(
             id="gpt-5",
             name="GPT",
-            _toolang=ModelToolang(provider="openai", ready=True),
+            _toolang=ModelToolang(ready=True),
             family="gpt",
             tool_call=True,
             limit={"context": 200000},
+            provider="openai",
         ),
         Model(
             id="model/nested",
             name="Nested",
-            _toolang=ModelToolang(provider="openrouter", ready=True),
+            _toolang=ModelToolang(ready=True),
             family=None,
             tool_call=False,
+            provider="openrouter",
         ),
         Model(
             id="gpt-mini",
             name="Mini",
-            _toolang=ModelToolang(provider="local", ready=False),
+            _toolang=ModelToolang(ready=False),
             family="gpt",
             tool_call=True,
+            provider="local",
         ),
     )
     legacy = ModelCollection(models)

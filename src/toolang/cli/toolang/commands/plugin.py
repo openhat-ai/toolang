@@ -12,7 +12,6 @@ from toolang.cli.common.workspaces import (
 from toolang.cli.common.context import context_layout
 
 import asyncio
-import json
 from collections.abc import Sequence
 from typing import Annotated
 
@@ -92,7 +91,7 @@ def list_tools(
     if query:
         parsed = user_call(lambda: Query.parse(query).validate({"key": "ref"}))
         records = [record for record in records if parsed.match(record) is not None]
-    echo_records(records, ("ref", "description", "source", "tags"), json_=json_)
+    echo_records(records, ("ref", "description", "tags"), json_=json_)
     if not json_:
         echo_collection_summary(
             len(records),
@@ -105,38 +104,20 @@ def list_tools(
 def list_channels() -> None:
     _list_plugins(
         group="toolang.channel",
-        header="CHANNEL",
+        noun="channel",
     )
 
 
-def adapters_command(
-    json_: Annotated[
-        bool,
-        typer.Option("--json", help="Write adapter metadata as JSON"),
-    ] = False,
-) -> None:
+def adapters_command() -> None:
     """List installed model-adapter entry points without loading plugins."""
 
-    rows = plugin_info_rows("toolang.model_adapter")
-    if json_:
-        typer.echo(
-            json.dumps(
-                [{"id": name, "source": source} for name, source in rows],
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        )
-        return
-    if rows:
-        echo_table(("ADAPTER", "SOURCE"), rows)
-    echo_collection_summary(len(rows), "adapter")
+    _list_plugins(group="toolang.model_adapter", noun="adapter")
 
 
 def list_catalogs() -> None:
     _list_plugins(
         group="toolang.model_catalog",
-        header="CATALOG",
+        noun="catalog",
     )
 
 
@@ -147,7 +128,7 @@ def list_toolsets(
 ) -> None:
     _list_plugins(
         group="toolang.toolset",
-        header="TOOLSET",
+        noun="toolset",
         include_internal=all_,
     )
 
@@ -155,22 +136,22 @@ def list_toolsets(
 def list_sandboxes() -> None:
     _list_plugins(
         group="toolang.sandbox",
-        header="SANDBOX",
+        noun="sandbox",
     )
 
 
 def _list_plugins(
     *,
     group: str,
-    header: str,
+    noun: str,
     include_internal: bool = True,
 ) -> None:
     rows = plugin_info_rows(group)
     if not include_internal:
         rows = [row for row in rows if not is_internal_toolset_name(row[0])]
     if rows:
-        echo_table((header, "SOURCE"), rows)
-    echo_collection_summary(len(rows), header.lower())
+        echo_table(("NAME", "PACKAGE"), rows)
+    echo_collection_summary(len(rows), noun)
 
 
 def model_rows(
@@ -184,7 +165,7 @@ def model_rows(
     return [
         (
             model.ref,
-            model._toolang.provider,
+            model.provider,
             model_target_profile(model),
         )
         for model in models
@@ -192,4 +173,4 @@ def model_rows(
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:
-    return [(info.name, info.source) for info in list_plugin_infos(group=group)]
+    return [(info.name, info.package or "-") for info in list_plugin_infos(group=group)]

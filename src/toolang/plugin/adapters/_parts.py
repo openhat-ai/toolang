@@ -31,7 +31,7 @@ def compatible(
     part: ReasoningPart | TextPart | ToolCallPart, model: Model, adapter: str
 ) -> bool:
     return (
-        part.provider == model._toolang.provider
+        part.provider == model.provider
         and part.provider_metadata.get("adapter") == adapter
         and part.provider_metadata.get("model") == model.id
     )

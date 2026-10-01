@@ -305,7 +305,7 @@ def chat_completion_payload(
         openai_strict_object_schema(request.output_schema)
         if request.output_schema is not None
         and model.structured_output is True
-        and model._toolang.provider.lower() != "deepseek"
+        and model.provider.lower() != "deepseek"
         else None
     )
     instructions = (
@@ -334,18 +334,18 @@ def chat_completion_payload(
         request.output_schema,
         native_schema=native_schema,
         json_object=(
-            model._toolang.provider.lower() == "deepseek"
+            model.provider.lower() == "deepseek"
             and model.structured_output is True
             and request.output_schema is not None
             and is_object_schema(request.output_schema)
         ),
     )
-    _apply_reasoning(payload, request.reasoning, model._toolang.provider)
+    _apply_reasoning(payload, request.reasoning, model.provider)
     if request.max_output_tokens is not None:
         extra_options = options.get("extra_body")
         field = (
             "max_completion_tokens"
-            if model._toolang.provider == "openai"
+            if model.provider == "openai"
             or options.get("max_completion_tokens") is not None
             or (
                 isinstance(extra_options, Mapping)
@@ -355,7 +355,7 @@ def chat_completion_payload(
         )
         # These compatible APIs use max_tokens, including when authored generic
         # options were normalized from another alias before admission.
-        if model._toolang.provider in {"ollama", "llama_cpp"}:
+        if model.provider in {"ollama", "llama_cpp"}:
             field = "max_tokens"
         clear_options(payload, "max_completion_tokens", "max_tokens", "n_predict")
         payload[field] = request.max_output_tokens
@@ -480,7 +480,7 @@ def _openai_sdk_payload(
         "openrouter": ("reasoning",),
         "deepseek": ("thinking",),
         "llama_cpp": ("reasoning_budget_tokens", "thinking_budget_tokens"),
-    }.get(model._toolang.provider.lower(), ())
+    }.get(model.provider.lower(), ())
     extensions = {
         field: result.pop(field) for field in extension_fields if field in result
     }
@@ -831,7 +831,7 @@ class _ChatReasoning:
 
     @property
     def primary(self) -> str | None:
-        provider = self.model._toolang.provider.lower()
+        provider = self.model.provider.lower()
         if provider in {"vercel", "openrouter"}:
             return "reasoning_details"
         return "reasoning_content" if provider == "deepseek" else None
@@ -983,7 +983,7 @@ class _ChatReasoning:
                     ("reasoning", source),
                     ReasoningPart(
                         self.aliases[source],
-                        provider=self.model._toolang.provider,
+                        provider=self.model.provider,
                         provider_metadata=native_metadata(
                             self.model, "chat_completions", field=source
                         ),
@@ -1021,7 +1021,7 @@ class _ChatReasoning:
                     ReasoningPart(
                         text,
                         signature=signature,
-                        provider=self.model._toolang.provider,
+                        provider=self.model.provider,
                         provider_metadata=native_metadata(
                             self.model,
                             "chat_completions",
@@ -1227,7 +1227,7 @@ def _log_api_request(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.request provider=%s ref=%s model=%s adapter=%s stream=%s payload=%s",
-        model._toolang.provider,
+        model.provider,
         model.ref,
         model.id,
         model._toolang.route.adapter,
@@ -1246,7 +1246,7 @@ def _log_api_response(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.result provider=%s ref=%s model=%s adapter=%s stream=%s payload=%s",
-        model._toolang.provider,
+        model.provider,
         model.ref,
         model.id,
         model._toolang.route.adapter,

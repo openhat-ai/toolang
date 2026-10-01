@@ -529,6 +529,7 @@ class AgentState:
     module_sources: Mapping[str, str]
     module_digests: Mapping[str, str]
     module_caps: Mapping[str, tuple[StateCap, ...]]
+    toolang_root: Path | None = None
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
     allow_overrides: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -728,7 +729,10 @@ def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]
     base = tuple(state.caps.values()) if state.base_caps is None else state.base_caps
     return {
         module: _allowed_caps(
-            effective_caps(base, here), agent_name=state.name, allows=allows
+            effective_caps(base, here),
+            root=state.toolang_root,
+            agent_name=state.name,
+            allows=allows,
         )
         for module, here in state.module_caps.items()
     }
@@ -737,6 +741,7 @@ def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]
 def _allowed_caps(
     entries: tuple[StateCap, ...],
     *,
+    root: Path | None,
     agent_name: str,
     allows: Mapping[str, tuple[str, ...] | None],
 ) -> tuple[StateCap, ...]:
@@ -758,7 +763,7 @@ def _allowed_caps(
             selected = tuple(
                 item.record
                 for item in cap_collection(
-                    candidates, agent_name=agent_name, kind=kind
+                    candidates, root=root, agent_name=agent_name, kind=kind
                 ).query(queries)
             )
         selected_ids.update((cap.kind, cap.name, cap.ref) for cap in selected)
@@ -769,6 +774,7 @@ def _allowed_caps(
 
 def compose_agent_state(
     *,
+    toolang_root: Path | None = None,
     root_revision: str,
     home_revision: str,
     root_config: Mapping[str, object],
@@ -789,6 +795,7 @@ def compose_agent_state(
     effective_base = effective_caps(root_caps, home_caps)
     agent_here = module_caps.get("agent", ())
     return AgentState(
+        toolang_root=toolang_root,
         revision=agent_state_revision(
             root_revision,
             home_revision,
@@ -1306,7 +1313,7 @@ def entry_definition_file(entry: StateCap) -> str:
     return entry.source.path
 
 
-def entry_source(entry: StateCap, *, agent_name: str) -> str:
+def entry_source(entry: StateCap, *, agent_name: str, root: Path | None) -> str:
     """Return the human-facing source location for one capability."""
 
     form = entry_form(entry)
@@ -1324,7 +1331,12 @@ def entry_source(entry: StateCap, *, agent_name: str) -> str:
             f"{quote(github.repo, safe='')}/{view}/{quote(github.rev, safe='/')}/"
             f"{quote(github.path, safe='/')}"
         )
-    source = entry_definition_file(entry)
+    if root is None:
+        raise ValueError("local cap locations require the Toolang root")
+    source_path = root / entry_definition_file(entry)
+    if form == "authored" and entry.kind == "skill" and source_path.name != "SKILL.md":
+        source_path /= "SKILL.md"
+    source = str(source_path)
     if form == "inline" and entry.source.line is not None:
         return f"{source}:{entry.source.line}"
     return source

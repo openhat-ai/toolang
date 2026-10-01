@@ -1155,10 +1155,10 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
                     id="model",
                     name="model",
                     _toolang=ModelToolang(
-                        provider="openai",
                         ready=True,
                         route=ModelRoute(adapter="responses"),
                     ),
+                    provider="openai",
                 ),
                 request,
                 stateful=True,

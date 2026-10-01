@@ -41,8 +41,9 @@ def _model(provider: str, model: str, *, tools: bool = True) -> Model:
     return Model(
         id=model,
         name=model,
-        _toolang=ModelToolang(provider=provider, ready=True),
+        _toolang=ModelToolang(ready=True),
         tool_call=tools,
+        provider=provider,
     )
 
 

@@ -25,7 +25,8 @@ def _setup(tmp_path: Path, refs: tuple[str, ...]) -> AgentSetup:
             Model(
                 id=ref.partition("/")[2],
                 name=ref,
-                _toolang=ModelToolang(provider=ref.partition("/")[0], ready=True),
+                _toolang=ModelToolang(ready=True),
+                provider=ref.partition("/")[0],
             )
             for ref in refs
         ),

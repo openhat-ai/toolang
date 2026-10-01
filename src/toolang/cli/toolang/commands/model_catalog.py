@@ -30,26 +30,15 @@ from toolang.setup.watcher import load_setup
 
 MODEL_COLUMNS = (
     "ref",
-    "limit.context",
-    "limit.output",
-    "modalities.input",
-    "tool_call",
-    "reasoning",
-    "temperature",
-    "structured_output",
-    "cost.input",
-    "cost.output",
+    "context",
+    "max_output",
+    "price",
+    "input",
+    "output",
+    "features",
     "tags",
 )
-PROVIDER_COLUMNS = (
-    "id",
-    "_toolang.available_models",
-    "_toolang.model_count",
-    "_toolang.adapters",
-    "_toolang.route.api",
-    "env",
-    "tags",
-)
+PROVIDER_COLUMNS = ("id", "models", "adapter", "api", "env")
 
 
 def models_command(
@@ -90,7 +79,7 @@ def models_command(
         echo_collection_summary(
             len(selected),
             "model",
-            group=(len({model._toolang.provider for model in selected}), "provider"),
+            group=(len({model.provider for model in selected}), "provider"),
         )
 
 
@@ -116,14 +105,8 @@ def providers_command(
     check_output_options(human=human, json_=json_)
     inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
-    models = setup.models() if all_ else setup.models_effective()
     providers = setup.providers() if all_ else setup.providers_effective()
-    by_provider = {provider.id: [] for provider in providers}
-    for model in models:
-        by_provider[model._toolang.provider].append(model)
-    records = [
-        provider_record(provider, by_provider[provider.id]) for provider in providers
-    ]
+    records = [provider_record(provider) for provider in providers]
     echo_records(records, PROVIDER_COLUMNS, json_=json_)
     if not json_:
         echo_collection_summary(len(records), "provider")

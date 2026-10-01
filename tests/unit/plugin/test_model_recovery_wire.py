@@ -103,11 +103,11 @@ def wire_call(monkeypatch) -> Callable[..., ModelCallResult]:
                 id="test",
                 name="Test",
                 _toolang=ModelToolang(
-                    provider="test",
                     route=ModelRoute(
                         adapter=protocol, api="https://example.invalid", env=()
                     ),
                 ),
+                provider="test",
             )
 
             async def ignore(event):

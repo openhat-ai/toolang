@@ -44,7 +44,7 @@ def materialized_setup(
     ready_models = tuple(
         model for model in model_records if model._toolang.effective_ready
     )
-    ready_provider_ids = {model._toolang.provider for model in ready_models}
+    ready_provider_ids = {model.provider for model in ready_models}
     data = _ModelData(
         models=model_records,
         providers=provider_records,

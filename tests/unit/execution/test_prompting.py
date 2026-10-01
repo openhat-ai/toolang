@@ -261,10 +261,10 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
             id="model",
             name="model",
             _toolang=ModelToolang(
-                provider="test",
                 ready=True,
                 route=ModelRoute(adapter="test", api=None, env=()),
             ),
+            provider="test",
         ),
         values={"_": primary},
         facts={},

@@ -133,7 +133,7 @@ def _parse_model(
     return Model(
         id=model_id,
         name=_required_text(data.get("name"), label=f"{label} name"),
-        _toolang=ModelToolang(provider=provider_id),
+        _toolang=ModelToolang(),
         description=_optional_text(
             data.get("description"), label=f"{label} description"
         ),
@@ -169,8 +169,9 @@ def _parse_model(
         experimental=_optional_mapping(
             data.get("experimental"), label=f"{label} experimental"
         ),
-        provider=_model_provider(data.get("override"), label=f"{label} override"),
+        override=_model_provider(data.get("override"), label=f"{label} override"),
         cost=cost,
+        provider=provider_id,
     )
 
 

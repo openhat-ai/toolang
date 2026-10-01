@@ -9,7 +9,7 @@ the setup watcher captures source data and lazily resolves memoized model views.
 | Term | Meaning |
 | --- | --- |
 | `Provider` | One provider record in the flat catalog |
-| `Model` | One model record linked by `_toolang.provider` and an exact `ref` |
+| `Model` | One model record linked by `provider` and an exact `ref` |
 | `ModelProvider` | Typed per-model connection overrides, including optional `ProviderToolang` declarations |
 | `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
 | `ModelAdapter` | A plugin that invokes one wire protocol |
@@ -89,8 +89,8 @@ The target goes before `models` or `providers`; use `agent:<name>` when a name
 matches a command name. Both forms default to routable, allowed models.
 `--all` includes unready and allow-excluded records. Inspection queries run
 transiently over the selected records. `too models --json` emits an array of
-public model records; `too providers --json` emits an array of providers with
-ID-keyed `models` mappings. Neither is the flat catalog input format.
+public model records; `too providers --json` emits an array of provider inspection records with
+`models` formatted as stored ready/total counts. Neither is the flat catalog input format.
 Availability reflects the invoking process's configuration and environment,
 not a running agent's session or sandbox.
 
@@ -433,28 +433,30 @@ The public resources are:
 too models [--all] [--query QUERY] [--json]
 too providers [--all] [--json]
 too catalogs
-too adapters [--json]
+too adapters
 ```
 
 `too models` shows ready, allowed models. `too providers` lists providers with
-at least one such model and includes only those effective models. `--all` (or
-`-a`) includes unready and excluded entries, plus empty providers. It preserves
-scope and catalog precedence and grants no runtime access.
+at least one such model. `--all` (or `-a`) includes unready and excluded entries,
+plus empty providers. It preserves scope and catalog precedence and grants no
+runtime access. Providers store no model collection; their setup-computed
+`ready_count` and `model_count` always cover all owned models.
 
-Both human views show `tags`: `ready`, `not_allowed`, `no_env`, `no_api`, and
-`no_adapter` describe availability and blockers. Models also carry `local` or
-`remote` origin. Provider tags summarize the selected models. Model columns use
-JSON paths, including separate `cost.input` and `cost.output` values per million
-tokens. Providers show `_toolang.available_models`, `_toolang.model_count`,
-`_toolang.adapters`, `_toolang.route.api`, and catalog `env` names.
+Model tags describe availability/blockers and `local`/`remote` origin. Provider
+inspection formats stored counts as `models: "3/5"` and exposes the default
+route as `adapter`, `api`, and `env`; providers have no tags. Models expose short
+inspection fields alongside the full canonical record. Human headers uppercase
+those keys, and `PRICE` formats per-million-token input/output prices together.
+See [Resource Queries](queries.md) for exact shapes and column order.
 
 Human summaries count displayed rows: `N models, M providers` (no provider count
 for zero or one model) or `N providers`. Empty human results print the zero count.
 JSON is an array without summaries; empty JSON is `[]`. `--human` explicitly
 selects the default table and cannot combine with `--json`.
 
-`too catalogs` and `too adapters [--json]` list locally installed catalog and
-adapter entry points and their `built-in` or `external` source. They do not
+`too catalogs` and `too adapters` list locally installed catalog and
+adapter entry points with `NAME` and distribution `PACKAGE` columns. Plugin
+inventories have no `--json`, `--human`, or query options. They do not
 accept an agent name, construct setup, read catalog/configuration files, or
 invoke plugin factories. Installed entries remain visible even if they cannot
 be loaded. Runtime setup still owns the adapter instances used for execution.
@@ -463,7 +465,7 @@ these commands read one published setup version.
 
 `too models --query ... --json` emits an array of public model records from the
 same setup version used for selection. `too providers --json` emits provider
-records with ID-keyed `models` mappings. Both follow the default/`--all` scope;
+inspection records with a formatted `models` count string. Both follow the default/`--all` visibility;
 the full provider view includes empty providers. These inspection records are
 not the flat runtime catalog input format. Inspection skips configured default
 and compact-model validation so that `--all` can diagnose unready choices.

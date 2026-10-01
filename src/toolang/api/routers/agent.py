@@ -334,7 +334,7 @@ def _model_item(
     return {
         "ref": ref,
         "name": model.name,
-        "provider": model._toolang.provider,
+        "provider": model.provider,
         "parameters": {
             "reasoning": {
                 "effort": list(efforts),

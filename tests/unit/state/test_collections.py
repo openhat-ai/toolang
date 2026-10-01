@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -84,21 +85,25 @@ def test_cap_query_matches_full_refs_across_four_kinds() -> None:
 
     qualified = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("skill/reviewer",),
     )
     plural_collection_prefix = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("skills/reviewer",),
     )
     unqualified = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("*/reviewer",),
     )
     predicate = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("*[tags has root]",),
     )
@@ -125,7 +130,9 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
         _cap("skill", "reviewer"),
     )
 
-    views = query_cap_views(entries, agent_name="default", queries=None)
+    views = query_cap_views(
+        entries, root=Path("/toolang"), agent_name="default", queries=None
+    )
 
     assert [(item.kind, item.name) for item in views] == [
         ("prompt", "summary"),
@@ -138,11 +145,13 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
 def test_cap_public_records_have_copyable_refs_and_native_tags(kind: EntryKind) -> None:
     entry = replace(_cap(kind, "reviewer"), meta={"description": "Review changes"})
-    collection = cap_collection((entry,), agent_name="default")
+    collection = cap_collection((entry,), root=Path("/toolang"), agent_name="default")
     record = collection.items[0].data
     assert record["ref"] == f"{kind}/reviewer"
-    assert record["source"] == f"root://{kind}s/reviewer"
-    assert record["tags"] == ["ready", "local", "root"]
+    assert record["location"] == f"/toolang/{kind}s/reviewer" + (
+        "/SKILL.md" if kind == "skill" else ""
+    )
+    assert record["tags"] == ["ready", "local", "root", "authored"]
     assert record["description"] == "Review changes"
     assert not {"id", "scope", "form", "allowed", "routable"}.intersection(record)
     assert collection.query("reviewer") == ()

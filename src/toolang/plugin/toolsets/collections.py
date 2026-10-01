@@ -317,8 +317,6 @@ def tool_record(view: ToolQueryView, *, allowed: bool = True) -> dict[str, objec
         "ref": f"{view.toolset}/{view.name}",
         "toolset": view.toolset,
         "name": view.name,
-        "plugin": view.plugin,
-        "source": view.source,
         "description": view.description,
         "parameters": list(view.parameters),
         "tags": ["ready" if allowed else "not_allowed"],

@@ -131,3 +131,32 @@ def test_allow_help_uses_resource_query_vocabulary() -> None:
     output = strip_ansi(result.stdout)
     assert "<RESOURCE>=<QUERY>" in output
     assert "SELECTORS" not in output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["adapters"], ["catalogs"], ["toolsets"], ["sandboxes"], ["channel", "list"]],
+)
+@pytest.mark.parametrize("option", ["--json", "--human"])
+def test_plugin_inventories_only_support_default_tables(command, option):
+    result = runner.invoke(toolang_app, [*command, option])
+    assert result.exit_code == 2
+    assert f"No such option: {option}" in strip_ansi(result.stderr)
+
+
+def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(tmp_path):
+    skill = tmp_path / "skills" / "reviewer" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
+    expression = f'*[location="{skill}"]'
+    (tmp_path / "config.toml").write_text(
+        f"[allow]\nskills = [{json.dumps(expression)}]\n"
+    )
+    result = runner.invoke(
+        toolang_app, ["--root", str(tmp_path), "caps", "--query", expression, "--json"]
+    )
+    assert result.exit_code == 0, result.stderr
+    records = json.loads(result.stdout)
+    assert [record["ref"] for record in records] == ["skill/reviewer"]
+    assert records[0]["location"] == str(skill)
+    assert records[0]["tags"] == ["ready", "local", "root", "authored"]

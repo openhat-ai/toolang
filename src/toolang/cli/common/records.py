@@ -4,6 +4,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from rich.cells import chop_cells
+
 import typer
 from typer._click.exceptions import UsageError
 
@@ -37,10 +39,30 @@ def echo_records(
         if isinstance(value, (list, tuple)):
             return ",".join(str(item) for item in value) or "-"
         text = str(value)
+        if path == "ref":
+            return _wrap_ref(text)
+        if path in {"location", "price", "models"}:
+            return text
         return text[:117] + "..." if len(text) > 120 else text
 
     if records:
         echo_table(
-            tuple(columns),
+            tuple(column.upper() for column in columns),
             [tuple(cell(record, path) for path in columns) for record in records],
+            max_widths=tuple(40 if column == "ref" else None for column in columns),
         )
+
+
+def _wrap_ref(value: str) -> str:
+    """Wrap without losing characters, preferring slash boundaries within 40 cells."""
+
+    lines = []
+    while value:
+        chunk = chop_cells(value, 40)[0]
+        if len(chunk) < len(value):
+            boundary = chunk.rfind("/")
+            if boundary >= 0:
+                chunk = chunk[: boundary + 1]
+        lines.append(chunk)
+        value = value[len(chunk) :]
+    return "\n".join(lines)

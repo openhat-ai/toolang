@@ -1,94 +1,46 @@
-"""Public model and provider inspection records."""
+"""Inspection projections of canonical setup records."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import Any
 
-from toolang.base.types.model import Model, ModelRoute, Provider
+from toolang.base.types.model import Model, Provider
 
 
-def route_record(route: ModelRoute) -> dict[str, object]:
-    return {
-        "adapter": route.adapter,
-        "api": route.api,
-        "env": None
-        if route.env is None
-        else [list(item) if isinstance(item, tuple) else item for item in route.env],
-    }
-
-
-def model_tags(model: Model) -> list[str]:
-    route = model._toolang.route
-    tags = []
-    if not model._toolang.allowed:
-        tags.append("not_allowed")
-    if route.env is None or route.api_env_missing:
-        tags.append("no_env")
-    if route.api is None and not route.api_env_missing:
-        tags.append("no_api")
-    if route.adapter is None:
-        tags.append("no_adapter")
-    if not tags:
-        tags.append("ready")
-    tags.append("local" if model._toolang.local else "remote")
-    return tags
-
-
-def _public_data(value: object) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            key: _public_data(item)
-            for key, item in value.items()
-            if key not in {"headers", "body", "options", "_toolang"}
-        }
-    if isinstance(value, (tuple, list)):
-        return [_public_data(item) for item in value]
-    return value
+def _price(value: object) -> str:
+    return f"{value:6.2f}" if type(value) in (int, float) else f"{'-':>6}"
 
 
 def model_record(model: Model) -> dict[str, Any]:
-    data = _public_data(model.to_data())
+    """Add short inspection fields without changing canonical catalog facts."""
+
+    data = model.to_data()
+    cost = model.cost or {}
     data.update(
-        ref=model.ref,
-        tags=model_tags(model),
-        _toolang={
-            "provider": model._toolang.provider,
-            "route": route_record(model._toolang.route),
-        },
+        tags=list(model._toolang.tags),
+        context=model.limit.get("context"),
+        max_output=model.limit.get("output"),
+        price=f"{_price(cost.get('input'))} /{_price(cost.get('output'))}",
+        input=list(model.modalities.get("input", ())),
+        output=list(model.modalities.get("output", ())),
+        features=[
+            name
+            for name in ("reasoning", "tool_call", "temperature", "structured_output")
+            if getattr(model, name) is True
+        ],
     )
     return data
 
 
-def provider_record(provider: Provider, models: Sequence[Model]) -> dict[str, Any]:
-    records = [model_record(model) for model in models]
-    ready = sum("ready" in record["tags"] for record in records)
-    tags = (
-        ["ready"]
-        if ready
-        else [
-            tag
-            for tag in ("not_allowed", "no_env", "no_api", "no_adapter")
-            if records and all(tag in record["tags"] for record in records)
-        ]
-    )
+def provider_record(provider: Provider) -> dict[str, Any]:
+    """Format setup's stored counts and default route without visiting models."""
+
     data = provider.to_data()
+    route = provider._toolang.route.to_data()
     data.update(
-        models={
-            model.id: record for model, record in zip(models, records, strict=True)
-        },
-        tags=tags,
-        _toolang={
-            "model_count": len(models),
-            "available_models": ready,
-            "adapters": list(
-                dict.fromkeys(
-                    model._toolang.route.adapter
-                    for model in models
-                    if model._toolang.route.adapter
-                )
-            ),
-            "route": route_record(provider._toolang.route),
-        },
+        models=f"{provider._toolang.ready_count}/{provider._toolang.model_count}",
+        adapter=route["adapter"],
+        api=route["api"],
+        env=route["env"] or [],
     )
     return data

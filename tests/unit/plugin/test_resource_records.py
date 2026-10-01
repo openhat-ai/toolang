@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from tq import Query, QueryError
@@ -13,6 +14,7 @@ from toolang.base.types.model import (
     ModelRoute,
     ModelToolang,
     Provider,
+    ProviderToolang,
 )
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
@@ -33,10 +35,9 @@ def model(name="one", *, route=READY, allowed=True, local=False, **facts):
     return Model(
         id=name,
         name=name,
-        _toolang=ModelToolang(
-            provider="test", route=route, allowed=allowed, local=local
-        ),
+        _toolang=ModelToolang(route=route, allowed=allowed, local=local),
         **facts,
+        provider="test",
     )
 
 
@@ -63,56 +64,48 @@ def test_model_tags_express_independent_blockers_and_origin(
     assert len(tags) == len(set(tags))
 
 
-@pytest.mark.parametrize(
-    "models,expected",
-    [
-        ((), []),
-        ((model(), model("two", route=ModelRoute())), ["ready"]),
-        (
-            (
-                model(route=replace(READY, env=None)),
-                model("two", route=replace(READY, api=None)),
-            ),
-            [],
-        ),
-        (
-            (model(allowed=False), model("two", allowed=False, route=ModelRoute())),
-            ["not_allowed"],
-        ),
-        (
-            (model(route=ModelRoute()), model("two", route=ModelRoute())),
-            ["no_env", "no_api", "no_adapter"],
-        ),
-    ],
-)
-def test_provider_status_aggregates_only_shared_blockers(models, expected):
-    record = provider_record(Provider(id="test", name="Test"), models)
-    assert record["tags"] == expected
-    assert list(record["models"]) == [item.id for item in models]
-    assert record["_toolang"]["model_count"] == len(models)
-    assert record["_toolang"]["available_models"] == sum(
-        item._toolang.effective_ready for item in models
+@pytest.mark.parametrize("ready,total", [(0, 0), (0, 5), (3, 5)])
+def test_provider_inspection_only_formats_stored_setup_facts(ready, total):
+    provider = Provider(
+        id="test",
+        name="Test",
+        api="https://catalog/v1",
+        env=("RAW_KEY",),
+        _toolang=ProviderToolang(model_count=total, ready_count=ready, route=READY),
     )
+    canonical = provider.to_data()
+    record = provider_record(provider)
+    assert record["models"] == f"{ready}/{total}"
+    assert record["api"] == READY.api
+    assert record["env"] == []
+    assert record["adapter"] == READY.adapter
+    assert record["_toolang"] == canonical["_toolang"]
+    assert set(record["_toolang"]) == {"model_count", "ready_count", "route"}
+    assert not {"tags", "ref", "adapters"}.intersection(record)
+    assert "models" not in canonical
+    assert provider.to_data() == canonical
+    assert canonical["api"] == "https://catalog/v1"
+    assert canonical["env"] == ["RAW_KEY"]
 
 
-def test_public_model_shape_keeps_nested_data_and_removes_private_payloads():
+def test_public_model_shape_keeps_catalog_data_and_excludes_runtime_payloads():
     value = model(
         release_date="2025-04",
         reasoning_options=({"effort": "high", "budget": 100},),
         cost={"input": 1.2, "cache_read": 0.1, "future": {"tier": 2}},
-        provider=ModelProvider(
+        override=ModelProvider(
             npm="sdk",
             api="https://model/v1",
             shape="chat_completions",
             mode="thinking",
-            headers={"authorization": "secret"},
-            body={"token": "secret"},
+            headers={"authorization": "declared-header"},
+            body={"token": "declared-body"},
         ),
         experimental={
             "future": {
                 "score": 42,
-                "options": {"secret": True},
-                "_toolang": {"secret": True},
+                "options": {"public": True},
+                "_toolang": {"public": True},
             }
         },
         route=replace(
@@ -124,16 +117,25 @@ def test_public_model_shape_keeps_nested_data_and_removes_private_payloads():
     )
     record = json.loads(json.dumps(model_record(value)))
     assert record["ref"] == "test/one" and record["id"] == "one"
-    assert record["provider"] == {
+    assert record["provider"] == "test"
+    assert record["override"] == {
         "npm": "sdk",
         "api": "https://model/v1",
         "shape": "chat_completions",
         "mode": "thinking",
+        "headers": {"authorization": "declared-header"},
+        "body": {"token": "declared-body"},
     }
     assert record["release_date"] == "2025-04"
     assert record["reasoning_options"] == [{"effort": "high", "budget": 100}]
     assert record["cost"] == {"input": 1.2, "cache_read": 0.1, "future": {"tier": 2}}
-    assert record["experimental"] == {"future": {"score": 42}}
+    assert record["experimental"] == {
+        "future": {
+            "score": 42,
+            "options": {"public": True},
+            "_toolang": {"public": True},
+        }
+    }
     assert record["_toolang"]["route"]["env"] == [["FIRST_KEY", "SECOND_KEY"]]
     assert "secret" not in json.dumps(record)
     assert not {
@@ -166,7 +168,7 @@ def test_local_origin_survives_merge_policy_route_and_provider_projection():
         ModelCatalogSnapshot(
             providers={name: Provider(id=name, name=name)},
             models=(
-                replace(model(), _toolang=ModelToolang(provider=name, route=READY)),
+                replace(model(), _toolang=ModelToolang(route=READY), provider=name),
             ),
             revision=name,
             local=local,
@@ -175,20 +177,18 @@ def test_local_origin_survives_merge_policy_route_and_provider_projection():
     )
     merged = merge_catalog_snapshots(snapshots)
     for item in merged.models:
-        local = item._toolang.provider == "runtime"
+        local = item.provider == "runtime"
         updated = replace(
             item, _toolang=item._toolang.with_allowed(False).with_route(READY)
         )
         selected = ModelCollection((updated,)).subset((updated.ref,)).entries[0]
         assert selected._toolang.local is local
-        provider = provider_record(
-            merged.providers[item._toolang.provider], (selected,)
-        )
-        assert provider["models"][item.id]["tags"] == [
+        provider = provider_record(merged.providers[item.provider])
+        assert model_record(selected)["tags"] == [
             "not_allowed",
             "local" if local else "remote",
         ]
-        assert "local" not in provider["tags"] and "remote" not in provider["tags"]
+        assert "tags" not in provider
 
 
 @pytest.mark.parametrize(
@@ -235,6 +235,7 @@ def cap(name="reviewer", *, origin="local", scope="root"):
             else None,
             path=f"agents/test/skills/{name}" if scope == "home" else f"skills/{name}",
             updated_at="now",
+            line=4 if scope == "here" else None,
             fingerprint="0" * 64,
         ),
         meta={"description": "Review changes"},
@@ -251,7 +252,9 @@ def test_empty_resource_collections_still_use_tq_validation(expression):
     consumers = (
         lambda: filter_models((), (expression,)),
         lambda: ToolCollection().query(expression),
-        lambda: cap_collection((), agent_name="test").query(expression),
+        lambda: cap_collection((), root=Path("/toolang"), agent_name="test").query(
+            expression
+        ),
         lambda: resolve_setup_allow(({"allow": {"models": [expression]}},)),
     )
     with pytest.raises(QueryError):
@@ -264,15 +267,25 @@ def test_empty_resource_collections_still_use_tq_validation(expression):
 def test_cap_sources_and_tool_parameters_use_native_json_membership():
     caps = cap_collection(
         (cap(), cap(scope="home", origin="remote"), cap()),
+        root=Path("/toolang"),
         agent_name="test",
         allowed=(),
     )
     assert len(caps.items) == 2
     assert [view.data["tags"] for view in caps.query("*[tags has not_allowed]")] == [
-        ["not_allowed", "local", "root"],
-        ["not_allowed", "remote", "home"],
+        ["not_allowed", "local", "root", "authored"],
+        ["not_allowed", "remote", "home", "configured"],
     ]
     tools = ToolCollection.from_tools({"fs__read": create_function_tool(read)})
+    assert set(tool_record(tools.query()[0])) == {
+        "ref",
+        "toolset",
+        "name",
+        "description",
+        "parameters",
+        "tags",
+    }
+    assert tool_record(tools.query()[0], allowed=False)["tags"] == ["not_allowed"]
     for expression in (
         "*[tags has ready]",
         "*[parameters has path]",
@@ -304,8 +317,120 @@ def test_policy_tags_are_evaluated_once_without_status_restrictions():
     ]
 
 
-def test_inline_cap_has_here_scope_without_form_or_kind_tags():
-    record = cap_collection((cap(scope="here"),), agent_name="test").items[0].data
-    assert record["tags"] == ["ready", "local", "here"]
-    assert record["source"] == "inline://skills/reviewer"
+def test_inline_cap_has_here_scope_and_form_without_kind_tags():
+    record = (
+        cap_collection((cap(scope="here"),), root=Path("/toolang"), agent_name="test")
+        .items[0]
+        .data
+    )
+    assert record["tags"] == ["ready", "local", "here", "inline"]
+    assert record["location"] == "/toolang/skills/reviewer:4"
     assert not {"id", "kind", "form", "scope", "origin", "allowed"}.intersection(record)
+
+
+@pytest.mark.parametrize(
+    "input_price,output_price,expected",
+    [
+        (1, 2, "  1.00 /  2.00"),
+        (12, 34, " 12.00 / 34.00"),
+        (123, 456, "123.00 /456.00"),
+        (1234, 0.003, "1234.00 /  0.00"),
+        (None, 0, "     - /  0.00"),
+        (None, None, "     - /     -"),
+    ],
+)
+def test_inspection_price_preserves_padding_and_canonical_precision(
+    input_price, output_price, expected
+):
+    cost = {
+        key: value
+        for key, value in (("input", input_price), ("output", output_price))
+        if value is not None
+    }
+    value = model(cost=cost)
+    canonical = value.to_data()
+    inspected = model_record(value)
+    assert inspected["price"] == expected
+    assert inspected["cost"] == canonical["cost"] == cost
+    assert "price" not in canonical and "tags" not in canonical
+    assert canonical["_toolang"]["tags"] == inspected["tags"]
+    assert set(canonical["_toolang"]) == {"tags", "route"}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "*[context>=200000]",
+        "*[limit.context>=200000]",
+        "*[tags has ready]",
+        "*[_toolang.tags has ready]",
+        "*[features has tool_call]",
+        "*[input has image]",
+        "*[output has text]",
+    ],
+)
+def test_inspection_shortcuts_are_real_query_fields_on_every_model_selection(query):
+    value = model(
+        limit={"context": 200000, "output": 32768},
+        modalities={"input": ("text", "image"), "output": ("text",)},
+        reasoning=True,
+        tool_call=True,
+        temperature=False,
+    )
+    record = model_record(value)
+    assert record["features"] == ["reasoning", "tool_call"]
+    assert record["max_output"] == 32768
+    assert Query.parse(query).validate({"key": "ref"}).match(record) is not None
+    assert filter_models((value,), (query,)) == (value,)
+    ordered, allowed = order_and_allow_models((value,), (query,))
+    assert ordered == (value,) and allowed == frozenset({value.ref})
+
+
+@pytest.mark.parametrize("form", ["authored", "inline", "configured", "referenced"])
+@pytest.mark.parametrize("allowed", [True, False])
+def test_cap_location_addresses_content_and_tags_preserve_form_and_allow(form, allowed):
+    remote = form in {"configured", "referenced"}
+    source = CapSource(
+        origin="remote" if remote else "local",
+        form=form,
+        path="agents/test/agent.too"
+        if form != "authored"
+        else "skills/reviewer/SKILL.md",
+        line=7,
+        declared_ref="github://test/caps/skills/reviewer@main" if remote else None,
+        updated_at="now",
+        fingerprint="0" * 64,
+    )
+    entry = replace(
+        cap(), source=source, ref=source.declared_ref if remote else cap().ref
+    )
+    collection = cap_collection(
+        (entry,),
+        root=Path("/toolang"),
+        agent_name="test",
+        allowed=None if allowed else (),
+    )
+    record = collection.items[0].data
+    expected = (
+        "https://github.com/test/caps/tree/main/skills/reviewer"
+        if remote
+        else "/toolang/agents/test/agent.too:7"
+        if form == "inline"
+        else "/toolang/skills/reviewer/SKILL.md"
+    )
+    assert record["location"] == expected
+    assert set(record) == {"ref", "name", "description", "location", "tags"}
+    tags = record["tags"]
+    assert isinstance(tags, list)
+    assert form in tags
+    status = "ready" if allowed else "not_allowed"
+    assert status in tags
+    assert collection.query(f"*[tags has {status}]") == collection.items
+    # Display locations never replace the canonical source identity.
+    assert collection.items[0].source_ref == (
+        source.declared_ref
+        if remote
+        else "inline://skills/reviewer"
+        if form == "inline"
+        else "root://skills/reviewer"
+    )

@@ -22,7 +22,7 @@ def test_source_revision_is_deterministic_and_tracks_catalog_route_declarations(
     tmp_path,
 ):
     def snapshot(api: str) -> ModelCatalogSnapshot:
-        model = Model(id="one", name="One", _toolang=ModelToolang(provider="test"))
+        model = Model(id="one", name="One", _toolang=ModelToolang(), provider="test")
         provider = Provider(
             id="test",
             name="Test",
@@ -48,10 +48,11 @@ def test_catalog_records_detach_readonly_views_from_plugin_owned_data():
     model = Model(
         id="one",
         name="One",
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         cost=MappingProxyType(cost),
         limit=MappingProxyType(limits),
         reasoning_options=(MappingProxyType({"values": efforts}),),
+        provider="test",
     )
     snapshot = ModelCatalogSnapshot(
         providers={"test": Provider(id="test", name="Test")},
@@ -88,7 +89,7 @@ def test_route_detaches_nested_plugin_data():
 def test_source_revision_tracks_per_model_origin_and_environment_blockers():
     from dataclasses import replace
 
-    model = Model(id="one", name="One", _toolang=ModelToolang(provider="test"))
+    model = Model(id="one", name="One", _toolang=ModelToolang(), provider="test")
     snapshot = ModelCatalogSnapshot(
         providers={"test": Provider(id="test", name="Test")},
         models=(model,),

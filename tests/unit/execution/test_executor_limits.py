@@ -65,8 +65,9 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
     model = Model(
         id="model",
         name="Model",
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         cost={"input": 1, "output": 2},
+        provider="test",
     )
     models = ModelCollection((model,))
     assert models.contains(model.ref)
@@ -98,7 +99,7 @@ def test_cost_budget_uses_settled_units_for_live_and_restored_totals() -> None:
             0, 0, reported=ModelCost(amount, "USD", True), selected="reported"
         )
 
-    model = Model("one", "One", ModelToolang(provider="test"))
+    model = Model("one", "One", ModelToolang(), provider="test")
     live = _RunLimitState(RunLimits(cost=0.3))
     restored = _RunLimitState(RunLimits(cost=0.3))
     for amount in (0.1, 0.2):
@@ -133,7 +134,7 @@ def test_budget_records_reject_boolean_costs(value: bool) -> None:
 
 def test_cost_settles_decimal_token_prices_once() -> None:
     model = Model(
-        "one", "One", ModelToolang(provider="test"), cost={"input": 0.58, "output": 0}
+        "one", "One", ModelToolang(), cost={"input": 0.58, "output": 0}, provider="test"
     )
     assert (
         selected_usd_cost(

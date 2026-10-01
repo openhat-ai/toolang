@@ -56,9 +56,10 @@ def _model(
     return Model(
         id=model_id,
         name=name or model_id,
-        _toolang=ModelToolang(provider=provider, ready=True),
+        _toolang=ModelToolang(ready=True),
         structured_output=structured_output,
         reasoning=reasoning,
+        provider=provider,
     )
 
 
@@ -1619,11 +1620,11 @@ def test_adapter_encodes_decimal_catalog_options_without_mutating_prices(adapter
     )
     _providers, models = parse_model_catalog_data(raw)
     model = models[0]
-    assert model.provider is not None
+    assert model.override is not None
     model = model.with_route(
         _route(
             adapter=adapter,
-            options=dict(cast(Mapping[str, object], model.provider.body)),
+            options=dict(cast(Mapping[str, object], model.override.body)),
         )
     )
     request = ModelCall("", [Message.user("hello")], max_output_tokens=128)

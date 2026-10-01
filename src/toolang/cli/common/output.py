@@ -138,8 +138,11 @@ def echo_table(
     rows: Sequence[Sequence[TableCell]],
     *,
     justify: Sequence[TableJustify | None] | None = None,
+    max_widths: Sequence[int | None] | None = None,
 ) -> None:
-    _TABLE_CONSOLE.print(_make_table(headers, rows, justify=justify))
+    _TABLE_CONSOLE.print(
+        _make_table(headers, rows, justify=justify, max_widths=max_widths)
+    )
 
 
 def echo_collection_summary(
@@ -263,6 +266,7 @@ def _make_table(
     rows: Sequence[Sequence[TableCell]],
     *,
     justify: Sequence[TableJustify | None] | None,
+    max_widths: Sequence[int | None] | None = None,
 ) -> Table:
     table = Table(
         box=box.HORIZONTALS,
@@ -275,7 +279,14 @@ def _make_table(
         column_justify: TableJustify = "left"
         if justify is not None and index < len(justify) and justify[index] is not None:
             column_justify = cast(TableJustify, justify[index])
-        table.add_column(header, no_wrap=True, justify=column_justify)
+        max_width = max_widths[index] if max_widths is not None else None
+        table.add_column(
+            header,
+            no_wrap=max_width is None,
+            justify=column_justify,
+            max_width=max_width,
+            overflow="fold" if max_width is not None else "ellipsis",
+        )
     for row in rows:
         table.add_row(*(_table_cell_text(cell) for cell in row))
     return table

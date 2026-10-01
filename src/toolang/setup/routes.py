@@ -110,7 +110,7 @@ def resolve_catalog_providers(
         models=tuple(
             resolve_model(
                 model,
-                providers[model._toolang.provider],
+                providers[model.provider],
                 adapters=adapters,
                 environ=environ,
             )
@@ -199,7 +199,7 @@ def catalog_environment_names(
         adapter = adapters.get(provider_adapter(provider) or "")
         templates.append(_provider_api_template(provider, adapter))
     for model in snapshot.models:
-        provider = snapshot.providers[model._toolang.provider]
+        provider = snapshot.providers[model.provider]
         adapter = adapters.get(model_adapter(provider, model) or "")
         templates.append(_model_api_template(provider, model, adapter))
     for template in templates:
@@ -230,7 +230,7 @@ def _provider_api_template(
 def _model_api_template(
     provider: Provider, model: Model, adapter: RouteAdapter | None
 ) -> str | None:
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     if _optional_text(override.api) is not None:
         return _api_template(override.api, None)
 
@@ -268,7 +268,7 @@ def _default_api(adapter: RouteAdapter | None, *, npm: str | None) -> str | None
 def _model_npm(provider: Provider, model: Model) -> str | None:
     """Use npm defaults only when npm selects the model's adapter."""
 
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return None
@@ -290,7 +290,7 @@ def provider_adapter(provider: Provider) -> str | None:
 
 def model_adapter(provider: Provider, model: Model) -> str | None:
     """Resolve explicit model routes, gateway conventions, then provider defaults."""
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return declared.adapter
@@ -320,7 +320,7 @@ def model_headers(
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     _merge_headers(headers, override.headers)
     for mode_block in mode_blocks:
         _merge_headers(headers, mode_block.get("headers"))
@@ -336,7 +336,7 @@ def model_options(
     options.update(
         cast(Mapping[str, object], _convention_block(provider.id)["options"])
     )
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     body = override.body
     if isinstance(body, Mapping):
         options.update(body)
@@ -350,7 +350,7 @@ def model_options(
 def model_mode(model: Model) -> str | None:
     """Return the catalog mode that applies to one model, when declared."""
 
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     value = override.mode
     return _optional_text(value)
 

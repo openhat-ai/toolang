@@ -13,7 +13,7 @@ class PluginInfo:
     """One discoverable plugin entry point."""
 
     name: str
-    source: PluginSource
+    package: str | None
 
 
 @dataclass(frozen=True, slots=True)

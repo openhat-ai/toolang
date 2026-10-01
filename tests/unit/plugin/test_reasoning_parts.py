@@ -35,7 +35,6 @@ def model(adapter, provider=None, options=None):
         id="test-model",
         name="Test",
         _toolang=ModelToolang(
-            provider=provider or providers[adapter],
             route=ModelRoute(
                 adapter=adapter,
                 api="https://example.test",
@@ -43,6 +42,7 @@ def model(adapter, provider=None, options=None):
                 options=options or {},
             ),
         ),
+        provider=provider or providers[adapter],
     )
 
 

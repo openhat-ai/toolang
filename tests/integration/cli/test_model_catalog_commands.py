@@ -62,9 +62,12 @@ def test_empty_model_allow_keeps_complete_diagnostic_view(
     assert exit_code == 0, result.err
     if not all_:
         assert result.out.strip() == f"0 {command}"
-    else:
-        assert "tags" in result.out
+    elif command == "models":
+        assert "TAGS" in result.out
         assert "not_allowed" in result.out
+    else:
+        assert "MODELS" in result.out
+        assert "0/2" in result.out
 
 
 def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
@@ -168,7 +171,7 @@ def test_models_query_exports_a_valid_complete_catalog(
 
     assert result.exit_code == 0, result.stderr
     data = json.loads(result.stdout, parse_float=float)
-    assert {item["_toolang"]["provider"] for item in data} == {"test"}
+    assert {item["provider"] for item in data} == {"test"}
     assert [item["id"] for item in data] == ["two"]
 
 
@@ -226,8 +229,8 @@ def test_models_loads_catalog_limits_that_models_dev_reports_as_zero(
 
     assert table.exit_code == 0, table.stderr
     stdout = strip_ansi(table.stdout)
-    assert "limit.context" in stdout
-    assert "limit.output" in stdout
+    assert "CONTEXT" in stdout
+    assert "MAX_OUTPUT" in stdout
     assert "8192" in stdout
     exported = runner.invoke(
         cli.app,
@@ -374,7 +377,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
     for field in model_catalog_commands.MODEL_COLUMNS:
-        assert field in stdout
+        assert field.upper() in stdout
     assert "text,image" in stdout
     assert "no_env,remote" in stdout
     assert "1 model" in stdout
@@ -402,8 +405,10 @@ def test_models_render_aligned_prices_and_group_summary(
     assert len(lines) == 2
     assert "0.43" in lines[0] and "0.87" in lines[0]
     assert "1.25" in lines[1] and "10" in lines[1]
-    assert "cost.input" in result.stdout and "cost.output" in result.stdout
-    assert "tags" in result.stdout
+    assert "PRICE" in result.stdout
+    assert "  0.43 /  0.87" in lines[0]
+    assert "  1.25 / 10.00" in lines[1]
+    assert "TAGS" in result.stdout
     assert result.stdout.strip().endswith("2 models, 1 provider")
 
 
@@ -459,9 +464,10 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         model = Model(
             id="local",
             name="local",
-            _toolang=ModelToolang(provider="ollama", ready=True),
+            _toolang=ModelToolang(ready=True),
             modalities={"input": ("text",), "output": ("text",)},
             cost=dict(LOCAL_ZERO_COST),
+            provider="ollama",
         )
         provider = Provider(
             id="ollama",
@@ -481,9 +487,10 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         model = Model(
             id="second",
             name="second",
-            _toolang=ModelToolang(provider="llama_cpp", ready=True),
+            _toolang=ModelToolang(ready=True),
             modalities={"input": ("text",), "output": ("text",)},
             cost=dict(LOCAL_ZERO_COST),
+            provider="llama_cpp",
         )
         provider = Provider(
             id="llama_cpp",
@@ -542,6 +549,7 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         rows: Sequence[Sequence[str | Text]],
         *,
         justify: object | None = None,
+        max_widths: object | None = None,
     ) -> None:
         del justify
         nonlocal captured_headers, captured_rows
@@ -563,13 +571,18 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
 
     assert providers_result.exit_code == 0, providers_result.stderr
     assert "2 providers" in providers_result.stdout
-    assert captured_headers == model_catalog_commands.PROVIDER_COLUMNS
+    assert captured_headers == tuple(
+        key.upper() for key in model_catalog_commands.PROVIDER_COLUMNS
+    )
     by_provider = {str(row[0]): row for row in captured_rows}
-    assert by_provider["ollama"][1:3] == ("1", "1")
-    assert by_provider["llama_cpp"][1:3] == ("1", "1")
-    assert by_provider["llama_cpp"][3] == "chat_completions"
-    assert by_provider["llama_cpp"][4] == "http://llama.test/v1"
-    assert by_provider["llama_cpp"][-1] == "ready"
+    assert by_provider["ollama"][1] == "1/1"
+    assert by_provider["llama_cpp"] == (
+        "llama_cpp",
+        "1/1",
+        "chat_completions",
+        "http://llama.test/v1",
+        "-",
+    )
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -609,9 +622,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert result.exit_code == 0, result.stderr
     stdout = strip_ansi(result.stdout)
     for field in model_catalog_commands.PROVIDER_COLUMNS:
-        assert field in stdout
+        assert field.upper() in stdout
     assert "https://api.test/v1" in stdout
-    assert "TEST_API_KEY,TEST_ALT_API_KEY" in stdout
+    assert ("TEST_API_KEY" in stdout) is configured
     assert "1 provider" in stdout
 
     filtered = runner.invoke(
@@ -640,6 +653,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
         rows: Sequence[Sequence[str | Text]],
         *,
         justify: object | None = None,
+        max_widths: object | None = None,
     ) -> None:
         del headers, justify
         captured_rows.extend(tuple(row) for row in rows)
@@ -660,12 +674,13 @@ def test_providers_lists_resolved_api_and_model_adapters(
 
     assert styled_result.exit_code == 0, styled_result.stderr
     styled_row = next(row for row in captured_rows if row[0] == "test")
-    assert styled_row[1] == ("2" if configured else "0")
-    assert styled_row[2] == "2"
-    assert set(str(styled_row[3]).split(",")) == {"chat_completions", "messages"}
-    assert styled_row[4] == "https://api.test/v1"
-    assert styled_row[5] == "TEST_API_KEY,TEST_ALT_API_KEY"
-    assert styled_row[6] == ("ready" if configured else "no_env")
+    assert styled_row == (
+        "test",
+        "2/2" if configured else "0/2",
+        "messages",
+        "https://api.test/v1",
+        "TEST_API_KEY,TEST_ALT_API_KEY" if configured else "-",
+    )
 
     json_result = runner.invoke(
         cli.app,
@@ -712,10 +727,10 @@ def test_catalog_reasons_only_appear_inside_model_status(
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "-a"])
 
     assert result.exit_code == 0, result.stderr
-    expected = (
-        "no_env,no_adapter,remote" if command == "models" else "no_env,no_adapter"
-    )
-    assert all(row[-1] == expected for row in rows)
+    if command == "models":
+        assert all(row[-1] == "no_env,no_adapter,remote" for row in rows)
+    else:
+        assert rows == [("test", "0/2", "-", "-", "-")]
 
 
 @pytest.mark.parametrize("available_models", [0, 1])
@@ -737,7 +752,7 @@ def test_provider_api_and_counts_use_independent_availability(
     monkeypatch.setattr(
         record_output,
         "echo_table",
-        lambda headers, values: rows.extend(values),
+        lambda headers, values, **kwargs: rows.extend(values),
     )
 
     result = runner.invoke(
@@ -753,10 +768,13 @@ def test_provider_api_and_counts_use_independent_availability(
     )
 
     assert result.exit_code == 0, result.stderr
-    assert rows[0][1:3] == (str(available_models), "2")
-    assert rows[0][4] == "-"
-    assert rows[0][5] == "TEST_API_KEY"
-    assert rows[0][-1] == ("ready" if available_models else "no_env")
+    assert rows[0] == (
+        "test",
+        f"{available_models}/2",
+        "chat_completions",
+        "-",
+        "TEST_API_KEY",
+    )
 
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
@@ -835,7 +853,7 @@ def test_models_uses_isolated_resident_catalogs(
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
-                assert "tags" in output.out
+                assert "TAGS" in output.out
             else:
                 assert output.out.strip() == "0 models"
 
@@ -1110,7 +1128,13 @@ def test_catalog_commands_share_default_and_complete_views(
         if command == "providers" and all_:
             expected.add("empty")
         assert _provider_ids(exported) == expected
-        assert set(_model_map(exported)) == ({"one", "two"} if all_ else {"one"})
+        if command == "models":
+            assert set(_model_map(exported)) == ({"one", "two"} if all_ else {"one"})
+        else:
+            assert (
+                next(record for record in exported if record["id"] == "test")["models"]
+                == "1/2"
+            )
         assert isinstance(exported, list)
         assert "synthetic-key" not in output
         table = invoke(options)
@@ -1163,7 +1187,11 @@ def test_full_catalog_can_inspect_unready_configured_models(
         cli.app, ["--root", str(tmp_path), command, "--all", "--json"]
     )
     assert result.exit_code == 0, result.exception
-    assert set(_model_map(json.loads(result.stdout))) == {"one", "two"}
+    records = json.loads(result.stdout)
+    if command == "models":
+        assert set(_model_map(records)) == {"one", "two"}
+    else:
+        assert records[0]["models"] == "0/2"
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
@@ -1201,8 +1229,10 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
     assert result.exit_code == 0, result.exception
     assert rows
-    expected = "no_env,remote" if command == "models" else "no_env"
-    assert all(row[-1] == expected for row in rows)
+    if command == "models":
+        assert all(row[-1] == "no_env,remote" for row in rows)
+    else:
+        assert rows[0][1] == "0/2" and rows[0][-1] == "-"
     assert all("added-after-publication" not in str(row) for row in rows)
 
 
@@ -1220,10 +1250,14 @@ def test_cli_keeps_invalid_modes_in_full_catalog_only(tmp_path, monkeypatch, com
             ["--root", str(tmp_path), command, *(["--all"] if all_ else []), "--json"],
         )
         assert result.exit_code == 0, result.exception
-        models = _model_map(json.loads(result.stdout))
-        assert set(models) == ({"one", "two"} if all_ else {"one"})
-        if all_:
-            assert models["two"]["provider"] == {"mode": "missing"}
+        records = json.loads(result.stdout)
+        if command == "models":
+            models = _model_map(records)
+            assert set(models) == ({"one", "two"} if all_ else {"one"})
+            if all_:
+                assert models["two"]["override"] == {"mode": "missing"}
+        else:
+            assert records[0]["models"] == "1/2"
 
 
 @pytest.mark.parametrize("json_output", [True, False])
@@ -1256,14 +1290,14 @@ def test_adapters_lists_installed_metadata_without_loading_setup_or_plugins(
         cli.app,
         ["--root", str(tmp_path), "adapters", *(["--json"] if json_output else [])],
     )
-    assert result.exit_code == 0, result.exception
     if json_output:
-        assert json.loads(result.stdout) == [
-            {"id": "unloadable_adapter", "source": "external"}
-        ]
+        assert result.exit_code == 2
+        assert "No such option" in result.stderr
     else:
+        assert result.exit_code == 0, result.exception
         assert "unloadable_adapter" in result.stdout
-        assert "external" in result.stdout
+        assert "external-package" in result.stdout
+        assert "NAME" in result.stdout and "PACKAGE" in result.stdout
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
@@ -1284,7 +1318,10 @@ def test_model_status_columns_separate_readiness_and_allow(
     rows: list[dict[str, object]] = []
 
     def capture(headers, values, **kwargs):
-        rows.extend(dict(zip(headers, row, strict=True)) for row in values)
+        rows.extend(
+            dict(zip((key.lower() for key in headers), row, strict=True))
+            for row in values
+        )
 
     monkeypatch.setattr(record_output, "echo_table", capture)
     result = runner.invoke(
@@ -1308,30 +1345,21 @@ def test_model_status_columns_separate_readiness_and_allow(
     else:
         by_id = {str(row["id"]): row for row in rows}
         assert set(by_id) == ({"test", "offline"} if all_ else {"test"})
-        assert by_id["test"]["tags"] == "ready"
-        assert by_id["test"]["_toolang.available_models"] == "1"
-        assert by_id["test"]["_toolang.model_count"] == ("2" if all_ else "1")
+        assert by_id["test"]["models"] == "1/2"
         if all_:
-            assert by_id["offline"]["tags"] == "no_env"
+            assert by_id["offline"]["models"] == "0/2"
         assert all(
             tuple(row) == model_catalog_commands.PROVIDER_COLUMNS for row in rows
         )
 
 
 def _model_map(records):
-    if records and "models" in records[0]:
-        return next(record["models"] for record in records if record["id"] == "test")
-    return {
-        record["id"]: record
-        for record in records
-        if record["_toolang"]["provider"] == "test"
-    }
+    return {record["id"]: record for record in records if record["provider"] == "test"}
 
 
 def _provider_ids(records):
     return {
-        record["id"] if "models" in record else record["_toolang"]["provider"]
-        for record in records
+        record["id"] if "models" in record else record["provider"] for record in records
     }
 
 

@@ -70,8 +70,9 @@ Cap commands:
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
 
-List output uses `ref`, `description`, `source`, and `tags` for combined and
-kind-specific lists. `source` is the canonical source URI.
+List output uses `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
+kind-specific lists. `location` addresses actual content, with `file:line` only
+for inline caps. JSON and query keys are lowercase.
 
 Resource query parameters use native TQ over public model/tool/cap records.
 Cap identities have singular prefixes such as `skill/reviewer`, including
@@ -836,19 +837,20 @@ allow-excluded caps, internal and allow-excluded tools, or unready and allow-exc
 Default tools hide internal `_toolang` leaves. Queries and counts describe the
 selected view. `me` is not internally hidden and follows normal tool allow policy.
 
-Resource lists support `--json` arrays and default human tables (`--human`).
-The two output flags cannot combine. Model/provider records retain supported
-models.dev fields plus safe `_toolang` metadata; connection headers, bodies,
-options, and private metadata are excluded. Provider records contain ID-keyed
-`models` mappings within the selected scope. These are inspection records, not
-the flat catalog input format.
+Resource lists support `--json` inspection arrays and default human tables
+(`--human`). The two output flags cannot combine. Model/provider canonical records
+retain the flat models-repository shape plus `_toolang`; model ownership is the
+`provider` string and connection declarations use `override`. Runtime credentials
+and connection payloads are excluded from public route metadata.
+Providers never contain model records or ID lists. Their inspection `models`
+field formats setup's stored ready/total counts, unchanged by `--all`.
 
-Human headers use JSON field paths verbatim. Models show separate `cost.input`
-and `cost.output` columns; providers show `_toolang.available_models` and
-`_toolang.model_count`. Tools and caps show `ref`, `description`, `source`, and
-`tags`. All four collections use `tags` for availability and blockers; caps also
-include scope and origin, and models include origin. See
-[Resource Queries](queries.md) for the complete records, columns, and tag groups.
+Human headers uppercase record keys. Models use short inspection fields including
+`CONTEXT`, `MAX_OUTPUT`, and `PRICE`; providers show `ID`, `MODELS`, `ADAPTER`,
+`API`, `ENV`. Tools show `REF`, `DESCRIPTION`, `TAGS`; caps additionally show
+`LOCATION` before `TAGS`. Models/tools/caps have availability tags; providers do
+not. Caps also include form, scope, and origin; models include origin.
+See [Resource Queries](queries.md) for the records, columns, and tag groups.
 Providers have no built-in query option; their JSON supports external TQ.
 
 Every resource `--all` accepts `-a`. Human lists show displayed-row summaries;
@@ -862,13 +864,13 @@ See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semant
 ## Plugin Inventory Commands
 
 - `toolang catalogs`
-- `toolang adapters [--json]`
+- `toolang adapters`
 - `toolang toolsets [--all]`
 - `toolang sandboxes`
 - `toolang channel list`
 
-These commands list locally installed entry-point identities and their
-`built-in` or `external` source. They reject agent names and do not read setup,
+These commands list installed entry-point `NAME` and distribution `PACKAGE`
+(such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
 configuration, or catalog files or invoke factories. An installed plugin remains
 visible even when it cannot load. `toolsets` hides internal entries such as
 `_toolang` unless `--all` is given. Plugin lists have no agent allow policy.

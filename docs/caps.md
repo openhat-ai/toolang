@@ -44,8 +44,8 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope. Both views
-show `ref`, `description`, `source`, and `tags`; availability is `ready` or
-`not_allowed`, alongside origin and scope tags. The full view does not restore
+show `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
+`not_allowed`, alongside origin, scope, and form tags. The full view does not restore
 shadowed definitions or grant runtime access. This applies to aggregate and
 kind-specific lists through both CLIs, for example `too alice caps --all`,
 `too alice skill list --all`, and `caps alice list --all`. Queries filter the
@@ -294,5 +294,6 @@ carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
 
 Template detail responses include template metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `form`,
-`ref`, `definition_file`, and optional `line`. CLI list commands project that
-runtime view into `SOURCE`, `FORM`, and runtime `SCOPE`.
+`ref`, `definition_file`, and optional `line`. CLI lists use `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
+actual content; only inline caps use `file:line`. Form, origin, scope, and allow
+status are tags. See [Resource Queries](queries.md) for the complete record shape.

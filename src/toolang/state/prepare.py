@@ -116,6 +116,7 @@ def prepare_agent_state(
             else compose_layer_state(
                 root,
                 home,
+                toolang_root=layout.root,
                 name=layout.name,
                 allow_overrides=overrides,
                 workspace_additions=workspace_additions,
@@ -136,6 +137,7 @@ def compose_layer_state(
     root: RootLayer,
     home: HomeLayer,
     *,
+    toolang_root: Path | None = None,
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
@@ -144,6 +146,7 @@ def compose_layer_state(
     """Compose runtime State from one exact root/home layer pair."""
 
     return compose_agent_state(
+        toolang_root=toolang_root,
         name=name,
         allow_overrides=allow_overrides,
         workspace_additions=workspace_additions,
@@ -180,6 +183,7 @@ def load_agent_state(
         root,
         home,
         revision_dir=agent_revision_dir(layout, effective),
+        toolang_root=layout.root,
         name=name,
         allow_overrides=overrides,
         workspace_additions=workspace_additions,
@@ -289,7 +293,10 @@ def inspect_root_caps(
     root = prepare_root(layout, progress=progress)
     entries = tuple(cap for cap in root.caps if cap.kind in kinds)
     allowed = _allowed_caps(
-        entries, agent_name="", allows=resolve_cap_allows((root.config,))
+        entries,
+        root=layout.root,
+        agent_name="",
+        allows=resolve_cap_allows((root.config,)),
     )
     return entries, allowed
 

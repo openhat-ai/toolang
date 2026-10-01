@@ -64,15 +64,13 @@ def test_packaged_catalog_matches_pinned_release_and_keeps_model_overrides() -> 
     )
     assert snapshot.models[0].ref == "302ai/deepseek-flash"
     model = snapshot.find("agentrouter", "claude-opus-5")
-    assert model is not None and model.provider is not None
-    assert model.provider.npm == "@ai-sdk/anthropic"
+    assert model is not None and model.override is not None
+    assert model.override.npm == "@ai-sdk/anthropic"
 
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:
     model = Model(
-        id="one",
-        name="One",
-        _toolang=ModelToolang(provider="test", ready=True),
+        id="one", name="One", _toolang=ModelToolang(ready=True), provider="test"
     )
     provider = Provider(
         id="test",
@@ -181,10 +179,10 @@ def test_flat_catalog_composes_refs_and_keeps_connection_overrides() -> None:
     providers, models = parse_model_catalog_data(payload)
     assert tuple(providers) == ("with/slash",)
     assert models[0].ref == "with/slash/nested/model"
-    assert models[0].provider == ModelProvider(
+    assert models[0].override == ModelProvider(
         shape="messages", api="https://test.invalid/v1"
     )
-    assert models[0]._toolang.provider == "with/slash"
+    assert models[0].provider == "with/slash"
 
 
 def test_catalog_reader_attaches_origin_without_rematerializing_records(
@@ -221,8 +219,8 @@ def test_catalog_import_drops_unknown_fields_and_keeps_float_prices(
     assert model is not None
     assert model.cost == {"input": 1.25, "output": 2}
     exported = cast(dict[str, Any], snapshot.to_data())
-    assert "future_provider_field" not in exported["test"]
-    assert "future_model_field" not in exported["test"]["models"]["one"]
+    assert "future_provider_field" not in exported["providers"][0]
+    assert "future_model_field" not in exported["models"][0]
 
 
 def test_catalog_import_rejects_models_dev_provider_map_and_combined_data(
@@ -321,7 +319,7 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         nested["size"] = 999
     exported = cast(dict[str, Any], read_model_catalog_snapshot(path).to_data())
-    assert exported["test"]["models"]["one"]["cost"]["tiers"] == [
+    assert exported["models"][0]["cost"]["tiers"] == [
         {"input": 3, "tier": {"type": "context", "size": 200}}
     ]
 
@@ -423,9 +421,7 @@ def test_filtered_export_round_trips_deterministically() -> None:
 
     first = dumps(snapshot.to_data(models=selected))
     second = dumps(snapshot.to_data(models=selected))
-    imported, models = parse_model_catalog_data(
-        _flat_catalog_data(json.loads(first, parse_float=float))
-    )
+    imported, models = parse_model_catalog_data(json.loads(first, parse_float=float))
 
     assert first == second
     assert tuple(imported) == ("test",)
@@ -446,8 +442,9 @@ def test_model_protocol_hints_override_the_provider_default() -> None:
     model = Model(
         id="one",
         name="One",
-        _toolang=ModelToolang(provider="test", ready=True),
-        provider=ModelProvider(npm="@ai-sdk/anthropic"),
+        _toolang=ModelToolang(ready=True),
+        override=ModelProvider(npm="@ai-sdk/anthropic"),
+        provider="test",
     )
 
     assert model_adapter(provider, model) == "messages"
@@ -530,12 +527,13 @@ def _model(
     return Model(
         id=model_id,
         name=model_id,
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         family=family,
         reasoning=reasoning,
         temperature=temperature,
         modalities={"input": ("text", "image"), "output": ("text",)},
         limit={"context": 1000},
+        provider="test",
     )
 
 
@@ -575,7 +573,7 @@ def test_flat_snapshot_joins_same_local_ids_by_provider_and_exports_selection():
         name: Provider(id=name, name=name) for name in ("first", "second", "empty")
     }
     models = tuple(
-        Model(id="same", name=name, _toolang=ModelToolang(provider=name))
+        Model(id="same", name=name, _toolang=ModelToolang(), provider=name)
         for name in ("first", "second")
     )
     snapshot = ModelCatalogSnapshot(providers=providers, models=models, revision="test")
@@ -587,10 +585,19 @@ def test_flat_snapshot_joins_same_local_ids_by_provider_and_exports_selection():
     assert snapshot.find("empty", "same") is None
     assert snapshot.find("missing", "same") is None
     assert snapshot.to_data(models=(models[1],)) == {
-        "second": providers["second"].to_data(models={"same": models[1]})
+        "providers": [{"id": "second", "name": "second", "env": []}],
+        "models": [
+            {
+                "id": "same",
+                "name": "second",
+                "provider": "second",
+                "modalities": {},
+                "limit": {},
+            }
+        ],
     }
-    assert providers["empty"].to_data()["models"] == {}
-    assert snapshot.to_data(models=()) == {}
+    assert "models" not in providers["empty"].to_data()
+    assert snapshot.to_data(models=()) == {"providers": [], "models": []}
     with pytest.raises(ValueError, match="unknown providers"):
         dataclasses.replace(snapshot, providers={"first": providers["first"]})
     with pytest.raises(ValueError, match="unique provider/model identity"):

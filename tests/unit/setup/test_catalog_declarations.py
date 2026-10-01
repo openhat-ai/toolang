@@ -38,7 +38,11 @@ def test_minimal_catalog_is_assembled_and_routed():
     )
     model = routed.models[0]
     assert model._toolang.ready
-    assert model.to_data() == raw.models[0].to_data()
+    assert {
+        k: v
+        for k, v in model.to_data().items()
+        if k not in {"provider", "ref", "_toolang"}
+    } == raw.models[0].to_data()
     assert output_budget(model.limit) == 32768
     assert input_budget(model.limit, 32768) is None
 

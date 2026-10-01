@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from tq import Query
 
 from toolang.common.errors import ToolangError
 from toolang.common.types import SetOperator
 
-from .state import StateCap, entry_definition_file, entry_origin, entry_ref, entry_scope
+from .state import (
+    StateCap,
+    entry_form,
+    entry_origin,
+    entry_ref,
+    entry_scope,
+    entry_source,
+)
 from .types import EntryKind
 
 
@@ -18,6 +26,7 @@ from .types import EntryKind
 class CapView:
     record: StateCap
     data: dict[str, object]
+    source_ref: str
 
     @property
     def kind(self) -> EntryKind:
@@ -32,7 +41,9 @@ class CapView:
         return str(self.data["ref"])
 
 
-def cap_view(entry: StateCap, *, agent_name: str, allowed: bool = True) -> CapView:
+def cap_view(
+    entry: StateCap, *, root: Path | None, agent_name: str, allowed: bool = True
+) -> CapView:
     description = entry.meta.get("description")
     return CapView(
         entry,
@@ -40,15 +51,15 @@ def cap_view(entry: StateCap, *, agent_name: str, allowed: bool = True) -> CapVi
             "ref": f"{entry.kind}/{entry.name}",
             "name": entry.name,
             "description": description if isinstance(description, str) else None,
-            "source": entry_ref(entry, agent_name=agent_name),
-            "definition": entry_definition_file(entry),
-            "line": entry.source.line,
+            "location": entry_source(entry, agent_name=agent_name, root=root),
             "tags": [
                 "ready" if allowed else "not_allowed",
                 entry_origin(entry),
                 entry_scope(entry, agent_name=agent_name),
+                entry_form(entry),
             ],
         },
+        source_ref=entry_ref(entry, agent_name=agent_name),
     )
 
 
@@ -71,7 +82,7 @@ class CapCollection:
         self, operations: Sequence[tuple[SetOperator, Sequence[str]]]
     ) -> tuple[CapView, ...]:
         def key(view: CapView) -> tuple[str, str]:
-            return view.ref, str(view.data["source"])
+            return view.ref, view.source_ref
 
         active = {key(view) for view in self.items}
         for operator, queries in operations:
@@ -90,6 +101,7 @@ class CapCollection:
 def cap_collection(
     entries: Sequence[StateCap],
     *,
+    root: Path | None,
     agent_name: str,
     kind: EntryKind | None = None,
     allowed: Collection[tuple[EntryKind, str]] | None = None,
@@ -100,19 +112,21 @@ def cap_collection(
             view = cap_view(
                 entry,
                 agent_name=agent_name,
+                root=root,
                 allowed=allowed is None or (entry.kind, entry.name) in allowed,
             )
-            views.setdefault((view.ref, str(view.data["source"])), view)
+            views.setdefault((view.ref, view.source_ref), view)
     return CapCollection(tuple(views.values()))
 
 
 def query_cap_views(
     entries: Sequence[StateCap],
     *,
+    root: Path | None,
     agent_name: str,
     queries: Sequence[str] | None,
     allowed: Collection[tuple[EntryKind, str]] | None = None,
 ) -> tuple[CapView, ...]:
-    return cap_collection(entries, agent_name=agent_name, allowed=allowed).query(
-        queries
-    )
+    return cap_collection(
+        entries, root=root, agent_name=agent_name, allowed=allowed
+    ).query(queries)

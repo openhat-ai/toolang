@@ -67,7 +67,7 @@ def _provider_value(provider: Provider) -> dict[str, object]:
 
 def _model_value(model: Model) -> dict[str, object]:
     data = model.to_data()
-    connection = model.provider
+    connection = model.override
     if connection is not None and connection._toolang is not None:
         data["provider_connection_toolang"] = {
             "env": connection._toolang.env,
@@ -75,7 +75,7 @@ def _model_value(model: Model) -> dict[str, object]:
             "route": _route_value(connection._toolang.route),
         }
     data["toolang"] = {
-        "provider": model._toolang.provider,
+        "provider": model.provider,
         "status": int(model._toolang.status),
         "local": model._toolang.local,
         "route": _route_value(model._toolang.route),

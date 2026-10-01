@@ -52,7 +52,7 @@ def merge_catalog_snapshots(
                 raise ValueError(f"duplicate catalog provider: {provider_id}")
             providers[provider_id] = provider
         for model in snapshot.models:
-            identity = (model._toolang.provider, model.id)
+            identity = (model.provider, model.id)
             if identity in model_identities:
                 raise ValueError(f"duplicate catalog model: {model.identity}")
             model_identities.add(identity)
@@ -92,7 +92,8 @@ def assemble_catalog(
         models=tuple(
             Model(
                 **{f.name: getattr(model, f.name) for f in fields(ModelFacts)},
-                _toolang=ModelToolang(provider=model.provider_id, local=snapshot.local),
+                _toolang=ModelToolang(local=snapshot.local),
+                provider=model.provider_id,
             )
             for model in snapshot.models
         ),

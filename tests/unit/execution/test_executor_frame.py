@@ -100,7 +100,6 @@ def _models() -> ModelCollection:
                 id="model",
                 name="model",
                 _toolang=ModelToolang(
-                    provider="test",
                     ready=True,
                     route=ModelRoute(
                         adapter="test", api="https://example.invalid/v1", env=()
@@ -108,6 +107,7 @@ def _models() -> ModelCollection:
                 ),
                 tool_call=True,
                 structured_output=True,
+                provider="test",
             ),
         )
     )
