@@ -157,17 +157,6 @@ def echo_collection_summary(
     typer.echo(summary)
 
 
-def inspection_status(*, allowed: bool, ready: bool = True) -> str:
-    """Keep policy exclusion and unmet prerequisites independently visible."""
-
-    reasons = [
-        label
-        for failed, label in ((not allowed, "blocked"), (not ready, "unready"))
-        if failed
-    ]
-    return ", ".join(reasons) or "ok"
-
-
 def echo_pairs_table(
     rows: Sequence[tuple[str, str]],
     *,

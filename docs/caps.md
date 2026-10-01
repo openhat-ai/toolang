@@ -30,7 +30,8 @@ Precedence is:
 One effective cap set is built by applying this precedence to all visible cap
 definitions.
 
-CLI and HTTP read APIs expose these runtime `scope` values directly.
+CLI query records expose scope through `tags`; HTTP read payloads retain the
+`scope` field.
 
 `too caps` and untargeted kind-specific lists show root-shared resources
 filtered by root cap-kind allow policy. `too alice caps` combines root resources

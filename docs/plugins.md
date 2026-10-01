@@ -224,16 +224,19 @@ execution permissions. Queries and counts use the selected view. An
 internal-only tool query needs `--all`. Tool-call inspection shows the
 recorded plugin identity, independently of its Python module location.
 
-Full cap tables show `STATUS` immediately after identity (`ok` or `blocked`).
-Full tool tables put STATUS last (`ok` or `blocked`). Full model tables put
-STATUS last: `ok`, `blocked`, `unready (reason)`, or `blocked, unready (reason)`.
-`ok` means ready and allowed.
-Internal names need no extra label. Provider tables always use `MODELS`, with
-`OK/ALL` values in full views and effective counts by default, and omit REASON.
-Tools omit SOURCE; plugin inventories retain it. All lists have summaries,
-including zero counts for empty results. Resource
-summaries include group counts only when more than one row is displayed.
-Every `--all` option accepts `-a`. Plugin inventories have no agent allow policy.
+Resource lists use JSON field paths as human headers and expose `tags` for
+availability and blockers. Models and caps also carry origin tags; caps carry
+scope tags. Tools and caps display `source`. Providers summarize their selected
+models through `_toolang.available_models` and `_toolang.model_count`.
+`--json` emits arrays without summaries; `--human` explicitly selects the
+default tables. Human summaries include zero counts and add group counts only
+when more than one row is displayed. See [Resource Queries](queries.md) for
+records, columns, and tag meanings.
+
+Models, tools, and caps accept native TQ queries. Providers support external TQ
+through JSON only. Plugin inventories have no query interface or agent allow
+policy; their existing output remains unchanged. Every resource `--all` accepts
+`-a`.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
 and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.

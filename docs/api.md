@@ -836,23 +836,25 @@ allow-excluded caps, internal and allow-excluded tools, or unready and allow-exc
 Default tools hide internal `_toolang` leaves. Queries and counts describe the
 selected view. `me` is not internally hidden and follows normal tool allow policy.
 
-`models --json` and `providers --json` export the same selected setup version as
-models.dev-compatible catalog data without Toolang metadata or resolved secrets.
-Models display identity, context/output sizes, modalities, capabilities, and
-prices. Full cap tables add STATUS after identity (`ok` or `blocked`).
-Full tool tables put STATUS last (`ok` or `blocked`).
-Full model tables put STATUS last: `ok`, `blocked`, `unready (reason)`, or
-`blocked, unready (reason)`. `ok` means ready AND allowed; caps/tools have no
-independent readiness check. Unready reasons appear inside STATUS parentheses.
-Provider tables always show `MODELS`: effective counts by default, `OK/ALL`
-counts with `--all`. Models and providers have no separate REASON column.
-Ready-but-blocked models do not count as OK. Tools omit SOURCE; plugin
-inventories retain it. Internal names need no separate INTERNAL label.
+Resource lists support `--json` arrays and default human tables (`--human`).
+The two output flags cannot combine. Model/provider records retain supported
+models.dev fields plus safe `_toolang` metadata; connection headers, bodies,
+options, and private metadata are excluded. Provider records contain ID-keyed
+`models` mappings within the selected scope. These are inspection records, not
+the flat catalog input format.
 
-Every `--all` accepts `-a`. Lists always show displayed-row summaries; empty
-results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
+Human headers use JSON field paths verbatim. Models show separate `cost.input`
+and `cost.output` columns; providers show `_toolang.available_models` and
+`_toolang.model_count`. Tools and caps show `ref`, `description`, `source`, and
+`tags`. All four collections use `tags` for availability and blockers; caps also
+include scope and origin, and models include origin. See
+[Resource Queries](queries.md) for the complete records, columns, and tag groups.
+Providers have no built-in query option; their JSON supports external TQ.
+
+Every resource `--all` accepts `-a`. Human lists show displayed-row summaries;
+empty results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
 toolset, kind, or provider count when more than one row is displayed. JSON has
-no summary. Prices independently align input/output amounts and their separator.
+no summary and uses `[]` for an empty result. Prices are per million tokens.
 API readiness does not prove remote reachability or entitlement.
 See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semantics.
 
@@ -988,9 +990,11 @@ runtime model collection. `GET /api/v1/tools` uses the same convention and
 returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
 fields. Omitting
 `query` lists the complete effective collection. Repeated query values and
-comma-separated top-level matches order result groups as authored; each group
-retains the model collection's existing order, and overlaps use the first
-match. Valid empty matches return an empty `items` list and a `null` default.
+comma-separated top-level matches form a union. Models use first matching
+branch order, then source order; tools retain source order. Overlaps are
+deduplicated. Empty matches return an empty `items` list; the model response
+also has a `null` default. Matching uses the public CLI JSON projection, while
+these HTTP response fields remain unchanged.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.
@@ -1010,9 +1014,10 @@ Collections:
 - `GET /api/v1/prompts`
 
 The cap summary and collection endpoints accept repeatable `query` parameters.
-The summary applies each query independently through the psyche, skill,
-service, and prompt collection definitions, then returns the existing grouped
-response and counts.
+They match the public cap records documented in [Resource Queries](queries.md),
+using `kind/name` identities and `tags`, then retain source order. The summary
+returns the existing grouped response and counts. Response `ref` values remain
+source URIs; the query projection calls this field `source`.
 
 Cap list items include `form` and the additive `summary` display field.
 `summary` is at most 256 Unicode code points and selects the first nonblank
@@ -1088,8 +1093,9 @@ items include:
 - `editable`
 
 Read and write payloads use the same `root`, `home`, and `here` scope
-vocabulary. Read payloads expose `form`, `scope`, and `origin`; CLI list
-commands project those into `SOURCE`, `FORM`, and `SCOPE`.
+vocabulary. Read payloads retain `form`, `scope`, and `origin`; CLI query
+records expose scope and origin through `tags` and omit form. CLI `source`
+contains the source URI, and CLI `ref` is `kind/name`.
 
 
 ## Chat Client Orchestration

@@ -75,8 +75,8 @@ external `--catalog` source is mounted read-only and
 Use `too alice models` to inspect a resident agent's model context. It layers
 the agent's provider/plugin configuration and dotenv values over root inputs,
 and prefers its home catalog according to the precedence above. The agent does
-not need to be running. `--catalog`, `--all`, `--query/-q`, and `--json` work in
-both root and resident forms:
+not need to be running. `--catalog`, `--all`, `--human`, and `--json` work in
+both root and resident forms. Only models accept `--query/-q`:
 
 ```bash
 too models
@@ -88,11 +88,11 @@ too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --js
 The target goes before `models` or `providers`; use `agent:<name>` when a name
 matches a command name. Both forms default to routable, allowed models.
 `--all` includes unready and allow-excluded records. Inspection queries run
-transiently over the selected records. `too models --json` remains a nested
-filtered export for external consumers; convert it to the flat cata format
-before supplying it back as a catalog. Availability reflects the invoking
-process's configuration and environment, not a running agent's session or
-sandbox.
+transiently over the selected records. `too models --json` emits an array of
+public model records; `too providers --json` emits an array of providers with
+ID-keyed `models` mappings. Neither is the flat catalog input format.
+Availability reflects the invoking process's configuration and environment,
+not a running agent's session or sandbox.
 
 The flat importer validates both arrays, unique provider/model identities,
 provider references, and known field types. It drops unknown additive fields,
@@ -258,8 +258,8 @@ with its effective route:
 
 ```text
 ProviderToolang: { env: declared rule, adapter: declared adapter, route: ModelRoute }
-ModelToolang:    { provider: string, status: ROUTABLE | ALLOWED, route: ModelRoute }
-ModelRoute:      { adapter: string?, api: string?, env: rule?, headers, options }
+ModelToolang:    { provider: string, status: ROUTABLE | ALLOWED, route: ModelRoute, local: bool }
+ModelRoute:      { adapter: string?, api: string?, env: rule?, headers, options, api_env_missing: bool }
 ```
 
 The `ROUTABLE` bit records route readiness; `ALLOWED` records policy membership.
@@ -272,6 +272,9 @@ facts, without injected resolution fields. Adapters receive
 `Provider.api` stays the raw catalog value. Setup resolves model/provider API
 values, adapter defaults, and templates into `route.api`. Route environment
 rules contain names only; actual values remain in `setup.envs`.
+`local` preserves the declaring catalog's origin across merging. Missing API
+template variables set `api_env_missing`, prevent readiness, and produce the
+public `no_env` tag rather than `no_api`.
 
 A missing/uninstalled adapter or invalid selected catalog mode makes a route
 non-routable; an unresolved API or unmet environment requirements also prevent

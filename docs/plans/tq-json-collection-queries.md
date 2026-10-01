@@ -6,8 +6,7 @@ Approved on 2026-10-01. Implementation follows this definition.
 
 Use TQ as the sole parser, validator, and matcher for resource selection.
 Remove `too query`, Toolang's query schemas/`MatchUnion`/matcher datasets,
-filter registries, and compatibility rewrites. Current models use TQ behind
-legacy field validation; tools/caps/runnables still use the old engine.
+filter registries, and compatibility rewrites. Runnables use exact references.
 
 | Collection | Built-in query | Config/directive selection | CLI inspection |
 | --- | --- | --- | --- |
@@ -21,6 +20,9 @@ Human output remains the default; `--human` and `--json` are mutually exclusive.
 JSON is an array of records, with no prose and `[]` for empty results. Models
 and providers intentionally replace their current catalog-envelope/provider-map
 outputs. Providers retain catalog order and support external TQ via JSON only.
+These output changes apply to CLI resource lists. HTTP and Chat inspection
+keep their existing response fields/envelopes while matching the same public
+records. Internal cap forms, source refs, and model status bits are unchanged.
 
 ## Query semantics
 
@@ -103,7 +105,7 @@ unsupported upstream fields are not fabricated.
 Use one ordered, deduplicated `tags: string[]`, displayed directly as `tags`.
 These five groups define ten globally distinct names; shared names keep their
 meaning across collections. The groups are neither JSON objects nor validators.
-Emit in table order, then name order within each group.
+Emit groups and tags in the order shown in the table.
 
 | Group (English) | Tags | Records |
 | --- | --- | --- |

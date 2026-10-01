@@ -19,6 +19,16 @@ The default view contains effective resources.
 | Tools | `ref`: `toolset/name` | `ref`, `description`, `source`, `tags` |
 | Caps | `ref`: `kind/name` | `ref`, `description`, `source`, `tags` |
 
+The public fields below describe the JSON projections, not a filter allowlist.
+Optional catalog fields can be absent; inspect `--json` for the captured values.
+
+| Record | Public fields |
+| --- | --- |
+| Model | `ref`, `id`, `name`, `description`, `family`, `attachment`, `reasoning`, `reasoning_options`, `tool_call`, `interleaved`, `structured_output`, `temperature`, `knowledge`, `release_date`, `last_updated`, `modalities`, `open_weights`, `limit`, `status`, `experimental`, `provider`, `cost`, `tags`, `_toolang.provider`, `_toolang.route.{adapter,api,env}` |
+| Provider | `id`, `name`, `npm`, `api`, `doc`, `env`, `models`, `tags`, `_toolang.{model_count,available_models,adapters}`, `_toolang.route.{adapter,api,env}` |
+| Tool | `ref`, `toolset`, `name`, `plugin`, `source`, `description`, `parameters`, `tags` |
+| Cap | `ref`, `name`, `description`, `source`, `definition`, `line`, `tags` |
+
 Model/provider records retain the supported models.dev nested shapes. Model
 `id` is the model ID; optional `provider` is an override object. Owning provider
 is `_toolang.provider`. Prices use the catalog's per-million-token units.
@@ -31,6 +41,9 @@ Tools also expose `toolset`, `name`, `plugin`, and parameter names in `parameter
 Caps also expose `name`, `definition`, and `line`; `source` is the canonical source
 URI. Cap kinds are `psyche`, `skill`, `service`, and `prompt`. Combined and
 kind-specific lists both require the full identity pattern.
+HTTP and Chat inspection keep their existing response fields and envelopes;
+their resource queries match these public CLI records. This does not change
+internal cap source refs or metadata.
 
 ## Native TQ semantics
 
@@ -100,8 +113,10 @@ too serve alice \
   --allow 'skills=skill/reviewer'
 ```
 
-Standalone `all`/`none` are case-insensitive policy sentinels and cannot mix
-with queries. Policy evaluates input tags once, then publishes updated tags.
+In allow settings, standalone `all`/`none` are case-insensitive policy sentinels
+and cannot mix with queries. Resource directives use `*` for all inherited
+resources and `none` for the empty set.
+Policy evaluates input tags once, then publishes updated tags.
 Setup adds no separate restrictions on query fields or status tags.
 
 Models use first matching branch then source order for inspection and allow
