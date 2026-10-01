@@ -10,11 +10,18 @@ from toolang.catalog.types import CapKind
 from toolang.cli.common.routing import OptionalPrefixAgentGroup
 
 
+class _CapGroup(OptionalPrefixAgentGroup):
+    argument_help = "Agent name, .too file, reference, or URL; omit for root scope"
+
+
 @cache
 def _apps() -> dict[CapKind, typer.Typer]:
     from toolang.cli.caps.commands import create_cap_apps
 
-    return create_cap_apps(group_cls=OptionalPrefixAgentGroup)
+    return create_cap_apps(
+        group_cls=_CapGroup,
+        agent_help="Agent name, .too file, reference, or URL",
+    )
 
 
 def psyche_app() -> typer.Typer:

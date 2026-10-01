@@ -54,17 +54,20 @@ def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
     )
 
 
-def _kind_list_command_cls(label: str) -> type[OptionalPrefixAgentListCommand]:
+def _kind_list_command_cls(
+    label: str, agent_help: str
+) -> type[OptionalPrefixAgentListCommand]:
     return type(
         f"{label.title().replace(' ', '')}ListScopeCommand",
         (OptionalPrefixAgentListCommand,),
-        {"argument_help": f"Local agent name; omit for root {label} only"},
+        {"argument_help": f"{agent_help}; omit for root {label} only"},
     )
 
 
 def create_cap_apps(
     *,
     group_cls: type[TyperGroup] | None = None,
+    agent_help: str = "Local agent name",
 ) -> dict[CapKind, typer.Typer]:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
@@ -146,7 +149,7 @@ def create_cap_apps(
         title = cap_titles[kind]
         label = cap_labels[kind]
         command_cls = _kind_command_cls(label)
-        list_command_cls = _kind_list_command_cls(label)
+        list_command_cls = _kind_list_command_cls(label, agent_help)
         cap_app = typer.Typer(
             help=cap_group_help[kind],
             cls=group_cls,
@@ -486,6 +489,10 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:
     agent_name = context_agent(ctx)
     if agent_name:
+        if context_layout(ctx).placement != "resident":
+            raise ClickException(
+                "cap changes require a resident agent; clone the source first"
+            )
         return "home", agent_name
     return "root", "default"
 

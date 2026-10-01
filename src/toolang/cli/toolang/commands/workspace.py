@@ -24,9 +24,17 @@ from ...common.output import echo_table
 from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGroup
 
 
+class _WorkspaceGroup(RequiredPrefixAgentGroup):
+    argument_help = "Agent name, .too file, reference, or URL"
+
+
+class _WorkspaceCommand(RequiredPrefixAgentCommand):
+    argument_help = "Agent name, .too file, reference, or URL"
+
+
 def workspace_app() -> typer.Typer:
     app = typer.Typer(
-        cls=RequiredPrefixAgentGroup,
+        cls=_WorkspaceGroup,
         help="Manage agent workspaces",
         add_completion=False,
         no_args_is_help=True,
@@ -36,18 +44,18 @@ def workspace_app() -> typer.Typer:
     app.command(
         "list",
         help="List workspaces",
-        cls=RequiredPrefixAgentCommand,
+        cls=_WorkspaceCommand,
     )(list_workspaces)
     app.command(
         "add",
         help="Add a workspace",
-        cls=RequiredPrefixAgentCommand,
+        cls=_WorkspaceCommand,
         no_args_is_help=True,
     )(add_workspace)
     app.command(
         "remove",
         help="Remove a workspace",
-        cls=RequiredPrefixAgentCommand,
+        cls=_WorkspaceCommand,
         no_args_is_help=True,
     )(remove_workspace)
     return app

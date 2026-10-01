@@ -63,8 +63,12 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
 
 @pytest.mark.parametrize("target", ["resident", "url", "github", "source"])
 @pytest.mark.parametrize("options", [[], ["--all"], ["--query", "english-coach"]])
+@pytest.mark.parametrize(
+    "command",
+    [["caps"], *[[kind, "list"] for kind in ("psyche", "skill", "service", "prompt")]],
+)
 def test_caps_inspects_the_selected_agent_layout(
-    tmp_path, monkeypatch, capsys, target, options
+    tmp_path, monkeypatch, capsys, target, options, command
 ):
     from toolang.cli.caps import commands
 
@@ -98,25 +102,53 @@ def test_caps_inspects_the_selected_agent_layout(
         return prepare(selected, **kwargs)
 
     monkeypatch.setattr(commands, "prepare_agent_state", inspect)
-    args = [selector, "caps", *options]
+    args = [selector, *command, *options]
     if target != "source":
         args = ["--root", str(root), *args]
     assert _call_main(args) == 0
     output = capsys.readouterr()
-    assert "english-coach" in output.out
+    if command[0] in {"caps", "psyche"}:
+        assert "english-coach" in output.out
+    else:
+        assert f"0 {command[0]}s" in output.out
     assert prepared == [layout]
 
 
-@pytest.mark.parametrize("selector", ["https://example.com/lex.too", "example/lex"])
+@pytest.mark.parametrize("target", ["url", "github", "source"])
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
-def test_visiting_cap_mutations_remain_rejected(selector, kind, monkeypatch, capsys):
+@pytest.mark.parametrize("operation", ["new", "edit", "add", "remove", "delete"])
+def test_nonresident_cap_mutations_remain_rejected(
+    target, kind, operation, tmp_path, monkeypatch, capsys
+):
+    from toolang.cli.caps import commands
+
+    source = tmp_path / "lex.too"
+    source.write_text("agic:\n  Reply directly.\n")
+    layout = AgentLayout(tmp_path / "cache", "lex", "visiting")
+    selectors = {
+        "url": "https://example.com/lex.too",
+        "github": "example/lex",
+        "source": str(source),
+    }
     monkeypatch.setattr(
-        agents,
-        "resolve_visiting_layout",
-        lambda *_args, **_kwargs: pytest.fail("must reject before fetching"),
+        agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
     )
-    assert _call_main([selector, kind, "add", "example"]) == 2
-    assert f"{kind} does not support visiting agents" in capsys.readouterr().err
+    monkeypatch.setattr(
+        commands, "edit_markdown", lambda *_args: pytest.fail("must not open editor")
+    )
+    monkeypatch.setattr(
+        commands.cap_state,
+        "resolve_remote_ref",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch a cap"),
+    )
+    assert _call_main([selectors[target], kind, operation, "example"]) == 1
+    assert (
+        "cap changes require a resident agent; clone the source first"
+        in capsys.readouterr().err
+    )
+    assert source.read_text() == "agic:\n  Reply directly.\n"
+    assert not layout.root.exists()
+    assert not (tmp_path / "toolang.toml").exists()
 
 
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
@@ -158,7 +190,7 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
         ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
-        ("skill", {"none", "before"}, {"resident"}),
+        ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("tools", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("providers", {"none", "before"}, {"resident", "roaming", "visiting"}),

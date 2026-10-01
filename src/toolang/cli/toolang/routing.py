@@ -117,7 +117,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
                 name,
                 "none",
                 "before",
-                placements=_RESIDENT,
+                placements=_ALL_PLACEMENTS,
                 prepare="program",
             )
             for name in CAP_KINDS

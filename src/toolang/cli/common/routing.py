@@ -124,6 +124,7 @@ class RequiredPrefixAgentGroup(CliGroup):
     """Render required AGENT between the CLI root and a command group."""
 
     prefix_agent_metavar = "<AGENT>"
+    argument_help = "Local agent name"
 
     def get_params(self, ctx: Context) -> list[Parameter]:
         agent = _HelpOnlyTyperArgument(
@@ -132,7 +133,7 @@ class RequiredPrefixAgentGroup(CliGroup):
             type=TextType(),
             required=True,
             expose_value=False,
-            help="Local agent name",
+            help=self.argument_help,
         )
         return [agent, *super().get_params(ctx)]
 
