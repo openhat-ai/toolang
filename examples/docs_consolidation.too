@@ -153,8 +153,7 @@ agic write(_: Job, plan: Plan, repo: Text, out: Text) -> Change:
 
   Read the sources, then draft or minimally correct only the assigned output file.
   Define only owned concepts and verify examples. Link to proposed or retained
-  files at final repository paths. Leave the repository, migration.md, and other
-  jobs' files intact.
+  files at final repository paths. Leave the repository and other jobs' files intact.
 
   A blocked plan produces no document writes.
 
@@ -181,10 +180,12 @@ agic audit(_: Text, plan: Plan, repo: Text, out: Text) -> Review:
 agic triage(_: Review[], plan: Plan, out: Text) -> Job[]:
   Output: {{out}}://; reviews: {{_}}; plan: {{plan}}.
 
-  Return one correction job per affected planned document, combining findings
-  with exact fixes, evidence, acceptance checks, and originating review run IDs.
-  Return [] when all pass. Keep architecture and migration.md issues as blockers
-  rather than inventing decisions or editing the plan. Preserve review records.
+  Combine findings into one correction job per affected file in the proposed
+  repository, with exact fixes, evidence, checks, and originating review run IDs.
+  Include retained source files needing incoming-link repairs; copy them to their
+  repository-relative output paths and use existing decisions for link destinations.
+  Return [] when all pass. Migration explanations and links may be corrected using
+  existing decisions. Keep architecture changes as blockers. Preserve review records.
 
 agic finish(_: Review[], plan: Plan, out: Text) -> Result:
   Output: {{out}}://; plan: {{plan}}; latest reviews: {{_}}.
