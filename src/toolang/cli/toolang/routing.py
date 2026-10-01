@@ -109,6 +109,9 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("rerun", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("rewind", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("fork", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
+        _command(
+            "caps", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+        ),
         *(
             _command(
                 name,
@@ -117,7 +120,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
                 placements=_RESIDENT,
                 prepare="program",
             )
-            for name in ("caps", *CAP_KINDS)
+            for name in CAP_KINDS
         ),
         _command(
             "models", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"

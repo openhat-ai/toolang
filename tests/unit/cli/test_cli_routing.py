@@ -61,6 +61,64 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
     assert set(group.commands) == set(COMMAND_SPECS)
 
 
+@pytest.mark.parametrize("target", ["resident", "url", "github", "source"])
+@pytest.mark.parametrize("options", [[], ["--all"], ["--query", "english-coach"]])
+def test_caps_inspects_the_selected_agent_layout(
+    tmp_path, monkeypatch, capsys, target, options
+):
+    from toolang.cli.caps import commands
+
+    source = tmp_path / "lex.too"
+    source.write_text(
+        "psyche english-coach:\n  Help the user practice English.\n\nagic:\n  {{_}}\n"
+    )
+    root = tmp_path / "root"
+    if target == "source":
+        layout = AgentLayout.roaming(source)
+        selector = str(source)
+    else:
+        placement = "resident" if target == "resident" else "visiting"
+        layout = AgentLayout(root, "lex", placement)
+        layout.home.mkdir(parents=True)
+        layout.program.write_text(source.read_text())
+        selector = {
+            "resident": "lex",
+            "url": "https://example.com/lex.too",
+            "github": "example/lex",
+        }[target]
+        monkeypatch.setattr(
+            agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+        )
+
+    prepare = commands.prepare_agent_state
+    prepared = []
+
+    def inspect(selected, **kwargs):
+        prepared.append(selected)
+        return prepare(selected, **kwargs)
+
+    monkeypatch.setattr(commands, "prepare_agent_state", inspect)
+    args = [selector, "caps", *options]
+    if target != "source":
+        args = ["--root", str(root), *args]
+    assert _call_main(args) == 0
+    output = capsys.readouterr()
+    assert "english-coach" in output.out
+    assert prepared == [layout]
+
+
+@pytest.mark.parametrize("selector", ["https://example.com/lex.too", "example/lex"])
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+def test_visiting_cap_mutations_remain_rejected(selector, kind, monkeypatch, capsys):
+    monkeypatch.setattr(
+        agents,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail("must reject before fetching"),
+    )
+    assert _call_main([selector, kind, "add", "example"]) == 2
+    assert f"{kind} does not support visiting agents" in capsys.readouterr().err
+
+
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
     group = typer.main.get_command(cli.app)
     assert isinstance(group, TyperGroup)

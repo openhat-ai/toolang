@@ -20,7 +20,7 @@ from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from toolang.state.prepare import inspect_root_caps, prepare_agent_state
-from ..common.context import context_agent, context_root, user_call
+from ..common.context import context_agent, context_layout, context_root, user_call
 from ..common.help import CliCommand
 from ..common.output import echo_block, echo_collection_summary, echo_table
 from ..common.query import query_items
@@ -192,8 +192,9 @@ def list_caps(
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
     entries, allowed = _cap_entries(
-        context_root(ctx),
-        agent_name,
+        context_layout(ctx)
+        if selected_agent is not None
+        else AgentLayout.resident(context_root(ctx), agent_name),
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
@@ -234,8 +235,9 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
         entries, allowed = _cap_entries(
-            context_root(ctx),
-            agent_name,
+            context_layout(ctx)
+            if selected_agent is not None
+            else AgentLayout.resident(context_root(ctx), agent_name),
             prepare=selected_agent is not None,
             kinds={kind},
         )
@@ -497,17 +499,15 @@ def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
 
 
 def _cap_entries(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     prepare: bool,
     kinds: set[EntryKind],
 ) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
     from ..common.progress import make_cli_progress
 
-    if not prepare and not toolang_root.exists():
+    if not prepare and not layout.root.exists():
         return (), ()
-    layout = AgentLayout.resident(toolang_root, agent_name)
     progress = make_cli_progress()
     try:
         with progress:
