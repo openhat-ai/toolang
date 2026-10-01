@@ -176,7 +176,7 @@ async def stream_chat_completion(
         try:
             with model_transport_errors():
                 async for chunk in stream:
-                    chunk_usage = chat_usage(chunk)
+                    chunk_usage = chat_usage(chunk, provider=model.provider)
                     if chunk_usage is not None:
                         final_usage = chunk_usage
                     choice = _first_choice(chunk)
@@ -572,7 +572,7 @@ def parse_chat_completion(
 
     choice = _first_choice(response)
     if choice is None:
-        return ModelCallResult(usage=chat_usage(response))
+        return ModelCallResult(usage=chat_usage(response, provider=model.provider))
     raw_message = getattr(choice, "message", None)
     text = getattr(raw_message, "content", None)
     try:
@@ -583,7 +583,7 @@ def parse_chat_completion(
             )
         tool_calls = tuple(parse_tool_calls(getattr(raw_message, "tool_calls", None)))
     except ModelResponseError as exc:
-        exc.usage = chat_usage(response)
+        exc.usage = chat_usage(response, provider=model.provider)
         exc.partial_text = text if isinstance(text, str) else ""
         raise
     reasoning = _ChatReasoning(model)
@@ -600,7 +600,7 @@ def parse_chat_completion(
             audio=audio,
         ),
         tool_calls=tool_calls,
-        usage=chat_usage(response),
+        usage=chat_usage(response, provider=model.provider),
     )
 
 
@@ -644,7 +644,7 @@ def parse_tool_calls(raw_tool_calls: object) -> list[ToolCall]:
     return results
 
 
-def chat_usage(response: Any) -> ModelUsage | None:
+def chat_usage(response: Any, *, provider: str = "") -> ModelUsage | None:
     """Extract one normalized model usage summary."""
 
     usage = getattr(response, "usage", None)
@@ -665,6 +665,9 @@ def chat_usage(response: Any) -> ModelUsage | None:
     if uncached is None and (cached is not None or cache_write is not None):
         uncached = input_tokens - (cached or 0) - (cache_write or 0)
     reasoning = optional_int(output_details, "reasoning_tokens")
+    if provider.lower() == "xai" and reasoning is not None:
+        # xAI reports reasoning separately from completion_tokens.
+        output_tokens += reasoning
     cost, currency = reported_cost(usage)
     service_tier = billing_value(response, "service_tier") or billing_value(
         usage, "service_tier"
