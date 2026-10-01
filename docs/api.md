@@ -930,15 +930,17 @@ script runs and TUI execution do not consume this endpoint.
 
 `GET /api/v1/workspaces` reads the server's current Setup and State. It returns
 `revision`, ordered `items` (`name`, source `path`, and runtime `available`), and
-`workdir`. Optional `workdir=NAME://path` validates a location in that runtime;
-invalid or unavailable locations return HTTP 400. In a guest sandbox,
+`workdir`. A listing remains available when the runtime default cannot be resolved;
+in that case `workdir` is `null`. Inspection does not create workspace directories.
+Optional `workdir=NAME://path` validates that location independently of the runtime
+default; invalid or unavailable requested locations return HTTP 400. In a guest sandbox,
 availability requires a matching captured mount and an existing guest directory.
 
 `too AGENT workspace list` uses this endpoint while the agent is running. Without
 a server it prepares local State and inspects host directories. Inspection of a
 running roaming agent keeps its runtime workspace defaults; it does not add an
-automatic source workspace. Execution CLI
-commands parse local directory grants but leave named workspace URI validation
+automatic source workspace. Execution CLI commands parse local directory grants
+but leave named workspace URI validation
 to the embedded executor or remote server; client configuration and filesystem
 paths do not determine remote availability.
 

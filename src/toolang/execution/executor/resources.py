@@ -10,7 +10,10 @@ from typing import cast
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import Model
 from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.tool import ToolContext
+from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.common.errors import ToolangError
+from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
 from toolang.common.query import SetOperator
 from toolang.execution.types import (
     AgentCapResource,
@@ -50,6 +53,37 @@ def available_workspaces(setup: AgentSetup, state: AgentState) -> tuple[str, ...
         for name, root in setup.workspace_roots(state.workspaces).items()
         if root.is_dir()
     )
+
+
+def workspace_context(setup: AgentSetup, state: AgentState, cwd: str) -> ToolContext:
+    """Bind path resolution to captured workspace grants and runtime roots."""
+    grants = setup.workspace_grants(state.workspaces)
+    return ToolContext(
+        home=setup.layout.home,
+        room=setup.layout.tool_room("_toolang"),
+        workspaces=setup.workspace_roots(state.workspaces),
+        workspace_names=tuple(grants),
+        workspace_bindings=grants,
+        cwd=cwd,
+    )
+
+
+def default_workspace_workdir(
+    setup: AgentSetup, state: AgentState, *, workdir: str | None = None
+) -> str:
+    """Resolve an initial location without run history or filesystem mutation."""
+    names = available_workspaces(setup, state)
+    if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
+        raise ToolangError("implicit lab workspace is unavailable")
+    default = workspace_uri(names[-1])
+    if workdir is None:
+        return default
+    target, name, relative = resolve_input_path(
+        workdir, workspace_context(setup, state, default)
+    )
+    if not target.is_dir():
+        raise ToolangError(f"workdir is not a directory: {target}")
+    return workspace_uri(name, relative)
 
 
 def workspace_declarations(
@@ -388,11 +422,9 @@ def _query_operations(
 
 
 def workspace_inspection(
-    setup: AgentSetup, state: AgentState, *, workdir: str | None = None
+    setup: AgentSetup, state: AgentState, *, workdir: str | None
 ) -> WorkspaceInspection:
     """Inspect captured grants using only the runtime's mapped filesystem roots."""
-    from toolang.base.utils.workspace_paths import parse_cwd, authorize_workspace_path
-
     grants = setup.workspace_grants(state.workspaces)
     roots = setup.workspace_roots(state.workspaces)
     items = tuple(
@@ -401,14 +433,4 @@ def workspace_inspection(
         )
         for name, path in grants.items()
     )
-    available = tuple(item.name for item in items if item.available)
-    if not available or available[0] != "lab":
-        raise ToolangError("implicit lab workspace is unavailable")
-    selected = workdir or f"{available[-1]}://"
-    name, relative = parse_cwd(selected)
-    if name not in available:
-        raise ToolangError(f"workspace is not available: {name}")
-    root = roots[name].resolve()
-    if not authorize_workspace_path(root / relative, root).is_dir():
-        raise ToolangError(f"workdir is not a directory: {selected}")
-    return WorkspaceInspection(revision=state.revision, items=items, workdir=selected)
+    return WorkspaceInspection(revision=state.revision, items=items, workdir=workdir)

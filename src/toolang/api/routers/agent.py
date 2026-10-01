@@ -29,7 +29,10 @@ from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
 from toolang.state.schemas import WorkspaceInspection
-from toolang.execution.executor.resources import workspace_inspection
+from toolang.execution.executor.resources import (
+    default_workspace_workdir,
+    workspace_inspection,
+)
 
 router = APIRouter(tags=["agent"])
 
@@ -384,9 +387,13 @@ def workspaces(
     setup = core.setup.current()
     state = core.state.current()
     try:
-        selected = core.executor.resolve_workdir(
-            setup, state, workdir=workdir, inherit_thread_workdir=False
+        selected = (
+            default_workspace_workdir(setup, state, workdir=workdir)
+            if workdir is not None
+            else core.executor.default_workdir(setup, state)
         )
-        return workspace_inspection(setup, state, workdir=selected)
-    except (ToolangError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (OSError, ToolangError, ValueError) as exc:
+        if workdir is not None:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        selected = None
+    return workspace_inspection(setup, state, workdir=selected)

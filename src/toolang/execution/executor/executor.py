@@ -11,7 +11,7 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.types.tool import ToolContext, ToolResult
+from toolang.base.types.tool import ToolResult
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -143,7 +143,8 @@ from .resources import (
     resolve_runnable_resources,
     snapshot_model_selection,
     validate_model_binding,
-    available_workspaces,
+    default_workspace_workdir,
+    workspace_context,
 )
 from .limits import (
     _RunLimitExceeded,
@@ -342,35 +343,17 @@ class RunExecutor:
 
         self._require_available()
 
-    def _workdir_context(
-        self, setup: AgentSetup, state: AgentState, cwd: str
-    ) -> ToolContext:
-        grants = setup.workspace_grants(state.workspaces)
-        return ToolContext(
-            home=setup.layout.home,
-            room=setup.layout.tool_room("_toolang"),
-            workspaces=setup.workspace_roots(state.workspaces),
-            workspace_names=tuple(grants),
-            workspace_bindings=grants,
-            cwd=cwd,
-        )
-
     def _default_workdir(self, setup: AgentSetup, state: AgentState) -> str:
         environment = setup.environment
         if environment is None or environment.workspace_location == "host":
             ensure_scratch_workspace(setup.layout.home)
-        names = available_workspaces(setup, state)
-        if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
-            raise ToolangError("implicit lab workspace is unavailable")
-        if self._default_workdir_override is not None:
-            target, name, relative = resolve_input_path(
-                self._default_workdir_override,
-                self._workdir_context(setup, state, workspace_uri(names[-1])),
-            )
-            if not target.is_dir():
-                raise ToolangError(f"workdir is not a directory: {target}")
-            return workspace_uri(name, relative)
-        return workspace_uri(names[-1])
+        return self.default_workdir(setup, state)
+
+    def default_workdir(self, setup: AgentSetup, state: AgentState) -> str:
+        """Inspect the runtime default without preparing directories or a Run."""
+        return default_workspace_workdir(
+            setup, state, workdir=self._default_workdir_override
+        )
 
     def _valid_workdir(
         self, setup: AgentSetup, state: AgentState, value: str
@@ -378,9 +361,7 @@ class RunExecutor:
         try:
             path, name, relative = resolve_input_path(
                 value,
-                self._workdir_context(
-                    setup, state, self._default_workdir(setup, state)
-                ),
+                workspace_context(setup, state, self._default_workdir(setup, state)),
             )
         except (OSError, ToolangError, ValueError):
             return None
@@ -434,7 +415,7 @@ class RunExecutor:
         if workdir is None:
             return previous
         base = workdir_base or previous
-        context = self._workdir_context(setup, state, base)
+        context = workspace_context(setup, state, base)
         target, name, relative = resolve_input_path(workdir, context)
         if not target.is_dir():
             raise ToolangError(f"workdir target is not a directory: {workdir}")

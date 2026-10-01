@@ -3710,3 +3710,24 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     assert result == 0, output.err
     assert requests == ["/api/v1/workspaces"]
+
+
+@pytest.mark.parametrize("command", ["models", "providers", "tools"])
+def test_setup_inspection_does_not_require_valid_program_for_workspace_options(
+    tmp_path, monkeypatch, command
+):
+    import toolang.cli.toolang.commands.model_catalog as model_commands
+
+    _create_agent(tmp_path)
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.program.write_text("not a valid program ???")
+
+    async def load_setup(layout, **kwargs):
+        return await _EmptySetupWatcher(layout).refresh()
+
+    monkeypatch.setattr(model_commands, "load_setup", load_setup)
+    monkeypatch.setattr(plugin_commands, "load_setup", load_setup)
+    result = _invoke(tmp_path, "alice", command, "-w", str(tmp_path))
+
+    assert result.exit_code == 0, result.stderr
+    assert not layout.agent_state.exists()

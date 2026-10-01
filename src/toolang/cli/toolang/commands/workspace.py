@@ -110,7 +110,7 @@ def list_workspaces(
             for item in inspection.items
         ),
     )
-    typer.echo(f"Workdir: {inspection.workdir}")
+    typer.echo(f"Workdir: {inspection.workdir or 'unavailable'}")
 
 
 def _authored_config(layout: AgentLayout) -> Path:

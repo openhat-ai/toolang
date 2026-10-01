@@ -133,7 +133,7 @@ def inspect_workspaces(
     if context_agent(ctx) is None:
         raise typer.BadParameter("workspace options require an agent target")
     layout = context_layout(ctx)
-    selection = user_call(
+    return user_call(
         resolve_workspaces,
         layout,
         procdir=Path.cwd(),
@@ -144,10 +144,6 @@ def inspect_workspaces(
         else None,
         no_auto=no_auto,
     )
-
-    if paths or workdir is not None:
-        user_call(inspect_workspace_selection, layout, selection)
-    return selection
 
 
 def single_workdir(values: str | Sequence[str] | None) -> str | None:
@@ -193,12 +189,15 @@ def inspect_workspace_selection(
 
     from toolang.state.prepare import prepare_agent_state
     from toolang.setup import AgentSetup
-    from toolang.execution.executor.resources import workspace_inspection
+    from toolang.execution.executor.resources import (
+        default_workspace_workdir,
+        workspace_inspection,
+    )
 
     state = prepare_agent_state(layout, workspace_additions=selection.additions)
-    return workspace_inspection(
-        AgentSetup(layout=layout, envs={}), state, workdir=selection.workdir
-    )
+    setup = AgentSetup(layout=layout, envs={})
+    workdir = default_workspace_workdir(setup, state, workdir=selection.workdir)
+    return workspace_inspection(setup, state, workdir=workdir)
 
 
 def validate_running_workspace_additions(

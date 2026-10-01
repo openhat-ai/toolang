@@ -153,3 +153,73 @@ def test_workspace_inspection_accepts_symlinked_runtime_root(
             assert response.json()["workdir"] == "repo://src"
     finally:
         asyncio.run(core.close())
+
+
+def test_workspace_listing_survives_stale_runtime_default(tmp_path, monkeypatch):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    selected = repo / "src"
+    selected.mkdir(parents=True)
+    layout.config.write_text(f'[workspaces]\nrepo = "{repo}"\n')
+    core = AgentCore(layout, workdir="repo://src")
+    asyncio.run(core.state.refresh())
+    setup = AgentSetup(layout=layout, envs={})
+    monkeypatch.setattr(core.setup, "current", lambda: setup)
+    selected.rmdir()
+    try:
+        with TestClient(
+            create_app(core, CapsManager(layout), JobsManager(layout))
+        ) as client:
+            response = client.get("/api/v1/workspaces")
+            assert response.status_code == 200, response.text
+            assert response.json()["workdir"] is None
+            assert response.json()["items"][-1]["available"] is True
+            response = client.get("/api/v1/workspaces", params={"workdir": "repo://"})
+            assert response.status_code == 200, response.text
+            assert response.json()["workdir"] == "repo://"
+            assert (
+                client.get(
+                    "/api/v1/workspaces", params={"workdir": "repo://src"}
+                ).status_code
+                == 400
+            )
+    finally:
+        asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("guest", [False, True])
+def test_listing_reports_unavailable_lab_without_requiring_execution(
+    tmp_path, monkeypatch, guest
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    core = AgentCore(layout)
+    asyncio.run(core.state.refresh())
+    environment = AgentEnvironment.capture(layout, sandbox="host")
+    if guest:
+        environment = replace(
+            environment,
+            sandbox="docker",
+            workspace_location="guest",
+            workspace_mounts={},
+        )
+    else:
+        (layout.home / "lab").rmdir()
+    monkeypatch.setattr(
+        core.setup,
+        "current",
+        lambda: AgentSetup(layout=layout, envs={}, environment=environment),
+    )
+    try:
+        with TestClient(
+            create_app(core, CapsManager(layout), JobsManager(layout))
+        ) as client:
+            response = client.get("/api/v1/workspaces")
+            assert response.status_code == 200, response.text
+            assert response.json()["workdir"] is None
+            assert response.json()["items"] == [
+                {"name": "lab", "path": str(layout.home / "lab"), "available": False}
+            ]
+    finally:
+        asyncio.run(core.close())

@@ -135,4 +135,4 @@ class WorkspaceInspection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     revision: str
     items: tuple[WorkspaceInfo, ...]
-    workdir: str
+    workdir: str | None
