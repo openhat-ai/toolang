@@ -132,15 +132,16 @@ agic organize(_: Review[], repo: Text, out: Text) -> Plan:
   This documentation work is authorized; repository files stay unchanged.
   Use all supplied reviews, investigating conflicts and gaps against the inventory.
   Plan document jobs and one keep/rewrite/merge/remove/defer decision for every
-  source file. Link the plan and relevant jobs to their source reviews.
+  source file. Retain every source review run ID in the plan and relevant jobs.
   Each job owns a unique path, purpose, concepts, and acceptance checks.
 
   Include glossary.md for canonical terms, definitions, aliases, owning packages,
   evidence, and links to detailed explanations. Include an entry index. Choose
   document count by scope; link shared definitions instead of repeating them.
 
-  Only draft migration.md here; write handles the document jobs. Reserve records/
-  and reviews.json for provenance. Record unresolved decisions as blockers.
+  Only draft migration.md here; write handles the document jobs. Exclude records/
+  and reviews.json from document jobs. Describe unresolved product choices as
+  current behavior and proposed alternatives; block only if drafting cannot proceed.
 
 agic assign(plan: Plan, out: Text) -> Job[]:
   Output: {{out}}://; plan: {{plan}}.
