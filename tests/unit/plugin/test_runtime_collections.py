@@ -46,7 +46,7 @@ def _model(provider: str, model: str, *, tools: bool = True) -> Model:
     )
 
 
-def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> None:
+def test_model_collection_uses_tq_and_preserves_bounded_sets_and_exact_lookup() -> None:
     alpha = _model("alpha", "one")
     beta = _model("beta", "two", tools=False)
     gamma = _model("alpha", "three")
@@ -99,10 +99,10 @@ def test_model_collection_exact_subsets_do_not_build_queries(
     beta = _model("beta", "two")
     models = ModelCollection((alpha, beta))
 
-    def fail_dataset(*_args: object, **_kwargs: object) -> None:
+    def fail_query_parse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("exact subset must not parse queries")
 
-    monkeypatch.setattr(Query, "parse", fail_dataset)
+    monkeypatch.setattr(Query, "parse", fail_query_parse)
 
     assert models.subset(("beta/two",)).entries == (beta,)
 
@@ -162,10 +162,10 @@ def test_tool_collection_exact_subsets_do_not_build_queries(
         {"alpha__one": alpha, "beta__two": beta},
     )
 
-    def fail_dataset(*_args: object, **_kwargs: object) -> None:
+    def fail_query_parse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("exact subset must not parse queries")
 
-    monkeypatch.setattr(Query, "parse", fail_dataset)
+    monkeypatch.setattr(Query, "parse", fail_query_parse)
 
     assert tools.subset(("beta__two",)).refs() == ("beta/two",)
 

@@ -202,7 +202,7 @@ def test_runtime_rejects_unlined_entry_selectors(tmp_path, selector):
         harness.store.close()
 
 
-def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> None:
+def test_root_runnable_override_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -240,7 +240,7 @@ flow hello_flow(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_root_runnable_query_is_removed_from_recalled_history(tmp_path) -> None:
+def test_root_runnable_override_is_removed_from_recalled_history(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""

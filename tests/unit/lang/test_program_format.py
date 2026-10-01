@@ -9,6 +9,7 @@ from toolang.lang import (
     to_data,
 )
 from toolang.lang.ast import LetStmt
+from toolang.lang.format import format_query_text
 
 
 def test_format_statement_head_preserves_compact_source_order() -> None:
@@ -1141,3 +1142,10 @@ def test_format_source_does_not_promote_plain_comments_to_shebangs(prefix):
     formatted = format_source(source)
     assert formatted.startswith("\n#!/usr/bin/env too\n")
     assert format_source(formatted) == formatted
+
+
+def test_raw_query_formatting_preserves_nested_and_empty_matches() -> None:
+    assert (
+        format_query_text('one[family in (a,b)],,two[name="x,y"],')
+        == 'one[family in (a,b)], , two[name="x,y"],'
+    )

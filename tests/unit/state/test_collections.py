@@ -74,7 +74,7 @@ def test_cap_display_summary_uses_metadata_then_bounded_content(tmp_path) -> Non
     assert bounded.endswith("…")
 
 
-def test_cap_query_fans_out_over_four_base_collections() -> None:
+def test_cap_query_matches_full_refs_across_four_kinds() -> None:
     entries = (
         _cap("prompt", "summary"),
         _cap("psyche", "reviewer"),

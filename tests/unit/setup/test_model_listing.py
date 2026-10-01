@@ -29,7 +29,7 @@ def _model(ref: str, *, ready: bool) -> Model:
     )
 
 
-def test_model_query_dataset_projects_full_catalog_records():
+def test_model_query_matches_public_catalog_records():
     snapshot = ModelCatalogSnapshot(
         providers={
             "openai": Provider(id="openai", name="OpenAI"),
