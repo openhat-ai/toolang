@@ -736,6 +736,88 @@ def test_chat_output_limit_precedes_json_parsing_and_preserves_usage():
     assert caught.value.partial_text == "Working."
 
 
+@pytest.mark.parametrize("mode", ["invoke", "stream", "empty", "length"])
+@pytest.mark.parametrize(
+    ("provider", "completion_tokens", "reasoning_tokens", "expected_output"),
+    [
+        ("xai", 9, 94, 103),
+        ("xai", 9, 4, 13),
+        ("xai", 9, 0, 9),
+        ("xai", 9, None, 9),
+        ("openai", 103, 94, 103),
+        ("openrouter", 103, 94, 103),
+    ],
+)
+def test_chat_reasoning_usage_is_inclusive(
+    monkeypatch, mode, provider, completion_tokens, reasoning_tokens, expected_output
+) -> None:
+    message = SimpleNamespace(content="done", tool_calls=())
+    response = SimpleNamespace(
+        choices=[]
+        if mode == "empty"
+        else [
+            SimpleNamespace(
+                finish_reason="length" if mode == "length" else "stop",
+                message=message,
+                delta=message,
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=32,
+            completion_tokens=completion_tokens,
+            total_tokens=32 + expected_output,
+            completion_tokens_details=SimpleNamespace(
+                reasoning_tokens=reasoning_tokens
+            ),
+        ),
+    )
+
+    class _Stream:
+        async def __aiter__(self):
+            yield response
+
+        async def close(self) -> None:
+            pass
+
+    class _Completions:
+        async def create(self, **payload):
+            return _Stream() if payload["stream"] else response
+
+    monkeypatch.setattr(
+        chat_completions_models,
+        "create_client",
+        lambda model, *, environ: SimpleNamespace(
+            chat=SimpleNamespace(completions=_Completions())
+        ),
+    )
+    adapter = chat_completions_models.create_model_adapter({})
+    model = _model("grok-4.7", provider=provider)
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+    expected = ModelUsage(
+        input_tokens=32,
+        output_tokens=expected_output,
+        output_visible_tokens=(
+            expected_output - reasoning_tokens if reasoning_tokens is not None else None
+        ),
+        output_reasoning_tokens=reasoning_tokens,
+    )
+
+    if mode == "length":
+        with pytest.raises(ModelResponseError, match="output limit") as caught:
+            asyncio.run(adapter.invoke(model, request, environ={}))
+        assert caught.value.usage == expected
+        return
+    if mode == "stream":
+        result = asyncio.run(
+            adapter.stream(model, request, environ={}, on_event=_ignore_event)
+        )
+    else:
+        result = asyncio.run(adapter.invoke(model, request, environ={}))
+
+    assert result.usage == expected
+    assert result.message == (None if mode == "empty" else Message.assistant("done"))
+
+
 def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) -> None:
     class _Stream:
         async def __aiter__(self):
