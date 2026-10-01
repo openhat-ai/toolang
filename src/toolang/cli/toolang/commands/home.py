@@ -1,4 +1,4 @@
-"""Open an interactive shell in the Toolang root or a resident agent home."""
+"""Open an interactive shell in agent home."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typer._click.exceptions import ClickException
 from ...common.context import context_agent, context_layout, context_root
 
 
-def shell(ctx: typer.Context) -> None:
+def home(ctx: typer.Context) -> None:
     """Run the configured interactive shell from the selected directory."""
 
     directory = context_layout(ctx).home if context_agent(ctx) else context_root(ctx)
@@ -33,4 +33,4 @@ def shell(ctx: typer.Context) -> None:
 
 def _require_interactive_terminal(input_stream: TextIO, output_stream: TextIO) -> None:
     if not input_stream.isatty() or not output_stream.isatty():
-        raise ClickException("shell requires an interactive terminal")
+        raise ClickException("home requires an interactive terminal")

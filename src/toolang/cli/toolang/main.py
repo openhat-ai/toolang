@@ -62,7 +62,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "remove",
     "list",
     "info",
-    "shell",
+    "home",
     "serve",
     "start",
     "stop",
@@ -152,8 +152,8 @@ class _TargetSetupCommand(OptionalPrefixAgentSetupCommand):
     )
 
 
-class _ShellCommand(OptionalPrefixAgentCommand):
-    argument_help = "Local agent name; omit for Toolang root"
+class _HomeCommand(OptionalPrefixAgentCommand):
+    argument_help = "Agent name, .too file, reference, or URL"
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
@@ -346,10 +346,10 @@ _registered_command(
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
-    "shell",
-    "toolang.cli.toolang.commands.shell:shell",
-    help="Open a shell in Toolang root or agent home",
-    cls=_ShellCommand,
+    "home",
+    "toolang.cli.toolang.commands.home:home",
+    help="Open a shell in agent home",
+    cls=_HomeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(

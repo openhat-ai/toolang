@@ -118,7 +118,7 @@ Use these commands to run and manage agents. Add `--help` to any command for its
 too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
-too [agent] shell                     # Open a shell in the Toolang root or agent home
+too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background
 too stop <agent>                      # Stop a running agent
