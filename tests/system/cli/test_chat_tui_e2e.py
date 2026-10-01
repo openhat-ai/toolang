@@ -557,8 +557,10 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+@pytest.mark.parametrize("clear_before_run", [False, True])
 def test_chat_run_status_stays_above_queue_and_input_in_terminal(
     tmp_path: Path,
+    clear_before_run: bool,
 ) -> None:
     bootstrap = """
 import runpy
@@ -602,7 +604,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
         rendered_width = tmp_path / "run-status-width"
 
         def wait_for_layout(
-            *, queued: bool, running: bool, columns: int = 100
+            *, queued: bool, running: bool, columns: int = 100, startup: bool = False
         ) -> list[str]:
             deadline = time.monotonic() + 10
             lines: list[str] = []
@@ -634,6 +636,14 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                     and len(session_rows[0].rstrip()) == columns - 2
                 ):
                     surface = queue_rows[0] if queued else input_rows[0] - 1
+                    if startup:
+                        header_bottom = next(
+                            i for i, line in enumerate(lines) if line.startswith("╰")
+                        )
+                        if surface == header_bottom + 2:
+                            return lines
+                        time.sleep(0.02)
+                        continue
                     status = lines[surface - 1] if surface >= 2 else "invalid"
                     elapsed = bool(
                         re.fullmatch(
@@ -666,9 +676,16 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                 "Input did not move to the top after clear:\n" + "\n".join(lines)
             )
 
-        wait_for_layout(queued=False, running=False)
-        clear_and_wait_for_top_input()
+        initial = wait_for_layout(queued=False, running=False, startup=True)
+        initial_input_row = next(
+            i for i, line in enumerate(initial) if "Ask or describe" in line
+        )
+        if clear_before_run:
+            clear_and_wait_for_top_input()
         pane.send_keys("hold status", enter=True)
+        running = wait_for_layout(queued=False, running=True)
+        control_row = next(i for i, line in enumerate(running) if "hold status" in line)
+        assert control_row == (1 if clear_before_run else initial_input_row)
         for queued in (False, True):
             if queued:
                 pane.send_keys("queued follow-up", enter=True)

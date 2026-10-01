@@ -381,7 +381,7 @@ class ChatTuiApp:
         self._status_elapsed_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
         self._footer_row_floor = 0
-        self._run_status_collapsed = False
+        self._run_status_collapsed = True
         self.progress_max_width = progress_max_width
         self.surfaces = surfaces
         self.presenter = ChatRunPresenter(
