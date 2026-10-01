@@ -162,6 +162,7 @@ async def _queue_test_app() -> AsyncIterator[tuple[tui.ChatTuiApp, _TerminalOutp
             client=FakeClient(),
         )
         app.active_run_id = "run_busy"
+        app._set_status_running(True)
         for source in ("first", "second", "third"):
             app.handle_submit(source)
         with set_app(app.app):
@@ -5475,6 +5476,41 @@ def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
 
 
 @pytest.mark.parametrize("rows", [4, 5, 6, 30])
+def test_chat_initial_input_and_first_control_share_the_live_origin(
+    rows: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        output = _TerminalOutput()
+        output.rows = rows
+        with create_app_session(input=DummyInput(), output=output):
+            app = tui.ChatTuiApp(
+                thread_id="term_new",
+                setting=FakeClient().initial_setting(),
+                home="/tmp/agent",
+                input_history=None,
+                client=FakeClient(),
+            )
+            monkeypatch.setattr(tui.threading.Thread, "start", lambda self: None)
+            with set_app(app.app):
+                app.prompt.replace_input("hello")
+                initial = _render_chat_layout(app)
+                assert "class:input" in initial.data_buffer[0][1].style
+                assert _screen_lines(initial, output.columns)[1].strip() == "hello"
+
+                # Give the submitted control room to remain fully visible.
+                output.rows = 30
+                app.handle_ui_event(ChatUIEvent("submit", "hello"))
+                submitted = _render_chat_layout(app)
+                lines = _screen_lines(submitted, output.columns)
+                assert "hello" in lines[1]
+                assert any("Working" in line for line in lines)
+                assert "Ask or describe" in "\n".join(lines)
+            await app.app.cancel_and_wait_for_background_tasks()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("rows", [4, 5, 6, 30])
 def test_chat_tui_clear_collapses_run_spacing_until_next_run(rows: int) -> None:
     async def exercise() -> None:
         async with _queue_test_app() as (app, output):
@@ -6580,9 +6616,8 @@ def test_chat_live_steer_feedback_has_blank_rows_before_queue(accepted: int) -> 
             assert "pending" in lines[status_row]
             assert not lines[status_row - 1].strip()
             assert not lines[status_row + 1].strip()
-            assert all(
-                not line.strip() for line in lines[status_row + 2 : status_row + 4]
-            )
+            assert not lines[status_row + 2].strip()
+            assert lines[status_row + 3].strip() == "Working"
             assert "3 queued" in lines[status_row + 4]
             # The upper gap is outside the padded control bar.
             assert _cell_attrs(app, screen, status_row - 1, 0).bgcolor == ""
