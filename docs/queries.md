@@ -26,6 +26,7 @@ and empty arrays display `-`. Locations remain complete for copying.
 Model REF continuation lines are right-aligned; other fields start on the second
 line when the ref wraps. Model `CONTEXT` and `MAX_OUTPUT` display comma thousands
 separators, while JSON and query values remain integers.
+Model `MAX_OUTPUT`, `PRICE`, and `OUTPUT` columns are right-aligned.
 
 ### Canonical and inspection records
 
@@ -57,7 +58,8 @@ Inspection records retain canonical fields and add these shortcuts:
 
 Price uses `f"{input_price:6.2f} /{output_price:6.2f}"` in per-million-token units:
 `"  1.00 /  2.00"`. Each side is space-padded to a minimum width of six;
-an unknown side uses `-` at that width. JSON and human output retain the padding.
+an unknown side uses `-` at that width. If both sides are unknown, `price` is a
+single `"-"`. JSON and human output retain the same string and padding.
 Original numeric cost/limit fields remain queryable without display rounding.
 Missing scalar shortcuts are null; missing lists are empty arrays. `price` and
 `models` always remain formatted strings.

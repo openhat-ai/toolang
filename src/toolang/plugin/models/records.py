@@ -20,7 +20,9 @@ def model_record(model: Model) -> dict[str, Any]:
         tags=list(model._toolang.tags),
         context=model.limit.get("context"),
         max_output=model.limit.get("output"),
-        price=f"{_price(cost.get('input'))} /{_price(cost.get('output'))}",
+        price=f"{_price(cost.get('input'))} /{_price(cost.get('output'))}"
+        if any(type(cost.get(key)) in (int, float) for key in ("input", "output"))
+        else "-",
         input=list(model.modalities.get("input", ())),
         output=list(model.modalities.get("output", ())),
         features=[

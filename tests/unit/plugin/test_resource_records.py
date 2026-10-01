@@ -336,7 +336,7 @@ def test_inline_cap_has_here_scope_and_form_without_kind_tags():
         (123, 456, "123.00 /456.00"),
         (1234, 0.003, "1234.00 /  0.00"),
         (None, 0, "     - /  0.00"),
-        (None, None, "     - /     -"),
+        (None, None, "-"),
     ],
 )
 def test_inspection_price_preserves_padding_and_canonical_precision(

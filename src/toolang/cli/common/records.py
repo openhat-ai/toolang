@@ -23,6 +23,7 @@ def echo_records(
     *,
     json_: bool,
     align_ref_continuations: bool = False,
+    right_align: Sequence[str] = (),
 ) -> None:
     if json_:
         typer.echo(json.dumps(records, ensure_ascii=False, separators=(",", ":")))
@@ -80,6 +81,9 @@ def echo_records(
         echo_table(
             tuple(column.upper() for column in columns),
             rows,
+            justify=tuple(
+                "right" if column in right_align else "left" for column in columns
+            ),
             max_widths=tuple(40 if column == "ref" else None for column in columns),
         )
 

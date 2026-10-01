@@ -90,6 +90,7 @@ Each number has a minimum width of six characters, two decimal places, and
 space padding on the left, never zero padding. There is one literal space before
 `/`; any spaces after it are the output number's own left padding. Larger values
 expand without truncation. An unknown side is `-`, right-aligned to width six.
+If both sides are unknown, the entire price string is a single `"-"`.
 Keep this exact string, including padding, in inspection JSON and human output.
 
 ```json
@@ -227,6 +228,7 @@ preferably after `/`, without truncating or inserting visible characters. Short
 refs stay on one line; JSON and query values remain unchanged.
 In model tables, continuation lines align to the right edge of the REF column;
 the other cells of a wrapped row start on its second line.
+Model `MAX_OUTPUT`, `PRICE`, and `OUTPUT` columns are right-aligned.
 
 Human cells render arrays as comma-separated values in record order, and null
 or empty arrays as `-`. Model `CONTEXT` and `MAX_OUTPUT` cells use comma thousands

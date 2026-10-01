@@ -77,6 +77,7 @@ def models_command(
         MODEL_COLUMNS,
         json_=json_,
         align_ref_continuations=True,
+        right_align=("max_output", "price", "output"),
     )
     if not json_:
         echo_collection_summary(
