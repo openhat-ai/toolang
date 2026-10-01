@@ -935,7 +935,9 @@ invalid or unavailable locations return HTTP 400. In a guest sandbox,
 availability requires a matching captured mount and an existing guest directory.
 
 `too AGENT workspace list` uses this endpoint while the agent is running. Without
-a server it prepares local State and inspects host directories. Execution CLI
+a server it prepares local State and inspects host directories. Inspection of a
+running roaming agent keeps its runtime workspace defaults; it does not add an
+automatic source workspace. Execution CLI
 commands parse local directory grants but leave named workspace URI validation
 to the embedded executor or remote server; client configuration and filesystem
 paths do not determine remote availability.

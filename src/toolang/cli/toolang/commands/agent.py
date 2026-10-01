@@ -224,11 +224,17 @@ def info_agent(
     workspace_names = tuple(setup.workspace_grants(state.workspaces))
     if status.status == "running":
         inspection = user_call(
-            running_workspace_inspection, layout, workdir=selection.workdir
+            running_workspace_inspection,
+            layout,
+            workdir=None if selection.automatic else selection.workdir,
         )
         if inspection is not None:
             user_call(validate_running_workspace_additions, inspection, selection)
             workspace_names = tuple(item.name for item in inspection.items)
+    else:
+        from toolang.execution.executor.resources import workspace_inspection
+
+        user_call(workspace_inspection, setup, state, workdir=selection.workdir)
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),

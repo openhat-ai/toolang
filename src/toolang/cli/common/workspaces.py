@@ -54,6 +54,7 @@ _URI = re.compile(r"^[^/=]+://")
 class InvocationWorkspaces:
     additions: Mapping[str, str]
     workdir: str | None
+    automatic: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "additions", MappingProxyType(dict(self.additions)))
@@ -100,6 +101,7 @@ def resolve_workspaces(
         return workspace_uri(name)
 
     selected = None
+    automatic = False
     for value in paths:
         selected = add(value, f"-w {value}")
     if workdir is not None:
@@ -112,7 +114,8 @@ def resolve_workspaces(
             selected = add(workdir, f"--workdir {workdir}")
     elif not paths and srcdir is not None and not no_auto:
         selected = add(f"={srcdir}", "automatic source workspace")
-    return InvocationWorkspaces(additions, selected)
+        automatic = True
+    return InvocationWorkspaces(additions, selected, automatic=automatic)
 
 
 def inspect_workspaces(
@@ -181,7 +184,9 @@ def inspect_workspace_selection(
     layout: AgentLayout, selection: InvocationWorkspaces
 ) -> WorkspaceInspection:
     """Inspect live runtime grants, or prepare a standalone host State."""
-    inspection = running_workspace_inspection(layout, workdir=selection.workdir)
+    inspection = running_workspace_inspection(
+        layout, workdir=None if selection.automatic else selection.workdir
+    )
     if inspection is not None:
         validate_running_workspace_additions(inspection, selection)
         return inspection
@@ -199,6 +204,10 @@ def inspect_workspace_selection(
 def validate_running_workspace_additions(
     inspection: WorkspaceInspection, selection: InvocationWorkspaces
 ) -> None:
+    # Inspection defaults belong to the running agent; source-directory defaults
+    # only apply when preparing a standalone host State.
+    if selection.automatic:
+        return
     bindings = {item.name: item.path for item in inspection.items}
     if any(bindings.get(name) != path for name, path in selection.additions.items()):
         raise ValueError(

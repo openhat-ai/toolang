@@ -112,3 +112,44 @@ def test_guest_workspace_added_after_launch_is_not_reported_available(
             )
     finally:
         asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("guest", [False, True])
+def test_workspace_inspection_accepts_symlinked_runtime_root(
+    tmp_path, monkeypatch, guest
+):
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.home.mkdir(parents=True)
+    target = tmp_path / "target"
+    (target / "src").mkdir(parents=True)
+    link = tmp_path / "repo"
+    link.mkdir()
+    layout.config.write_text(f'[workspaces]\nrepo = "{link}"\n')
+    core = AgentCore(layout)
+    asyncio.run(core.state.refresh())
+    link.rmdir()
+    link.symlink_to(target, target_is_directory=True)
+    environment = AgentEnvironment.capture(layout, sandbox="host")
+    if guest:
+        environment = replace(
+            environment,
+            sandbox="docker",
+            workspace_location="guest",
+            workspace_mounts={
+                "lab": (layout.home / "lab", layout.home / "lab"),
+                "repo": (link, link),
+            },
+        )
+    setup = AgentSetup(layout=layout, envs={}, environment=environment)
+    monkeypatch.setattr(core.setup, "current", lambda: setup)
+    try:
+        with TestClient(
+            create_app(core, CapsManager(layout), JobsManager(layout))
+        ) as client:
+            response = client.get(
+                "/api/v1/workspaces", params={"workdir": "repo://src"}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["workdir"] == "repo://src"
+    finally:
+        asyncio.run(core.close())

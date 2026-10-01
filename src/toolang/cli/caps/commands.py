@@ -365,7 +365,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                     progress=progress.sink,
                 )
                 name = cap_state.remote_entry_name(kind, canonical_ref)
-                _configured_caps(context_root(ctx), agent_name, scope).create(
+                entry = _configured_caps(context_root(ctx), agent_name, scope).create(
                     cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
                 )
                 if selected_agent:
@@ -387,15 +387,6 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                     f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
                 ) from exc
             raise ClickException(f"Configured {kind} {ref} not found") from exc
-        entry = _named_entry(
-            context_root(ctx),
-            agent_name,
-            scope=scope,
-            kind=kind,
-            name=name,
-            source_origin="remote",
-            source_form="configured",
-        )
         typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")
 
     return add_cap
@@ -411,16 +402,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        entry = _named_entry(
-            context_root(ctx),
-            agent_name,
-            scope=scope,
-            kind=kind,
-            name=name,
-            source_origin="remote",
-            source_form="configured",
-        )
-        user_call(
+        entry = user_call(
             _configured_caps(context_root(ctx), agent_name, scope).remove,
             kind,
             name,
@@ -445,21 +427,12 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        entry = _named_entry(
-            context_root(ctx),
-            agent_name,
-            scope=scope,
-            kind=kind,
-            name=name,
-            source_origin="local",
-            source_form="authored",
-        )
-        deleted_path = context_root(ctx) / entry.source.path
-        user_call(
+        entry = user_call(
             _authored_caps(context_root(ctx), agent_name, scope).remove,
             kind,
             name,
         )
+        deleted_path = entry.path.parent if kind == "skill" else entry.path
         if selected_agent:
             _refresh_agent_state(
                 context_root(ctx),

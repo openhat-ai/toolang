@@ -408,6 +408,7 @@ def workspace_inspection(
     name, relative = parse_cwd(selected)
     if name not in available:
         raise ToolangError(f"workspace is not available: {name}")
-    if not authorize_workspace_path(roots[name] / relative, roots[name]).is_dir():
+    root = roots[name].resolve()
+    if not authorize_workspace_path(root / relative, root).is_dir():
         raise ToolangError(f"workdir is not a directory: {selected}")
     return WorkspaceInspection(revision=state.revision, items=items, workdir=selected)

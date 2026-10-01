@@ -3659,3 +3659,57 @@ def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monke
     assert str(project) not in result.stdout
     assert "temporary" in result.stdout
     assert str(temporary) in result.stdout
+
+
+@pytest.mark.parametrize("workdir", ["missing://", "lab://missing"])
+def test_offline_agent_info_validates_workdir(tmp_path, monkeypatch, workdir):
+    _create_agent(tmp_path)
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+
+    result = _invoke(tmp_path, "alice", "info", "--workdir", workdir)
+
+    assert result.exit_code == 1
+    assert "workspace is not available" in result.stderr or (
+        "workdir is not a directory" in result.stderr
+    )
+
+
+@pytest.mark.parametrize("command", [("workspace", "list"), ("info",)])
+def test_running_roaming_inspection_preserves_runtime_workspaces(
+    tmp_path, monkeypatch, capsys, command
+):
+    from toolang.cli.common.client import RuntimeClient
+
+    source = tmp_path / "demo.too"
+    source.write_text(
+        templates.render_template("agent", agent_name="demo", name="demo")
+    )
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda self, **kwargs: agents.AgentStatus(
+            name="demo",
+            status="running",
+            endpoint="http://runtime.test",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker",
+        ),
+    )
+    requests = []
+
+    def get(self, path):
+        requests.append(path)
+        return {
+            "revision": "a" * 64,
+            "items": [{"name": "lab", "path": "/host/lab", "available": True}],
+            "workdir": "lab://",
+        }
+
+    monkeypatch.setattr(RuntimeClient, "get", get)
+    result = cli.main([str(source), *command])
+    output = capsys.readouterr()
+
+    assert result == 0, output.err
+    assert requests == ["/api/v1/workspaces"]
