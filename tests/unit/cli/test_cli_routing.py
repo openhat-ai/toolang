@@ -61,6 +61,96 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
     assert set(group.commands) == set(COMMAND_SPECS)
 
 
+@pytest.mark.parametrize("target", ["resident", "url", "github", "source"])
+@pytest.mark.parametrize("options", [[], ["--all"], ["--query", "english-coach"]])
+@pytest.mark.parametrize(
+    "command",
+    [["caps"], *[[kind, "list"] for kind in ("psyche", "skill", "service", "prompt")]],
+)
+def test_caps_inspects_the_selected_agent_layout(
+    tmp_path, monkeypatch, capsys, target, options, command
+):
+    from toolang.cli.caps import commands
+
+    source = tmp_path / "lex.too"
+    source.write_text(
+        "psyche english-coach:\n  Help the user practice English.\n\nagic:\n  {{_}}\n"
+    )
+    root = tmp_path / "root"
+    if target == "source":
+        layout = AgentLayout.roaming(source)
+        selector = str(source)
+    else:
+        placement = "resident" if target == "resident" else "visiting"
+        layout = AgentLayout(root, "lex", placement)
+        layout.home.mkdir(parents=True)
+        layout.program.write_text(source.read_text())
+        selector = {
+            "resident": "lex",
+            "url": "https://example.com/lex.too",
+            "github": "example/lex",
+        }[target]
+        monkeypatch.setattr(
+            agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+        )
+
+    prepare = commands.prepare_agent_state
+    prepared = []
+
+    def inspect(selected, **kwargs):
+        prepared.append(selected)
+        return prepare(selected, **kwargs)
+
+    monkeypatch.setattr(commands, "prepare_agent_state", inspect)
+    args = [selector, *command, *options]
+    if target != "source":
+        args = ["--root", str(root), *args]
+    assert _call_main(args) == 0
+    output = capsys.readouterr()
+    if command[0] in {"caps", "psyche"}:
+        assert "english-coach" in output.out
+    else:
+        assert f"0 {command[0]}s" in output.out
+    assert prepared == [layout]
+
+
+@pytest.mark.parametrize("target", ["url", "github", "source"])
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+@pytest.mark.parametrize("operation", ["new", "edit", "add", "remove", "delete"])
+def test_nonresident_cap_mutations_remain_rejected(
+    target, kind, operation, tmp_path, monkeypatch, capsys
+):
+    from toolang.cli.caps import commands
+
+    source = tmp_path / "lex.too"
+    source.write_text("agic:\n  Reply directly.\n")
+    layout = AgentLayout(tmp_path / "cache", "lex", "visiting")
+    selectors = {
+        "url": "https://example.com/lex.too",
+        "github": "example/lex",
+        "source": str(source),
+    }
+    monkeypatch.setattr(
+        agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+    )
+    monkeypatch.setattr(
+        commands, "edit_markdown", lambda *_args: pytest.fail("must not open editor")
+    )
+    monkeypatch.setattr(
+        commands.cap_state,
+        "resolve_remote_ref",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch a cap"),
+    )
+    assert _call_main([selectors[target], kind, operation, "example"]) == 1
+    assert (
+        "cap changes require a resident agent; clone the source first"
+        in capsys.readouterr().err
+    )
+    assert source.read_text() == "agic:\n  Reply directly.\n"
+    assert not layout.root.exists()
+    assert not (tmp_path / "toolang.toml").exists()
+
+
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
     group = typer.main.get_command(cli.app)
     assert isinstance(group, TyperGroup)
@@ -100,7 +190,7 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
         ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
-        ("skill", {"none", "before"}, {"resident"}),
+        ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("tools", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("providers", {"none", "before"}, {"resident", "roaming", "visiting"}),

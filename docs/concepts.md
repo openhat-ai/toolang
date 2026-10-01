@@ -71,6 +71,12 @@ Current placements are:
 Placement determines which root, home, source, and config files participate in
 runtime assembly. It does not define the semantic shape of one run.
 
+Inspection commands (`info`, `models`, `providers`, `tools`, `caps`,
+`psyche list`, `skill list`, `service list`, `prompt list`, `workspace list`,
+and `inspect`) use the selected placement. Cap mutations target root scope when
+no agent is selected, or the selected resident agent's home. Visiting and roaming
+caps are read-only through these commands; clone a shared agent to modify its caps.
+
 
 ## Agent Sandbox
 

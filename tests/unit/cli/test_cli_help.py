@@ -485,7 +485,6 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         "start",
         "stop",
         "_serve",
-        "workspace",
         "task",
         "chore",
     }:
@@ -503,12 +502,24 @@ def test_cap_agent_help_distinguishes_mutation_and_listing(
 ):
     assert main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
+    agent_help = (
+        "Agent name, .too file, reference, or URL"
+        if main is too_main
+        else "Local agent name"
+    )
     expected = (
         f"Modify the agent's home {kind}s; omit for root {kind}s"
         if command == "new"
-        else f"Local agent name; omit for root {kind}s only"
+        else f"{agent_help}; omit for root {kind}s only"
     )
     assert f"AGENT {expected}" in output
+
+
+@pytest.mark.parametrize("command", ["caps", "models", "providers", "tools"])
+def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
+    output = " ".join(strip_ansi(capsys.readouterr().out).split())
+    assert "AGENT Agent name, .too file, reference, or URL; omit for root" in output
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])

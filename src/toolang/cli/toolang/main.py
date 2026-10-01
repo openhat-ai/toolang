@@ -142,6 +142,16 @@ class _TargetAgentCommand(RequiredPrefixAgentCommand):
     argument_help = "Agent name, .too file, reference, or URL"
 
 
+class _TargetListCommand(OptionalPrefixAgentListCommand):
+    argument_help = "Agent name, .too file, reference, or URL; omit for root caps only"
+
+
+class _TargetSetupCommand(OptionalPrefixAgentSetupCommand):
+    argument_help = (
+        "Agent name, .too file, reference, or URL; omit for root configuration"
+    )
+
+
 class _ShellCommand(OptionalPrefixAgentCommand):
     argument_help = "Local agent name; omit for Toolang root"
 
@@ -462,14 +472,14 @@ _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
-    cls=OptionalPrefixAgentSetupCommand,
+    cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
     help="List available model providers",
-    cls=OptionalPrefixAgentSetupCommand,
+    cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(
@@ -483,7 +493,7 @@ _registered_command(
     "tools",
     "toolang.cli.toolang.commands.plugin:list_tools",
     help="List available tools",
-    cls=OptionalPrefixAgentSetupCommand,
+    cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
@@ -543,7 +553,7 @@ _registered_command(
     "caps",
     "toolang.cli.caps.commands:list_caps",
     help="List available caps",
-    cls=OptionalPrefixAgentListCommand,
+    cls=_TargetListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 
