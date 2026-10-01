@@ -185,6 +185,29 @@ def test_import_grouping_retains_source_order_and_documentation_barriers():
     assert format_source(formatted) == formatted
 
 
+@pytest.mark.parametrize("gap", ["", "\n", "\n\n"])
+@pytest.mark.parametrize("tab_size", [2, 4])
+@pytest.mark.parametrize(
+    "statement",
+    ["run: Work.", "scatter using discover", "repeat 2 times:\n    run: Work."],
+)
+def test_flow_preserves_authored_gap_after_directives(
+    gap: str, tab_size: int, statement: str
+) -> None:
+    source = (
+        "agic discover -> Text[]:\n  Discover items.\n\n"
+        f"flow work:\n  tools = fs/*\n{gap}  {statement}\n"
+    )
+
+    formatted = format_source(source, tab_size=tab_size)
+
+    assert (
+        f"tools = fs/*\n{gap}{' ' * tab_size}{statement.splitlines()[0]}" in formatted
+    )
+    assert _semantics(formatted) == _semantics(source)
+    assert format_source(formatted, tab_size=tab_size) == formatted
+
+
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("tab_size", [2, 4])
 def test_directives_group_stably_by_first_key_without_blank_lines(

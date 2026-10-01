@@ -781,6 +781,8 @@ def _preserves_blank_line(previous_kind: str | None, current_kind: str) -> bool:
         return True
     if previous_kind == "comment":
         return True
+    if previous_kind == "directive" and current_kind == "indented":
+        return True
     return previous_kind == current_kind and current_kind in {
         "message_body",
         "block_body",

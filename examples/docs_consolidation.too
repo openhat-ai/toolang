@@ -1,0 +1,196 @@
+#!/usr/bin/env too
+
+# mkdir -p ../toolang-docs
+# too examples/docs_consolidation.too \
+# -w code=. -w docs=../toolang-docs repo=code out=docs
+# Output: documents, glossary.md, migration.md, records/, and reviews.json.
+# Source files stay intact. Accept the result only when passed=true.
+
+psyche editor:
+  Follow repository guidance. Write concise English grounded in code and tests;
+  distinguish current behavior from plans. Remove duplication and stale claims,
+  preserve useful information, and give documents clear audiences and ownership.
+  Read from the repository workspace and write into the output workspace using
+  explicit workspace URIs. Exclude archive, dist, scratch, caches, and generated
+  files. Preserve uncertainty and report only checks actually performed.
+
+  For named agics, save the exact structured result at the record path in output
+  as {"run_id": "<current run>", "stage": "<current stage>", "result": ...}.
+  Preserve earlier runs' records. Copy the runtime-supplied ID, never invent one.
+  Hash file bytes with SHA-256; omit unavailable hashes and fail unreadable files.
+
+context provenance:
+  Current run: {{run.id}}
+  Current thread: {{run.thread_id}}
+  Current stage: {{runnable.name}}
+  Record path: records/{{runnable.name}}/{{run.id}}.json
+
+struct Document:
+  path: Text
+  sources: Text[]
+
+struct Finding:
+  issue: Text
+  change: Text
+  evidence: Text[]
+
+struct Review:
+  run_id: Text
+  path: Text
+  sha256?: Text
+  passed: Boolean
+  concepts: Text[]
+  evidence: Text[]
+  findings: Finding[]
+  checks: Text[]
+
+struct Job:
+  path: Text
+  instructions: Text
+  sources: Text[]
+  checks: Text[]
+  review_run_ids: Text[]
+
+struct Decision:
+  path: Text
+  action: Text
+  destinations: Text[]
+  reason: Text
+
+struct Plan:
+  documents: Job[]
+  decisions: Decision[]
+  review_run_ids: Text[]
+  blockers: Text[]
+
+struct Change:
+  run_id: Text
+  path: Text
+  sha256?: Text
+  changes: Text[]
+  blockers: Text[]
+
+struct FileReview:
+  path: Text
+  sha256?: Text
+  review_run_ids: Text[]
+  review_count: Number
+  passed: Boolean
+
+struct Result:
+  passed: Boolean
+  files: FileReview[]
+  findings: Text[]
+
+## Consolidate documentation with durable evidence and per-file review history.
+flow(repo: Text, out: Text) -> Result:
+  recall = none
+  context = provenance
+  lanes = 3
+  tools = fs/*, shell/*
+
+  scatter using discover
+  map using inspect
+  let plan = gather using organize
+  scatter using assign
+  map using write
+  scatter using collect
+  map using audit
+
+  repeat 2 times:
+    scatter using triage
+    map using write
+    scatter using collect
+    map using audit
+    until: Return true only if {{_}} is nonempty and every review passed.
+
+  gather using finish
+
+agic discover(repo: Text, out: Text) -> Document[]:
+  Repository: {{repo}}://; output: {{out}}://.
+
+  Verify granted, non-overlapping roots and empty output before writing records.
+
+  Inventory README and all documentation, including plans and drafts. Include each
+  source file once, with related implementation and test paths. Keep missing or
+  unreadable sources in the inventory.
+
+agic inspect(_: Document, repo: Text, out: Text) -> Review:
+  Repository: {{repo}}://; output: {{out}}://; document: {{_}}.
+
+  Review this source file against code and tests. Identify concept ownership and
+  definitions, stale claims, duplicates, conflicts, and omissions. Cite supporting
+  path:line evidence even when no issue is found. Give specific changes for findings.
+  Mark uncertainty and failed or unperformed checks explicitly.
+
+agic organize(_: Review[], repo: Text, out: Text) -> Plan:
+  Repository: {{repo}}://; output: {{out}}://; source reviews: {{_}}.
+
+  Reconcile all reviews against the inventory, investigating conflicts and gaps.
+  Plan document jobs and one keep/rewrite/merge/remove/defer decision for every
+  source file. Link the plan and relevant jobs to their source reviews.
+  Each job owns a unique path, purpose, concepts, and acceptance checks.
+
+  Include glossary.md for canonical terms, definitions, aliases, owning packages,
+  evidence, and links to detailed explanations. Include an entry index. Choose
+  document count by scope; link shared definitions instead of repeating them.
+
+  Write migration.md from the decisions. Reserve records/ and reviews.json for
+  provenance, not authored documents. Record unresolved decisions as blockers.
+
+agic assign(plan: Plan, out: Text) -> Job[]:
+  Output: {{out}}://; plan: {{plan}}.
+
+  Return its document jobs unchanged, excluding migration.md. Return [] if blocked.
+
+agic write(_: Job, plan: Plan, repo: Text, out: Text) -> Change:
+  Repository: {{repo}}://; output: {{out}}://; plan: {{plan}}; job: {{_}}.
+
+  Read the sources, then draft or minimally correct only the assigned output file.
+  Define only owned concepts and verify examples. Link to proposed or retained
+  files at final repository paths. Leave the repository, migration.md, and other
+  jobs' files intact.
+
+  A blocked plan produces no document writes.
+
+agic collect(plan: Plan, out: Text) -> Text[]:
+  Output: {{out}}://; plan: {{plan}}.
+
+  Return unique paths for every planned and actual deliverable, including
+  glossary.md and migration.md. Keep missing planned files so review catches them.
+  Exclude records/ and reviews.json: these are provenance, not review targets.
+
+agic audit(_: Text, plan: Plan, repo: Text, out: Text) -> Review:
+  Repository: {{repo}}://; output: {{out}}://; plan: {{plan}}; file: {{_}}.
+
+  Independently review this one final file against implementation and the plan.
+  Check concepts, duplication, omissions, examples, links and anchors, including
+  incoming links from retained files. Resolve the proposed repository by overlaying
+  output and excluding planned removals. Check glossary coverage and migration
+  completeness where applicable. Do not change deliverables during review.
+
+  Support findings with specific changes and path:line evidence. Distinguish
+  performed, failed, and unverified checks. Pass only with no material findings or
+  blockers; missing files and blocked plans must fail.
+
+agic triage(_: Review[], plan: Plan, out: Text) -> Job[]:
+  Output: {{out}}://; reviews: {{_}}; plan: {{plan}}.
+
+  Return one correction job per affected planned document, combining findings
+  with exact fixes, evidence, acceptance checks, and originating review run IDs.
+  Return [] when all pass. Keep architecture and migration.md issues as blockers
+  rather than inventing decisions or editing the plan. Preserve review records.
+
+agic finish(_: Review[], plan: Plan, out: Text) -> Result:
+  Output: {{out}}://; plan: {{plan}}; latest reviews: {{_}}.
+
+  Build reviews.json from saved audit records, using the same content as this
+  step's output. Cover every deliverable, including glossary.md and migration.md.
+  Count distinct audit runs across all versions of each file.
+  Keep source reviews under inspect. Saved run IDs and outputs are for human audit;
+  do not cross-check them against execution history.
+
+  A file passes only if its latest review passed and matches its current hash.
+  The set passes only with complete inventory and planned-file coverage, no plan
+  blockers, and every file passing. Report remaining findings on failure.
+  Do not modify deliverables or rewrite earlier records.
