@@ -110,7 +110,7 @@ def test_startup_cap_replacements_have_distinct_reproducible_revisions(
         pytest.fail("unchanged State must not recompute effective caps")
 
     layout.config.write_text('[allow]\nprompts = ["prompt/one"]\n')
-    monkeypatch.setattr(collections, "cap_dataset", no_query)
+    monkeypatch.setattr(collections, "cap_collection", no_query)
     assert asyncio.run(watcher.refresh()) is watcher.current()
     assert watcher.current() == denied
 
@@ -126,7 +126,7 @@ def test_unchanged_refresh_reuses_effective_caps(tmp_path, monkeypatch):
     def no_query(*_args, **_kwargs):
         pytest.fail("unchanged State must not recompute effective caps")
 
-    monkeypatch.setattr(collections, "cap_dataset", no_query)
+    monkeypatch.setattr(collections, "cap_collection", no_query)
     assert asyncio.run(watcher.refresh()) is state
     assert watcher.load(state.revision) is state
     assert state.caps_for("agent") is state.caps_for("agent")

@@ -22,18 +22,25 @@ def list_plugin_names(*, group: str) -> list[str]:
 
 
 def list_plugin_infos(*, group: str) -> list[PluginInfo]:
-    """Return installed plugin entry point names and sources for one family."""
+    """Return installed plugin names and distribution packages without loading."""
 
     return sorted(
         (
             PluginInfo(
                 name=entry_point.name,
-                source=_entry_point_plugin_source(entry_point),
+                package=_entry_point_package(entry_point),
             )
             for entry_point in entry_points(group=group)
         ),
         key=lambda item: item.name,
     )
+
+
+def _entry_point_package(entry_point: object) -> str | None:
+    dist = getattr(entry_point, "dist", None)
+    metadata = getattr(dist, "metadata", None)
+    name = metadata.get("Name") if metadata is not None else None
+    return name.strip() if isinstance(name, str) and name.strip() else None
 
 
 def plugin_provenance(*, group: str) -> tuple[PluginProvenance, ...]:

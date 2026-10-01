@@ -40,7 +40,6 @@ from toolang.execution.types import (
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import StateCap
 from toolang.state.watcher import StateWatcher
-from toolang.setup import ModelCollection
 
 
 SOURCE = """
@@ -365,7 +364,7 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
     entry = harness.setup.models_effective()[0]
     harness.setup = replace_materialized_setup(
         harness.setup,
-        models=ModelCollection((replace(entry, tool_call=False),)),
+        models=(replace(entry, tool_call=False),),
     )
 
     async def scenario():

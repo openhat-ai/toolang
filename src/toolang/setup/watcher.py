@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 import logging
 from pathlib import Path
@@ -464,10 +465,21 @@ def _build_setup(
             model.with_allowed(model.ref in allowed_refs) for model in ordered_models
         ]
         models_effective = [model for model in models if model._toolang.effective_ready]
-        providers = list(resolved.providers.values())
-        effective_provider_ids = {model._toolang.provider for model in models_effective}
+        model_counts = Counter(model.provider for model in models)
+        ready_counts = Counter(model.provider for model in models_effective)
+        providers = [
+            replace(
+                provider,
+                _toolang=replace(
+                    provider._toolang,
+                    model_count=model_counts[provider.id],
+                    ready_count=ready_counts[provider.id],
+                ),
+            )
+            for provider in resolved.providers.values()
+        ]
         providers_effective = [
-            provider for provider in providers if provider.id in effective_provider_ids
+            provider for provider in providers if provider._toolang.ready_count > 0
         ]
         if validate_defaults and compact.model is not None:
             select_compact_model(models_effective, compact.model)

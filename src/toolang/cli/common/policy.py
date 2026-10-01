@@ -9,7 +9,7 @@ from toolang.base.model_settings import compose_model_overrides, parse_model_bod
 from toolang.base.money import normalize_cost
 from toolang.base.types.model import ModelOverride
 from toolang.common.errors import ToolangError
-from toolang.common.query import resolve_query_sentinels
+from toolang.common.policy import resolve_query_sentinels
 
 _ALLOW_FIELDS = (
     "models",

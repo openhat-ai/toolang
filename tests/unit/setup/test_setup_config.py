@@ -10,7 +10,6 @@ from toolang.base.types.model import (
     Reasoning,
 )
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
-from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.setup.config import (
     load_agent_config,
@@ -224,8 +223,9 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
 
 
 def test_setup_policy_validates_owned_collection_queries() -> None:
-    with pytest.raises(ToolangError, match="unknown models query field"):
-        resolve_setup_allow(({"allow": {"models": ["*[missing=value]"]}},))
+    assert resolve_setup_allow(
+        ({"allow": {"models": ["*[missing=value]"]}},)
+    ).models == ("*[missing=value]",)
     with pytest.raises(ValueError, match="invalid default runnable ref"):
         resolve_run_defaults(({"default": {"runnable": "*[missing=value]"}},))
 

@@ -27,7 +27,7 @@ from toolang.state.prepare import (
 from ..common.context import context_agent, context_layout, context_root, user_call
 from ..common.help import CliCommand
 from ..common.output import echo_block, echo_collection_summary, echo_table
-from ..common.query import query_items
+from ..common.records import check_output_options, echo_records
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
@@ -187,38 +187,52 @@ def list_caps(
             "--query",
             "-q",
             metavar="QUERY",
-            help="Query cap collections. Repeat to add matches; see 'too query'",
+            help="TQ query; repeat for union. See --json for fields",
         ),
     ] = None,
     all_: Annotated[
         bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
     ] = False,
+    json_: Annotated[
+        bool, typer.Option("--json", help="Write public cap records as JSON")
+    ] = False,
+    human: Annotated[
+        bool, typer.Option("--human", help="Display a table (default)")
+    ] = False,
 ) -> None:
-    from toolang.state.collections import cap_table, query_cap_views
+    from toolang.state.collections import query_cap_views
+
+    check_output_options(human=human, json_=json_)
 
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
-    entries, allowed = _cap_entries(
+    layout = (
         context_layout(ctx)
         if selected_agent is not None
-        else AgentLayout.resident(context_root(ctx), agent_name),
+        else AgentLayout.resident(context_root(ctx), agent_name)
+    )
+    entries, allowed = _cap_entries(
+        layout,
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
     selected = user_call(
         query_cap_views,
         entries if all_ else allowed,
+        root=layout.root,
         agent_name=agent_name,
         queries=query,
+        allowed=_allowed_cap_keys(allowed),
     )
-    headers, rows = cap_table(
-        selected, allowed=_allowed_cap_keys(allowed) if all_ else None
+    echo_records(
+        [view.data for view in selected],
+        ("ref", "description", "location", "tags"),
+        json_=json_,
     )
-    if rows:
-        echo_table(headers, rows)
-    echo_collection_summary(
-        len(selected), "cap", group=(len({cap.kind for cap in selected}), "kind")
-    )
+    if not json_:
+        echo_collection_summary(
+            len(selected), "cap", group=(len({cap.kind for cap in selected}), "kind")
+        )
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
@@ -230,34 +244,50 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 "--query",
                 "-q",
                 metavar="QUERY",
-                help=(f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'"),
+                help="TQ query; repeat for union. See --json for fields",
             ),
         ] = None,
         all_: Annotated[
             bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
         ] = False,
+        json_: Annotated[
+            bool, typer.Option("--json", help="Write public cap records as JSON")
+        ] = False,
+        human: Annotated[
+            bool, typer.Option("--human", help="Display a table (default)")
+        ] = False,
     ) -> None:
-        from toolang.state.collections import cap_dataset, cap_table
+        from toolang.state.collections import cap_collection
+
+        check_output_options(human=human, json_=json_)
 
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
-        entries, allowed = _cap_entries(
+        layout = (
             context_layout(ctx)
             if selected_agent is not None
-            else AgentLayout.resident(context_root(ctx), agent_name),
+            else AgentLayout.resident(context_root(ctx), agent_name)
+        )
+        entries, allowed = _cap_entries(
+            layout,
             prepare=selected_agent is not None,
             kinds={kind},
         )
-        dataset = cap_dataset(
-            entries if all_ else allowed, agent_name=agent_name, kind=kind
+        dataset = cap_collection(
+            entries if all_ else allowed,
+            root=layout.root,
+            agent_name=agent_name,
+            kind=kind,
+            allowed=_allowed_cap_keys(allowed),
         )
-        selected = query_items(dataset, query)
-        headers, rows = cap_table(
-            selected, kind=kind, allowed=_allowed_cap_keys(allowed) if all_ else None
+        selected = user_call(dataset.query, query)
+        echo_records(
+            [view.data for view in selected],
+            ("ref", "description", "location", "tags"),
+            json_=json_,
         )
-        if rows:
-            echo_table(headers, rows)
-        echo_collection_summary(len(selected), kind)
+        if not json_:
+            echo_collection_summary(len(selected), kind)
 
     return list_caps
 

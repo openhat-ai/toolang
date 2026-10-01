@@ -38,7 +38,7 @@ def test_builtin_factories_and_inspection_share_registered_identities(
     assert {
         info.name
         for info in list_plugin_infos(group=group)
-        if info.source == "built-in"
+        if info.package == "toolang"
     } == names
 
     for name, entry in entries.items():

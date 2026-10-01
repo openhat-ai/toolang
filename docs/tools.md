@@ -26,12 +26,14 @@ are loaded on first accessor use and memoized within that setup revision.
 `me/*` follows normal allow policy in the default view and appears with `--all`.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
-not guessed tools from an unloadable plugin. Full tables add one `STATUS` column
-at the end: `ok` or `blocked`. Internal tools are identifiable
-by their `_toolang` names without an extra label. Default tables show only name
-and description; SOURCE is omitted from both tool views but remains queryable.
-Summaries use `N tools, M toolsets`, with no toolset count for zero or one tool.
-Empty results print only `0 tools`. `-a` is an alias for `--all`.
+not guessed tools from an unloadable plugin. Both views show `REF`, `DESCRIPTION`, and `TAGS`, taken directly from the
+record fields `ref`, `description`, and `tags`. Tags are `ready` or `not_allowed`; internal tools retain
+copyable `_toolang/name` refs. `--json` emits the same public records used for
+native TQ matching. `--human` explicitly selects the default table; the flags
+cannot combine. See [Resource Queries](queries.md) for fields and syntax.
+Human summaries use `N tools, M toolsets`, omitting the toolset count for zero
+or one tool. Empty human results print `0 tools`; empty JSON is `[]`.
+`-a` is an alias for `--all`.
 `too toolsets [--all]` instead lists locally installed toolset plugins, without
 agent configuration, policy, or factory loading.
 

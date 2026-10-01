@@ -12,7 +12,7 @@ from toolang.base.types.model import Model
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
-    resolve_public_runnable_query,
+    resolve_runnable_reference,
     available_runnable_defaults,
     runnable_binding_defaults,
 )
@@ -25,7 +25,6 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     model_reasoning_effort_exhaustive,
 )
-from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
 from toolang.state.schemas import WorkspaceInspection
@@ -89,11 +88,11 @@ def tools(
     query: list[str] | None = Query(default=None),
 ) -> dict[str, object]:
     try:
-        dataset = tool_dataset(core.setup.current().tools())
+        dataset = core.setup.current().tools()
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        selected = dataset.query(query) if query is not None else dataset.items
+        selected = dataset.query(query)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -148,7 +147,7 @@ async def prompt_completions(
         else:  # pragma: no cover - runnable fallback invariant
             raise HTTPException(status_code=500, detail="chat has no default runnable")
     try:
-        module = resolve_public_runnable_query(state, selected).module
+        module = resolve_runnable_reference(state, selected).module
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     program = state_program(state, module)
@@ -335,7 +334,7 @@ def _model_item(
     return {
         "ref": ref,
         "name": model.name,
-        "provider": model._toolang.provider,
+        "provider": model.provider,
         "parameters": {
             "reasoning": {
                 "effort": list(efforts),

@@ -321,7 +321,7 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
 def test_accounting_selects_advertised_mode_price() -> None:
     model = _model(
         {"input": 1, "output": 2},
-        provider=ModelProvider(mode="fast"),
+        override=ModelProvider(mode="fast"),
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
     )
     accounting = build_model_accounting(
@@ -465,19 +465,20 @@ def _target() -> Model:
 def _model(
     cost: dict[str, object] | None = None,
     *,
-    provider: ModelProvider | None = None,
+    override: ModelProvider | None = None,
     experimental: dict[str, object] | None = None,
 ) -> Model:
     return Model(
         id="one",
         name="One",
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         reasoning=True,
         modalities={"input": ("text",), "output": ("text",)},
         limit={"context": 1000},
         cost=cost,
-        provider=provider,
+        override=override,
         experimental=experimental,
+        provider="test",
     )
 
 

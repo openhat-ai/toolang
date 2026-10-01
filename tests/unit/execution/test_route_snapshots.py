@@ -375,6 +375,22 @@ def test_entry_fallback_prefers_the_unnamed_entry_or_fails(
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("as_state", [False, True])
+def test_runnable_binding_preserves_module_qualification(kind, as_state):
+    from toolang.execution.runnables import runnable_binding_defaults
+
+    state = _state(f"{kind} main:\n  pass\n")
+    program = state if as_state else state.modules["agent"]
+    expected = ("main", None) if kind == "agic" else (None, "main")
+    assert (
+        runnable_binding_defaults(program, f"agent::{kind}:main", fallback_agic="chat")
+        == expected
+    )
+    with pytest.raises(ToolangError, match="Runnable not found"):
+        runnable_binding_defaults(program, f"other::{kind}:main", fallback_agic="chat")
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("authored_name", ["main"])
 def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
     kind, authored_name, capsys
@@ -384,7 +400,6 @@ def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
 
     from toolang.cli.toolang.commands.script import _program_command
     from toolang.execution.runnables import runnable_signature
-    from toolang.state.runnable_collections import runnable_dataset
 
     input_doc = "Primary request."
     parameter_doc = "Topic details. " * 80
@@ -434,8 +449,6 @@ agic caller:
             }
         ]
     )
-    item = next(item for item in runnable_dataset(state).items if item.name == "main")
-    assert item.description == entry["documentation"]
     rendered = _document(_render(state, routes))
     assert {item["tag"] for item in rendered} == {"hands", "handoffs"}
     assert all(item["input"] == contract["input"] for item in rendered)

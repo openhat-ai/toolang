@@ -105,7 +105,7 @@ def test_cost_selection_survives_numeric_record_round_trip(
     amount: float | None,
     complete: bool | None,
 ) -> None:
-    model = Model("one", "One", ModelToolang(provider="test"), cost=rates)
+    model = Model("one", "One", ModelToolang(), cost=rates, provider="test")
     accounting = build_model_accounting(model, usage)
     assert accounting is not None and accounting.selected == selected
     noted = ModelStepNoted(accounting=accounting, continuation={"cursor": "after"})

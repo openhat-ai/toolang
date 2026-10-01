@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import Model, Reasoning
-from toolang.plugin.models.collections import ModelCollection
-
-
-def build_model_collection(models: Sequence[Model]) -> ModelCollection:
-    """Compile resolved catalog models into one immutable effective collection."""
-
-    return ModelCollection(tuple(models))
 
 
 def model_reasoning_controls(model: Model) -> tuple[Mapping[str, object], ...]:

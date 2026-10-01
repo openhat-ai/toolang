@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypeAlias, cast
+from typing import Literal, TypeAlias
 
 from toolang.base.errors import ToolangError
 from toolang.lang.ast import (
@@ -19,7 +18,6 @@ from toolang.state.state import (
     program_runnable_index,
     state_program,
 )
-from toolang.state.runnable_collections import runnable_dataset
 
 Runnable: TypeAlias = AgicDecl | FlowDecl
 RUNNABLE_DOCUMENTATION_MAX_CHARS = 512
@@ -118,20 +116,23 @@ def resolve_agic_routes(
         ("run", hands),
         ("execute", handoffs),
     )
-    dataset = runnable_dataset(state)
+    index = getattr(state, "runnables", None)
+    if index is None:
+        index = program_runnable_index(state_program(state))
+    targets = tuple(resolve_public_runnable(state, name) for name in index)
     for route_action, references in groups:
         if not references or references == ("none",):
             continue
         if references == ("*",):
-            selected = dataset.items
+            selected = targets
         else:
             refs = tuple(parse_runnable_ref_parts(value) for value in references)
             selected = tuple(
                 item
-                for item in dataset.items
+                for item in targets
                 if any(
                     item.name == ref.name
-                    and (ref.kind is None or item.kind == ref.kind)
+                    and (ref.kind is None or item.executable.kind == ref.kind)
                     and (ref.module is None or item.module == ref.module)
                     for ref in refs
                 )
@@ -140,7 +141,7 @@ def resolve_agic_routes(
             target = ResolvedRunnable(
                 name=item.name,
                 module=item.module,
-                executable=cast(Runnable, item.record),
+                executable=item.executable,
             )
             actions_by_ref.setdefault(target.ref, set()).add(route_action)
     resolved = tuple(
@@ -148,12 +149,12 @@ def resolve_agic_routes(
             runnable=ResolvedRunnable(
                 name=item.name,
                 module=item.module,
-                executable=cast(Runnable, item.record),
+                executable=item.executable,
             ),
             actions=tuple(action for action in ("run", "execute") if action in actions),
         )
-        for item in dataset.items
-        if (actions := actions_by_ref.get(f"{item.kind}:{item.name}")) is not None
+        for item in targets
+        if (actions := actions_by_ref.get(item.ref)) is not None
     )
     return AgicRoutes(hands=hands, handoffs=handoffs, resolved=resolved)
 
@@ -210,44 +211,41 @@ def resolve_state_runnable(
     return state.runnable_modules[key], entry
 
 
-def resolve_state_runnable_query(
-    state: AgentState,
-    query: str,
-) -> tuple[str, Runnable]:
-    """Resolve one singular runnable collection query."""
-
-    resolved = resolve_public_runnable_query(state, query)
-    return resolved.module, resolved.executable
-
-
-def resolve_public_runnable_query(
+def resolve_runnable_reference(
     state: AgentState | Program,
-    query: str,
+    reference: str,
 ) -> ResolvedRunnable:
-    """Resolve one singular query with its effective public identity."""
-
+    """Resolve an exact name, kind, module, or line-qualified reference."""
+    parsed = parse_runnable_ref_parts(reference)
     index = (
         program_runnable_index(state)
         if isinstance(state, Program)
         else getattr(state, "runnables", None)
     )
-    if isinstance(index, Mapping):
-        key, entry = _lookup_index_item(index, query)
-        if key is not None and entry is not None:
-            module = (
-                "agent" if isinstance(state, Program) else state.runnable_modules[key]
-            )
-            return ResolvedRunnable(
-                name=key,
-                module=module,
-                executable=entry,
-            )
-    item = runnable_dataset(state).require_one(query, label="runnable")
-    return ResolvedRunnable(
-        name=item.name,
-        module=item.module,
-        executable=cast(Runnable, item.record),
+    if index is None:
+        index = program_runnable_index(state_program(state))
+    modules = (
+        {name: "agent" for name in index}
+        if isinstance(state, Program) or not hasattr(state, "runnable_modules")
+        else state.runnable_modules
     )
+    if parsed.module is not None:
+        index = {
+            name: item for name, item in index.items() if modules[name] == parsed.module
+        }
+    if parsed.name == "_":
+        entries = [
+            item
+            for name, item in index.items()
+            if name.startswith("<entry:")
+            and (parsed.kind is None or item.kind == parsed.kind)
+        ]
+        if len(entries) > 1:
+            raise ToolangError(f"Runnable reference is ambiguous: {reference}")
+    key, entry = _lookup_index_item(index, reference)
+    if key is not None and entry is not None:
+        return ResolvedRunnable(name=key, module=modules[key], executable=entry)
+    raise ToolangError(f"Runnable not found: {reference}")
 
 
 def resolve_module_runnable(
@@ -419,12 +417,8 @@ def runnable_binding_defaults(
 
     if binding is None:
         binding = runnable_fallback(program, preferred=fallback_agic)
-    if isinstance(program, AgentState):
-        resolved = resolve_public_runnable_query(program, binding)
-        name, runnable = resolved.name, resolved.executable
-    else:
-        name, kind = parse_runnable_ref(binding)
-        runnable = resolve_runnable(program, name, kind=kind)
+    resolved = resolve_runnable_reference(program, binding)
+    name, runnable = resolved.name, resolved.executable
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
 
 

@@ -11,7 +11,6 @@ from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup.types import AgentEnvironment, AgentSetup, CompactConfig, _ModelData
 
@@ -21,7 +20,7 @@ def materialized_setup(
     layout: AgentLayout,
     providers: Mapping[str, Provider] | Sequence[Provider],
     adapters: Mapping[str, ModelAdapter],
-    models: ModelCollection | Sequence[Model],
+    models: Sequence[Model],
     tools: ToolCollection,
     envs: Mapping[str, str],
     revision: str = "test",
@@ -36,15 +35,13 @@ def materialized_setup(
         provider_records = tuple(cast(Mapping[str, Provider], providers).values())
     else:
         provider_records = tuple(cast(Sequence[Provider], providers))
-    model_records = (
-        models.entries if isinstance(models, ModelCollection) else tuple(models)
-    )
+    model_records = tuple(models)
     frozen_adapters = MappingProxyType(dict(adapters))
     frozen_tools = tools
     ready_models = tuple(
         model for model in model_records if model._toolang.effective_ready
     )
-    ready_provider_ids = {model._toolang.provider for model in ready_models}
+    ready_provider_ids = {model.provider for model in ready_models}
     data = _ModelData(
         models=model_records,
         providers=provider_records,
@@ -97,7 +94,7 @@ def replace_materialized_setup(
         models=(
             setup.models_effective()
             if models is _UNSET
-            else cast(ModelCollection | Sequence[Model], models)
+            else cast(Sequence[Model], models)
         ),
         tools=setup.tools() if tools is _UNSET else cast(ToolCollection, tools),
         envs=setup.envs,

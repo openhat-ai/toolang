@@ -358,7 +358,7 @@ def _message_part(
             text=_text(block.get("thinking")) if kind == "thinking" else "",
             signature=_text(block.get("signature" if kind == "thinking" else "data"))
             or None,
-            provider=model._toolang.provider,
+            provider=model.provider,
             provider_metadata=native_metadata(
                 model, "messages", type=kind, index=index
             ),
@@ -538,7 +538,7 @@ def _headers(
     api_key = credential_value(model._toolang.route.env, environ=environ)
     if not api_key and model._toolang.route.env != ():
         raise ToolangError("Messages adapter requires a resolved API key")
-    gateway_route = model._toolang.provider.lower() in {"openrouter", "vercel"}
+    gateway_route = model.provider.lower() in {"openrouter", "vercel"}
     headers = {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",

@@ -276,7 +276,7 @@ class PromptInputs:
                 },
                 "model": {
                     "ref": self.model.ref,
-                    "provider": self.model._toolang.provider,
+                    "provider": self.model.provider,
                     "name": self.model.name,
                     "model": self.model.id,
                     "adapter": self.model._toolang.route.adapter,

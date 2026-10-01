@@ -37,7 +37,6 @@ from toolang.execution.compaction import permit
 from toolang.execution.tokens import InputEstimate
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
-from toolang.plugin.models.collections import ModelCollection
 
 
 def compact_runs(harness, thread):
@@ -82,7 +81,7 @@ def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
     )
     harness.setup = replace_materialized_setup(
         harness.setup,
-        models=ModelCollection((normal, reducer)),
+        models=(normal, reducer),
         compact_model=parse_model_body("test/reducer"),
     )
 
@@ -110,13 +109,11 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             if output_limit is None:
                 harness.setup = replace_materialized_setup(
                     harness.setup,
-                    models=ModelCollection(
-                        tuple(
-                            replace(model, limit={"context": 14000})
-                            if model.id == "scripted"
-                            else model
-                            for model in harness.setup.models_effective()
-                        )
+                    models=tuple(
+                        replace(model, limit={"context": 14000})
+                        if model.id == "scripted"
+                        else model
+                        for model in harness.setup.models_effective()
                     ),
                 )
             summary = {
@@ -498,7 +495,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             )
             harness.setup = replace_materialized_setup(
                 harness.setup,
-                models=ModelCollection((normal, *candidates)),
+                models=(normal, *candidates),
                 compact_model=configured,
             )
             harness.setup = replace(
@@ -585,11 +582,9 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
             thread, end = await seed(harness)
             harness.setup = replace_materialized_setup(
                 harness.setup,
-                models=ModelCollection(
-                    tuple(
-                        replace(model, tool_call=False)
-                        for model in harness.setup.models_effective()
-                    )
+                models=tuple(
+                    replace(model, tool_call=False)
+                    for model in harness.setup.models_effective()
                 ),
             )
             harness.adapter._responses.extend(
@@ -1149,13 +1144,11 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
             models = harness.setup.models_effective()
             harness.setup = replace_materialized_setup(
                 harness.setup,
-                models=ModelCollection(
-                    tuple(
-                        replace(m, limit={"context": 8000, "output": 1024})
-                        if m.id == "reducer"
-                        else m
-                        for m in models
-                    )
+                models=tuple(
+                    replace(m, limit={"context": 8000, "output": 1024})
+                    if m.id == "reducer"
+                    else m
+                    for m in models
                 ),
             )
             harness.setup = replace(

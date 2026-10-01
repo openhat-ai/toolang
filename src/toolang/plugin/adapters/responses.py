@@ -124,14 +124,14 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 
 
 def _stateful_route(model: Model) -> bool:
-    return model._toolang.provider in _STATEFUL_PROVIDERS
+    return model.provider in _STATEFUL_PROVIDERS
 
 
 def _require_supported_inputs(
     model: Model,
     request: ModelCall,
 ) -> None:
-    if model._toolang.provider != "openai":
+    if model.provider != "openai":
         return
     if _supports_openai_audio_input(model):
         return
@@ -852,7 +852,7 @@ def _reasoning_item_parts(
             part = ReasoningPart(
                 text,
                 signature=signature if not parts else None,
-                provider=model._toolang.provider,
+                provider=model.provider,
                 provider_metadata=metadata,
             )
             if status in {"in_progress", "incomplete"}:
@@ -865,7 +865,7 @@ def _reasoning_item_parts(
                 ReasoningPart(
                     "",
                     signature=signature,
-                    provider=model._toolang.provider,
+                    provider=model.provider,
                     provider_metadata={**common, **shared},
                 ),
             )
@@ -1312,7 +1312,7 @@ def _log_api_request(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.request provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
-        model._toolang.provider,
+        model.provider,
         model.ref,
         model.id,
         model._toolang.route.adapter,
@@ -1333,7 +1333,7 @@ def _log_api_response(
         return
     _ADAPTER_LOGGER.debug(
         "adapter.result provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
-        model._toolang.provider,
+        model.provider,
         model.ref,
         model.id,
         model._toolang.route.adapter,

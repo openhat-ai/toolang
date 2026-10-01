@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tq import QueryError
 
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
@@ -29,7 +30,6 @@ from toolang.execution.types import (
     AgentToolResource,
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
-from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModels
@@ -80,7 +80,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
         layout=AgentLayout.resident(tmp_path, "alice"),
         providers=providers,
         adapters={},
-        models=build_model_collection(provider.list_models(environ={})),
+        models=provider.list_models(environ={}),
         tools=ToolCollection.from_tools(tools),
         envs={},
     )
@@ -252,6 +252,17 @@ def test_agent_ceiling_cannot_expand_empty_agent_resources(
             agent,
             AgentCeiling(models=("test/scripted",)),
         )
+
+
+@pytest.mark.parametrize("query", ["*[", "*[ref=test/scripted]"])
+def test_empty_model_ceiling_still_validates_native_query(
+    tmp_path: Path, query: str
+) -> None:
+    setup, state, _selection = _snapshots(tmp_path)
+    agent = resolve_agent_resources(setup, state, AgentCeiling(models=()))
+
+    with pytest.raises(QueryError):
+        apply_agent_ceiling(setup, state, agent, AgentCeiling(models=(query,)))
 
 
 def test_flow_resets_resources_while_agics_use_current_flow(

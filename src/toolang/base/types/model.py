@@ -167,6 +167,7 @@ class ModelRoute:
     env: ResolvedEnv | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
     options: Mapping[str, object] = field(default_factory=dict)
+    api_env_missing: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
@@ -174,10 +175,22 @@ class ModelRoute:
         if self.env is not None:
             object.__setattr__(self, "env", normalized_env(self.env))
 
+    def to_data(self) -> dict[str, object]:
+        """Return inspectable route facts without resolved connection payloads."""
+
+        return {
+            "adapter": self.adapter,
+            "api": self.api,
+            "env": None if self.env is None else _mutable_json(self.env),
+        }
+
     @property
     def ready(self) -> bool:
         return (
-            self.adapter is not None and self.api is not None and self.env is not None
+            self.adapter is not None
+            and self.api is not None
+            and self.env is not None
+            and not self.api_env_missing
         )
 
 
@@ -188,6 +201,8 @@ class ProviderToolang:
     env: ResolvedEnv = ()
     adapter: str | None = None
     route: ModelRoute = field(default_factory=ModelRoute)
+    model_count: int = 0
+    ready_count: int = 0
 
 
 class ModelStatus(IntFlag):
@@ -199,25 +214,23 @@ class ModelStatus(IntFlag):
 
 @dataclass(frozen=True, slots=True, init=False)
 class ModelToolang:
-    """Ownership, compact status bits, and effective route for one model."""
+    """Compact status bits, origin, and effective route for one model."""
 
-    provider: str
     route: ModelRoute
     status: ModelStatus
+    local: bool
 
     def __init__(
         self,
         ready: bool | None = None,
-        provider: str = "",
         route: ModelRoute = ModelRoute(),
         *,
         allowed: bool = True,
         status: ModelStatus | int | None = None,
+        local: bool = False,
     ) -> None:
         """Build compact route/allow flags; ``ready`` remains route readiness."""
 
-        if not isinstance(provider, str):
-            raise TypeError("model provider id must be text")
         if not isinstance(route, ModelRoute):
             raise TypeError("model route must be ModelRoute")
         if not isinstance(allowed, bool):
@@ -240,7 +253,7 @@ class ModelToolang:
                 raise ValueError("model ready argument conflicts with status")
             if allowed is not True and allowed != bool(flags & ModelStatus.ALLOWED):
                 raise ValueError("model allow argument conflicts with status")
-        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "local", local)
         object.__setattr__(self, "route", route)
         object.__setattr__(self, "status", flags)
 
@@ -268,13 +281,31 @@ class ModelToolang:
 
         return self.routable and self.allowed
 
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """Return selection tags from this generation's route and allow facts."""
+
+        tags = []
+        if not self.allowed:
+            tags.append("not_allowed")
+        if self.route.env is None or self.route.api_env_missing:
+            tags.append("no_env")
+        if self.route.api is None and not self.route.api_env_missing:
+            tags.append("no_api")
+        if self.route.adapter is None:
+            tags.append("no_adapter")
+        if not tags:
+            tags.append("ready")
+        tags.append("local" if self.local else "remote")
+        return tuple(tags)
+
     def with_route(self, route: ModelRoute) -> ModelToolang:
         """Replace route facts while preserving allow membership."""
 
         flags = self.status & ModelStatus.ALLOWED
         if route.ready:
             flags |= ModelStatus.ROUTABLE
-        return ModelToolang(provider=self.provider, route=route, status=flags)
+        return ModelToolang(route=route, status=flags, local=self.local)
 
     def with_allowed(self, allowed: bool) -> ModelToolang:
         """Replace allow membership while preserving route readiness."""
@@ -284,7 +315,7 @@ class ModelToolang:
         flags = self.status & ModelStatus.ROUTABLE
         if allowed:
             flags |= ModelStatus.ALLOWED
-        return ModelToolang(provider=self.provider, route=self.route, status=flags)
+        return ModelToolang(route=self.route, status=flags, local=self.local)
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,14 +372,14 @@ class ModelFacts:
     status: str | None = None
     experimental: Mapping[str, object] | None = None
     # Per-model connection overrides; ownership is carried separately.
-    provider: ModelProvider | None = None
+    override: ModelProvider | None = None
     cost: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("model id and name are required")
-        if self.provider is not None and not isinstance(self.provider, ModelProvider):
-            raise TypeError("model provider must be ModelProvider")
+        if self.override is not None and not isinstance(self.override, ModelProvider):
+            raise TypeError("model override must be ModelProvider")
         # A read-only view may still wrap a dictionary owned by a plugin.
         # Detach all nested values before publishing or resolving a record.
         object.__setattr__(
@@ -378,7 +409,7 @@ class ModelFacts:
             )
 
     def to_data(self) -> dict[str, object]:
-        """Return this model in models.dev-compatible JSON form."""
+        """Return portable catalog facts in the normalized models repository shape."""
 
         data: dict[str, object] = {}
         data.update(
@@ -407,7 +438,7 @@ class ModelFacts:
             "last_updated": self.last_updated,
             "status": self.status,
             "experimental": self.experimental,
-            "provider": self.provider.to_data() if self.provider is not None else None,
+            "override": self.override.to_data() if self.override is not None else None,
             "cost": self.cost,
         }
         data.update({key: _mutable_json(value) for key, value in optional.items()})
@@ -431,11 +462,25 @@ class Model(ModelFacts):
     """A model declaration assembled with Toolang ownership and routing."""
 
     _toolang: ModelToolang
+    provider: str = field(kw_only=True)
 
     def __post_init__(self) -> None:
         ModelFacts.__post_init__(self)
-        if not self._toolang.provider:
+        if not isinstance(self.provider, str) or not self.provider:
             raise ValueError("model requires its provider id")
+
+    def to_data(self) -> dict[str, object]:
+        """Return the canonical setup record with normalized catalog ownership."""
+
+        return {
+            **ModelFacts.to_data(self),
+            "provider": self.provider,
+            "ref": self.ref,
+            "_toolang": {
+                "tags": list(self._toolang.tags),
+                "route": self._toolang.route.to_data(),
+            },
+        }
 
     def with_route(self, route: ModelRoute) -> Self:
         """Publish a route while sharing this record's already detached catalog facts."""
@@ -457,7 +502,7 @@ class Model(ModelFacts):
     def identity(self) -> str:
         """Return the exact provider/model catalog identity."""
 
-        return f"{self._toolang.provider}/{self.id}"
+        return f"{self.provider}/{self.id}"
 
     @property
     def ref(self) -> str:
@@ -500,10 +545,8 @@ class Provider:
         if not self.id or not self.name:
             raise ValueError("provider id and name are required")
 
-    def to_data(
-        self, *, models: Mapping[str, Model] | None = None
-    ) -> dict[str, object]:
-        """Return this provider in models.dev-compatible JSON form."""
+    def to_data(self) -> dict[str, object]:
+        """Return the canonical provider record without embedding models."""
 
         data: dict[str, object] = {}
         data.update(
@@ -511,9 +554,10 @@ class Provider:
                 "id": self.id,
                 "name": self.name,
                 "env": list(self.env),
-                "models": {
-                    key: model.to_data()
-                    for key, model in sorted((models or {}).items())
+                "_toolang": {
+                    "model_count": self._toolang.model_count,
+                    "ready_count": self._toolang.ready_count,
+                    "route": self._toolang.route.to_data(),
                 },
             }
         )
@@ -551,10 +595,10 @@ class ModelCatalogSnapshot:
         models = tuple(self.models)
         if any(key != provider.id for key, provider in providers.items()):
             raise ValueError("catalog provider keys must match provider ids")
-        identities = [(model._toolang.provider, model.id) for model in models]
+        identities = [(model.provider, model.id) for model in models]
         if len(identities) != len(set(identities)):
             raise ValueError("catalog models must have unique provider/model identity")
-        if any(model._toolang.provider not in providers for model in models):
+        if any(model.provider not in providers for model in models):
             raise ValueError("catalog models reference unknown providers")
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "models", models)
@@ -566,7 +610,7 @@ class ModelCatalogSnapshot:
             (
                 model
                 for model in self.models
-                if model._toolang.provider == provider_id and model.id == model_id
+                if model.provider == provider_id and model.id == model_id
             ),
             None,
         )
@@ -576,19 +620,25 @@ class ModelCatalogSnapshot:
         *,
         models: tuple[Model, ...] | None = None,
     ) -> dict[str, object]:
-        """Return a complete models.dev-compatible provider map."""
+        """Return normalized provider and model arrays."""
 
-        selected = self.models if models is None else models
-        by_provider: dict[str, dict[str, Model]] = {}
         if self.local:
             raise ValueError("a local-only catalog cannot be exported")
-        for model in selected:
-            by_provider.setdefault(model._toolang.provider, {})[model.id] = model
+        selected = self.models if models is None else models
+        provider_ids = {model.provider for model in selected}
         return {
-            provider_id: self.providers[provider_id].to_data(
-                models=by_provider[provider_id]
-            )
-            for provider_id in sorted(by_provider)
+            "providers": [
+                {
+                    key: value
+                    for key, value in self.providers[provider_id].to_data().items()
+                    if key != "_toolang"
+                }
+                for provider_id in sorted(provider_ids)
+            ],
+            "models": [
+                {**ModelFacts.to_data(model), "provider": model.provider}
+                for model in selected
+            ],
         }
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 import shlex
@@ -14,7 +13,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
-from toolang.common.query import resolve_query_sentinels
+from toolang.common.policy import resolve_query_sentinels
 from toolang.lang.input import (
     CallInput,
     CallInputHeader,
@@ -22,12 +21,8 @@ from toolang.lang.input import (
     parse_call_input_header,
     validate_runnable_input_names,
 )
-from toolang.lang.runnable_query import RUNNABLE_SCHEMA
-from toolang.plugin.models.collections import MODEL_SCHEMA
-from toolang.plugin.toolsets.collections import TOOL_SCHEMA
+from toolang.lang.types import parse_runnable_ref_parts
 from toolang.setup import AgentSetup
-from toolang.state.collections import cap_kind_definition
-from toolang.state.types import EntryKind
 
 from .types import (
     ALLOW_FIELDS,
@@ -43,12 +38,6 @@ from .types import (
 import math
 import posixpath
 
-_CAP_KIND_BY_FIELD = {
-    "psyches": "psyche",
-    "skills": "skill",
-    "services": "service",
-    "prompts": "prompt",
-}
 # Setting name -> (standalone setting body, independently useful override bodies).
 SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     {
@@ -426,7 +415,7 @@ def _runnable_override(
     else:
         runnable = f"{name}:{target}"
     if runnable != "default":
-        RUNNABLE_SCHEMA.parse(runnable)
+        parse_runnable_ref_parts(runnable)
     return RunOverride(runnable=runnable), _named_inputs(tokens[1:])
 
 
@@ -630,17 +619,6 @@ def _allow_value(
         normalized = resolve_query_sentinels(values, label=f"allow {field}")
     except ToolangError as error:
         raise ValueError(str(error)) from error
-    if normalized is None or not normalized:
-        return normalized
-    schema = (
-        MODEL_SCHEMA
-        if field == "models"
-        else TOOL_SCHEMA
-        if field == "tools"
-        else cap_kind_definition(cast(EntryKind, _CAP_KIND_BY_FIELD[field])).schema
-    )
-    for query in normalized:
-        schema.parse(query)
     return normalized
 
 

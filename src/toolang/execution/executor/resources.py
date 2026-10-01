@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 import json
@@ -14,7 +16,7 @@ from toolang.base.types.tool import ToolContext
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.common.errors import ToolangError
 from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
-from toolang.common.query import SetOperator
+from toolang.common.types import SetOperator
 from toolang.execution.types import (
     AgentCapResource,
     AgentResources,
@@ -39,7 +41,7 @@ from toolang.state.state import (
     StateCap,
     state_module_caps,
 )
-from toolang.state.collections import cap_dataset
+from toolang.state.collections import cap_collection
 from toolang.state.types import EntryKind
 from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
@@ -157,6 +159,7 @@ def resolve_agent_resources(
         caps,
         ceiling,
         agent_name=setup.layout.name,
+        root=setup.layout.root,
         label="cap",
     )
     return _agent_resources(models=models, tools=dict(tools), caps=caps)
@@ -176,13 +179,13 @@ def apply_agent_ceiling(
         models = subset_models(setup.models_effective(), resources.models)
     elif not ceiling.models:
         models = ()
-    elif not resources.models:
-        raise ToolangError("model ceiling matched no available models")
     else:
         models = filter_models(
             subset_models(setup.models_effective(), resources.models),
             ceiling.models,
         )
+        if not resources.models:
+            raise ToolangError("model ceiling matched no available models")
 
     available_tools = _resource_tool_collection(setup, resources)
     if ceiling.tools is None:
@@ -201,6 +204,7 @@ def apply_agent_ceiling(
         caps,
         ceiling,
         agent_name=setup.layout.name,
+        root=setup.layout.root,
         label="cap ceiling",
     )
     return _agent_resources(models=models, tools=tools, caps=caps)
@@ -211,6 +215,7 @@ def _apply_cap_ceiling(
     ceiling: AgentCeiling,
     *,
     agent_name: str,
+    root: Path,
     label: str,
 ) -> tuple[StateCap, ...]:
     selected_ids: set[tuple[str, str, str]] = set()
@@ -222,11 +227,11 @@ def _apply_cap_ceiling(
         elif not queries:
             selected = ()
         else:
-            dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
-            dataset.require_each(queries, label=f"{label} {kind}")
-            selected = tuple(
-                cast(StateCap, view.record) for view in dataset.query(queries)
+            dataset = cap_collection(
+                entries, root=root, agent_name=agent_name, kind=kind
             )
+            dataset.require_each(queries, label=f"{label} {kind}")
+            selected = tuple(view.record for view in dataset.query(queries))
         selected_ids.update((item.kind, item.name, item.ref) for item in selected)
     return tuple(
         item for item in caps if (item.kind, item.name, item.ref) in selected_ids
@@ -279,14 +284,15 @@ def resolve_runnable_resources(
         ("prompt", "prompts"),
     ):
         entries = tuple(item for item in available_caps if item.kind == kind)
-        selected = cap_dataset(
+        selected = cap_collection(
             entries,
             agent_name=setup.layout.name,
+            root=setup.layout.root,
             kind=kind,
         ).apply(_query_operations(_directives(runnable, directive_name)))
         selected_cap_ids.update(
             (item.kind, item.name, item.ref)
-            for item in (cast(StateCap, view.record) for view in selected)
+            for item in (view.record for view in selected)
         )
     caps = tuple(
         item

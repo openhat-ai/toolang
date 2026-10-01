@@ -578,7 +578,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
     override, input = parse_call(":agic missing\nInput")
     try:
-        with pytest.raises(ToolangError, match="runnable query matched no items"):
+        with pytest.raises(ToolangError, match="Runnable not found: agic:missing"):
             asyncio.run(
                 script._execute(
                     layout=harness.setup.layout,
@@ -1890,9 +1890,9 @@ def test_script_materializes_input_local_entry_selector(kind, selector) -> None:
     assert override == RunOverride(runnable=f"{kind}:<entry:1>")
 
 
-def test_script_materializes_input_local_runnable_queries() -> None:
+def test_script_materializes_input_local_exact_runnable_reference() -> None:
     override = script._materialize_script_runnable_override(
-        RunOverride(runnable="*[kind=agic;name=demo]"),
+        RunOverride(runnable="agic:demo"),
         program=script.Program.from_source(_SOURCE),
     )
 

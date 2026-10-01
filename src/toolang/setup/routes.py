@@ -110,7 +110,7 @@ def resolve_catalog_providers(
         models=tuple(
             resolve_model(
                 model,
-                providers[model._toolang.provider],
+                providers[model.provider],
                 adapters=adapters,
                 environ=environ,
             )
@@ -142,6 +142,9 @@ def resolve_provider(
             environ=environ,
             default=None,
         ),
+        api_env_missing=_api_environment_missing(
+            _provider_api_template(provider, adapter), environ
+        ),
         env=satisfied,
         headers=cast(Mapping[str, str], conventions["headers"]),
         options=cast(Mapping[str, object], conventions["options"]),
@@ -170,6 +173,9 @@ def resolve_model(
             environ=environ,
             default=None,
         ),
+        api_env_missing=_api_environment_missing(
+            _model_api_template(provider, model, implementation), environ
+        ),
         env=provider._toolang.route.env,
         headers=model_headers(provider, model, mode_blocks=mode_blocks)
         if mode_blocks is not None
@@ -193,7 +199,7 @@ def catalog_environment_names(
         adapter = adapters.get(provider_adapter(provider) or "")
         templates.append(_provider_api_template(provider, adapter))
     for model in snapshot.models:
-        provider = snapshot.providers[model._toolang.provider]
+        provider = snapshot.providers[model.provider]
         adapter = adapters.get(model_adapter(provider, model) or "")
         templates.append(_model_api_template(provider, model, adapter))
     for template in templates:
@@ -224,7 +230,7 @@ def _provider_api_template(
 def _model_api_template(
     provider: Provider, model: Model, adapter: RouteAdapter | None
 ) -> str | None:
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     if _optional_text(override.api) is not None:
         return _api_template(override.api, None)
 
@@ -262,7 +268,7 @@ def _default_api(adapter: RouteAdapter | None, *, npm: str | None) -> str | None
 def _model_npm(provider: Provider, model: Model) -> str | None:
     """Use npm defaults only when npm selects the model's adapter."""
 
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return None
@@ -284,7 +290,7 @@ def provider_adapter(provider: Provider) -> str | None:
 
 def model_adapter(provider: Provider, model: Model) -> str | None:
     """Resolve explicit model routes, gateway conventions, then provider defaults."""
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     declared = override._toolang
     if isinstance(declared, ProviderToolang) and declared.adapter:
         return declared.adapter
@@ -314,7 +320,7 @@ def model_headers(
 
     headers: dict[str, str] = {}
     _merge_headers(headers, _convention_block(provider.id).get("headers"))
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     _merge_headers(headers, override.headers)
     for mode_block in mode_blocks:
         _merge_headers(headers, mode_block.get("headers"))
@@ -330,7 +336,7 @@ def model_options(
     options.update(
         cast(Mapping[str, object], _convention_block(provider.id)["options"])
     )
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     body = override.body
     if isinstance(body, Mapping):
         options.update(body)
@@ -344,7 +350,7 @@ def model_options(
 def model_mode(model: Model) -> str | None:
     """Return the catalog mode that applies to one model, when declared."""
 
-    override = model.provider or ModelProvider()
+    override = model.override or ModelProvider()
     value = override.mode
     return _optional_text(value)
 
@@ -453,3 +459,13 @@ def _normalized_shape(value: object) -> str | None:
 
 def _env_value(environ: Mapping[str, str], name: str) -> bool:
     return bool(str(environ.get(name, "")).strip())
+
+
+def _api_environment_missing(template: str | None, environ: Mapping[str, str]) -> bool:
+    if template is None:
+        return False
+    return any(
+        not environ.get(match.group("named") or match.group("braced") or "", "").strip()
+        for match in Template.pattern.finditer(template)
+        if match.group("named") or match.group("braced")
+    )

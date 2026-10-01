@@ -184,7 +184,7 @@ def query_tools(
     tools: dict[str, Tool],
     queries: Sequence[str] | None,
 ) -> dict[str, Tool]:
-    from .collections import tool_dataset
+    from .collections import ToolCollection
 
     if queries is None:
         return tools
@@ -192,7 +192,7 @@ def query_tools(
         return {}
     return {
         item.model_name: cast(Tool, item.record)
-        for item in tool_dataset(tools).query(queries)
+        for item in ToolCollection.from_tools(tools).query(queries)
     }
 
 
@@ -200,11 +200,11 @@ def validate_tool_queries(
     tools: dict[str, Tool],
     queries: Sequence[str] | None,
 ) -> None:
-    from .collections import tool_dataset
+    from .collections import ToolCollection
 
     if not queries:
         return
     try:
-        tool_dataset(tools).require_each(queries, label="tool")
+        ToolCollection.from_tools(tools).require_each(queries, label="tool")
     except ToolangError as error:
         raise ValueError(str(error)) from error

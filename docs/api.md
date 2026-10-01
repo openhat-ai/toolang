@@ -70,27 +70,15 @@ Cap commands:
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
 
-List output uses:
+List output uses `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
+kind-specific lists. `location` addresses actual content, with `file:line` only
+for inline caps. JSON and query keys are lowercase.
 
-- `KIND`
-- `CAP`
-- `ORIGIN`
-- `FORM`
-- `SCOPE`
-- `SOURCE`
-
-Kind-specific list commands omit `KIND`.
-
-`SOURCE` is the authored source location. File sources are paths relative to
-the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. External GitHub
-sources are shown as directly accessible `https://github.com/...` URLs.
-
-`FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE`
-accepts `root`, `home`, and `here`. Query predicates use typed fields such as
-`scope=home`, `form=authored`, and `origin=remote`. Combined lists use
-`psyches`, `skills`, `services`, and `prompts` as identity prefixes;
-kind-specific lists also accept local cap names. Run `too query COLLECTION` for
-the complete query contract.
+Resource query parameters use native TQ over public model/tool/cap records.
+Cap identities have singular prefixes such as `skill/reviewer`, including
+kind-specific lists. Use tags for provenance and scope, for example
+`skill/*[tags has all (home,remote)]`. API response envelopes retain their
+existing shapes; see [Resource Queries](queries.md) for the matching records.
 
 Typical usage:
 
@@ -613,7 +601,7 @@ files:
 [allow]
 models = ["gateway/*"]
 tools = ["shell/*"]
-skills = ["reviewer"]
+skills = ["skill/reviewer"]
 
 [default]
 model = "gateway/chat effort=high"
@@ -849,23 +837,26 @@ allow-excluded caps, internal and allow-excluded tools, or unready and allow-exc
 Default tools hide internal `_toolang` leaves. Queries and counts describe the
 selected view. `me` is not internally hidden and follows normal tool allow policy.
 
-`models --json` and `providers --json` export the same selected setup version as
-models.dev-compatible catalog data without Toolang metadata or resolved secrets.
-Models display identity, context/output sizes, modalities, capabilities, and
-prices. Full cap tables add STATUS after identity (`ok` or `blocked`).
-Full tool tables put STATUS last (`ok` or `blocked`).
-Full model tables put STATUS last: `ok`, `blocked`, `unready (reason)`, or
-`blocked, unready (reason)`. `ok` means ready AND allowed; caps/tools have no
-independent readiness check. Unready reasons appear inside STATUS parentheses.
-Provider tables always show `MODELS`: effective counts by default, `OK/ALL`
-counts with `--all`. Models and providers have no separate REASON column.
-Ready-but-blocked models do not count as OK. Tools omit SOURCE; plugin
-inventories retain it. Internal names need no separate INTERNAL label.
+Resource lists support `--json` inspection arrays and default human tables
+(`--human`). The two output flags cannot combine. Model/provider canonical records
+retain the flat models-repository shape plus `_toolang`; model ownership is the
+`provider` string and connection declarations use `override`. Runtime credentials
+and connection payloads are excluded from public route metadata.
+Providers never contain model records or ID lists. Their inspection `models`
+field formats setup's stored ready/total counts, unchanged by `--all`.
 
-Every `--all` accepts `-a`. Lists always show displayed-row summaries; empty
-results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
+Human headers uppercase record keys. Models use short inspection fields including
+`CONTEXT`, `MAX_OUTPUT`, and `PRICE`; providers show `ID`, `MODELS`, `ADAPTER`,
+`API`, `ENV`. Tools show `REF`, `DESCRIPTION`, `TAGS`; caps additionally show
+`LOCATION` before `TAGS`. Models/tools/caps have availability tags; providers do
+not. Caps also include form, scope, and origin; models include origin.
+See [Resource Queries](queries.md) for the records, columns, and tag groups.
+Providers have no built-in query option; their JSON supports external TQ.
+
+Every resource `--all` accepts `-a`. Human lists show displayed-row summaries;
+empty results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
 toolset, kind, or provider count when more than one row is displayed. JSON has
-no summary. Prices independently align input/output amounts and their separator.
+no summary and uses `[]` for an empty result. Prices are per million tokens.
 API readiness does not prove remote reachability or entitlement.
 See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semantics.
 
@@ -873,13 +864,13 @@ See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semant
 ## Plugin Inventory Commands
 
 - `toolang catalogs`
-- `toolang adapters [--json]`
+- `toolang adapters`
 - `toolang toolsets [--all]`
 - `toolang sandboxes`
 - `toolang channel list`
 
-These commands list locally installed entry-point identities and their
-`built-in` or `external` source. They reject agent names and do not read setup,
+These commands list installed entry-point `NAME` and distribution `PACKAGE`
+(such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
 configuration, or catalog files or invoke factories. An installed plugin remains
 visible even when it cannot load. `toolsets` hides internal entries such as
 `_toolang` unless `--all` is given. Plugin lists have no agent allow policy.
@@ -1001,9 +992,11 @@ runtime model collection. `GET /api/v1/tools` uses the same convention and
 returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
 fields. Omitting
 `query` lists the complete effective collection. Repeated query values and
-comma-separated top-level matches order result groups as authored; each group
-retains the model collection's existing order, and overlaps use the first
-match. Valid empty matches return an empty `items` list and a `null` default.
+comma-separated top-level matches form a union. Models use first matching
+branch order, then source order; tools retain source order. Overlaps are
+deduplicated. Empty matches return an empty `items` list; the model response
+also has a `null` default. Matching uses the public CLI JSON projection, while
+these HTTP response fields remain unchanged.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.
@@ -1023,9 +1016,11 @@ Collections:
 - `GET /api/v1/prompts`
 
 The cap summary and collection endpoints accept repeatable `query` parameters.
-The summary applies each query independently through the psyche, skill,
-service, and prompt collection definitions, then returns the existing grouped
-response and counts.
+They match the public cap records documented in [Resource Queries](queries.md),
+using `kind/name` identities and `tags`, then retain source order. The summary
+returns the existing grouped response and counts. Response `ref` values remain
+source URIs; query records instead use `kind/name` as `ref` and a content address
+as `location`. Source URIs are not a field in the query projection.
 
 Cap list items include `form` and the additive `summary` display field.
 `summary` is at most 256 Unicode code points and selects the first nonblank
@@ -1101,8 +1096,11 @@ items include:
 - `editable`
 
 Read and write payloads use the same `root`, `home`, and `here` scope
-vocabulary. Read payloads expose `form`, `scope`, and `origin`; CLI list
-commands project those into `SOURCE`, `FORM`, and `SCOPE`.
+vocabulary. Read payloads retain `form`, `scope`, and `origin`; CLI query
+records expose all three through `tags`. CLI `ref` is `kind/name`, and
+`location` addresses the actual content as an absolute path or GitHub HTTPS URL.
+Only inline caps append a declaration line as `file:line`; CLI records have no
+separate `source`, `definition`, or `line` field.
 
 
 ## Chat Client Orchestration

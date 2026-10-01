@@ -21,7 +21,6 @@ def test_setup_facade_exposes_no_catalog_projection_cache() -> None:
     assert setup_package.__all__ == [
         "AgentEnvironment",
         "AgentSetup",
-        "ModelCollection",
         "RunDefaults",
         "SetupWatcher",
         "ToolCollection",
@@ -56,7 +55,7 @@ def test_agent_setup_fields_are_a_lazy_revision_facade() -> None:
 @pytest.mark.parametrize("invalid", [-1, 4, 7])
 def test_model_status_rejects_unknown_bits(invalid: int) -> None:
     with pytest.raises(ValueError, match="unknown bits"):
-        ModelToolang(provider="test", status=invalid)
+        ModelToolang(status=invalid)
 
 
 def test_run_defaults_require_a_typed_model_request() -> None:
@@ -89,9 +88,7 @@ def test_agent_setup_copies_and_freezes_captured_inputs() -> None:
 
 def test_accessors_are_lazy_single_flight_and_revision_local() -> None:
     model = Model(
-        id="one",
-        name="One",
-        _toolang=ModelToolang(provider="test", ready=True),
+        id="one", name="One", _toolang=ModelToolang(ready=True), provider="test"
     )
     provider = Provider(id="test", name="Test")
     lock = Lock()

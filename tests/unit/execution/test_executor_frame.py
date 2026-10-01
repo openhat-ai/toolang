@@ -71,12 +71,7 @@ from toolang.lang.ast import (
 from toolang.lang.input import CallInput, resolve_runnable_input
 from toolang.lang.types import Array
 from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
-from toolang.setup import (
-    AgentEnvironment,
-    AgentSetup,
-    ModelCollection,
-    ToolCollection,
-)
+from toolang.setup import AgentEnvironment, AgentSetup, ToolCollection
 
 
 def _provider() -> Provider:
@@ -93,23 +88,21 @@ def _provider() -> Provider:
     )
 
 
-def _models() -> ModelCollection:
-    return ModelCollection(
-        (
-            Model(
-                id="model",
-                name="model",
-                _toolang=ModelToolang(
-                    provider="test",
-                    ready=True,
-                    route=ModelRoute(
-                        adapter="test", api="https://example.invalid/v1", env=()
-                    ),
+def _models() -> tuple[Model, ...]:
+    return (
+        Model(
+            id="model",
+            name="model",
+            _toolang=ModelToolang(
+                ready=True,
+                route=ModelRoute(
+                    adapter="test", api="https://example.invalid/v1", env=()
                 ),
-                tool_call=True,
-                structured_output=True,
             ),
-        )
+            tool_call=True,
+            structured_output=True,
+            provider="test",
+        ),
     )
 
 
@@ -270,7 +263,7 @@ def test_build_agic_frame_builds_one_complete_model_input(
     provider = _provider()
     adapter = _Adapter()
     tool = _Tool()
-    model_records = (replace(_models().entries[0], limit=limits),)
+    model_records = (replace(_models()[0], limit=limits),)
     if thread_window is not None:
         model_records += (
             replace(

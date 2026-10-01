@@ -352,17 +352,20 @@ def test_full_routes_are_resolved_before_effective_adapter_policy(
     path.write_text(json.dumps(raw), encoding="utf-8")
     watcher, _counts = _watcher(monkeypatch, tmp_path)
     watcher.layout.root_config.write_text(
-        '[allow]\nmodels = ["*[adapter=responses]"]\n', encoding="utf-8"
+        '[allow]\nmodels = ["*[_toolang.route.adapter=responses]"]\n', encoding="utf-8"
     )
     setup = asyncio.run(watcher.refresh())
 
     full = setup.models()
     assert tuple(
-        model.ref for model in filter_models(full, ("*[adapter=responses]",))
+        model.ref
+        for model in filter_models(full, ("*[_toolang.route.adapter=responses]",))
     ) == ("test/one",)
     assert tuple(
         model.ref
-        for model in filter_models(full, ("*[route.adapter=chat_completions]",))
+        for model in filter_models(
+            full, ("*[_toolang.route.adapter=chat_completions]",)
+        )
     ) == ("test/two",)
     assert tuple(model.ref for model in setup.models_effective()) == ("test/one",)
     assert {provider.id for provider in setup.providers_effective()} == {"test"}

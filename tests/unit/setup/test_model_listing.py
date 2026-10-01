@@ -7,7 +7,8 @@ from toolang.base.types.model import (
     ModelToolang,
     Provider,
 )
-from toolang.plugin.models.collections import catalog_model_dataset
+from toolang.plugin.models.query import filter_models
+from toolang.plugin.models.records import model_record
 
 
 def _model(ref: str, *, ready: bool) -> Model:
@@ -17,7 +18,6 @@ def _model(ref: str, *, ready: bool) -> Model:
         name=model_id,
         tool_call=True,
         _toolang=ModelToolang(
-            provider=provider,
             ready=ready,
             route=ModelRoute(
                 adapter="responses" if ready else None,
@@ -25,10 +25,11 @@ def _model(ref: str, *, ready: bool) -> Model:
                 env=() if ready else None,
             ),
         ),
+        provider=provider,
     )
 
 
-def test_model_query_dataset_projects_full_catalog_records():
+def test_model_query_matches_public_catalog_records():
     snapshot = ModelCatalogSnapshot(
         providers={
             "openai": Provider(id="openai", name="OpenAI"),
@@ -41,14 +42,20 @@ def test_model_query_dataset_projects_full_catalog_records():
         ),
         revision="revision",
     )
-    dataset = catalog_model_dataset(snapshot)
-    assert tuple(item.key for item in dataset.query(None)) == (
+    assert tuple(model_record(model)["ref"] for model in snapshot.models) == (
         "openai/ready",
         "openai/unready",
         "other/ready",
     )
-    assert tuple(item.key for item in dataset.query("*[available]")) == (
+    assert tuple(
+        model.ref for model in filter_models(snapshot.models, ("*[tags has ready]",))
+    ) == (
         "openai/ready",
         "other/ready",
     )
-    assert dataset.table(dataset.query("openai/unready"))[1][0][0] == "openai/unready"
+    assert model_record(snapshot.models[1])["tags"] == [
+        "no_env",
+        "no_api",
+        "no_adapter",
+        "remote",
+    ]

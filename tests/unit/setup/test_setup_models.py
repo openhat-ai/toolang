@@ -3,9 +3,14 @@
 import pytest
 
 from toolang.base.model_settings import parse_model_body
-from toolang.base.types.model import Model, ModelToolang
+from toolang.base.types.model import Model, ModelToolang, ModelRoute
 from toolang.common.errors import ToolangError
-from toolang.plugin.models.query import apply_model_operations, filter_models
+from toolang.plugin.models.query import (
+    apply_model_operations,
+    filter_models,
+    resolve_model,
+    subset_models,
+)
 from toolang.setup.config import resolve_compact_config, resolve_setup_allow
 from toolang.setup.models import order_models, select_compact_model
 from toolang.setup.types import CompactConfig
@@ -23,9 +28,16 @@ def model(
     return Model(
         id=name,
         name=name,
-        _toolang=ModelToolang(provider=provider, ready=routable, allowed=allowed),
+        _toolang=ModelToolang(
+            ready=routable,
+            allowed=allowed,
+            route=ModelRoute(
+                adapter="test", api="https://test", env=() if routable else None
+            ),
+        ),
         tool_call=tools,
         structured_output=structured,
+        provider=provider,
     )
 
 
@@ -97,7 +109,28 @@ def test_model_queries_use_tq_and_keep_branch_order():
         "openai/c",
     )
     assert refs(filter_models(models, ("*[tool_call]",))) == refs(models)
+    assert refs(filter_models(models, ("openai/*", "*/c"))) == ("openai/a", "openai/c")
     assert refs(filter_models(models, ())) == ()
+
+
+def test_exact_model_lookup_and_subsets_do_not_parse_queries(monkeypatch):
+    from tq import Query
+
+    nested = model("gateway/vendor/model")
+    other = model("other/model")
+
+    def reject_query(*args, **kwargs):
+        pytest.fail("Exact model lookup must not parse queries")
+
+    monkeypatch.setattr(Query, "parse", reject_query)
+    assert resolve_model((nested, other), nested.ref) is nested
+    assert subset_models((nested, other), (other.ref, nested.ref)) == (other, nested)
+    for lookup in (
+        lambda: resolve_model((nested,), "missing/model"),
+        lambda: subset_models((nested,), ("missing/model",)),
+    ):
+        with pytest.raises(ToolangError, match="model ref is unavailable"):
+            lookup()
 
 
 def test_compact_config_layers_are_independent_complete_model_requests():
@@ -182,58 +215,61 @@ def test_tq_queries_expose_routability_allow_and_effective_ready():
         model("test/blocked", routable=True, allowed=False),
         model("test/offline", routable=False, allowed=True),
     )
-    assert refs(filter_models(models, ("*[allowed=true]",))) == (
+    assert refs(filter_models(models, ("*[tags has no not_allowed]",))) == (
         "test/allowed",
         "test/offline",
     )
-    assert refs(filter_models(models, ("*[available=true]",))) == (
+    assert refs(filter_models(models, ("*[tags has no no_env]",))) == (
         "test/allowed",
         "test/blocked",
     )
-    assert refs(filter_models(models, ("*[ready=true]",))) == ("test/allowed",)
+    assert refs(filter_models(models, ("*[tags has ready]",))) == ("test/allowed",)
     month_model = Model(
         id="month",
         name="Month",
-        _toolang=ModelToolang(provider="test", ready=True),
+        _toolang=ModelToolang(ready=True),
         release_date="2025-04",
+        provider="test",
     )
     assert refs(
         filter_models((month_model,), ("test/month[release_date=2025-04]",))
     ) == ("test/month",)
-    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("o3",))) == (
+    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("o3",))) == ()
+    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("*/o3",))) == (
         "openai/o3",
     )
 
 
 def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators():
-    from toolang.plugin.models.collections import ModelCollection
-
     models = (
         Model(
             id="a",
             name="A",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ("image", "text")},
+            provider="test",
         ),
         Model(
             id="b",
             name="B",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ("text",)},
+            provider="test",
         ),
         Model(
             id="c",
             name="C",
-            _toolang=ModelToolang(provider="test"),
+            _toolang=ModelToolang(),
             modalities={"input": ()},
+            provider="test",
         ),
     )
-    legacy = ModelCollection(models)
-    for query in ("*[modalities.input=image]", "*[modalities.input!=image]"):
-        assert refs(filter_models(models, (query,))) == refs(
-            legacy.match(query).entries
-        )
-    assert refs(filter_models(models, ("*[modalities.input!=image]", "test/c"))) == (
+    assert refs(filter_models(models, ("*[modalities.input has image]",))) == (
+        "test/a",
+    )
+    assert refs(
+        filter_models(models, ("*[modalities.input has no image]", "test/c"))
+    ) == (
         "test/b",
         "test/c",
     )
@@ -243,48 +279,46 @@ def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators
     )
 
 
-def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields():
-    """Selected legacy semantics survive the TQ switch without a setup index."""
-    from toolang.plugin.models.collections import ModelCollection
-
+def test_tq_model_queries_match_identity_scalar_predicates_and_missing_fields():
     models = (
         Model(
             id="gpt-5",
             name="GPT",
-            _toolang=ModelToolang(provider="openai", ready=True),
+            _toolang=ModelToolang(ready=True),
             family="gpt",
             tool_call=True,
             limit={"context": 200000},
+            provider="openai",
         ),
         Model(
             id="model/nested",
             name="Nested",
-            _toolang=ModelToolang(provider="openrouter", ready=True),
+            _toolang=ModelToolang(ready=True),
             family=None,
             tool_call=False,
+            provider="openrouter",
         ),
         Model(
             id="gpt-mini",
             name="Mini",
-            _toolang=ModelToolang(provider="local", ready=False),
+            _toolang=ModelToolang(ready=False),
             family="gpt",
             tool_call=True,
+            provider="local",
         ),
     )
-    legacy = ModelCollection(models)
-    for query in (
-        "gpt-*",
-        "openrouter/model/*",
-        '"openrouter/model/nested"',
-        '"*/gpt-5"',
-        "*[family=null]",
-        "*[limit.context>=200000]",
-        "*[tool_call=true]",
-        "*[available=false]",
+    for query, expected in (
+        ("gpt-*", ()),
+        ("openrouter/model/*", ("openrouter/model/nested",)),
+        ('"openrouter/model/nested"', ("openrouter/model/nested",)),
+        ('"*/gpt-5"', ()),
+        ("*[family=null]", ()),
+        ("*[context=null]", ("openrouter/model/nested", "local/gpt-mini")),
+        ("*[limit.context>=200000]", ("openai/gpt-5",)),
+        ("*[tool_call=true]", ("openai/gpt-5", "local/gpt-mini")),
+        ("*[unknown=false]", ()),
     ):
-        assert refs(filter_models(models, (query,))) == refs(
-            legacy.match(query).entries
-        )
+        assert refs(filter_models(models, (query,))) == expected
     assert refs(filter_models(models, ("local/*", "openai/*", "gpt-*"))) == (
         "local/gpt-mini",
         "openai/gpt-5",
@@ -294,11 +328,7 @@ def test_tq_model_query_parity_for_identity_scalar_predicates_and_missing_fields
             models,
             (("=", ("gpt-*",)), ("-=", ("local/*",)), ("+=", ("local/*",))),
         )
-    ) == refs(
-        legacy.apply(
-            (("=", ("gpt-*",)), ("-=", ("local/*",)), ("+=", ("local/*",)))
-        ).entries
-    )
+    ) == ("local/gpt-mini",)
 
 
 def test_compact_fields_layer_independently():

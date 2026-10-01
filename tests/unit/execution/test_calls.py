@@ -31,7 +31,7 @@ from toolang.execution.schemas import (
 from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadPrefix
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
-from toolang.setup import ModelCollection, ToolCollection
+from toolang.setup import ToolCollection
 from toolang.state.state import CapSource, StateCap, agent_state_revision
 from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
@@ -190,19 +190,19 @@ def test_entry_selector_resolves_to_a_lined_run_identity(tmp_path, kind, selecto
 
 @pytest.mark.parametrize("selector", ["<entry>", "agic:<entry>", "flow:<entry>"])
 def test_runtime_rejects_unlined_entry_selectors(tmp_path, selector):
-    from toolang.execution.runnables import resolve_public_runnable_query
+    from toolang.execution.runnables import resolve_runnable_reference
 
     harness = ExecutionHarness.create(
         tmp_path, source="agic():\n  pass\n", responses=[]
     )
     try:
         with pytest.raises((ToolangError, ValueError)):
-            resolve_public_runnable_query(harness.state, selector)
+            resolve_runnable_reference(harness.state, selector)
     finally:
         harness.store.close()
 
 
-def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> None:
+def test_root_runnable_override_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -240,7 +240,7 @@ flow hello_flow(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_root_runnable_query_is_removed_from_recalled_history(tmp_path) -> None:
+def test_root_runnable_override_is_removed_from_recalled_history(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -596,7 +596,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         layout=harness.setup.layout,
         providers={},
         adapters={},
-        models=ModelCollection(),
+        models=(),
         tools=ToolCollection(),
         envs={},
         environment=harness.setup.environment,
@@ -623,3 +623,22 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         asyncio.run(scenario())
     finally:
         harness.store.close()
+
+
+def test_runnable_reference_lookup_never_uses_tq(monkeypatch):
+    from tq import Query
+    from toolang.lang import Program
+    from toolang.execution.runnables import resolve_runnable_reference
+
+    def reject_query(*args, **kwargs):
+        pytest.fail("Runnable lookup must use exact language references")
+
+    monkeypatch.setattr(Query, "parse", reject_query)
+    program = Program.from_source("agic worker:\n  Work.\n")
+    for reference in ("worker", "agic:worker", "agent::agic:worker"):
+        assert resolve_runnable_reference(program, reference).ref == "agic:worker"
+    with pytest.raises(ToolangError, match="Runnable not found"):
+        resolve_runnable_reference(program, "other::agic:worker")
+    for reference in ("*", "worker*", "*[kind=agic]", "worker,missing"):
+        with pytest.raises(ValueError, match="invalid public runnable ref"):
+            resolve_runnable_reference(program, reference)

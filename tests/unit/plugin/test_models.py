@@ -66,8 +66,7 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     resolve_model_reasoning,
 )
-from toolang.plugin.models.views import _format_decimal_unit
-from toolang.setup import ModelCollection, ToolCollection
+from toolang.setup import ToolCollection
 from toolang.plugin.catalogs.models_dev.catalog import read_model_catalog_snapshot
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 from toolang.plugin.loading import load_model_adapters
@@ -91,9 +90,10 @@ def _reasoning_model(options: list[dict[str, object]]) -> Model:
     return Model(
         id="m",
         name="m",
-        _toolang=ModelToolang(provider="p", ready=True),
+        _toolang=ModelToolang(ready=True),
         reasoning=True,
         reasoning_options=tuple(options),
+        provider="p",
     )
 
 
@@ -223,10 +223,11 @@ def _model(
     return Model(
         id=model_id,
         name=name or model_id,
-        _toolang=ModelToolang(provider=provider, ready=True),
+        _toolang=ModelToolang(ready=True),
         tool_call=tool_call,
         structured_output=structured_output,
         reasoning=reasoning,
+        provider=provider,
     )
 
 
@@ -270,10 +271,6 @@ def test_builtin_model_adapter_loader_includes_all_protocol_adapters() -> None:
         "messages",
         "responses",
     )
-
-
-def test_decimal_unit_formatting_accepts_integer_values() -> None:
-    assert _format_decimal_unit(1) == "1"
 
 
 def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
@@ -2249,7 +2246,7 @@ def _prepared_agic(
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
                 adapters={},
-                models=ModelCollection(),
+                models=(),
                 tools=ToolCollection.from_tools({tool.name: tool}),
                 envs={},
             ),
@@ -2310,9 +2307,10 @@ def test_missing_reasoning_controls_allow_explicit_attempts(options, control):
     model = Model(
         id="m",
         name="M",
-        _toolang=ModelToolang(provider="third_party"),
+        _toolang=ModelToolang(),
         reasoning=True,
         reasoning_options=options,
+        provider="third_party",
     )
     assert resolve_model_reasoning(model, control) == control
 

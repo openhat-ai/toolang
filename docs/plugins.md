@@ -126,7 +126,7 @@ execute model calls or install packages named by catalog metadata.
 
 Model adapter plugins execute one turn for a setup-resolved `Model` and a
 `ModelCall`, returning `ModelCallResult`. Connection facts come from
-`model._toolang.route`; ownership comes from `model._toolang.provider`.
+`model._toolang.route`; ownership comes from `model.provider`.
 `invoke(model, request, *, environ)` and
 `stream(model, request, *, environ, on_event)` receive only declared environment
 values from the run-pinned setup. Both calls are asynchronous, and streaming
@@ -197,8 +197,8 @@ helpers are support code, not additional plugins. Docker owns its CLI helpers
 and packaged guest bootstrap files inside `sandboxes/docker/`.
 
 Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
-`too channel list`, and `too sandboxes`) list entry-point identities and their
-built-in or external source. They do not accept an agent name or read setup,
+`too channel list`, and `too sandboxes`) list entry-point `NAME` and distribution
+`PACKAGE`, with `-` for missing distribution metadata. They do not accept an agent name or read setup,
 configuration, or catalog files. No factory is invoked, so an installed plugin
 can be listed even if its runtime dependencies are unavailable.
 
@@ -220,20 +220,25 @@ allow policy can exclude it from the default view. Resource `--all` shows the
 complete diagnostic view: caps include allow-excluded resources, tools include
 internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
 providers. It preserves the selected scope and configuration and never grants
-execution permissions. Queries and counts use the selected view. An
+execution permissions. Queries use the selected view; provider counts always cover all owned models. An
 internal-only tool query needs `--all`. Tool-call inspection shows the
 recorded plugin identity, independently of its Python module location.
 
-Full cap tables show `STATUS` immediately after identity (`ok` or `blocked`).
-Full tool tables put STATUS last (`ok` or `blocked`). Full model tables put
-STATUS last: `ok`, `blocked`, `unready (reason)`, or `blocked, unready (reason)`.
-`ok` means ready and allowed.
-Internal names need no extra label. Provider tables always use `MODELS`, with
-`OK/ALL` values in full views and effective counts by default, and omit REASON.
-Tools omit SOURCE; plugin inventories retain it. All lists have summaries,
-including zero counts for empty results. Resource
-summaries include group counts only when more than one row is displayed.
-Every `--all` option accepts `-a`. Plugin inventories have no agent allow policy.
+Resource lists uppercase record keys for human headers. Models, tools, and caps
+expose `tags` for availability and blockers. Models/caps also carry origin;
+caps carry scope and form. Caps show actual content `LOCATION`; tools omit
+plugin/package provenance. Providers format setup's stored counts as `MODELS`
+and show their default route, without tags or nested model records.
+`--json` emits inspection arrays without summaries; `--human` explicitly selects
+the default tables. Plugin inventories instead use only default `NAME`, `PACKAGE`
+tables, without output-mode or query flags. Human summaries include zero counts
+and add group counts only when more than one row is displayed.
+See [Resource Queries](queries.md) for records, columns, and tag meanings.
+
+Models, tools, and caps accept native TQ queries. Providers support external TQ
+through JSON only. Plugin inventories have no query interface or agent allow
+policy. Every resource `--all` accepts
+`-a`.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
 and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.

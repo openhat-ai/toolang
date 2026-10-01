@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
-import toolang.state.collections as collections
 from toolang.state.collections import (
-    cap_kind_definition,
-    cap_table,
+    cap_collection,
     query_cap_views,
 )
 from toolang.state.state import CapSource, StateCap
@@ -76,7 +75,7 @@ def test_cap_display_summary_uses_metadata_then_bounded_content(tmp_path) -> Non
     assert bounded.endswith("…")
 
 
-def test_cap_query_fans_out_over_four_base_collections() -> None:
+def test_cap_query_matches_full_refs_across_four_kinds() -> None:
     entries = (
         _cap("prompt", "summary"),
         _cap("psyche", "reviewer"),
@@ -86,23 +85,27 @@ def test_cap_query_fans_out_over_four_base_collections() -> None:
 
     qualified = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("skill/reviewer",),
     )
     plural_collection_prefix = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
         queries=("skills/reviewer",),
     )
     unqualified = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
-        queries=("reviewer",),
+        queries=("*/reviewer",),
     )
     predicate = query_cap_views(
         entries,
+        root=Path("/toolang"),
         agent_name="default",
-        queries=("*[scope=root]",),
+        queries=("*[tags has root]",),
     )
 
     assert [(item.kind, item.name) for item in qualified] == [("skill", "reviewer")]
@@ -127,7 +130,9 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
         _cap("skill", "reviewer"),
     )
 
-    views = query_cap_views(entries, agent_name="default", queries=None)
+    views = query_cap_views(
+        entries, root=Path("/toolang"), agent_name="default", queries=None
+    )
 
     assert [(item.kind, item.name) for item in views] == [
         ("prompt", "summary"),
@@ -138,50 +143,18 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
-@pytest.mark.parametrize("description", [None, "Review changes", "x" * 140])
-def test_cap_tables_share_columns_and_copyable_identities(
-    kind: EntryKind, description: str | None
-) -> None:
-    views = query_cap_views(
-        (replace(_cap(kind, "reviewer"), meta={"description": description}),),
-        agent_name="default",
-        queries=None,
+def test_cap_public_records_have_copyable_refs_and_native_tags(kind: EntryKind) -> None:
+    entry = replace(_cap(kind, "reviewer"), meta={"description": "Review changes"})
+    collection = cap_collection((entry,), root=Path("/toolang"), agent_name="default")
+    record = collection.items[0].data
+    assert record["ref"] == f"{kind}/reviewer"
+    assert record["location"] == f"/toolang/{kind}s/reviewer" + (
+        "/SKILL.md" if kind == "skill" else ""
     )
-
-    assert not hasattr(collections, "CAP_SCHEMA")
-    definition = cap_kind_definition(kind)
-    assert definition.schema.name == f"{kind}s"
-    assert definition.schema.identity.bound == (kind,)
-    expected_description = (
-        "x" * 117 + "..." if description == "x" * 140 else description or "-"
-    )
-    expected = (
-        ("CAP", "DESCRIPTION", "SCOPE", "FORM", "SOURCE"),
-        (
-            (
-                f"{kind}/reviewer",
-                expected_description,
-                "root",
-                "authored",
-                f"{kind}s/reviewer",
-            ),
-        ),
-    )
-    assert cap_table(views) == expected
-    assert cap_table(views, kind=kind) == expected
-    assert definition.dataset(views).query(f'"{expected[1][0][0]}"') == views
-
-
-def test_combined_cap_table_preserves_interleaved_kind_order() -> None:
-    entries = (
-        _cap("prompt", "first"),
-        _cap("skill", "reviewer"),
-        _cap("prompt", "last"),
-    )
-    views = query_cap_views(entries, agent_name="default", queries=None)
-    assert [row[0] for row in cap_table(views)[1]] == [
-        "prompt/first",
-        "skill/reviewer",
-        "prompt/last",
-    ]
-    assert cap_table(()) == (("CAP", "DESCRIPTION", "SCOPE", "FORM", "SOURCE"), ())
+    assert record["tags"] == ["ready", "local", "root", "authored"]
+    assert record["description"] == "Review changes"
+    assert not {"id", "scope", "form", "allowed", "routable"}.intersection(record)
+    assert collection.query("reviewer") == ()
+    assert collection.query(f'"{kind}/reviewer"') == collection.items
+    assert collection.query("*[tags has root]") == collection.items
+    assert collection.query("*[future.field=value]") == ()

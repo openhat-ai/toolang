@@ -37,7 +37,6 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import CompactControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.execution.types import ModelStepNoted, RunRef, ThreadPrefix, ToolStepGiven
-from toolang.plugin.models.collections import ModelCollection
 
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
@@ -73,7 +72,7 @@ async def seed(h, monkeypatch):
     model = replace(
         h.setup.models_effective()[0], limit={"context": 10000, "output": 512}
     )
-    h.setup = replace_materialized_setup(h.setup, models=ModelCollection((model,)))
+    h.setup = replace_materialized_setup(h.setup, models=(model,))
     # Exercise the automatic path with a deterministic, explicit retained boundary.
     monkeypatch.setattr(
         model_step,
@@ -759,13 +758,11 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             constrain(h)
             h.setup = replace_materialized_setup(
                 h.setup,
-                models=ModelCollection(
-                    tuple(
-                        replace(m, limit={"context": 8000, "output": 1024})
-                        if m.id == "reducer"
-                        else m
-                        for m in h.setup.models_effective()
-                    )
+                models=tuple(
+                    replace(m, limit={"context": 8000, "output": 1024})
+                    if m.id == "reducer"
+                    else m
+                    for m in h.setup.models_effective()
                 ),
             )
             h.setup = replace(

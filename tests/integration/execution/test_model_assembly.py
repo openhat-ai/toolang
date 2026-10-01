@@ -1155,10 +1155,10 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
                     id="model",
                     name="model",
                     _toolang=ModelToolang(
-                        provider="openai",
                         ready=True,
                         route=ModelRoute(adapter="responses"),
                     ),
+                    provider="openai",
                 ),
                 request,
                 stateful=True,
@@ -1300,7 +1300,6 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
     tmp_path, streaming, context, control, capability
 ):
     from toolang.base.types.model import ModelRequest, Reasoning
-    from toolang.plugin.models.resolution import build_model_collection
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -1314,9 +1313,7 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
         reasoning=capability,
         reasoning_options=None,
     )
-    harness.setup = replace_materialized_setup(
-        harness.setup, models=build_model_collection((model,))
-    )
+    harness.setup = replace_materialized_setup(harness.setup, models=(model,))
     reasoning = (
         Reasoning(budget_tokens=control)
         if isinstance(control, int)
@@ -1388,7 +1385,6 @@ def test_automatic_output_leaves_room_after_reasoning(
 ):
     from toolang.base.types.model import ModelRequest
     from toolang.base.types.run import ModelUsage
-    from toolang.plugin.models.resolution import build_model_collection
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -1402,9 +1398,7 @@ def test_automatic_output_leaves_room_after_reasoning(
         reasoning=reasoning_capable,
         reasoning_options=None,
     )
-    harness.setup = replace_materialized_setup(
-        harness.setup, models=build_model_collection((model,))
-    )
+    harness.setup = replace_materialized_setup(harness.setup, models=(model,))
     take_turn = harness.adapter._take_turn
 
     def respond(model, request):
@@ -1465,7 +1459,6 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
 ):
     from toolang.base.types.model import ModelRequest
     from toolang.plugin.adapters._payload import output_allowance
-    from toolang.plugin.models.resolution import build_model_collection
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -1485,9 +1478,7 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
             ),
         ),
     )
-    harness.setup = replace_materialized_setup(
-        harness.setup, models=build_model_collection((model,))
-    )
+    harness.setup = replace_materialized_setup(harness.setup, models=(model,))
     monkeypatch.setattr(
         harness.adapter,
         "output_allowance",
@@ -1518,7 +1509,6 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
 @pytest.mark.parametrize("demand", [None, 32768])
 def test_impossible_reservation_names_route_and_output_source(tmp_path, demand):
     from toolang.base.types.model import ModelRequest, Reasoning
-    from toolang.plugin.models.resolution import build_model_collection
 
     harness = ExecutionHarness.create(tmp_path, source=SOURCE, responses=[])
     model = replace(
@@ -1527,9 +1517,7 @@ def test_impossible_reservation_names_route_and_output_source(tmp_path, demand):
         reasoning=True,
         reasoning_options=None,
     )
-    harness.setup = replace_materialized_setup(
-        harness.setup, models=build_model_collection((model,))
-    )
+    harness.setup = replace_materialized_setup(harness.setup, models=(model,))
 
     async def scenario():
         async with harness:

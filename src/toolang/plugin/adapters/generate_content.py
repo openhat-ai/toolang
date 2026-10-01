@@ -107,7 +107,7 @@ class GenerateContentModelAdapter(ModelAdapter):
                 if isinstance(part, ReasoningPart):
                     part = replace(
                         part,
-                        provider=model._toolang.provider,
+                        provider=model.provider,
                         provider_metadata=native_metadata(model, "generate_content"),
                     )
                 await parts.finish(active, part)
@@ -339,7 +339,7 @@ def _generate_part(
             part = replace(
                 part,
                 signature=signature,
-                provider=model._toolang.provider,
+                provider=model.provider,
                 provider_metadata=native_metadata(model, "generate_content"),
             )
         return part
@@ -349,13 +349,13 @@ def _generate_part(
             return ReasoningPart(
                 text,
                 signature=signature,
-                provider=model._toolang.provider,
+                provider=model.provider,
                 provider_metadata=native_metadata(model, "generate_content"),
             )
         return TextPart(
             text,
             signature=signature,
-            provider=model._toolang.provider if signature is not None else None,
+            provider=model.provider if signature is not None else None,
             provider_metadata=native_metadata(model, "generate_content")
             if signature is not None
             else {},

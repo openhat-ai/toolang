@@ -51,7 +51,6 @@ from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateRefresh
-from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentEnvironment, AgentSetup
@@ -222,13 +221,13 @@ class FakeModels:
             name="scripted",
             _toolang=ModelToolang(
                 ready=True,
-                provider=self.name,
                 route=ModelRoute(
                     adapter="scripted", api="https://example.invalid/v1", env=()
                 ),
             ),
             tool_call=True,
             structured_output=True,
+            provider=self.name,
         )
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[Model, ...]:
@@ -363,7 +362,7 @@ class ExecutionHarness:
             layout=layout,
             providers=providers,
             adapters={adapter.name: adapter},
-            models=build_model_collection(provider.list_models(environ={})),
+            models=provider.list_models(environ={}),
             tools=ToolCollection.from_tools(
                 {**load_tools(queries=("_toolang/*",)), **(tools or {})}
             ),

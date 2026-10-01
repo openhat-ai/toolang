@@ -144,7 +144,7 @@ module by its resolved name.
 
 ```too
 agic pay:
-  skills += fund
+  skills += skill/fund
 
   Help with the requested wallet funding task.
 ```
@@ -380,8 +380,8 @@ directives, context/instruct selection, and authored model messages.
 
 ```too
 agic review(_, focus?: Text) -> ReviewResult:
-  models = gpt-5
-  skills += review
+  models = */gpt-5
+  skills += skill/review
   tools = shell/*
   recall = near
   context = default
@@ -407,7 +407,7 @@ Agics and flows share these directives:
 
 | Type | Directives | Operators | Values |
 | --- | --- | --- | --- |
-| Q | models, tools, psyches, skills, services, prompts | `=`, `+=`, `-=` | Match union query; `none` or `*` |
+| Q | models, tools, psyches, skills, services, prompts | `=`, `+=`, `-=` | Native TQ query; `none` or `*` |
 | L | hands, handoffs | `=` | CSV runnable references; standalone `none` or `*` |
 | L | recall | `=` | CSV `far`/`near`; standalone `none`, `default`, or `*` |
 | V | lanes | `=` | Positive integer or `default` (4) |

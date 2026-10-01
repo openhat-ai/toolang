@@ -143,7 +143,7 @@ def test_gateway_explicit_model_adapter_overrides_namespace_inference(declaratio
     model = replace(
         _model_for(provider, "model"),
         id="anthropic/claude-sonnet",
-        provider=declaration,
+        override=declaration,
     )
     resolved = resolve_catalog_providers(
         _replace_catalog(provider, models={model.id: model}),
@@ -162,7 +162,7 @@ def test_gateway_model_explicit_npm_keeps_its_own_adapter_api():
     model = replace(
         _model_for(provider, "model"),
         id="anthropic/claude-sonnet",
-        provider=ModelProvider(npm="@ai-sdk/anthropic"),
+        override=ModelProvider(npm="@ai-sdk/anthropic"),
     )
     resolved = resolve_catalog_providers(
         _replace_catalog(provider, models={model.id: model}),
@@ -343,7 +343,7 @@ def test_vercel_gateway_provider_preserves_explicit_api_routes() -> None:
     custom_model = replace(
         default_model,
         id="custom-model",
-        provider=ModelProvider(api="https://model.example/v1"),
+        override=ModelProvider(api="https://model.example/v1"),
     )
     provider = _replace_catalog(
         provider,
@@ -427,7 +427,7 @@ def test_explicit_model_header_overrides_gateway_convention_case_insensitively()
     )
     model = replace(
         _model_for(gateway, "model"),
-        provider=ModelProvider(headers={"X-Title": "Custom App"}),
+        override=ModelProvider(headers={"X-Title": "Custom App"}),
     )
     gateway = _replace_catalog(gateway, models={model.id: model})
 
@@ -454,7 +454,15 @@ def test_provider_json_remains_raw_after_resolution() -> None:
 
     assert data["npm"] == "@ai-sdk/openai"
     assert "api" not in data
-    assert "_toolang" not in data
+    assert data["_toolang"] == {
+        "model_count": 0,
+        "ready_count": 0,
+        "route": {
+            "adapter": "responses",
+            "api": "https://api.openai.com/v1",
+            "env": ["OPENAI_API_KEY"],
+        },
+    }
 
 
 def test_model_override_resolves_its_own_protocol_route() -> None:
@@ -462,10 +470,11 @@ def test_model_override_resolves_its_own_protocol_route() -> None:
     claude = Model(
         id="claude",
         name="Claude",
-        _toolang=ModelToolang(provider="router"),
-        provider=ModelProvider(
+        _toolang=ModelToolang(),
+        override=ModelProvider(
             npm="@ai-sdk/anthropic", api="https://router.example/anthropic/v1"
         ),
+        provider="router",
     )
     provider = _catalog(
         Provider(
@@ -497,9 +506,10 @@ def test_resolver_reuses_frozen_model_catalog_fields() -> None:
     model = Model(
         id="model",
         name="Model",
-        _toolang=ModelToolang(provider="openai"),
+        _toolang=ModelToolang(),
         modalities={"input": ("text",)},
         cost={"input": 1},
+        provider="openai",
     )
     provider = _catalog(
         Provider(
@@ -634,11 +644,7 @@ def _provider(
 
 
 def _model(provider_id: str, model_id: str, name: str) -> Model:
-    return Model(
-        id=model_id,
-        name=name,
-        _toolang=ModelToolang(provider=provider_id),
-    )
+    return Model(id=model_id, name=name, _toolang=ModelToolang(), provider=provider_id)
 
 
 def test_imported_catalog_env_requires_account_and_credential():
@@ -687,7 +693,7 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
         api="https://${ACCOUNT}.example/v1",
     )
     model = replace(
-        _model_for(provider, "model"), provider=ModelProvider(shape="messages")
+        _model_for(provider, "model"), override=ModelProvider(shape="messages")
     )
     provider = _replace_catalog(provider, models={"model": model})
     original = _provider_data(provider)
@@ -708,7 +714,9 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
         route = model._toolang.route
         assert (route.adapter, route.api, route.env) == expected
         assert model._toolang.ready is False
-        assert _provider_data(resolved) == original
+        assert {
+            k: v for k, v in _provider_data(resolved).items() if k != "_toolang"
+        } == {k: v for k, v in original.items() if k != "_toolang"}
         assert (
             _provider_for(resolved)._toolang.adapter
             == _provider_for(provider)._toolang.adapter
@@ -716,7 +724,7 @@ def test_routes_publish_independent_failures_and_preserve_declarations():
         assert (
             _provider_for(resolved)._toolang.env == _provider_for(provider)._toolang.env
         )
-        assert model.provider is not None and model.provider._toolang is None
+        assert model.override is not None and model.override._toolang is None
 
     ready = resolve_catalog_providers(
         provider,
@@ -745,7 +753,7 @@ def test_resolver_uses_npm_service_endpoints_for_provider_and_model_routes():
 
     model = replace(
         _model_for(provider, "model"),
-        provider=ModelProvider(npm="@ai-sdk/mistral"),
+        override=ModelProvider(npm="@ai-sdk/mistral"),
     )
     provider = _replace_catalog(provider, models={"model": model})
     resolved = resolve_catalog_providers(provider, adapters=_adapters(), environ={})
@@ -761,7 +769,7 @@ def test_resolver_uses_npm_service_endpoints_for_provider_and_model_routes():
     assert _model_for(explicit, "model")._toolang.route.api == "https://catalog.test/v1"
     model = replace(
         model,
-        provider=ModelProvider(npm="@ai-sdk/mistral", api="https://model.test/v1"),
+        override=ModelProvider(npm="@ai-sdk/mistral", api="https://model.test/v1"),
     )
     explicit = resolve_catalog_providers(
         _replace_catalog(
@@ -787,7 +795,7 @@ def test_resolver_does_not_apply_npm_endpoints_to_explicit_adapter_declarations(
     ):
         model = replace(
             _model_for(provider, "model"),
-            provider=replace(ModelProvider(npm="@ai-sdk/mistral"), **declaration),
+            override=replace(ModelProvider(npm="@ai-sdk/mistral"), **declaration),
         )
         resolved = resolve_catalog_providers(
             _replace_catalog(provider, models={"model": model}),
@@ -808,7 +816,7 @@ def test_invalid_modes_only_disable_the_affected_model():
     ):
         invalid = replace(
             _model("test", "invalid", "Invalid"),
-            provider=ModelProvider(
+            override=ModelProvider(
                 mode="fast", headers={"X-Test": "raw"}, body={"temperature": 0}
             ),
             experimental=experimental,
@@ -830,7 +838,8 @@ def test_invalid_modes_only_disable_the_affected_model():
         assert model._toolang.route.env == ()
         assert model._toolang.route.headers == {}
         assert model._toolang.route.options == {}
-        assert model.to_data() == invalid.to_data()
+        assert model.override == invalid.override
+    assert model.to_data()["override"] == invalid.to_data()["override"]
 
 
 def test_valid_modes_merge_request_data_and_allow_empty_definitions():
@@ -841,7 +850,7 @@ def test_valid_modes_merge_request_data_and_allow_empty_definitions():
     ):
         model = replace(
             _model_for(provider, "model"),
-            provider=ModelProvider(
+            override=ModelProvider(
                 mode="fast", headers={"X-Test": "raw"}, body={"temperature": 0}
             ),
             experimental={"modes": {"fast": selected}},
@@ -876,9 +885,7 @@ def _model_for(snapshot: ModelCatalogSnapshot, model_id: str) -> Model:
 
 
 def _provider_data(snapshot: ModelCatalogSnapshot) -> dict[str, object]:
-    return _provider_for(snapshot).to_data(
-        models={model.id: model for model in snapshot.models}
-    )
+    return _provider_for(snapshot).to_data()
 
 
 def _replace_catalog(

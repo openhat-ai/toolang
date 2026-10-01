@@ -6,11 +6,9 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
-from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.common.query import QueryDataset
+from tq import Query
 from toolang.base.protocols.tool import Tool
 
 
@@ -37,102 +35,6 @@ class _Tool(Tool):
         return ToolResult({})
 
 
-def _model(provider: str, model: str, *, tools: bool = True) -> Model:
-    return Model(
-        id=model,
-        name=model,
-        _toolang=ModelToolang(provider=provider, ready=True),
-        tool_call=tools,
-    )
-
-
-def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> None:
-    alpha = _model("alpha", "one")
-    beta = _model("beta", "two", tools=False)
-    gamma = _model("alpha", "three")
-    models = ModelCollection((alpha, beta, gamma))
-
-    assert models.match(("beta/*", "alpha/*")).refs() == (
-        "beta/two",
-        "alpha/one",
-        "alpha/three",
-    )
-    assert models.match(("alpha/*", "*/three")).refs() == (
-        "alpha/one",
-        "alpha/three",
-    )
-    assert models.match("*[tool_call=false]").refs() == ("beta/two",)
-    assert models.apply(
-        (
-            ("-=", "alpha/*"),
-            ("+=", "alpha/three"),
-            ("=", "*[tool_call]"),
-        )
-    ).refs() == ("alpha/three",)
-    assert models.match("missing/*").refs() == ()
-    assert models.resolve("beta/two") is beta
-    assert models.entry("alpha/one") is alpha
-    assert models.subset(("alpha/three", "alpha/one")).entries == (gamma, alpha)
-    assert models.contains("alpha/one")
-    assert not models.contains("missing/model")
-    assert models.effective_default("beta/two") == "beta/two"
-    assert models.effective_default("missing/model") == "alpha/one"
-    assert ModelCollection().effective_default("missing/model") is None
-    with pytest.raises(TypeError):
-        cast(dict[str, int], alpha.limit)["mutable"] = 1
-    with pytest.raises(ToolangError, match="model ref is unavailable"):
-        models.resolve("missing/model")
-
-
-def test_model_collection_matches_its_public_ref() -> None:
-    model = _model("gateway", "vendor/model")
-    models = ModelCollection((model,))
-
-    assert model.ref == "gateway/vendor/model"
-    assert models.match(model.ref).entries == (model,)
-
-
-def test_model_collection_subsets_reuse_the_published_matcher(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    alpha = _model("alpha", "one")
-    beta = _model("beta", "two")
-    models = ModelCollection((alpha, beta))
-
-    def fail_dataset(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("published model matcher must be reused")
-
-    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
-
-    assert models.match("alpha/*").entries == (alpha,)
-    assert models.apply((("-=", "beta/*"),)).entries == (alpha,)
-    assert models.subset(("beta/two",)).entries == (beta,)
-
-
-def test_model_collection_public_state_is_immutable() -> None:
-    models = ModelCollection((_model("alpha", "one"),))
-
-    with pytest.raises((AttributeError, TypeError)):
-        setattr(cast(Any, models), "entries", ())
-    with pytest.raises(TypeError):
-        cast(dict[str, object], models._by_ref)["other/model"] = object()
-
-
-def test_model_collection_keys_are_stable_and_duplicate_refs_are_rejected() -> None:
-    first = ModelCollection((_model("alpha", "one"), _model("beta", "two")))
-    rebuilt = ModelCollection((_model("alpha", "one"), _model("beta", "two")))
-
-    assert first.keys() == rebuilt.keys() == ("alpha/one", "beta/two")
-    assert first == rebuilt
-    with pytest.raises(ValueError, match="duplicate public refs"):
-        ModelCollection(
-            (
-                _model("alpha", "one"),
-                _model("alpha", "one"),
-            )
-        )
-
-
 def test_tool_collection_owns_matching_set_operations_and_exact_indexes() -> None:
     alpha = _Tool("alpha", "one")
     beta = _Tool("beta", "two")
@@ -157,7 +59,7 @@ def test_tool_collection_owns_matching_set_operations_and_exact_indexes() -> Non
         tools.resolve("missing/tool")
 
 
-def test_tool_collection_subsets_reuse_the_published_matcher(
+def test_tool_collection_exact_subsets_do_not_build_queries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alpha = _Tool("alpha", "one")
@@ -166,13 +68,11 @@ def test_tool_collection_subsets_reuse_the_published_matcher(
         {"alpha__one": alpha, "beta__two": beta},
     )
 
-    def fail_dataset(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("published tool matcher must be reused")
+    def fail_query_parse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("exact subset must not parse queries")
 
-    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
+    monkeypatch.setattr(Query, "parse", fail_query_parse)
 
-    assert tools.match("alpha/*").refs() == ("alpha/one",)
-    assert tools.apply((("-=", "beta/*"),)).refs() == ("alpha/one",)
     assert tools.subset(("beta__two",)).refs() == ("beta/two",)
 
 
