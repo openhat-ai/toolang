@@ -5,6 +5,7 @@ from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 from pydantic import TypeAdapter
 
 from toolang.api.app import AgentCoreDep, CapsManagerDep
@@ -17,7 +18,8 @@ from toolang.common.errors import ToolangError
 from toolang.state import state as cap_state
 from toolang.state.collections import cap_dataset, query_cap_views
 from toolang.state.schemas import CapDetail, CapInfo
-from toolang.state.state import StateCap, AgentState, CapScope
+from toolang.state.state import StateCap, AgentState
+from toolang.state.prepare import load_state_caps
 
 MutableCapScope = Literal["home", "root"]
 
@@ -52,7 +54,7 @@ router = APIRouter(tags=["caps"])
     summary="Upsert Authored Psyche",
     response_model=CapDetail,
 )
-def put_authored_cap(
+async def put_authored_cap(
     core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
@@ -71,9 +73,11 @@ def put_authored_cap(
         kind=kind,
         name=name,
     )
-    _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(core, scope=scope, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=core.layout.name)
+    await run_in_threadpool(_wrap_user_error, catalog.upsert, cap)
+    state = await _publish_written_state(core)
+    return await run_in_threadpool(
+        _written_cap_detail, core, state, scope=scope, kind=kind, name=name
+    )
 
 
 @router.put(
@@ -88,7 +92,7 @@ def put_authored_cap(
 @router.put(
     "/psyches/{name}/configured", summary="Configure Psyche", response_model=CapDetail
 )
-def put_configured_cap(
+async def put_configured_cap(
     core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
@@ -97,7 +101,9 @@ def put_configured_cap(
 ) -> CapDetail:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
     scope = payload.scope
-    canonical_ref = _wrap_user_error(cap_state.resolve_remote_ref, kind, payload.ref)
+    canonical_ref = await run_in_threadpool(
+        _wrap_user_error, cap_state.resolve_remote_ref, kind, payload.ref
+    )
     if cap_state.remote_entry_name(kind, canonical_ref) != name:
         raise HTTPException(
             status_code=400,
@@ -105,9 +111,11 @@ def put_configured_cap(
         )
     catalog = _configured_caps(manager.home_configured, manager.root_configured, scope)
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
-    _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(core, scope=scope, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=core.layout.name)
+    await run_in_threadpool(_wrap_user_error, catalog.upsert, cap)
+    state = await _publish_written_state(core)
+    return await run_in_threadpool(
+        _written_cap_detail, core, state, scope=scope, kind=kind, name=name
+    )
 
 
 @router.delete(
@@ -134,7 +142,8 @@ def put_configured_cap(
     status_code=204,
     response_class=Response,
 )
-def delete_authored_cap(
+async def delete_authored_cap(
+    core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
     name: str,
@@ -142,7 +151,8 @@ def delete_authored_cap(
 ) -> None:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
     requested_scope = scope
-    _wrap_user_error(
+    await run_in_threadpool(
+        _wrap_user_error,
         _authored_caps(
             manager.home_authoring,
             manager.root_authoring,
@@ -151,6 +161,7 @@ def delete_authored_cap(
         kind,
         name,
     )
+    await _publish_written_state(core)
 
 
 @router.delete(
@@ -177,7 +188,8 @@ def delete_authored_cap(
     status_code=204,
     response_class=Response,
 )
-def delete_configured_cap(
+async def delete_configured_cap(
+    core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
     name: str,
@@ -185,7 +197,8 @@ def delete_configured_cap(
 ) -> None:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
     requested_scope = scope
-    _wrap_user_error(
+    await run_in_threadpool(
+        _wrap_user_error,
         _configured_caps(
             manager.home_configured,
             manager.root_configured,
@@ -194,6 +207,7 @@ def delete_configured_cap(
         kind,
         name,
     )
+    await _publish_written_state(core)
 
 
 @router.get("/caps", summary="Get Caps Summary")
@@ -383,21 +397,28 @@ def _collection_from_path(path: str) -> str:
     return parts[2]
 
 
-def _find_authored_entry(
+async def _publish_written_state(core: AgentCore) -> AgentState:
+    result = await core.state.refresh_result()
+    if result.diagnostics:
+        detail = "; ".join(item.message for item in result.diagnostics)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Capability change saved, but Agent State publication failed: {detail}",
+        )
+    return result.state
+
+
+def _written_cap_detail(
     core: AgentCore,
+    state: AgentState,
     *,
-    scope: CapScope,
+    scope: MutableCapScope,
     kind: CapKind,
     name: str,
-) -> StateCap:
-    for entry in cap_state.list_entries(
-        core.layout.root,
-        core.layout.name,
-        scope=scope,
-        kinds={kind},
-    ):
-        if entry.name == name:
-            return entry
+) -> CapDetail:
+    for entry in load_state_caps(core.layout, state, scope=scope):
+        if entry.kind == kind and entry.name == name:
+            return CapDetail.from_cap(entry, agent_name=core.layout.name)
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 

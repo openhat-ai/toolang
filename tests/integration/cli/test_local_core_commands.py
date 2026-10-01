@@ -3308,14 +3308,27 @@ def test_agent_info_fields_follow_the_compact_layout(
         },
     )
     monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
+    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
+
+    monkeypatch.setattr(
+        agent_commands,
+        "running_workspace_inspection",
+        lambda _layout, **kwargs: WorkspaceInspection(
+            revision="a" * 64,
+            items=tuple(
+                WorkspaceInfo(name=name, path=str(tmp_path), available=True)
+                for name in ("lab", "extra", "runtime")
+            ),
+            workdir="runtime://",
+        ),
+    )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
     )
 
     args = ("alice", "info") if target_first else ("info", "alice")
-    invocation = ("-w", f"extra={tmp_path}") if target_first else ()
-    result = _invoke(root, *args, *invocation)
+    result = _invoke(root, *args)
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
@@ -3325,10 +3338,8 @@ def test_agent_info_fields_follow_the_compact_layout(
     rows = dict(captured)
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
-    if target_first or status == "running":
-        workspace_names.append("extra")
     if status == "running":
-        workspace_names.append("runtime")
+        workspace_names.extend(("extra", "runtime"))
     assert rows["Workspaces"] == ", ".join(workspace_names)
     status_value = rows["Status"]
     if status == "stopped":
@@ -3424,6 +3435,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [AgentLayout.roaming(source).home]
     assert rows["Home"] == "compact home"
+    assert rows["Workspaces"] == "lab"
 
 
 def test_visiting_agent_info_uses_the_materialized_layout(
@@ -3612,7 +3624,8 @@ def test_tools_help_and_missing_agent_need_no_setup(
 
 
 def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monkeypatch):
-    import toolang.cli.toolang.commands.workspace as workspace_commands
+    import toolang.cli.common.workspaces as workspace_commands
+    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
     root = tmp_path / "toolang-root"
     _create_agent(root)
@@ -3624,14 +3637,97 @@ def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monke
     layout.config.write_text(f'[workspaces]\nproject = "{project}"\n')
     monkeypatch.setattr(
         workspace_commands,
-        "running_workspaces",
-        lambda _layout: {"temporary": str(temporary)},
+        "running_workspace_inspection",
+        lambda _layout, **kwargs: WorkspaceInspection(
+            revision="a" * 64,
+            items=(
+                WorkspaceInfo(
+                    name="lab", path=str(layout.home / "lab"), available=True
+                ),
+                WorkspaceInfo(name="temporary", path=str(temporary), available=True),
+            ),
+            workdir="temporary://",
+        ),
     )
 
     result = _invoke(root, "alice", "workspace", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert "Workdir: project://" in result.stdout
-    assert "Server grants" in result.stdout
+    assert "Workdir: temporary://" in result.stdout
+    assert str(project) not in result.stdout
     assert "temporary" in result.stdout
     assert str(temporary) in result.stdout
+
+
+@pytest.mark.parametrize("option", ["--workdir", "--workspace", "--no-auto-workspace"])
+def test_agent_info_rejects_execution_workspace_options(tmp_path, monkeypatch, option):
+    _create_agent(tmp_path)
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+
+    value = () if option == "--no-auto-workspace" else (str(tmp_path),)
+    result = _invoke(tmp_path, "alice", "info", option, *value)
+
+    assert result.exit_code == 2
+    assert f"No such option: {option}" in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize("command", [("workspace", "list"), ("info",)])
+def test_running_roaming_inspection_preserves_runtime_workspaces(
+    tmp_path, monkeypatch, capsys, command
+):
+    from toolang.cli.common.client import RuntimeClient
+
+    source = tmp_path / "demo.too"
+    source.write_text(
+        templates.render_template("agent", agent_name="demo", name="demo")
+    )
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda self, **kwargs: agents.AgentStatus(
+            name="demo",
+            status="running",
+            endpoint="http://runtime.test",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker",
+        ),
+    )
+    requests = []
+
+    def get(self, path):
+        requests.append(path)
+        return {
+            "revision": "a" * 64,
+            "items": [{"name": "lab", "path": "/host/lab", "available": True}],
+            "workdir": "lab://",
+        }
+
+    monkeypatch.setattr(RuntimeClient, "get", get)
+    result = cli.main([str(source), *command])
+    output = capsys.readouterr()
+
+    assert result == 0, output.err
+    assert requests == ["/api/v1/workspaces"]
+
+
+@pytest.mark.parametrize("command", ["models", "providers", "tools"])
+def test_setup_inspection_does_not_require_valid_program_for_workspace_options(
+    tmp_path, monkeypatch, command
+):
+    import toolang.cli.toolang.commands.model_catalog as model_commands
+
+    _create_agent(tmp_path)
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.program.write_text("not a valid program ???")
+
+    async def load_setup(layout, **kwargs):
+        return await _EmptySetupWatcher(layout).refresh()
+
+    monkeypatch.setattr(model_commands, "load_setup", load_setup)
+    monkeypatch.setattr(plugin_commands, "load_setup", load_setup)
+    result = _invoke(tmp_path, "alice", command, "-w", str(tmp_path))
+
+    assert result.exit_code == 0, result.stderr
+    assert not layout.agent_state.exists()

@@ -226,6 +226,9 @@ def serve(
     state = core.state.current()
     ceiling = AgentCeiling()
     validate_agent_ceiling(core.setup.current(), state, ceiling)
+    core.executor.resolve_workdir(
+        core.setup.current(), state, workdir=spec.workdir, inherit_thread_workdir=False
+    )
     cors_allowed_origins = resolve_cors_allowed_origins(
         load_setup_config(spec.layout),
         environ=environ,

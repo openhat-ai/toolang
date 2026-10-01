@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from toolang.cli.common.workspaces import (
-    WorkspaceOptions,
-    WorkdirOption,
-    NoAutoWorkspaceOption,
-    resolve_workspaces,
-    running_workspaces,
-)
+from toolang.cli.common.workspaces import running_workspace_inspection
 
 import asyncio
 from datetime import UTC, datetime
@@ -173,25 +167,10 @@ def info_agent(
         None, help="Agent name, .too file, reference, or URL", hidden=True
     ),
     model_catalog: ModelCatalogOption = None,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
-    selection = user_call(
-        resolve_workspaces,
-        layout,
-        procdir=Path.cwd(),
-        paths=workspace or (),
-        workdir=workdir,
-        srcdir=layout.program.resolve().parent
-        if layout.placement == "roaming"
-        else None,
-        no_auto=no_auto_workspace,
-        existing=running_workspaces(layout) if workdir else None,
-    )
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
@@ -218,21 +197,18 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
-    workspace_grants = {**state.workspaces, **selection.additions}
-    runtime_workspaces = runtime_state.get("workspace_additions")
-    if status.status == "running" and isinstance(runtime_workspaces, dict):
-        workspace_grants.update(
-            (name, path)
-            for name, path in runtime_workspaces.items()
-            if isinstance(name, str) and isinstance(path, str)
-        )
+    workspace_names = tuple(setup.workspace_grants(state.workspaces))
+    if status.status == "running":
+        inspection = user_call(running_workspace_inspection, layout)
+        if inspection is not None:
+            workspace_names = tuple(item.name for item in inspection.items)
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),
         ("Models", _models_summary(setup)),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Workspaces", ", ".join(setup.workspace_grants(workspace_grants))),
+        ("Workspaces", ", ".join(workspace_names)),
         ("Status", status_value),
     ]
     if status.status == "stopped":

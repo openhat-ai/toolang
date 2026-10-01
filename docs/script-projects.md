@@ -82,8 +82,10 @@ server cannot be rebound to different local directories; stop it before changing
 its grants. Use `--workdir NAME://SUBDIR` to select an existing server workspace.
 
 `too ./aide.too info` and `too ./aide.too workspace list` show configuration and
-workspace information. Workspace listing reports the current invocation's workdir
-and shows a running server's temporary grants separately.
+workspace information. `info` does not accept workspace or workdir options and
+does not add the source directory as a temporary workspace. Workspace listing
+uses a running server's grants and default workdir; without a server it prepares
+local State and reports the inspection invocation's workdir.
 Persistent workspace edits update source-local TOML;
 visiting agents accept temporary grants only.
 

@@ -28,6 +28,11 @@ from toolang.plugin.models.resolution import (
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
+from toolang.state.schemas import WorkspaceInspection
+from toolang.execution.executor.resources import (
+    default_workspace_workdir,
+    workspace_inspection,
+)
 
 router = APIRouter(tags=["agent"])
 
@@ -373,3 +378,22 @@ def _runnable_defaults(
         # Catalogs remain useful after a configured default becomes stale. The
         # defaults endpoint reports that invalid binding when a run is built.
         return None, None
+
+
+@router.get("/workspaces", summary="List Agent Workspaces")
+def workspaces(
+    core: AgentCoreDep, workdir: str | None = Query(default=None)
+) -> WorkspaceInspection:
+    setup = core.setup.current()
+    state = core.state.current()
+    try:
+        selected = (
+            default_workspace_workdir(setup, state, workdir=workdir)
+            if workdir is not None
+            else core.executor.default_workdir(setup, state)
+        )
+    except (OSError, ToolangError, ValueError) as exc:
+        if workdir is not None:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        selected = None
+    return workspace_inspection(setup, state, workdir=selected)

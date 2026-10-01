@@ -62,7 +62,11 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
                 )
             )
             arguments.append("demo")
-    authored_files = {path: path.read_bytes() for path in root.rglob("*.md")}
+    authored_files = {
+        path: path.read_bytes()
+        for path in root.rglob("*.md")
+        if ".state" not in path.relative_to(root).parts
+    }
     editor = (
         shlex.quote(str(tmp_path / "missing-editor"))
         if editor_failure == "missing"
@@ -79,4 +83,8 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
     assert result == 1
     assert "Editing failed" in error
     assert "Traceback" not in output.err
-    assert {path: path.read_bytes() for path in root.rglob("*.md")} == authored_files
+    assert {
+        path: path.read_bytes()
+        for path in root.rglob("*.md")
+        if ".state" not in path.relative_to(root).parts
+    } == authored_files

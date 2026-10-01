@@ -16,7 +16,7 @@ from toolang.cli.common.workspaces import (
     WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
-    running_workspaces,
+    inspect_workspace_selection,
 )
 from toolang.common.layout import AgentLayout
 from ...common.context import context_layout, require_prefix_agent, user_call
@@ -91,8 +91,6 @@ def list_workspaces(
 ) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    server_grants = running_workspaces(layout)
-    existing = server_grants if workdir else {}
     selection = user_call(
         resolve_workspaces,
         layout,
@@ -103,40 +101,16 @@ def list_workspaces(
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto_workspace,
-        existing=existing,
     )
-    configured = user_call(ConfiguredWorkspaces(layout.config).list)
-    configured.pop("lab", None)
-    workspaces = {
-        "lab": str(layout.home / "lab"),
-        **configured,
-        **existing,
-        **selection.additions,
-    }
-    if server_grants:
-        typer.echo("Current invocation:")
+    inspection = user_call(inspect_workspace_selection, layout, selection)
     echo_table(
         ("NAME", "PATH", "AVAILABLE"),
         tuple(
-            (name, path, "yes" if Path(path).is_dir() else "no")
-            for name, path in workspaces.items()
+            (item.name, item.path, "yes" if item.available else "no")
+            for item in inspection.items
         ),
     )
-    selected_workdir = selection.workdir or next(
-        (
-            f"{name}://"
-            for name, path in reversed(workspaces.items())
-            if Path(path).is_dir()
-        ),
-        "lab://",
-    )
-    typer.echo(f"Workdir: {selected_workdir}")
-    if server_grants:
-        typer.echo("Server grants:")
-        echo_table(
-            ("NAME", "PATH"),
-            tuple(server_grants.items()),
-        )
+    typer.echo(f"Workdir: {inspection.workdir or 'unavailable'}")
 
 
 def _authored_config(layout: AgentLayout) -> Path:

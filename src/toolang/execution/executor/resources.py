@@ -10,7 +10,10 @@ from typing import cast
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import Model
 from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.tool import ToolContext
+from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.common.errors import ToolangError
+from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
 from toolang.common.query import SetOperator
 from toolang.execution.types import (
     AgentCapResource,
@@ -38,6 +41,7 @@ from toolang.state.state import (
 )
 from toolang.state.collections import cap_dataset
 from toolang.state.types import EntryKind
+from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
 _Runnable = AgicDecl | FlowDecl
 
@@ -49,6 +53,37 @@ def available_workspaces(setup: AgentSetup, state: AgentState) -> tuple[str, ...
         for name, root in setup.workspace_roots(state.workspaces).items()
         if root.is_dir()
     )
+
+
+def workspace_context(setup: AgentSetup, state: AgentState, cwd: str) -> ToolContext:
+    """Bind path resolution to captured workspace grants and runtime roots."""
+    grants = setup.workspace_grants(state.workspaces)
+    return ToolContext(
+        home=setup.layout.home,
+        room=setup.layout.tool_room("_toolang"),
+        workspaces=setup.workspace_roots(state.workspaces),
+        workspace_names=tuple(grants),
+        workspace_bindings=grants,
+        cwd=cwd,
+    )
+
+
+def default_workspace_workdir(
+    setup: AgentSetup, state: AgentState, *, workdir: str | None = None
+) -> str:
+    """Resolve an initial location without run history or filesystem mutation."""
+    names = available_workspaces(setup, state)
+    if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
+        raise ToolangError("implicit lab workspace is unavailable")
+    default = workspace_uri(names[-1])
+    if workdir is None:
+        return default
+    target, name, relative = resolve_input_path(
+        workdir, workspace_context(setup, state, default)
+    )
+    if not target.is_dir():
+        raise ToolangError(f"workdir is not a directory: {target}")
+    return workspace_uri(name, relative)
 
 
 def workspace_declarations(
@@ -384,3 +419,18 @@ def _query_operations(
         for directive in directives
         if directive.values != ("none",) or directive.operator == "="
     )
+
+
+def workspace_inspection(
+    setup: AgentSetup, state: AgentState, *, workdir: str | None
+) -> WorkspaceInspection:
+    """Inspect captured grants using only the runtime's mapped filesystem roots."""
+    grants = setup.workspace_grants(state.workspaces)
+    roots = setup.workspace_roots(state.workspaces)
+    items = tuple(
+        WorkspaceInfo(
+            name=name, path=path, available=name in roots and roots[name].is_dir()
+        )
+        for name, path in grants.items()
+    )
+    return WorkspaceInspection(revision=state.revision, items=items, workdir=workdir)

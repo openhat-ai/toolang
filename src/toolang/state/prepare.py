@@ -189,6 +189,16 @@ def load_agent_state(
     return state
 
 
+def load_state_caps(
+    layout: AgentLayout, state: AgentState, *, scope: LayerScope
+) -> tuple[StateCap, ...]:
+    """Read one captured layer, including caps shadowed by another scope."""
+
+    if scope == "root":
+        return load_root_layer(layout, state.root_revision).caps
+    return load_home_layer(layout, state.home_revision).caps
+
+
 def validate_home_programs(authored: SourceSnapshot) -> None:
     """Validate one captured home Program candidate without publishing State."""
 

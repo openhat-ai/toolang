@@ -46,6 +46,7 @@ from toolang.plugin.loading import create_sandbox
 from toolang.setup.config import (
     load_setup_dotenvs,
 )
+from toolang.state.prepare import prepare_agent_state
 from toolang.up.mounts import (
     prepare_source_mounts,
     prepare_workspace_mounts,
@@ -207,15 +208,17 @@ async def _launch_locked(
             )
         on_host = implementation.location == "host"
         hosted_home = hosted_root / "agents" / spec.serve.layout.name
-        workspace_mounts, workspace_mapping = (
-            ((), {})
-            if on_host
-            else prepare_workspace_mounts(
-                spec.serve.layout.home,
-                hosted_home,
-                additions=spec.serve.workspace_additions,
+        workspace_mounts: tuple[SandboxMount, ...] = ()
+        workspace_mapping: dict[str, tuple[str, str]] = {}
+        if not on_host:
+            state = await asyncio.to_thread(
+                prepare_agent_state,
+                spec.serve.layout,
+                workspace_additions=spec.serve.workspace_additions,
             )
-        )
+            workspace_mounts, workspace_mapping = prepare_workspace_mounts(
+                spec.serve.layout.home, hosted_home, workspaces=state.workspaces
+            )
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
         if not on_host:
