@@ -1,101 +1,109 @@
-"""Public query view for resolved State capabilities."""
+"""Transient cap selection and public records."""
 
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from itertools import groupby
 
-from toolang.common.query import (
-    CollectionDefinition,
-    CollectionSchema,
-    ColumnSpec,
-    IdentitySpec,
-    QueryDataset,
-)
+from tq import Query
 
-from .state import (
-    StateCap,
-    entry_definition_file,
-    entry_form,
-    entry_origin,
-    entry_ref,
-    entry_scope,
-    entry_source,
-)
-from .types import CapForm, CapScope, EntryKind, EntryShape, SourceOrigin
+from toolang.common.errors import ToolangError
+from toolang.common.types import SetOperator
+
+from .state import StateCap, entry_definition_file, entry_origin, entry_ref, entry_scope
+from .types import EntryKind
 
 
 @dataclass(frozen=True, slots=True)
-class CapQueryView:
-    """Explicitly public resolved-cap query representation."""
+class CapView:
+    record: StateCap
+    data: dict[str, object]
 
-    record: object
-    kind: EntryKind
-    name: str
-    ref: str
-    description: str | None
-    scope: CapScope
-    origin: SourceOrigin
-    form: CapForm
-    source: str
-    definition: str
-    shape: EntryShape
-    editable: bool
-    line: int | None
+    @property
+    def kind(self) -> EntryKind:
+        return self.record.kind
 
+    @property
+    def name(self) -> str:
+        return self.record.name
 
-_COLLECTION_BY_KIND: dict[EntryKind, str] = {
-    "psyche": "psyches",
-    "skill": "skills",
-    "service": "services",
-    "prompt": "prompts",
-}
-_CAP_COLUMNS = (
-    ColumnSpec("CAP", ("name",), "identity"),
-    ColumnSpec("DESCRIPTION", ("description",), "truncate"),
-    ColumnSpec("SCOPE", ("scope",)),
-    ColumnSpec("FORM", ("form",)),
-    ColumnSpec("SOURCE", ("source",)),
-)
+    @property
+    def ref(self) -> str:
+        return str(self.data["ref"])
 
 
-def cap_kind_definition(kind: EntryKind) -> CollectionDefinition[CapQueryView]:
-    """Return one concrete cap-kind collection definition."""
-
-    return CollectionDefinition(
-        CollectionSchema.from_type(
-            f"{kind}s",
-            CapQueryView,
-            key=("kind", "name", "ref"),
-            identity=IdentitySpec(
-                paths=("name",),
-                labels=(kind, kind),
-                separator="/",
-                bound=(kind,),
-            ),
-            exclude=("record", "kind"),
-            columns=_CAP_COLUMNS,
-        )
+def cap_view(entry: StateCap, *, agent_name: str, allowed: bool = True) -> CapView:
+    description = entry.meta.get("description")
+    return CapView(
+        entry,
+        {
+            "ref": f"{entry.kind}/{entry.name}",
+            "name": entry.name,
+            "description": description if isinstance(description, str) else None,
+            "source": entry_ref(entry, agent_name=agent_name),
+            "definition": entry_definition_file(entry),
+            "line": entry.source.line,
+            "tags": [
+                "ready" if allowed else "not_allowed",
+                entry_origin(entry),
+                entry_scope(entry, agent_name=agent_name),
+            ],
+        },
     )
 
 
-def cap_dataset(
+@dataclass(frozen=True, slots=True)
+class CapCollection:
+    items: tuple[CapView, ...]
+
+    def query(self, queries: str | Sequence[str] | None = None) -> tuple[CapView, ...]:
+        if queries is None:
+            return self.items
+        query = Query.parse(queries).validate({"key": "ref"})
+        return tuple(view for view in self.items if query.match(view.data) is not None)
+
+    def require_each(self, queries: Sequence[str], *, label: str) -> None:
+        missing = [value for value in queries if not self.query(value)]
+        if missing:
+            raise ToolangError(f"{label} query matched no items: {', '.join(missing)}")
+
+    def apply(
+        self, operations: Sequence[tuple[SetOperator, Sequence[str]]]
+    ) -> tuple[CapView, ...]:
+        def key(view: CapView) -> tuple[str, str]:
+            return view.ref, str(view.data["source"])
+
+        active = {key(view) for view in self.items}
+        for operator, queries in operations:
+            matches = {key(view) for view in self.query(queries)}
+            if operator == "=":
+                active.intersection_update(matches)
+            elif operator == "+=":
+                active.update(matches)
+            elif operator == "-=":
+                active.difference_update(matches)
+            else:
+                raise ToolangError(f"unknown collection set operator: {operator!r}")
+        return tuple(view for view in self.items if key(view) in active)
+
+
+def cap_collection(
     entries: Sequence[StateCap],
     *,
     agent_name: str,
-    kind: EntryKind,
-) -> QueryDataset[CapQueryView]:
-    """Materialize one resolved base-cap collection."""
-
-    definition = cap_kind_definition(kind)
-    return definition.dataset(
-        tuple(
-            _cap_view(entry, agent_name=agent_name)
-            for entry in entries
-            if entry.kind == kind
-        )
-    )
+    kind: EntryKind | None = None,
+    allowed: Collection[tuple[EntryKind, str]] | None = None,
+) -> CapCollection:
+    views: dict[tuple[str, str], CapView] = {}
+    for entry in entries:
+        if kind is None or entry.kind == kind:
+            view = cap_view(
+                entry,
+                agent_name=agent_name,
+                allowed=allowed is None or (entry.kind, entry.name) in allowed,
+            )
+            views.setdefault((view.ref, str(view.data["source"])), view)
+    return CapCollection(tuple(views.values()))
 
 
 def query_cap_views(
@@ -103,73 +111,8 @@ def query_cap_views(
     *,
     agent_name: str,
     queries: Sequence[str] | None,
-) -> tuple[CapQueryView, ...]:
-    """Query the stable union of the four concrete cap collections."""
-
-    views = tuple(_cap_view(entry, agent_name=agent_name) for entry in entries)
-    selected_keys: set[tuple[EntryKind, str, str]] = set()
-    for kind in _COLLECTION_BY_KIND:
-        dataset = cap_kind_definition(kind).dataset(
-            tuple(view for view in views if view.kind == kind)
-        )
-        selected_keys.update(
-            (view.kind, view.name, view.ref) for view in dataset.query(queries)
-        )
-    return tuple(
-        view for view in views if (view.kind, view.name, view.ref) in selected_keys
-    )
-
-
-def cap_table(
-    views: Sequence[CapQueryView],
-    *,
-    kind: EntryKind | None = None,
     allowed: Collection[tuple[EntryKind, str]] | None = None,
-) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
-    """Render cap identities and metadata in the supplied order."""
-
-    if kind is not None:
-        dataset = cap_kind_definition(kind).dataset(tuple(views))
-        headers, rows = dataset.table()
-    else:
-        headers = tuple(column.label for column in _CAP_COLUMNS)
-        values: list[tuple[str, ...]] = []
-        for cap_kind, group in groupby(views, key=lambda view: view.kind):
-            dataset = cap_kind_definition(cap_kind).dataset(tuple(group))
-            values.extend(dataset.table()[1])
-        rows = tuple(values)
-    if allowed is not None:
-        headers = (headers[0], "STATUS", *headers[1:])
-        rows = tuple(
-            (row[0], "ok" if (view.kind, view.name) in allowed else "blocked", *row[1:])
-            for row, view in zip(rows, views, strict=True)
-        )
-    return headers, rows
-
-
-def _cap_view(entry: StateCap, *, agent_name: str) -> CapQueryView:
-    description = entry.meta.get("description")
-    return CapQueryView(
-        record=entry,
-        kind=entry.kind,
-        name=entry.name,
-        ref=entry_ref(entry, agent_name=agent_name),
-        description=description if isinstance(description, str) else None,
-        scope=entry_scope(entry, agent_name=agent_name),
-        origin=entry_origin(entry),
-        form=entry_form(entry),
-        source=entry_source(entry, agent_name=agent_name),
-        definition=entry_definition_file(entry),
-        shape=entry.shape,
-        editable=entry_origin(entry) == "local" and entry_form(entry) == "authored",
-        line=entry.source.line,
+) -> tuple[CapView, ...]:
+    return cap_collection(entries, agent_name=agent_name, allowed=allowed).query(
+        queries
     )
-
-
-__all__ = [
-    "CapQueryView",
-    "cap_table",
-    "cap_dataset",
-    "cap_kind_definition",
-    "query_cap_views",
-]

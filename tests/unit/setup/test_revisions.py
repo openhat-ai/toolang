@@ -83,3 +83,30 @@ def test_route_detaches_nested_plugin_data():
     assert route.options == {"nested": {"values": ("text",)}}
     with pytest.raises(TypeError):
         cast(Any, route.options["nested"])["values"] = ()
+
+
+def test_source_revision_tracks_per_model_origin_and_environment_blockers():
+    from dataclasses import replace
+
+    model = Model(id="one", name="One", _toolang=ModelToolang(provider="test"))
+    snapshot = ModelCatalogSnapshot(
+        providers={"test": Provider(id="test", name="Test")},
+        models=(model,),
+        revision="source",
+    )
+    local = replace(
+        snapshot, models=(replace(model, _toolang=replace(model._toolang, local=True)),)
+    )
+    missing_env = replace(
+        snapshot,
+        models=(
+            replace(
+                model,
+                _toolang=model._toolang.with_route(ModelRoute(api_env_missing=True)),
+            ),
+        ),
+    )
+    assert (
+        len({source_content_revision(item) for item in (snapshot, local, missing_env)})
+        == 3
+    )

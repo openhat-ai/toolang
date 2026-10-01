@@ -3,7 +3,7 @@
 import pytest
 
 from toolang.base.model_settings import parse_model_body
-from toolang.base.types.model import Model, ModelToolang
+from toolang.base.types.model import Model, ModelToolang, ModelRoute
 from toolang.common.errors import ToolangError
 from toolang.plugin.models.query import apply_model_operations, filter_models
 from toolang.setup.config import resolve_compact_config, resolve_setup_allow
@@ -23,7 +23,14 @@ def model(
     return Model(
         id=name,
         name=name,
-        _toolang=ModelToolang(provider=provider, ready=routable, allowed=allowed),
+        _toolang=ModelToolang(
+            provider=provider,
+            ready=routable,
+            allowed=allowed,
+            route=ModelRoute(
+                adapter="test", api="https://test", env=() if routable else None
+            ),
+        ),
         tool_call=tools,
         structured_output=structured,
     )
@@ -182,15 +189,15 @@ def test_tq_queries_expose_routability_allow_and_effective_ready():
         model("test/blocked", routable=True, allowed=False),
         model("test/offline", routable=False, allowed=True),
     )
-    assert refs(filter_models(models, ("*[allowed=true]",))) == (
+    assert refs(filter_models(models, ("*[tags has no not_allowed]",))) == (
         "test/allowed",
         "test/offline",
     )
-    assert refs(filter_models(models, ("*[available=true]",))) == (
+    assert refs(filter_models(models, ("*[tags has no no_env]",))) == (
         "test/allowed",
         "test/blocked",
     )
-    assert refs(filter_models(models, ("*[ready=true]",))) == ("test/allowed",)
+    assert refs(filter_models(models, ("*[tags has ready]",))) == ("test/allowed",)
     month_model = Model(
         id="month",
         name="Month",
@@ -200,7 +207,8 @@ def test_tq_queries_expose_routability_allow_and_effective_ready():
     assert refs(
         filter_models((month_model,), ("test/month[release_date=2025-04]",))
     ) == ("test/month",)
-    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("o3",))) == (
+    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("o3",))) == ()
+    assert refs(filter_models((model("openai/o3"), model("other/o4")), ("*/o3",))) == (
         "openai/o3",
     )
 
@@ -233,7 +241,9 @@ def test_sequence_predicates_keep_membership_semantics_and_tq_explicit_operators
         assert refs(filter_models(models, (query,))) == refs(
             legacy.match(query).entries
         )
-    assert refs(filter_models(models, ("*[modalities.input!=image]", "test/c"))) == (
+    assert refs(
+        filter_models(models, ("*[modalities.input has no image]", "test/c"))
+    ) == (
         "test/b",
         "test/c",
     )

@@ -25,7 +25,7 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.runnables import (
     parse_runnable_ref,
     runnable_binding_defaults,
-    resolve_public_runnable_query,
+    resolve_runnable_reference,
 )
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.models.query import filter_models, first_model_ref
@@ -34,7 +34,6 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     model_reasoning_effort_exhaustive,
 )
-from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import ControlInfo, RunRequest
@@ -43,7 +42,7 @@ from toolang.lang.input import CallInput
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
-from toolang.state.collections import cap_dataset, query_cap_views
+from toolang.state.collections import cap_collection, query_cap_views
 from toolang.state.schemas import CapInfo
 from toolang.state.types import EntryKind
 from toolang.state.state import (
@@ -195,7 +194,7 @@ class LocalChatSession:
         if queries is not None and not queries:
             return {"items": []}
         tools = self.setup_watcher.current().tools()
-        selected = tool_dataset(tools).query(queries)
+        selected = tools.query(queries)
         return {
             "items": [
                 {
@@ -232,7 +231,7 @@ class LocalChatSession:
                 if item.kind == item_kind
             )
         elif kind in {"psyche", "skill", "service", "prompt"}:
-            dataset = cap_dataset(
+            dataset = cap_collection(
                 entries,
                 agent_name=self.layout.name,
                 kind=cast(EntryKind, kind),
@@ -248,9 +247,7 @@ class LocalChatSession:
             raise ValueError(f"unknown cap kind: {kind}")
         return {
             "items": [
-                _local_cap_item(
-                    cast(StateCap, item.record), agent_name=self.layout.name
-                )
+                _local_cap_item(item.record, agent_name=self.layout.name)
                 for item in selected
             ]
         }
@@ -287,7 +284,7 @@ class LocalChatSession:
         selected = runnable or self._current_session_surface().runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
-        module = resolve_public_runnable_query(state, selected).module
+        module = resolve_runnable_reference(state, selected).module
         return {
             "items": [
                 {
@@ -569,7 +566,7 @@ class LocalChatSession:
             and len(state.runnables) == 1
         ):
             name, declaration = next(iter(state.runnables.items()))
-            runnable = resolve_public_runnable_query(
+            runnable = resolve_runnable_reference(
                 state, f"{declaration.kind}:{name}"
             ).ref
         return replace(initial, runnable=runnable)
@@ -580,9 +577,9 @@ class LocalChatSession:
             setup=self.setup_watcher.current(),
         ).ref
 
-    def _materialize_runnable_ref(self, query: str) -> str:
+    def _materialize_runnable_ref(self, reference: str) -> str:
         state = self.state_watcher.current()
-        return resolve_public_runnable_query(state, query).ref
+        return resolve_runnable_reference(state, reference).ref
 
     @staticmethod
     def _current_session_setting(
@@ -604,7 +601,7 @@ class LocalChatSession:
             elif default_flow is not None:
                 runnable = f"flow:{default_flow}"
         if runnable is not None:
-            runnable = resolve_public_runnable_query(state, runnable).ref
+            runnable = resolve_runnable_reference(state, runnable).ref
         return SessionSetting(
             model=model,
             runnable=runnable,

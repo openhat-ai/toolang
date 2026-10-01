@@ -1,4 +1,5 @@
 from __future__ import annotations
+from toolang.cli.common import records as record_output
 
 from tests.support.setup import materialized_setup
 
@@ -2639,11 +2640,12 @@ def test_tools_visibility_queries_and_counts(
     if not visible:
         assert result.stdout.strip() == "0 tools"
         return
-    header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
+    header = next(line for line in result.stdout.splitlines() if "description" in line)
     assert header.split() == [
-        "TOOL",
-        "DESCRIPTION",
-        *(["STATUS"] if "--all" in options else []),
+        "ref",
+        "description",
+        "source",
+        "tags",
     ]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
@@ -2654,8 +2656,7 @@ def test_tools_visibility_queries_and_counts(
         + (f", {toolset_count} toolset{toolset_plural}" if tool_count > 1 else "")
     )
     assert "Echo text." in result.stdout
-    assert "SOURCE" not in header
-    assert "external" not in result.stdout
+    assert "source" in header
 
 
 @pytest.mark.parametrize(
@@ -2813,7 +2814,7 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
     (root / "config.toml").write_text('[allow]\ntools = ["shell/echo"]\n')
     rows = []
     monkeypatch.setattr(
-        plugin_commands,
+        record_output,
         "echo_table",
         lambda headers, values: rows.extend(
             dict(zip(headers, row, strict=True)) for row in values
@@ -2823,18 +2824,18 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
     result = _invoke(root, "tools", *(("--all",) if all_ else ()))
 
     assert result.exit_code == 0, result.stderr
-    by_tool = {row["TOOL"]: row for row in rows}
+    by_tool = {row["ref"]: row for row in rows}
     if all_:
-        assert by_tool["shell/echo"]["STATUS"] == "ok"
-        assert by_tool["shell/repeat"]["STATUS"] == "blocked"
-        assert by_tool["me/echo"]["STATUS"] == "blocked"
-        assert by_tool["_toolang/echo"]["STATUS"] == "ok"
+        assert by_tool["shell/echo"]["tags"] == "ready"
+        assert by_tool["shell/repeat"]["tags"] == "not_allowed"
+        assert by_tool["me/echo"]["tags"] == "not_allowed"
+        assert by_tool["_toolang/echo"]["tags"] == "ready"
         assert "INTERNAL" not in by_tool["_toolang/echo"]
-        assert "SOURCE" not in by_tool["shell/echo"]
-        assert tuple(by_tool["shell/echo"]) == ("TOOL", "DESCRIPTION", "STATUS")
+        assert "source" in by_tool["shell/echo"]
+        assert tuple(by_tool["shell/echo"]) == ("ref", "description", "source", "tags")
     else:
         assert set(by_tool) == {"shell/echo"}
-        assert "STATUS" not in by_tool["shell/echo"]
+        assert by_tool["shell/echo"]["tags"] == "ready"
         assert "INTERNAL" not in by_tool["shell/echo"]
 
 
@@ -2859,13 +2860,12 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     all_: bool,
 ) -> None:
     from toolang.catalog.cap import AuthoredCaps, CapFile
-    from toolang.cli.caps import commands as cap_commands
 
     _create_agent(tmp_path)
     _create_agent(tmp_path, "default")
     layout = AgentLayout.resident(tmp_path, "alice")
-    (tmp_path / "config.toml").write_text(f'[allow]\n{kind}s = ["shared_cap"]\n')
-    layout.config.write_text(f'[allow]\n{kind}s = ["private_cap"]\n')
+    (tmp_path / "config.toml").write_text(f'[allow]\n{kind}s = ["{kind}/shared_cap"]\n')
+    layout.config.write_text(f'[allow]\n{kind}s = ["{kind}/private_cap"]\n')
     AgentLayout.resident(tmp_path, "default").config.write_text("invalid TOML [")
     for directory, name in (
         (tmp_path, "shared_cap"),
@@ -2881,7 +2881,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         )
     rows = []
     monkeypatch.setattr(
-        cap_commands,
+        record_output,
         "echo_table",
         lambda headers, values: rows.extend(
             dict(zip(headers, row, strict=True)) for row in values
@@ -2896,9 +2896,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     )
 
     assert result.exit_code == 0, result.stderr
-    identities = {
-        str(row["CAP"] if "CAP" in row else row[kind.upper()]): row for row in rows
-    }
+    identities = {str(row["ref"]): row for row in rows}
     # The collection formatter renders kind-qualified identities for every list.
     by_name = {identity.rsplit("/", 1)[-1]: row for identity, row in identities.items()}
     expected = (
@@ -2907,14 +2905,14 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         else {"private_cap" if agent else "shared_cap"}
     )
     assert set(by_name) == expected
-    if all_:
-        assert by_name["shared_cap"]["STATUS"] == ("blocked" if agent else "ok")
-        assert by_name["blocked_cap"]["STATUS"] == "blocked"
-        if agent:
-            assert by_name["private_cap"]["STATUS"] == "ok"
-            assert by_name["private_cap"]["SCOPE"] == "home"
-    else:
-        assert all("STATUS" not in row for row in rows)
+    for name, row in by_name.items():
+        tags = str(row["tags"]).split(",")
+        allowed = name == ("private_cap" if agent else "shared_cap")
+        assert ("ready" in tags) is allowed
+        assert ("not_allowed" in tags) is not allowed
+        assert "local" in tags
+        assert ("home" if name == "private_cap" else "root") in tags
+        assert tuple(row) == ("ref", "description", "source", "tags")
 
 
 @pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
@@ -2965,10 +2963,10 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     assert "Rewrite" in rewrite
     assert "root" in rewrite
     if all_:
-        assert rewrite.split()[1] == "ok"
+        assert "ready,remote,root" in rewrite
         other = next(line for line in stdout.splitlines() if "prompt/other" in line)
         assert "Other" in other
-        assert other.split()[1] == "blocked"
+        assert "not_allowed,remote,root" in other
     else:
         assert "prompt/other" not in stdout
     assert len(fetched) == 2
@@ -3065,11 +3063,12 @@ def test_tools_retains_query_diagnostics(
         "tools",
         *(("--all",) if all_ else ()),
         "--query",
-        "*[unknown=value]",
+        "*[",
     )
 
     assert result.exit_code != 0
-    assert "unknown tools query field 'unknown'" in strip_ansi(result.stderr)
+    assert "Traceback" not in result.stderr
+    assert result.stderr
 
 
 @pytest.mark.parametrize("command", ["tools", "toolsets"])
@@ -3579,7 +3578,7 @@ def test_standalone_caps_all_preserves_scope_and_query(
             "alice",
             "list",
             "--query",
-            "shared_cap",
+            "psyche/shared_cap",
             *(("--all",) if all_ else ()),
         ]
     )
@@ -3587,10 +3586,10 @@ def test_standalone_caps_all_preserves_scope_and_query(
 
     assert result == 0, output.err
     if all_:
-        assert "STATUS" in output.out
+        assert "tags" in output.out
         row = next(line for line in output.out.splitlines() if "shared_cap" in line)
         assert "home" in row
-        assert row.split()[1] == "blocked"
+        assert "not_allowed" in row
         assert output.out.count("psyche/shared_cap") == 1
     else:
         assert output.out.strip() == "0 caps"
@@ -3731,3 +3730,54 @@ def test_setup_inspection_does_not_require_valid_program_for_workspace_options(
 
     assert result.exit_code == 0, result.stderr
     assert not layout.agent_state.exists()
+
+
+@pytest.mark.parametrize("command", [("tools",), ("caps",), ("skill", "list")])
+@pytest.mark.parametrize("all_", [False, True])
+@pytest.mark.parametrize(
+    "query", ["*[tags has ready]", "*[tags has not_allowed]", "*[future.path=value]"]
+)
+def test_resource_json_human_and_external_tq_select_identical_records(
+    tmp_path, monkeypatch, capsys, plugin_inventory, command, all_, query
+):
+    from tq.cli import main as tq_main
+    from toolang.catalog.cap import AuthoredCaps, CapFile
+
+    (tmp_path / "config.toml").write_text(
+        '[allow]\ntools = ["shell/echo"]\nskills = ["skill/reviewer"]\n'
+    )
+    for name in ("reviewer", "blocked"):
+        AuthoredCaps(tmp_path).create(
+            CapFile.parse(
+                "---\ndescription: Review changes.\n---\nReview changes.\n",
+                kind="skill",
+                name=name,
+            )
+        )
+    options = ("--all",) if all_ else ()
+    complete = _invoke(tmp_path, *command, *options, "--json")
+    selected = _invoke(tmp_path, *command, *options, "--query", query, "--json")
+    assert complete.exit_code == selected.exit_code == 0, selected.stderr
+    records = json.loads(selected.stdout)
+    assert isinstance(records, list)
+    path = tmp_path / "records.json"
+    path.write_text(complete.stdout)
+    assert tq_main(["-M", "-c", "-k", "ref", query, str(path)]) == 0
+    external = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert external == records
+    rows = []
+    monkeypatch.setattr(
+        record_output,
+        "echo_table",
+        lambda headers, values: rows.extend(
+            dict(zip(headers, row, strict=True)) for row in values
+        ),
+    )
+    human = _invoke(tmp_path, *command, *options, "--query", query, "--human")
+    assert human.exit_code == 0, human.stderr
+    assert [row["ref"] for row in rows] == [record["ref"] for record in records]
+    assert all(tuple(row) == ("ref", "description", "source", "tags") for row in rows)
+    for row, record in zip(rows, records, strict=True):
+        assert row["tags"] == ",".join(record["tags"])
+        assert row["source"] == record["source"]
+        assert "id" not in record

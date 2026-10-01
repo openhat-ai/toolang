@@ -742,7 +742,7 @@ def _allowed_caps(
 ) -> tuple[StateCap, ...]:
     """Apply the same cap-kind policy to runtime and root inspection."""
 
-    from .collections import cap_dataset
+    from .collections import cap_collection
     from .config import CAP_ALLOW_FIELDS
 
     selected_ids: set[tuple[str, str, str]] = set()
@@ -756,8 +756,8 @@ def _allowed_caps(
             selected = ()
         else:
             selected = tuple(
-                cast(StateCap, item.record)
-                for item in cap_dataset(
+                item.record
+                for item in cap_collection(
                     candidates, agent_name=agent_name, kind=kind
                 ).query(queries)
             )

@@ -233,7 +233,7 @@ agic chat:
             )
             prompts = client.get(
                 "/api/v1/prompts",
-                params={"query": "review"},
+                params={"query": "prompt/review"},
             )
             invalid = client.get(
                 "/api/v1/models",
@@ -270,8 +270,10 @@ agic chat:
         assert caps.json()["prompts"][0]["summary"] == "Review input."
         assert caps.json()["prompts"][0]["form"] == "inline"
         assert [item["name"] for item in prompts.json()] == ["review"]
-        assert invalid.status_code == 400
-        assert invalid_tools.status_code == 400
+        assert invalid.status_code == 200
+        assert invalid.json()["items"] == []
+        assert invalid_tools.status_code == 200
+        assert invalid_tools.json()["items"] == []
     finally:
         asyncio.run(core.close())
 

@@ -62,7 +62,9 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
 
 
 @pytest.mark.parametrize("target", ["resident", "url", "github", "source"])
-@pytest.mark.parametrize("options", [[], ["--all"], ["--query", "english-coach"]])
+@pytest.mark.parametrize(
+    "options", [[], ["--all"], ["--query", "psyche/english-coach"]]
+)
 @pytest.mark.parametrize(
     "command",
     [["caps"], *[[kind, "list"] for kind in ("psyche", "skill", "service", "prompt")]],

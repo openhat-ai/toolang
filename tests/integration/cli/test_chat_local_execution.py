@@ -25,7 +25,6 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
-from toolang.common.errors import ToolangError
 from toolang.execution.events import RunEvent
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, SteerControlPayload
@@ -329,11 +328,11 @@ def test_local_chat_queries_resources_and_reconciles_model_ceiling(
         assert narrowed.model is None
 
         current = session.initial_setting()
-        with pytest.raises((ToolangError, ValueError), match="unknown"):
-            session.apply_setting(
-                current,
-                RunOverride(allow=(AllowOverride("models", ("*[unknown=true]",)),)),
-            )
+        selected = session.apply_setting(
+            current,
+            RunOverride(allow=(AllowOverride("models", ("*[unknown=true]",)),)),
+        )
+        assert selected.model is None
         assert current == session.initial_setting()
     finally:
         harness.store.close()

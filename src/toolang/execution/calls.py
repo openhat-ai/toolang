@@ -1,6 +1,7 @@
 """Parse caller input and resolve immutable run specifications."""
 
 from __future__ import annotations
+from toolang.common.errors import ToolangError
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -36,7 +37,7 @@ from .policy import (
     resolve_commands,
 )
 from .runnables import (
-    resolve_public_runnable_query,
+    resolve_runnable_reference,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
 from .types import RunCommand, RunOverride, SessionSetting
@@ -116,7 +117,7 @@ def resolve_run_request(
         request.model,
         setup=setup,
     )
-    resolved_runnable = resolve_public_runnable_query(state, request.runnable.ref)
+    resolved_runnable = resolve_runnable_reference(state, request.runnable.ref)
     if resolved_runnable.ref != request.runnable.ref and not _is_alias_ref(
         request.runnable.ref, resolved_runnable
     ):
@@ -353,7 +354,7 @@ def _resolve_concrete_spec(
     runnable_ref = bindings.runnable
     if runnable_ref is None:
         raise ValueError("run request requires a concrete runnable ref")
-    resolved_runnable = resolve_public_runnable_query(state, runnable_ref)
+    resolved_runnable = resolve_runnable_reference(state, runnable_ref)
     module = resolved_runnable.module
     runnable = resolved_runnable.executable
     if (
@@ -433,7 +434,7 @@ def validate_commands(
         surface=surface,
         session=commands,
     )
-    resolved_runnable = resolve_public_runnable_query(
+    resolved_runnable = resolve_runnable_reference(
         state,
         bindings.runnable or default_runnable,
     )
@@ -531,18 +532,13 @@ def _select_runnable_fallback(
     state: AgentState,
     candidates: tuple[str, ...],
 ) -> str:
-    from toolang.state.runnable_collections import runnable_dataset
-
-    dataset = runnable_dataset(state)
     for candidate in candidates:
-        matches = dataset.query(candidate)
-        if not matches:
-            continue
-        if len(matches) > 1:
-            raise ValueError(f"runnable fallback query is ambiguous: {candidate}")
-        return dataset.schema.exact_match_for(matches[0])
-    joined = ", ".join(candidates)
-    raise ValueError(f"no runnable fallback is available: {joined}")
+        try:
+            return resolve_runnable_reference(state, candidate).ref
+        except ToolangError as error:
+            if not str(error).startswith("Runnable not found:"):
+                raise
+    raise ValueError(f"no runnable fallback is available: {', '.join(candidates)}")
 
 
 def _strip_final_line_break(source: str) -> str:
@@ -559,7 +555,7 @@ def input_file_references(
     """Expand authored prompts and enumerate includes without opening any files."""
     from toolang.base.types.message import TextPart
 
-    resolved = resolve_public_runnable_query(state, runnable_ref)
+    resolved = resolve_runnable_reference(state, runnable_ref)
     program = state.modules[resolved.module]
     definitions = prompt_definitions(state, module=resolved.module, program=program)
     references: dict[str, None] = {}

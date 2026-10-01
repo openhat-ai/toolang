@@ -240,7 +240,6 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
             "fmt": "Format .too source",
             "highlight": "Highlight .too source",
             "parse": "Parse .too source",
-            "query": "Show collection query syntax and fields",
         },
     }
     for names in more_panels.values():

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
@@ -56,7 +56,14 @@ def merge_catalog_snapshots(
             if identity in model_identities:
                 raise ValueError(f"duplicate catalog model: {model.identity}")
             model_identities.add(identity)
-            models.append(model)
+            models.append(
+                replace(
+                    model,
+                    _toolang=replace(model._toolang, local=True),
+                )
+                if snapshot.local and not model._toolang.local
+                else model
+            )
     return ModelCatalogSnapshot(
         providers=providers,
         models=tuple(models),
@@ -85,7 +92,7 @@ def assemble_catalog(
         models=tuple(
             Model(
                 **{f.name: getattr(model, f.name) for f in fields(ModelFacts)},
-                _toolang=ModelToolang(provider=model.provider_id),
+                _toolang=ModelToolang(provider=model.provider_id, local=snapshot.local),
             )
             for model in snapshot.models
         ),

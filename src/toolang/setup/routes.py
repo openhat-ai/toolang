@@ -142,6 +142,9 @@ def resolve_provider(
             environ=environ,
             default=None,
         ),
+        api_env_missing=_api_environment_missing(
+            _provider_api_template(provider, adapter), environ
+        ),
         env=satisfied,
         headers=cast(Mapping[str, str], conventions["headers"]),
         options=cast(Mapping[str, object], conventions["options"]),
@@ -169,6 +172,9 @@ def resolve_model(
             _model_api_template(provider, model, implementation),
             environ=environ,
             default=None,
+        ),
+        api_env_missing=_api_environment_missing(
+            _model_api_template(provider, model, implementation), environ
         ),
         env=provider._toolang.route.env,
         headers=model_headers(provider, model, mode_blocks=mode_blocks)
@@ -453,3 +459,13 @@ def _normalized_shape(value: object) -> str | None:
 
 def _env_value(environ: Mapping[str, str], name: str) -> bool:
     return bool(str(environ.get(name, "")).strip())
+
+
+def _api_environment_missing(template: str | None, environ: Mapping[str, str]) -> bool:
+    if template is None:
+        return False
+    return any(
+        not environ.get(match.group("named") or match.group("braced") or "", "").strip()
+        for match in Template.pattern.finditer(template)
+        if match.group("named") or match.group("braced")
+    )

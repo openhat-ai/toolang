@@ -598,7 +598,8 @@ class RemoteChatSession:
             if (
                 previous_default is None
                 or exc.status_code != 422
-                or exc.detail != "runnable query matched no items"
+                or not isinstance(exc.detail, str)
+                or not exc.detail.startswith("Runnable not found:")
             ):
                 raise
             runnable = None

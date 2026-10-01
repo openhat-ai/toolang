@@ -14,70 +14,13 @@ from toolang.cli.toolang.main import app as toolang_app
 runner = CliRunner()
 
 
-def test_query_is_additional_but_direct_help_explains_the_grammar() -> None:
-    root = runner.invoke(toolang_app, ["--help"])
+def test_query_command_is_removed() -> None:
+    for command in (["query"], ["query", "models", "--json"]):
+        result = runner.invoke(toolang_app, command)
+        assert result.exit_code != 0
     more = runner.invoke(toolang_app, ["more"])
-    query = runner.invoke(toolang_app, ["query", "--help"])
-    bare = runner.invoke(toolang_app, ["query"])
-
-    assert root.exit_code == 0, root.stderr
-    assert "query" not in strip_ansi(root.stdout)
     assert more.exit_code == 0, more.stderr
-    assert "query" in strip_ansi(more.stdout)
-    assert "QUERY = MATCH" not in strip_ansi(more.stdout)
-    assert query.exit_code == 0, query.stderr
-    assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(query.stdout)
-    assert "models, tools, psyches, skills, services, prompts" in strip_ansi(
-        query.stdout
-    )
-    assert bare.exit_code == 0, bare.stderr
-    assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(bare.stdout)
-
-
-@pytest.mark.parametrize(
-    ("collection", "identity"),
-    [
-        ("models", "provider/model"),
-        ("tools", "toolset/tool"),
-        ("psyches", "psyche/psyche"),
-        ("skills", "skill/skill"),
-        ("services", "service/service"),
-        ("prompts", "prompt/prompt"),
-    ],
-)
-def test_query_command_publishes_human_and_json_schema(
-    collection: str,
-    identity: str,
-) -> None:
-    human = runner.invoke(toolang_app, ["query", collection])
-    machine = runner.invoke(toolang_app, ["query", collection, "--json"])
-
-    assert human.exit_code == 0, human.stderr
-    assert f"Collection: {collection}" in strip_ansi(human.stdout)
-    if collection == "models":
-        assert "Identity: bare glob matches model id" in strip_ansi(human.stdout)
-        assert "provider/model matches a full ref" in strip_ansi(human.stdout)
-    else:
-        assert f"Identity: {identity}" in strip_ansi(human.stdout)
-    assert "Fields:" in strip_ansi(human.stdout)
-    assert "Columns:" not in strip_ansi(human.stdout)
-    assert machine.exit_code == 0, machine.stderr
-    payload = json.loads(machine.stdout)
-    assert payload["collection"] == collection
-    assert payload["fields"]
-    assert "columns" not in payload
-    if collection == "models":
-        assert payload["query_language"] == "tq-json"
-
-
-@pytest.mark.parametrize("collection", ["caps", "model", "unknown"])
-def test_query_command_rejects_non_base_collections(collection: str) -> None:
-    result = runner.invoke(toolang_app, ["query", collection])
-
-    assert result.exit_code == 2
-    stderr = strip_ansi(result.stderr)
-    assert "unknown query collection" in stderr
-    assert "models, tools, psyches, skills, services, prompts" in stderr
+    assert "query" not in strip_ansi(more.stdout)
 
 
 @pytest.mark.parametrize(
@@ -143,7 +86,7 @@ def test_query_enabled_commands_reject_legacy_query_options(
     assert f"No such option: {legacy_option}" in strip_ansi(result.stderr)
 
 
-def test_tools_reports_invalid_queries_without_a_traceback(tmp_path: Path) -> None:
+def test_tools_accepts_dynamic_fields_and_returns_empty_json(tmp_path: Path) -> None:
     result = runner.invoke(
         toolang_app,
         [
@@ -152,26 +95,33 @@ def test_tools_reports_invalid_queries_without_a_traceback(tmp_path: Path) -> No
             "tools",
             "--query",
             "*[unknown=value]",
+            "--json",
         ],
     )
 
-    assert result.exit_code == 1
-    assert "unknown tools query field 'unknown'" in strip_ansi(result.stderr)
-    assert "Traceback" not in result.stderr
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == []
 
 
-def test_each_query_enabled_list_points_to_query_help() -> None:
-    commands = (
-        (toolang_app, ["models", "--help"], "too query models"),
-        (toolang_app, ["tools", "--help"], "too query tools"),
-        (caps_app, ["skill", "list", "--help"], "too query skills"),
-    )
-
-    for app, command, expected in commands:
-        result = runner.invoke(app, command)
-        assert result.exit_code == 0, result.stderr
-        output = " ".join(strip_ansi(result.stdout).replace("│", "").split())
-        assert f"'{expected}'" in output
+@pytest.mark.parametrize(
+    "app,command",
+    [
+        (toolang_app, ["models"]),
+        (toolang_app, ["tools"]),
+        (toolang_app, ["providers"]),
+        (caps_app, ["list"]),
+        (caps_app, ["skill", "list"]),
+    ],
+)
+def test_resource_lists_offer_json_and_human_output(app, command) -> None:
+    result = runner.invoke(app, [*command, "--help"])
+    assert result.exit_code == 0, result.stderr
+    output = strip_ansi(result.stdout)
+    assert "--json" in output
+    assert "--human" in output
+    result = runner.invoke(app, [*command, "--human", "--json"])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.stderr
 
 
 def test_allow_help_uses_resource_query_vocabulary() -> None:

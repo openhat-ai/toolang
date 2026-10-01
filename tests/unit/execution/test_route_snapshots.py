@@ -384,7 +384,6 @@ def test_runnable_docs_agree_in_help_routes_queries_and_input_contract(
 
     from toolang.cli.toolang.commands.script import _program_command
     from toolang.execution.runnables import runnable_signature
-    from toolang.state.runnable_collections import runnable_dataset
 
     input_doc = "Primary request."
     parameter_doc = "Topic details. " * 80
@@ -434,8 +433,6 @@ agic caller:
             }
         ]
     )
-    item = next(item for item in runnable_dataset(state).items if item.name == "main")
-    assert item.description == entry["documentation"]
     rendered = _document(_render(state, routes))
     assert {item["tag"] for item in rendered} == {"hands", "handoffs"}
     assert all(item["input"] == contract["input"] for item in rendered)

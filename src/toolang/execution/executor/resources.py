@@ -14,7 +14,7 @@ from toolang.base.types.tool import ToolContext
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.common.errors import ToolangError
 from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
-from toolang.common.query import SetOperator
+from toolang.common.types import SetOperator
 from toolang.execution.types import (
     AgentCapResource,
     AgentResources,
@@ -39,7 +39,7 @@ from toolang.state.state import (
     StateCap,
     state_module_caps,
 )
-from toolang.state.collections import cap_dataset
+from toolang.state.collections import cap_collection
 from toolang.state.types import EntryKind
 from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
@@ -222,11 +222,9 @@ def _apply_cap_ceiling(
         elif not queries:
             selected = ()
         else:
-            dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
+            dataset = cap_collection(entries, agent_name=agent_name, kind=kind)
             dataset.require_each(queries, label=f"{label} {kind}")
-            selected = tuple(
-                cast(StateCap, view.record) for view in dataset.query(queries)
-            )
+            selected = tuple(view.record for view in dataset.query(queries))
         selected_ids.update((item.kind, item.name, item.ref) for item in selected)
     return tuple(
         item for item in caps if (item.kind, item.name, item.ref) in selected_ids
@@ -279,14 +277,14 @@ def resolve_runnable_resources(
         ("prompt", "prompts"),
     ):
         entries = tuple(item for item in available_caps if item.kind == kind)
-        selected = cap_dataset(
+        selected = cap_collection(
             entries,
             agent_name=setup.layout.name,
             kind=kind,
         ).apply(_query_operations(_directives(runnable, directive_name)))
         selected_cap_ids.update(
             (item.kind, item.name, item.ref)
-            for item in (cast(StateCap, view.record) for view in selected)
+            for item in (view.record for view in selected)
         )
     caps = tuple(
         item

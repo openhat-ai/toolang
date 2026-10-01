@@ -712,5 +712,5 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
     def fail_query(*_args, **_kwargs):
         raise AssertionError("caps_for must use the precomputed State resources")
 
-    monkeypatch.setattr(state_collections, "cap_dataset", fail_query)
+    monkeypatch.setattr(state_collections, "cap_collection", fail_query)
     assert publication.caps_for("agent") == publication.caps_for("agent")

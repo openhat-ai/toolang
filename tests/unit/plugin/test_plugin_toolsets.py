@@ -13,7 +13,7 @@ from toolang.base.types.model import Model, ModelCatalogSnapshot
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelStreamHandler
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.plugin.toolsets.collections import tool_dataset
+from toolang.plugin.toolsets.collections import ToolCollection, tool_record
 from toolang.plugin.toolsets.registry import ToolRef
 from toolang.plugin.types import PluginInfo
 from toolang.plugin.loading import (
@@ -317,12 +317,14 @@ def test_tool_query_parameters_are_json_schema_property_names() -> None:
         del limit
         return path
 
-    dataset = tool_dataset({"filesystem__read": create_function_tool(read)})
+    dataset = ToolCollection.from_tools(
+        {"filesystem__read": create_function_tool(read)}
+    )
 
-    assert "model_name" not in dataset.schema.fields
-    assert dataset.items[0].parameters == ("limit", "path")
-    assert dataset.query("*[parameters=path]") == dataset.items
-    assert dataset.query("*[parameters=properties]") == ()
+    assert "model_name" not in tool_record(dataset.query()[0])
+    assert dataset.query()[0].parameters == ("limit", "path")
+    assert dataset.query("*[parameters has path]") == dataset.query()
+    assert dataset.query("*[parameters has properties]") == ()
 
 
 def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> None:

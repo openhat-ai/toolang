@@ -77,6 +77,7 @@ def _model_value(model: Model) -> dict[str, object]:
     data["toolang"] = {
         "provider": model._toolang.provider,
         "status": int(model._toolang.status),
+        "local": model._toolang.local,
         "route": _route_value(model._toolang.route),
     }
     return data
@@ -87,6 +88,7 @@ def _route_value(route: ModelRoute) -> dict[str, object]:
         "adapter": route.adapter,
         "api": route.api,
         "env": route.env,
+        "api_env_missing": route.api_env_missing,
         "headers": dict(route.headers),
         "options": dict(route.options),
     }

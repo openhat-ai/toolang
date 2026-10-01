@@ -10,7 +10,7 @@ from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.plugin.models.collections import ModelCollection
 from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.common.query import QueryDataset
+from tq import Query
 from toolang.base.protocols.tool import Tool
 
 
@@ -92,7 +92,7 @@ def test_model_collection_matches_its_public_ref() -> None:
     assert models.match(model.ref).entries == (model,)
 
 
-def test_model_collection_subsets_reuse_the_published_matcher(
+def test_model_collection_exact_subsets_do_not_build_queries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alpha = _model("alpha", "one")
@@ -100,12 +100,10 @@ def test_model_collection_subsets_reuse_the_published_matcher(
     models = ModelCollection((alpha, beta))
 
     def fail_dataset(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("published model matcher must be reused")
+        raise AssertionError("exact subset must not parse queries")
 
-    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
+    monkeypatch.setattr(Query, "parse", fail_dataset)
 
-    assert models.match("alpha/*").entries == (alpha,)
-    assert models.apply((("-=", "beta/*"),)).entries == (alpha,)
     assert models.subset(("beta/two",)).entries == (beta,)
 
 
@@ -114,8 +112,6 @@ def test_model_collection_public_state_is_immutable() -> None:
 
     with pytest.raises((AttributeError, TypeError)):
         setattr(cast(Any, models), "entries", ())
-    with pytest.raises(TypeError):
-        cast(dict[str, object], models._by_ref)["other/model"] = object()
 
 
 def test_model_collection_keys_are_stable_and_duplicate_refs_are_rejected() -> None:
@@ -157,7 +153,7 @@ def test_tool_collection_owns_matching_set_operations_and_exact_indexes() -> Non
         tools.resolve("missing/tool")
 
 
-def test_tool_collection_subsets_reuse_the_published_matcher(
+def test_tool_collection_exact_subsets_do_not_build_queries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alpha = _Tool("alpha", "one")
@@ -167,12 +163,10 @@ def test_tool_collection_subsets_reuse_the_published_matcher(
     )
 
     def fail_dataset(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("published tool matcher must be reused")
+        raise AssertionError("exact subset must not parse queries")
 
-    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
+    monkeypatch.setattr(Query, "parse", fail_dataset)
 
-    assert tools.match("alpha/*").refs() == ("alpha/one",)
-    assert tools.apply((("-=", "beta/*"),)).refs() == ("alpha/one",)
     assert tools.subset(("beta__two",)).refs() == ("beta/two",)
 
 

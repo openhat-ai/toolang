@@ -19,15 +19,15 @@ from typing import Annotated
 import typer
 
 from ...common.context import context_agent, context_root
-from ...common.output import echo_collection_summary, echo_table, inspection_status
-from ...common.query import query_items
+from ...common.output import echo_collection_summary, echo_table
+from ...common.records import check_output_options, echo_records
+from tq import Query
+from ...common.context import user_call
 from toolang.base.utils.tools import is_internal_toolset_name
 from toolang.common.layout import AgentLayout
-from toolang.common.query import QueryDataset
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
-    ToolQueryView,
-    tool_dataset,
+    tool_record,
 )
 from toolang.plugin.models.query import filter_models
 from toolang.setup import AgentSetup
@@ -51,17 +51,24 @@ def list_tools(
             "--query",
             "-q",
             metavar="QUERY",
-            help="Query tools. Repeat to add matches; see 'too query tools'",
+            help="TQ query; repeat for union. See --json for fields",
         ),
     ] = None,
     all_: Annotated[
         bool,
         typer.Option("--all", "-a", help="Include internal and allow-excluded tools"),
     ] = False,
+    json_: Annotated[
+        bool, typer.Option("--json", help="Write public tool records as JSON")
+    ] = False,
+    human: Annotated[
+        bool, typer.Option("--human", help="Display a table (default)")
+    ] = False,
     workspace: WorkspaceOptions = None,
     workdir: WorkdirOption = None,
     no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
+    check_output_options(human=human, json_=json_)
     inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     agent = context_agent(ctx)
     setup = asyncio.run(
@@ -75,32 +82,23 @@ def list_tools(
             validate_defaults=False,
         )
     )
-    dataset = setup_tool_dataset(setup, all=all_)
-    selected = tuple(
-        item
-        for item in query_items(dataset, query)
-        if all_ or not is_internal_toolset_name(item.toolset)
-    )
-    headers, raw_rows = dataset.table(selected)
-    columns = tuple(index for index, header in enumerate(headers) if header != "SOURCE")
-    headers = tuple(headers[index] for index in columns)
-    rows = [tuple(row[index] for index in columns) for row in raw_rows]
-    if all_:
-        headers = (*headers, "STATUS")
-        rows = [
-            (
-                *row,
-                inspection_status(allowed=item.model_name in setup.tools()),
-            )
-            for row, item in zip(rows, selected, strict=True)
-        ]
-    if rows:
-        echo_table(headers, rows)
-    echo_collection_summary(
-        len(selected),
-        "tool",
-        group=(len({item.toolset for item in selected}), "toolset"),
-    )
+    tools = setup.tools(all=all_)
+    allowed = setup.tools()
+    records = [
+        tool_record(view, allowed=view.model_name in allowed)
+        for view in tools.query()
+        if all_ or not is_internal_toolset_name(view.toolset)
+    ]
+    if query:
+        parsed = user_call(lambda: Query.parse(query).validate({"key": "ref"}))
+        records = [record for record in records if parsed.match(record) is not None]
+    echo_records(records, ("ref", "description", "source", "tags"), json_=json_)
+    if not json_:
+        echo_collection_summary(
+            len(records),
+            "tool",
+            group=(len({str(record["toolset"]) for record in records}), "toolset"),
+        )
 
 
 @channel_app.command("list", help="List installed channels")
@@ -191,14 +189,6 @@ def model_rows(
         )
         for model in models
     ]
-
-
-def setup_tool_dataset(
-    setup: AgentSetup, *, all: bool = False
-) -> QueryDataset[ToolQueryView]:
-    """Return the schema-owned tool query and display dataset for one setup."""
-
-    return tool_dataset(setup.tools(all=all))
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:

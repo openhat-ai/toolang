@@ -11,5 +11,5 @@ NO_AVAILABLE_MODELS_MESSAGE = (
 
 NO_MATCHED_MODELS_MESSAGE = (
     "No matched models.\n\n"
-    "Run `too models --query QUERY` to try a query, or `too query models` for help."
+    "Run `too models --query QUERY` to try a query, or `too models --json` for fields."
 )

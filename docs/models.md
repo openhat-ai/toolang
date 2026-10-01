@@ -81,7 +81,7 @@ both root and resident forms:
 ```bash
 too models
 too alice providers --all
-too alice models --all --query '*[available=false]'
+too alice models --all --query '*[tags has no_env]'
 too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
 ```
 
@@ -433,43 +433,22 @@ too catalogs
 too adapters [--json]
 ```
 
-`too models` shows ready, allowed models without a redundant status column.
-`too providers` lists only providers with at least one such model, and its nested
-model lists use the same scope. Add `--all` to either command to inspect the
-complete directory, including unready and allow-excluded entries; `providers
---all` also includes empty providers. The `available` query field describes
-readiness independently of allow membership.
+`too models` shows ready, allowed models. `too providers` lists providers with
+at least one such model and includes only those effective models. `--all` (or
+`-a`) includes unready and excluded entries, plus empty providers. It preserves
+scope and catalog precedence and grants no runtime access.
 
-`too models --all` (or `-a`) adds `STATUS` as the last column: `ok`,
-`blocked`, `unready (reason)`, or `blocked, unready (reason)`. `ok` means ready
-AND allowed. Unready reasons are included in parentheses, with no separate
-REASON column. Default tables omit STATUS. The query field `available`
-continues to describe readiness alone.
+Both human views show `tags`: `ready`, `not_allowed`, `no_env`, `no_api`, and
+`no_adapter` describe availability and blockers. Models also carry `local` or
+`remote` origin. Provider tags summarize the selected models. Model columns use
+JSON paths, including separate `cost.input` and `cost.output` values per million
+tokens. Providers show `_toolang.available_models`, `_toolang.model_count`,
+`_toolang.adapters`, `_toolang.route.api`, and catalog `env` names.
 
-Provider tables always use the `MODELS` header and never show REASON. With
-`--all`, values are `OK/ALL`: ready, allowed models over all provider models in
-scope. Without `--all`, values are effective counts and providers with none
-are hidden. `--all` preserves scope, configuration, and catalog precedence and
-grants no runtime access.
-
-Model summaries use `N models, M providers`; omit the provider count for zero
-or one model. Provider summaries use `N providers`. Empty results print only
-the zero count, without table headers. Summaries count displayed rows; JSON
-exports have no summary or presentation status. Prices independently right-align
-the input and output amounts across displayed rows so their `/` separators align.
-Amounts omit currency symbols; the `PRICE ($/1M)` header supplies the unit.
-
-Model STATUS shows coarse unready reasons from missing route fields:
-`No adapter`, `No API URL`, and `Missing env`, joined with `; ` in that order.
-These labels do not identify individual missing credentials or distinguish
-unknown adapters from uninstalled ones.
-
-Providers show `ADAPTERS`, `DEFAULT API`, and `ENV`. Adapter names are
-aggregated from the selected models; empty providers show their default adapter.
-The API column marks model endpoint overrides. ENV shows the satisfied rule, or
-catalog declarations when unavailable; its red styling indicates the overall
-environment requirement is unmet, not that every displayed variable is missing.
-A provider is available when at least one of its selected models is ready.
+Human summaries count displayed rows: `N models, M providers` (no provider count
+for zero or one model) or `N providers`. Empty human results print the zero count.
+JSON is an array without summaries; empty JSON is `[]`. `--human` explicitly
+selects the default table and cannot combine with `--json`.
 
 `too catalogs` and `too adapters [--json]` list locally installed catalog and
 adapter entry points and their `built-in` or `external` source. They do not
@@ -479,24 +458,19 @@ be loaded. Runtime setup still owns the adapter instances used for execution.
 Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
 these commands read one published setup version.
 
-`too models --query ... --json` emits a deterministic nested catalog export
-containing selected models, including models from local catalogs. It exports the
-same setup version used for selection without re-reading the source. The nested
-export is not accepted as a runtime catalog until externally converted to the
-flat format. `too providers --json` follows the same default/`--all` scope and
-preserves empty providers in the full view. Catalog inspection skips
-validation of the configured default and compact model, so `--all` can diagnose
-an unready choice; execution setup still validates those choices strictly.
-Provider and model JSON never includes a Toolang-side fact or an unmodelled catalog field.
+`too models --query ... --json` emits an array of public model records from the
+same setup version used for selection. `too providers --json` emits provider
+records with ID-keyed `models` mappings. Both follow the default/`--all` scope;
+the full provider view includes empty providers. These inspection records are
+not the flat runtime catalog input format. Inspection skips configured default
+and compact-model validation so that `--all` can diagnose unready choices.
 
-Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
-model IDs may contain additional `/` characters. Catalog and runtime models
-share query fields, including `family`, `reasoning`, `tool_call`, `temperature`,
-`structured_output`, `modalities.input`, `status`, `route.provider`,
-`route.adapter`, `available`, `allowed`, and `ready`. Model inspection and
-runnable model directives use `tq-json` transiently; setup does not precompute
-model collection-query indexes. Run `too query models` for the complete field
-contract.
+Models preserve supported models.dev fields and add `ref`, `tags`, and safe
+`_toolang` route metadata. Queries use native TQ over these JSON records,
+including nested fields such as `limit.context` and `cost.input`. Use
+`*[tags has ready]` for availability and `*[modalities.input has image]` for
+array membership. See [Resource Queries](queries.md) for fields, tags, ordering,
+and policy semantics. Setup does not retain query indexes or field registries.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.
 

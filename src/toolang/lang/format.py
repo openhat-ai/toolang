@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import re
 
 from tree_sitter import Node, Tree
-from toolang.common.query import format_query_text
 
 from . import ast
 from .ast import _first_syntax_error, _parse_tree
@@ -850,3 +849,38 @@ def _split_inline_comment(line: str) -> tuple[str, str]:
 
 def _leading_whitespace(line: str) -> str:
     return line[: len(line) - len(line.lstrip(" \t"))]
+
+
+def format_query_text(raw: str) -> str:
+    """Normalize top-level match spacing without repairing invalid syntax."""
+
+    parts: list[str] = []
+    start = 0
+    bracket_depth = 0
+    parenthesis_depth = 0
+    quoted = False
+    escaped = False
+    for index, character in enumerate(raw):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+            continue
+        if character == '"':
+            quoted = True
+        elif character == "[":
+            bracket_depth += 1
+        elif character == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif character == "(":
+            parenthesis_depth += 1
+        elif character == ")" and parenthesis_depth:
+            parenthesis_depth -= 1
+        elif character == "," and bracket_depth == 0 and parenthesis_depth == 0:
+            parts.append(raw[start:index].strip())
+            start = index + 1
+    parts.append(raw[start:].strip())
+    return ", ".join(parts).rstrip()

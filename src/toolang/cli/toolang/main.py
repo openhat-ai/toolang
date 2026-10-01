@@ -39,7 +39,6 @@ from ..common.routing import (
     extract_root_args,
 )
 from . import routing
-from .commands.metadata import QUERY_HELP
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
     "toolang_cli_prefix_agent", default=None
@@ -88,7 +87,7 @@ _MORE_PANEL_COMMAND_ORDER = (
     (RUN_COMMAND_PANEL, _RUN_PANEL_COMMAND_ORDER),
     (THREAD_COMMAND_PANEL, (*_THREAD_PANEL_COMMAND_ORDER, "compact")),
     (RUNTIME_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
-    (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse", "query")),
+    (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse")),
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
@@ -557,12 +556,7 @@ _registered_command(
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 
-_registered_command(
-    "query",
-    "toolang.cli.toolang.commands.query:query_command",
-    help=QUERY_HELP,
-    hidden=True,
-)
+
 _registered_command(
     "fmt",
     "toolang.cli.toolang.commands.program:fmt",

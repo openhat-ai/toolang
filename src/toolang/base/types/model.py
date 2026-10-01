@@ -167,6 +167,7 @@ class ModelRoute:
     env: ResolvedEnv | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
     options: Mapping[str, object] = field(default_factory=dict)
+    api_env_missing: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
@@ -177,7 +178,10 @@ class ModelRoute:
     @property
     def ready(self) -> bool:
         return (
-            self.adapter is not None and self.api is not None and self.env is not None
+            self.adapter is not None
+            and self.api is not None
+            and self.env is not None
+            and not self.api_env_missing
         )
 
 
@@ -204,6 +208,7 @@ class ModelToolang:
     provider: str
     route: ModelRoute
     status: ModelStatus
+    local: bool
 
     def __init__(
         self,
@@ -213,6 +218,7 @@ class ModelToolang:
         *,
         allowed: bool = True,
         status: ModelStatus | int | None = None,
+        local: bool = False,
     ) -> None:
         """Build compact route/allow flags; ``ready`` remains route readiness."""
 
@@ -240,6 +246,7 @@ class ModelToolang:
                 raise ValueError("model ready argument conflicts with status")
             if allowed is not True and allowed != bool(flags & ModelStatus.ALLOWED):
                 raise ValueError("model allow argument conflicts with status")
+        object.__setattr__(self, "local", local)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "route", route)
         object.__setattr__(self, "status", flags)
@@ -274,7 +281,9 @@ class ModelToolang:
         flags = self.status & ModelStatus.ALLOWED
         if route.ready:
             flags |= ModelStatus.ROUTABLE
-        return ModelToolang(provider=self.provider, route=route, status=flags)
+        return ModelToolang(
+            provider=self.provider, route=route, status=flags, local=self.local
+        )
 
     def with_allowed(self, allowed: bool) -> ModelToolang:
         """Replace allow membership while preserving route readiness."""
@@ -284,7 +293,9 @@ class ModelToolang:
         flags = self.status & ModelStatus.ROUTABLE
         if allowed:
             flags |= ModelStatus.ALLOWED
-        return ModelToolang(provider=self.provider, route=self.route, status=flags)
+        return ModelToolang(
+            provider=self.provider, route=self.route, status=flags, local=self.local
+        )
 
 
 @dataclass(frozen=True, slots=True)

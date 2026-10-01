@@ -47,7 +47,7 @@ from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
     available_runnable_defaults,
-    resolve_public_runnable_query,
+    resolve_runnable_reference,
 )
 from toolang.state.state import AgentState
 from toolang.up import AgentCore
@@ -89,7 +89,7 @@ async def _run_stream(
     setup = core.setup.current()
     try:
         state = core.state.current()
-        resolved_runnable = resolve_public_runnable_query(state, payload.runnable.ref)
+        resolved_runnable = resolve_runnable_reference(state, payload.runnable.ref)
         module = resolved_runnable.module
         runnable = resolved_runnable.executable
         model_request = require_exact_model_request(
@@ -353,7 +353,7 @@ async def run_defaults(
             runnable = f"flow:{default_flow}"
     if runnable is not None:
         try:
-            runnable = resolve_public_runnable_query(state, runnable).ref
+            runnable = resolve_runnable_reference(state, runnable).ref
         except (ToolangError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:

@@ -42,18 +42,17 @@ remote metadata, before applying allow and query filters. It never prepares an
 agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
-`--all` includes resources excluded by allow in the same scope and adds an
-`STATUS` column immediately after identity (`ok` or `blocked`), alongside
-description, scope, form, and source. It does not resurrect
-shadowed definitions or grant runtime access. Default output omits that column
-because all displayed entries pass the policy. This applies to aggregate and
+`--all` includes resources excluded by allow in the same scope. Both views
+show `ref`, `description`, `source`, and `tags`; availability is `ready` or
+`not_allowed`, alongside origin and scope tags. The full view does not restore
+shadowed definitions or grant runtime access. This applies to aggregate and
 kind-specific lists through both CLIs, for example `too alice caps --all`,
 `too alice skill list --all`, and `caps alice list --all`. Queries filter the
 chosen default/full view. Caps have no separate readiness protocol; an invalid
 or unresolvable definition remains an error, not an invented unavailable row.
 `-a` aliases `--all`. Aggregate summaries use `N caps, M kinds`; omit the kind
 count for zero or one cap. Kind-specific summaries use their own noun, such as
-`N skills`. Empty results print only `0 caps` or `0 skills`, without a table.
+`N skills`. Empty human results print `0 caps` or `0 skills`; JSON output is `[]`.
 Counts describe displayed rows after filtering.
 Per-module and run declarations can further narrow execution resources.
 
@@ -111,26 +110,23 @@ in this order:
 
 | Column | Meaning |
 | --- | --- |
-| `CAP` | Qualified query identity, such as `skill/reviewer` |
-| `DESCRIPTION` | Cap description, or `-` when absent |
-| `SCOPE` | Runtime scope: `root`, `home`, or `here` |
-| `FORM` | Source form: `authored`, `inline`, `configured`, or `referenced` |
-| `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
+| `ref` | Qualified query identity, such as `skill/reviewer` |
+| `description` | Cap description, or `-` when absent |
+| `source` | Canonical source URI |
+| `tags` | Availability, access, origin, and scope tags |
 
-`FORM` uses the same values as the runtime source form. It is not remapped for
-display.
-
-Use repeatable `--query/-q` options. Qualified cap identities use the singular
-kind prefixes `psyche`, `skill`, `service`, and `prompt`; kind-specific lists
-also accept unqualified cap names. Predicates use typed fields such as `scope`,
-`form`, and `origin`, for example `skill/*[scope=home;form=authored]`. Run
-`too query skills` to inspect the fields. There is no `caps` query schema: the
-combined command queries the four base collections independently.
+Use repeatable `--query/-q` with native TQ. Both combined and kind-specific
+lists match complete singular identities such as `skill/reviewer`; use
+`*/reviewer` across kinds. For example, `skill/*[tags has all (home,remote)]`
+selects remote skills in home scope. `--json` exposes the exact records used by
+queries, and `--human` uses the same field names as table headers. See
+[Resource Queries](queries.md).
 
 
-## Refs
+## Source Refs
 
-Public cap refs identify the selected cap itself:
+API and read/write source refs identify the selected cap itself. CLI query
+records expose these URIs as `source`; their `ref` is `kind/name`:
 
 | Ref | Meaning |
 | --- | --- |

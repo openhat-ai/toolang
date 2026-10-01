@@ -126,7 +126,7 @@ Both `highlight` and `fmt --highlight` accept:
 
 On `fmt`, rendering options require `--highlight`. Custom grammars, queries,
 themes, embedded-language highlighting, and arbitrary Tree-sitter query
-execution are outside this interface. `too query` remains collection-query help.
+execution are outside this interface. Resource lists expose query fields through `--json`.
 
 ## Stdin, Paths, and Errors
 

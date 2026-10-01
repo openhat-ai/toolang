@@ -17,7 +17,7 @@ from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
 from toolang.common.config_sources import read_config
 from toolang.common.files import atomic_write_text, file_write_lock
-from toolang.common.query import resolve_query_sentinels
+from toolang.common.policy import resolve_query_sentinels
 
 CAP_ALLOW_FIELDS = tuple(f"{kind}s" for kind in CAP_KINDS)
 WORKSPACE_ORDER_KEY = "__toolang_workspace_order__"

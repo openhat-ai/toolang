@@ -328,7 +328,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
             commands=(RunCommand("default", "runnable", "agic:not_found"),),
         )
 
-        with pytest.raises(ToolangError, match="runnable query matched no items"):
+        with pytest.raises(ToolangError, match="Runnable not found: agic:not_found"):
             await client.run(request)
 
         assert harness.store.list_runs(thread_id=thread, limit=None) == []

@@ -9,15 +9,8 @@ from typing import cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool
-from toolang.common.query import (
-    CollectionDefinition,
-    CollectionSchema,
-    ColumnSpec,
-    IdentitySpec,
-    MatchUnion,
-    QueryDataset,
-    SetOperator,
-)
+from tq import Query
+from toolang.common.types import SetOperator
 
 from .registry import ToolRef, tool_ref_for_model_tool
 
@@ -34,25 +27,6 @@ class ToolQueryView:
     source: str
     description: str
     parameters: tuple[str, ...]
-
-
-TOOL_SCHEMA = CollectionSchema.from_type(
-    "tools",
-    ToolQueryView,
-    key="model_name",
-    identity=IdentitySpec(
-        paths=("toolset", "name"),
-        labels=("toolset", "tool"),
-        separator="/",
-    ),
-    exclude=("model_name", "record"),
-    columns=(
-        ColumnSpec("TOOL", ("toolset", "name"), "identity"),
-        ColumnSpec("DESCRIPTION", ("description",), "truncate"),
-        ColumnSpec("SOURCE", ("source",)),
-    ),
-)
-TOOL_DEFINITION = CollectionDefinition(TOOL_SCHEMA)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +47,12 @@ class ToolEntry:
 
 @dataclass(frozen=True, slots=True, eq=False, init=False)
 class ToolCollection(Mapping[str, Tool]):
-    """Immutable effective tools with one shared matcher and exact indexes."""
+    """Immutable effective tools with exact lookup indexes."""
 
     entries: tuple[ToolEntry, ...]
     _by_key: Mapping[str, ToolEntry]
     _by_ref: Mapping[str, ToolEntry]
     _by_name: Mapping[str, ToolEntry]
-    _matcher: QueryDataset[ToolQueryView]
     _views: tuple[ToolQueryView, ...]
     _view_by_name: Mapping[str, ToolQueryView]
 
@@ -96,15 +69,13 @@ class ToolCollection(Mapping[str, Tool]):
             else tuple(_tool_view(entry.model_name, entry.tool) for entry in values)
         )
         _validate_tool_entries(values, query_views)
-        matcher = TOOL_DEFINITION.dataset(query_views)
-        self._initialize(values, query_views=query_views, matcher=matcher)
+        self._initialize(values, query_views=query_views)
 
     def _initialize(
         self,
         values: tuple[ToolEntry, ...],
         *,
         query_views: tuple[ToolQueryView, ...],
-        matcher: QueryDataset[ToolQueryView],
     ) -> None:
         _validate_tool_entries(values, query_views)
         by_key = {entry.key: entry for entry in values}
@@ -117,7 +88,6 @@ class ToolCollection(Mapping[str, Tool]):
         object.__setattr__(self, "_by_name", MappingProxyType(by_name))
         object.__setattr__(self, "_views", query_views)
         object.__setattr__(self, "_view_by_name", MappingProxyType(view_by_name))
-        object.__setattr__(self, "_matcher", matcher)
 
     @classmethod
     def from_tools(
@@ -168,22 +138,32 @@ class ToolCollection(Mapping[str, Tool]):
             )
         )
 
+    def query(
+        self, queries: str | Sequence[str] | None = None
+    ) -> tuple[ToolQueryView, ...]:
+        if queries is None:
+            return self._views
+        query = Query.parse(queries).validate({"key": "ref"})
+        return tuple(
+            view for view in self._views if query.match(tool_record(view)) is not None
+        )
+
     def match(
         self,
-        queries: MatchUnion | str | Sequence[str] | None = None,
+        queries: str | Sequence[str] | None = None,
     ) -> ToolCollection:
         """Return the stable-order subset accepted by collection queries."""
 
         if queries is None:
             return self
-        keys = {item.model_name for item in self._matcher.query(queries)}
+        keys = {item.model_name for item in self.query(queries)}
         return self._derive(
             tuple(entry for entry in self.entries if entry.model_name in keys)
         )
 
     def apply(
         self,
-        operations: Sequence[tuple[SetOperator, MatchUnion | str | Sequence[str]]],
+        operations: Sequence[tuple[SetOperator, str | Sequence[str]]],
     ) -> ToolCollection:
         """Apply set operations against this immutable collection base."""
 
@@ -192,9 +172,7 @@ class ToolCollection(Mapping[str, Tool]):
         available = set(self._by_name)
         active = set(available)
         for operator, query in operations:
-            matched = {
-                item.model_name for item in self._matcher.query(query)
-            } & available
+            matched = {item.model_name for item in self.query(query)} & available
             if operator == "=":
                 active.intersection_update(matched)
             elif operator == "+=":
@@ -224,12 +202,12 @@ class ToolCollection(Mapping[str, Tool]):
         return entry
 
     def subset(self, keys: Sequence[str]) -> ToolCollection:
-        """Resolve an ordered persisted-key subset without rebuilding its matcher."""
+        """Resolve an ordered persisted-key subset without querying."""
 
         return self._derive(tuple(self.entry(key) for key in keys))
 
     def compact(self) -> ToolCollection:
-        """Fix this subset as a standalone publication matcher."""
+        """Fix this subset as a standalone collection."""
 
         return ToolCollection(self.entries, views=self._views)
 
@@ -240,9 +218,7 @@ class ToolCollection(Mapping[str, Tool]):
         missing = [
             query
             for query in queries
-            if not any(
-                item.model_name in available for item in self._matcher.query(query)
-            )
+            if not any(item.model_name in available for item in self.query(query))
         ]
         if missing:
             raise ToolangError(f"{label} query matched no items: {', '.join(missing)}")
@@ -274,7 +250,6 @@ class ToolCollection(Mapping[str, Tool]):
             query_views=tuple(
                 self._view_by_name[entry.model_name] for entry in entries
             ),
-            matcher=self._matcher,
         )
         return derived
 
@@ -298,26 +273,6 @@ def _validate_tool_entries(
         raise ValueError("tool collection contains duplicate public refs")
     if len({entry.model_name for entry in values}) != len(values):
         raise ValueError("tool collection contains duplicate model-facing names")
-
-
-def tool_dataset(
-    tools: Mapping[str, Tool],
-    *,
-    plugin_sources: Mapping[str, str] | None = None,
-) -> QueryDataset[ToolQueryView]:
-    """Materialize a complete ordered model-facing tool snapshot."""
-
-    sources = plugin_sources or {}
-    if isinstance(tools, ToolCollection) and not plugin_sources:
-        return TOOL_DEFINITION.dataset(tools._views)
-    items = sorted(
-        (
-            _tool_view(model_name, tool, plugin_sources=sources)
-            for model_name, tool in tools.items()
-        ),
-        key=lambda item: (item.toolset, item.name, item.plugin, item.model_name),
-    )
-    return TOOL_DEFINITION.dataset(items)
 
 
 def _tool_view(
@@ -357,11 +312,14 @@ def _tool_view(
     )
 
 
-__all__ = [
-    "TOOL_DEFINITION",
-    "TOOL_SCHEMA",
-    "ToolCollection",
-    "ToolEntry",
-    "ToolQueryView",
-    "tool_dataset",
-]
+def tool_record(view: ToolQueryView, *, allowed: bool = True) -> dict[str, object]:
+    return {
+        "ref": f"{view.toolset}/{view.name}",
+        "toolset": view.toolset,
+        "name": view.name,
+        "plugin": view.plugin,
+        "source": view.source,
+        "description": view.description,
+        "parameters": list(view.parameters),
+        "tags": ["ready" if allowed else "not_allowed"],
+    }

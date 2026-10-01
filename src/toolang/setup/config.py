@@ -20,11 +20,7 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import read_config
-from toolang.common.query import (
-    resolve_query_sentinels,
-)
-from toolang.plugin.models.collections import MODEL_SCHEMA
-from toolang.plugin.toolsets.collections import TOOL_SCHEMA
+from toolang.common.policy import resolve_query_sentinels
 
 from .types import CompactConfig
 
@@ -193,7 +189,6 @@ def resolve_setup_allow(
         models=fields.get("models"),
         tools=fields.get("tools"),
     )
-    _validate_setup_allow_syntax(ceiling)
     return ceiling
 
 
@@ -343,13 +338,6 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         )
     except ToolangError as error:
         raise ValueError(str(error)) from error
-
-
-def _validate_setup_allow_syntax(ceiling: AgentCeiling) -> None:
-    for query in ceiling.models or ():
-        MODEL_SCHEMA.parse(query)
-    for query in ceiling.tools or ():
-        TOOL_SCHEMA.parse(query)
 
 
 def _default_value(name: str, value: object) -> str | None:

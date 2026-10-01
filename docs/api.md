@@ -70,27 +70,14 @@ Cap commands:
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
 
-List output uses:
+List output uses `ref`, `description`, `source`, and `tags` for combined and
+kind-specific lists. `source` is the canonical source URI.
 
-- `KIND`
-- `CAP`
-- `ORIGIN`
-- `FORM`
-- `SCOPE`
-- `SOURCE`
-
-Kind-specific list commands omit `KIND`.
-
-`SOURCE` is the authored source location. File sources are paths relative to
-the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. External GitHub
-sources are shown as directly accessible `https://github.com/...` URLs.
-
-`FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE`
-accepts `root`, `home`, and `here`. Query predicates use typed fields such as
-`scope=home`, `form=authored`, and `origin=remote`. Combined lists use
-`psyches`, `skills`, `services`, and `prompts` as identity prefixes;
-kind-specific lists also accept local cap names. Run `too query COLLECTION` for
-the complete query contract.
+Resource query parameters use native TQ over public model/tool/cap records.
+Cap identities have singular prefixes such as `skill/reviewer`, including
+kind-specific lists. Use tags for provenance and scope, for example
+`skill/*[tags has all (home,remote)]`. API response envelopes retain their
+existing shapes; see [Resource Queries](queries.md) for the matching records.
 
 Typical usage:
 
@@ -613,7 +600,7 @@ files:
 [allow]
 models = ["gateway/*"]
 tools = ["shell/*"]
-skills = ["reviewer"]
+skills = ["skill/reviewer"]
 
 [default]
 model = "gateway/chat effort=high"

@@ -12,9 +12,7 @@ import pytest
 
 from tests import PROJECT_ROOT
 from toolang.lang import Program, format_source
-from toolang.common.query import MatchUnion
-from toolang.lang.runnable_query import RUNNABLE_SCHEMA
-from toolang.state.runnable_collections import runnable_dataset
+from toolang.execution.runnables import resolve_runnable_reference
 from toolang.state.state import flow_export, program_runnable_index
 
 
@@ -69,18 +67,13 @@ def test_example_route_directives_resolve(path: Path) -> None:
     """Catch route typos, which stay valid syntax as unresolved authored refs."""
 
     program = Program.from_source(_source(path))
-    dataset = runnable_dataset(program)
 
     for agic in program.agics:
         for directive in agic.directives:
             if directive.name in {"hands", "handoffs"}:
-                query = directive.values[0]
-                for match in RUNNABLE_SCHEMA.parse(query).matches:
-                    resolved = dataset.query(MatchUnion(matches=(match,)))
-                    assert resolved, (
-                        f"{path.name}: {directive.name} = {query} does not resolve "
-                        f"{match.identity_pattern!r}"
-                    )
+                for reference in directive.values:
+                    if reference not in {"*", "none"}:
+                        assert resolve_runnable_reference(program, reference)
 
 
 @pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=_example_id)

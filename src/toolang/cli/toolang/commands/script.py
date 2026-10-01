@@ -611,13 +611,13 @@ def _materialize_script_runnable_override(
 
     if override.runnable in {None, "default"}:
         return override
-    from toolang.execution.runnables import resolve_public_runnable_query
+    from toolang.execution.runnables import resolve_runnable_reference
 
     try:
-        resolved = resolve_public_runnable_query(program, override.runnable)
+        resolved = resolve_runnable_reference(program, override.runnable)
     except (ToolangError, ValueError) as exc:
         raise ValueError(
-            f"runnable query is unknown or ambiguous: {override.runnable}"
+            f"runnable reference is unknown or ambiguous: {override.runnable}"
         ) from exc
     return replace(override, runnable=resolved.ref)
 

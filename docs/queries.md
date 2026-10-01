@@ -1,155 +1,111 @@
-# Collection Queries
+# Resource Queries
 
-Collection queries select an ordered subset of a base collection. Non-model
-collections use Toolang's typed collection-query grammar below; model queries
-use `tq-json` over model records.
+Models, tools, and caps use native `tq-json` queries over the same records emitted
+by `--json`. Use repeatable `-q/--query` options for a union of selections.
+Providers support JSON inspection and external TQ; plugins and runnables have no
+collection query interface. Runnables use exact language references.
 
-## Terms
+## Records and output
 
-| Term | Meaning |
-| --- | --- |
-| collection | Ordered items with unique stable keys. |
-| identity | Canonical public item identifier. |
-| query field | Typed public attribute addressable by a dotted path. |
-| predicate | One typed condition on a query field. |
-| match | An optional identity pattern plus zero or more AND predicates. |
-| query | The stable, deduplicated union of one or more matches. |
+Human tables are the default; `--human` and `--json` are mutually exclusive.
+JSON output is an array, including `[]` for an empty selection. Table headers
+use JSON field paths verbatim. `--all` includes unavailable or excluded records.
+The default view contains effective resources.
 
-For non-model collections the parsed query is a `MatchUnion` of ordered
-`Match` values. Model queries use `tq-json` instead.
+| Collection | Identity | Human columns |
+| --- | --- | --- |
+| Models | `ref`: `provider/id` | `ref`, `limit.context`, `limit.output`, `modalities.input`, `tool_call`, `reasoning`, `temperature`, `structured_output`, `cost.input`, `cost.output`, `tags` |
+| Providers | `id` (external TQ only) | `id`, `_toolang.available_models`, `_toolang.model_count`, `_toolang.adapters`, `_toolang.route.api`, `env`, `tags` |
+| Tools | `ref`: `toolset/name` | `ref`, `description`, `source`, `tags` |
+| Caps | `ref`: `kind/name` | `ref`, `description`, `source`, `tags` |
 
-## Syntax
+Model/provider records retain the supported models.dev nested shapes. Model
+`id` is the model ID; optional `provider` is an override object. Owning provider
+is `_toolang.provider`. Prices use the catalog's per-million-token units.
+Provider `models` is an ID-keyed mapping in the selected effective/all scope.
+Safe resolved route metadata appears under `_toolang.route`; environment entries
+are requirement names, never values. Headers, bodies, options, and private
+payload metadata are excluded.
 
-```text
-query      := match ("," match)*
-match      := identity-pattern? ("[" predicate (";" predicate)* "]")?
-predicate  := bool-field | "!" bool-field
-            | field comparator literal
-            | field ("in" | "not in") "(" literal ("," literal)* ")"
-comparator := "=" | "!=" | "~=" | "!~=" | "<" | "<=" | ">" | ">="
-field      := identifier ("." identifier)*
+Tools also expose `toolset`, `name`, `plugin`, and parameter names in `parameters`.
+Caps also expose `name`, `definition`, and `line`; `source` is the canonical source
+URI. Cap kinds are `psyche`, `skill`, `service`, and `prompt`. Combined and
+kind-specific lists both require the full identity pattern.
+
+## Native TQ semantics
+
+```sh
+too models -q 'openai/*[tool_call;limit.context>=200000]' --json
+too models -q '*[modalities.input has image]' --human
+too tools -q '*[parameters has path]' --json
+too caps -q 'skill/*[tags has all (home,remote)]' --json
 ```
 
-- A top-level comma forms the union of matches.
-- A match intersects its identity pattern and predicates.
-- A semicolon intersects predicates.
-- `in (...)` accepts any listed value within one predicate.
-- Repeating a sequence predicate requires every specified element.
-- An omitted identity is `*`.
+A comma or repeated option forms a union; semicolons combine predicates.
+A bare name matches only that full key, so use `*/reviewer` to match across cap
+kinds. Use native `has`, `has no`, or `has all (...)` for array membership.
+There are no field aliases, inferred field restrictions, or date conversions.
+Missing fields and operator/type compatibility follow TQ, so unknown fields
+normally produce no matches rather than setup validation errors.
 
-```text
-openai/*,anthropic/*
-*[scope in (root,home);origin=remote]
-*[reasoning;modalities.input=image;limit.context>=200000]
-*[modalities.input=image;modalities.input=pdf]
+Every built-in consumer parses and validates with `{"key": "ref"}`, without a
+filter list. TQ validation rejects predicates on the key: select refs through
+identity syntax. Its optional CLI currently omits this validation; external
+parity therefore applies to validated expressions.
+
+With the optional `tq-json[cli]` extra:
+
+```sh
+too models --json | tq -r -k ref '*[tags has all (ready,local)]'
+too providers --all --json | tq -k id '*[tags has no_env]'
 ```
 
-Identity patterns and `~=` are case-sensitive globs; only `*` and `?` are
-special. A JSON-quoted identity is exact. `=` and `!=` are exact typed
-comparisons. Quote values containing whitespace or query punctuation as JSON
-strings.
+TQ CLI emits individual objects. `-r` preserves model query branch priority.
+See the [TQ syntax reference](https://pypi.org/project/tq-json/).
 
-Supported field types determine the operators:
+## Tags
 
-| Type | Operators |
-| --- | --- |
-| Boolean | flag, `!flag`, `=`, `!=`, `in`, `not in` |
-| Text | `=`, `!=`, `~=`, `!~=`, `in`, `not in` |
-| Enum | `=`, `!=`, `in`, `not in` |
-| Number, date, datetime | equality, ordering, `in`, `not in` |
-| Optional | Underlying operators plus `null` |
-| Scalar sequence | Element operators |
+Tags have one meaning across collections. Group names describe the vocabulary;
+the JSON field is a flat `tags` array.
 
-## Base Collections
+| Group | Tags | Records |
+| --- | --- | --- |
+| Availability | `ready` | Models, providers, tools, caps |
+| Access | `not_allowed` | Models, providers, tools, caps |
+| Configuration | `no_env`, `no_api`, `no_adapter` | Models, providers |
+| Origin | `local`, `remote` | Models, caps |
+| Scope | `root`, `home`, `here` | Caps |
 
-The queryable base collections and identities are:
+`ready` excludes all blockers. Independent blockers may coexist. Missing API
+template variables produce `no_env`; a missing endpoint produces `no_api`.
+Tags use captured setup facts, with no live probes. Providers are ready when any
+scoped model is ready; otherwise they expose only blockers shared by every
+model in a nonempty set. Mixed failures remain on model records.
 
-| Collection | Identity |
-| --- | --- |
-| `models` | `provider/model` |
-| `tools` | `toolset/tool` |
-| `psyches` | `psyche/psyche` |
-| `skills` | `skill/skill` |
-| `services` | `service/service` |
-| `prompts` | `prompt/prompt` |
+Model Origin follows the source catalog's local-runtime declaration, not the
+catalog file location. Cap Origin preserves provenance even for cached remote
+caps. No kind, form, shape, editability, or action tags are added.
 
-An unqualified pattern matches the final identity component. A qualified
-pattern matches the complete identity. The final component may contain the
-separator.
+## Policy and directives
 
-`caps` is an umbrella, not a base collection. `too caps --query QUERY` applies
-the query independently to the four cap collections and concatenates their
-results. Use `skill/reviewer` to select one kind or `reviewer` to match that
-name across kinds.
+`[allow]`, environment overrides, `--allow`, Chat `/allow`, one-run `:allow`,
+and resource directives use the same TQ syntax. The allow fields are `models`,
+`tools`, `psyches`, `skills`, `services`, and `prompts`. Singular `model`
+bindings accept an exact model reference.
 
-Terminal Chat exposes models through `/models [-a] [QUERY]` using
-`tq-json`; `/tools [-a] [QUERY]` and `/caps [-a] [QUERY]` use the grammar
-above. By default, the base is the
-collection selected by the current session's `/allow` ceiling. `-a` changes the
-base to all available resources. The remaining complete command tail is one
-query and is intersected with that base. These inspection commands do not
-apply or change the session ceiling.
-
-## Ordering and Set Operations
-
-For the non-model collections described above, results retain base-collection
-order. For model inspection, TQ query branches return matches in branch order and
-catalog order within each branch. `allow.models` uses the same branch priority:
-matched records are moved ahead of unmatched records, which remain in catalog
-order. An unset allow list preserves catalog order exactly. Overlapping matches
-are deduplicated by stable ref.
-For model sequence fields such as `modalities.input`, `=image` means `has image`;
-`!=image` means a nonempty sequence without `image`. Explicit TQ `has no image`
-also matches empty sequences.
-
-Resource directives evaluate against one immutable base:
-
-```text
-=   active = active intersect matches
-+=  active = active union matches
--=  active = active difference matches
-```
-
-An include cannot add an item outside the inherited resource base. Runnable
-model directives use TQ queries but preserve the inherited base order; the
-special query-branch priority applies to `allow.models`, not to directive order.
-
-## CLI Help
-
-Query-enabled lists expose repeatable `--query/-q`. The additional `too query`
-command, discoverable through `too more`, documents the language without loading
-collection data:
-
-```text
-too query --help
-too query models
-too query skills --json
-```
-
-The collection form shows the field contract. `too query models` identifies
-`tq-json` and its identity fields; see the [tq-json syntax](https://pypi.org/project/tq-json/).
-Other collections show Toolang's query operators. Tables remain compact
-presentation views; their headers and composite cells do not define query fields.
-Providers and plugin inventories do not support queries.
-
-## Policy and Directives
-
-The six allow fields are `models`, `tools`, `psyches`, `skills`, `services`,
-and `prompts`. Model allow rules, model inspection, and authored model
-`=`, `+=`, `-=` directives use `tq-json`. Tool/cap allow rules and their
-directives use Toolang collection queries. `[allow]`, `TOOLANG_ALLOW_*`,
-`--allow`, Chat `/allow` settings, and one-run `:allow` overrides follow those
-per-resource query rules. Singular `model` bindings instead accept one exact
-`ModelRequest` ref and do not use a collection query.
-
-```bash
-toolang serve alice \
-  --allow 'models=*[streaming;tool_call]' \
+```sh
+too serve alice \
+  --allow 'models=*[tool_call]' \
   --allow 'tools=fs/*' \
-  --allow 'skills=reviewer'
+  --allow 'skills=skill/reviewer'
 ```
 
-`all` and `none` are case-insensitive policy-layer sentinels only when they are
-the complete value. They cannot be mixed with a query. Legacy `--filter`,
-`--select`, colon predicates, empty matches, and empty predicate blocks are
-invalid.
+Standalone `all`/`none` are case-insensitive policy sentinels and cannot mix
+with queries. Policy evaluates input tags once, then publishes updated tags.
+Setup adds no separate restrictions on query fields or status tags.
+
+Models use first matching branch then source order for inspection and allow
+ranking. Tools/caps retain base order. Overlapping matches are deduplicated.
+Resource `=`, `+=`, and `-=` operations respectively intersect, include, and
+exclude within the inherited base, always preserving base order. Includes
+cannot exceed that inherited ceiling. Required-match checks remain in place.
