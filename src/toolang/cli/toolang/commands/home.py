@@ -28,9 +28,12 @@ def should_prepare_target(arguments: list[str]) -> bool:
 def home(ctx: typer.Context) -> None:
     """Run the configured interactive shell from the selected directory."""
 
-    directory = context_layout(ctx).home if context_agent(ctx) else context_root(ctx)
+    agent = context_agent(ctx)
+    directory = context_layout(ctx).home if agent else context_root(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
     executable = os.environ.get("SHELL", "/bin/sh")
+    destination = "agent home" if agent else "Toolang root"
+    typer.echo(f"Entered {destination}. Type exit to return.")
     try:
         result = subprocess.run([executable, "-i"], cwd=directory, check=False)
     except OSError as exc:
