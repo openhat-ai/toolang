@@ -43,6 +43,36 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
     return SimpleNamespace(obj=CliContext(root=root, agent=agent))
 
 
+@pytest.mark.parametrize("agent", [None, "alice", "visiting", "roaming"])
+def test_home_announces_destination_once_before_launching(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agent: str | None,
+) -> None:
+    _create_agent(tmp_path)
+    monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
+    expected = (
+        "Entered agent home. Type exit to return.\n"
+        if agent
+        else "Entered Toolang root. Type exit to return.\n"
+    )
+
+    def run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        output = capsys.readouterr()
+        assert output.out == expected
+        assert output.err == ""
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(home_command.subprocess, "run", run)
+
+    home_command.home(_context(tmp_path, agent))
+
+    output = capsys.readouterr()
+    assert output.out == output.err == ""
+
+
 def test_home_opens_root_without_an_agent_and_respects_root_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
