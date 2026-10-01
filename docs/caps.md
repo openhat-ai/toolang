@@ -111,23 +111,27 @@ in this order:
 
 | Column | Meaning |
 | --- | --- |
-| `ref` | Qualified query identity, such as `skill/reviewer` |
-| `description` | Cap description, or `-` when absent |
-| `source` | Canonical source URI |
-| `tags` | Availability, access, origin, and scope tags |
+| `REF` | Qualified query identity, such as `skill/reviewer` |
+| `DESCRIPTION` | Cap description, or `-` when absent |
+| `LOCATION` | Absolute content path, inline `file:line`, or configured/referenced GitHub HTTPS URL |
+| `TAGS` | Availability, access, origin, scope, and form tags |
 
 Use repeatable `--query/-q` with native TQ. Both combined and kind-specific
 lists match complete singular identities such as `skill/reviewer`; use
 `*/reviewer` across kinds. For example, `skill/*[tags has all (home,remote)]`
 selects remote skills in home scope. `--json` exposes the exact records used by
-queries, and `--human` uses the same field names as table headers. See
+queries. JSON and query keys are lowercase; `--human` uppercases them for table
+headers. Locations remain complete for copying; authored skills point to
+`SKILL.md`, and only inline locations include a line number. See
 [Resource Queries](queries.md).
 
 
 ## Source Refs
 
-API and read/write source refs identify the selected cap itself. CLI query
-records expose these URIs as `source`; their `ref` is `kind/name`:
+API and read/write source refs identify the selected cap itself. These URIs
+also serve as identities for persistence and deduplication. CLI query records
+use `kind/name` as `ref` and expose the content address as `location`, without a
+`source` field:
 
 | Ref | Meaning |
 | --- | --- |

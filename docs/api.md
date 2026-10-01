@@ -1019,7 +1019,8 @@ The cap summary and collection endpoints accept repeatable `query` parameters.
 They match the public cap records documented in [Resource Queries](queries.md),
 using `kind/name` identities and `tags`, then retain source order. The summary
 returns the existing grouped response and counts. Response `ref` values remain
-source URIs; the query projection calls this field `source`.
+source URIs; query records instead use `kind/name` as `ref` and a content address
+as `location`. Source URIs are not a field in the query projection.
 
 Cap list items include `form` and the additive `summary` display field.
 `summary` is at most 256 Unicode code points and selects the first nonblank
@@ -1096,8 +1097,10 @@ items include:
 
 Read and write payloads use the same `root`, `home`, and `here` scope
 vocabulary. Read payloads retain `form`, `scope`, and `origin`; CLI query
-records expose scope and origin through `tags` and omit form. CLI `source`
-contains the source URI, and CLI `ref` is `kind/name`.
+records expose all three through `tags`. CLI `ref` is `kind/name`, and
+`location` addresses the actual content as an absolute path or GitHub HTTPS URL.
+Only inline caps append a declaration line as `file:line`; CLI records have no
+separate `source`, `definition`, or `line` field.
 
 
 ## Chat Client Orchestration
