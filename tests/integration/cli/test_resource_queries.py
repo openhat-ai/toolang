@@ -144,7 +144,20 @@ def test_plugin_inventories_only_support_default_tables(command, option):
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
-def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(tmp_path):
+@pytest.mark.parametrize(
+    ("app", "command"),
+    [
+        (toolang_app, ["caps"]),
+        (caps_app, ["list"]),
+        (caps_app, ["skill", "list"]),
+    ],
+)
+@pytest.mark.parametrize("relative_root", [False, True])
+def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(
+    tmp_path, monkeypatch, app, command, relative_root
+):
+    tmp_path = tmp_path.resolve()
+    monkeypatch.chdir(tmp_path.parent)
     skill = tmp_path / "skills" / "reviewer" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
@@ -153,10 +166,38 @@ def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(tmp_path)
         f"[allow]\nskills = [{json.dumps(expression)}]\n"
     )
     result = runner.invoke(
-        toolang_app, ["--root", str(tmp_path), "caps", "--query", expression, "--json"]
+        app,
+        [
+            "--root",
+            tmp_path.name if relative_root else str(tmp_path),
+            *command,
+            "--query",
+            expression,
+            "--json",
+        ],
     )
     assert result.exit_code == 0, result.stderr
     records = json.loads(result.stdout)
     assert [record["ref"] for record in records] == ["skill/reviewer"]
     assert records[0]["location"] == str(skill)
     assert records[0]["tags"] == ["ready", "local", "root", "authored"]
+
+
+def test_roaming_cap_location_uses_selected_layout_root(tmp_path, monkeypatch, capsys):
+    from toolang.cli.toolang.main import main
+
+    tmp_path = tmp_path.resolve()
+    source = tmp_path / "demo.too"
+    source.write_text("agic:\n  {{_}}\n")
+    skill = tmp_path / ".toolang" / "skills" / "reviewer" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "unrelated-root"))
+
+    result = main([str(source), "caps", "--json"])
+
+    output = capsys.readouterr()
+    assert result == 0, output.err
+    records = json.loads(output.out)
+    assert [record["ref"] for record in records] == ["skill/reviewer"]
+    assert records[0]["location"] == str(skill)

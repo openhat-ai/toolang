@@ -206,17 +206,20 @@ def list_caps(
 
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
-    entries, allowed = _cap_entries(
+    layout = (
         context_layout(ctx)
         if selected_agent is not None
-        else AgentLayout.resident(context_root(ctx), agent_name),
+        else AgentLayout.resident(context_root(ctx), agent_name)
+    )
+    entries, allowed = _cap_entries(
+        layout,
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
     selected = user_call(
         query_cap_views,
         entries if all_ else allowed,
-        root=context_root(ctx),
+        root=layout.root,
         agent_name=agent_name,
         queries=query,
         allowed=_allowed_cap_keys(allowed),
@@ -260,16 +263,19 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
 
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
-        entries, allowed = _cap_entries(
+        layout = (
             context_layout(ctx)
             if selected_agent is not None
-            else AgentLayout.resident(context_root(ctx), agent_name),
+            else AgentLayout.resident(context_root(ctx), agent_name)
+        )
+        entries, allowed = _cap_entries(
+            layout,
             prepare=selected_agent is not None,
             kinds={kind},
         )
         dataset = cap_collection(
             entries if all_ else allowed,
-            root=context_root(ctx),
+            root=layout.root,
             agent_name=agent_name,
             kind=kind,
             allowed=_allowed_cap_keys(allowed),
