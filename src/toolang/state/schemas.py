@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
+from pydantic import BaseModel, ConfigDict
+
 from .state import (
     StateCap,
     entry_definition_file,
@@ -116,3 +118,21 @@ def _bound_summary(value: str) -> str:
     if len(value) <= _CAP_SUMMARY_MAX_CODEPOINTS:
         return value
     return f"{value[: _CAP_SUMMARY_MAX_CODEPOINTS - 1].rstrip()}…"
+
+
+class WorkspaceInfo(BaseModel):
+    """One State grant and its availability in the inspecting runtime."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    name: str
+    path: str
+    available: bool
+
+
+class WorkspaceInspection(BaseModel):
+    """Workspace inspection bound to one published State revision."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    revision: str
+    items: tuple[WorkspaceInfo, ...]
+    workdir: str

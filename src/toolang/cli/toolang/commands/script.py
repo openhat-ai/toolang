@@ -48,7 +48,6 @@ from ...common.workspaces import (
     WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
-    running_workspaces,
     single_workdir,
 )
 from ...common.output import echo_error
@@ -700,9 +699,6 @@ def _run(
             workdir=workdir,
             srcdir=source_path.resolve().parent,
             no_auto=no_auto_workspace,
-            existing=running_workspaces(layout)
-            if workdir and "://" in workdir
-            else None,
         )
         session_override = _script_session_override(
             model_body=model_body,

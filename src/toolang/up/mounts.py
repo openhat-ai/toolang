@@ -10,7 +10,6 @@ from toolang.common.layout import (
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
-from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.source import observe_home_source, observe_root_source
 
 _ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
@@ -78,23 +77,16 @@ def prepare_linked_state_source_mounts(
 
 
 def prepare_workspace_mounts(
-    local_home: Path, hosted_home: Path, *, additions: Mapping[str, str] | None = None
+    local_home: Path, hosted_home: Path, *, workspaces: Mapping[str, str]
 ) -> tuple[tuple[SandboxMount, ...], dict[str, tuple[str, str]]]:
     """Capture mounted grants at sandbox startup; never mount later State additions."""
     scratch_root = ensure_scratch_workspace(local_home)
-    configured = ConfiguredWorkspaces(local_home / "config.toml").list()
     grants = {IMPLICIT_WORKSPACE_NAME: str(scratch_root)}
     grants.update(
         (name, source)
-        for name, source in configured.items()
+        for name, source in workspaces.items()
         if name != IMPLICIT_WORKSPACE_NAME
     )
-    for name, path in (additions or {}).items():
-        if name in grants:
-            raise ValueError(f"temporary workspace name already exists: {name}")
-        if not Path(path).is_dir():
-            raise ValueError(f"temporary workspace is unavailable: {path}")
-        grants[name] = path
     available = sorted(
         (
             (name, source, Path(source).resolve())

@@ -3308,6 +3308,20 @@ def test_agent_info_fields_follow_the_compact_layout(
         },
     )
     monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
+    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
+
+    monkeypatch.setattr(
+        agent_commands,
+        "running_workspace_inspection",
+        lambda _layout, **kwargs: WorkspaceInspection(
+            revision="a" * 64,
+            items=tuple(
+                WorkspaceInfo(name=name, path=str(tmp_path), available=True)
+                for name in ("lab", "extra", "runtime")
+            ),
+            workdir="runtime://",
+        ),
+    )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
@@ -3612,7 +3626,8 @@ def test_tools_help_and_missing_agent_need_no_setup(
 
 
 def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monkeypatch):
-    import toolang.cli.toolang.commands.workspace as workspace_commands
+    import toolang.cli.common.workspaces as workspace_commands
+    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
     root = tmp_path / "toolang-root"
     _create_agent(root)
@@ -3624,14 +3639,23 @@ def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monke
     layout.config.write_text(f'[workspaces]\nproject = "{project}"\n')
     monkeypatch.setattr(
         workspace_commands,
-        "running_workspaces",
-        lambda _layout: {"temporary": str(temporary)},
+        "running_workspace_inspection",
+        lambda _layout, **kwargs: WorkspaceInspection(
+            revision="a" * 64,
+            items=(
+                WorkspaceInfo(
+                    name="lab", path=str(layout.home / "lab"), available=True
+                ),
+                WorkspaceInfo(name="temporary", path=str(temporary), available=True),
+            ),
+            workdir="temporary://",
+        ),
     )
 
     result = _invoke(root, "alice", "workspace", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert "Workdir: project://" in result.stdout
-    assert "Server grants" in result.stdout
+    assert "Workdir: temporary://" in result.stdout
+    assert str(project) not in result.stdout
     assert "temporary" in result.stdout
     assert str(temporary) in result.stdout

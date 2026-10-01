@@ -83,7 +83,7 @@ def test_conflicts_fail_without_writing_config(layout, tmp_path, paths):
     assert not layout.config.exists()
 
 
-@pytest.mark.parametrize("workdir", ["missing://", "lab://../escape", "=", "name=", ""])
+@pytest.mark.parametrize("workdir", ["lab://../escape", "=", "name=", ""])
 def test_invalid_selection_rejected(layout, tmp_path, workdir):
     with pytest.raises((ValueError, ToolangError)):
         resolve_workspaces(layout, procdir=tmp_path, workdir=workdir)
@@ -108,7 +108,7 @@ def test_alias_mounts_share_one_mount(layout, tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     mounts, mapping = prepare_workspace_mounts(
-        layout.home, Path("/guest"), additions={"one": str(root), "two": str(root)}
+        layout.home, Path("/guest"), workspaces={"one": str(root), "two": str(root)}
     )
     assert len([mount for mount in mounts if mount.local_path == root]) == 1
     assert mapping["one"] == mapping["two"]
@@ -121,7 +121,6 @@ def test_existing_server_grant_can_be_selected_without_adding(layout, tmp_path):
         layout,
         procdir=tmp_path,
         workdir="repo://src",
-        existing={"repo": str(root)},
         srcdir=tmp_path,
     )
     assert selected.additions == {}
@@ -178,7 +177,6 @@ def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
         procdir=tmp_path,
         paths=["repo=repo"],
         workdir="repo://src",
-        existing={"repo": str(root)},
     )
     assert selected.additions == {"repo": str(root)}
     assert selected.workdir == "repo://src"
@@ -189,3 +187,84 @@ def test_configured_lab_does_not_replace_the_implicit_workspace(layout, tmp_path
     (layout.home / "lab" / "src").mkdir(parents=True)
     selected = resolve_workspaces(layout, procdir=tmp_path, workdir="lab://src")
     assert selected.workdir == "lab://src"
+
+
+def test_remote_workspace_uri_does_not_read_client_config_or_probe_remote_path(
+    layout, tmp_path
+):
+    layout.config.write_text("invalid toml = [")
+    selected = resolve_workspaces(
+        layout,
+        procdir=tmp_path,
+        workdir="remote://src",
+    )
+    assert selected.workdir == "remote://src"
+    assert selected.additions == {}
+
+
+def test_runtime_workspace_uri_is_deferred_without_client_state(layout, tmp_path):
+    selected = resolve_workspaces(layout, procdir=tmp_path, workdir="remote://src")
+    assert selected.workdir == "remote://src"
+
+
+def test_running_inspection_uses_server_state_without_local_preparation(
+    layout, tmp_path, monkeypatch
+):
+    from toolang.cli.common.client import RuntimeClient
+    from toolang.cli.common.workspaces import inspect_workspace_selection
+    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.state import prepare
+
+    layout.config.write_text("invalid = [")
+    monkeypatch.setattr(
+        AgentProcess,
+        "status",
+        lambda self, **kwargs: AgentStatus(
+            name=layout.name,
+            status="running",
+            endpoint="http://runtime.test",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker",
+        ),
+    )
+    monkeypatch.setattr(
+        prepare,
+        "prepare_agent_state",
+        lambda *args, **kwargs: pytest.fail(
+            "remote inspection must not prepare client State"
+        ),
+    )
+    requests = []
+
+    def get(self, path):
+        requests.append(path)
+        return {
+            "revision": "a" * 64,
+            "items": [
+                {"name": "lab", "path": "/host-only/lab", "available": True},
+                {"name": "repo", "path": "/host-only/repo", "available": True},
+            ],
+            "workdir": "repo://src",
+        }
+
+    monkeypatch.setattr(RuntimeClient, "get", get)
+    selection = resolve_workspaces(layout, procdir=tmp_path, workdir="repo://src")
+    result = inspect_workspace_selection(layout, selection)
+    assert result.workdir == "repo://src"
+    assert result.items[-1].available
+    assert requests == ["/api/v1/workspaces?workdir=repo%3A%2F%2Fsrc"]
+
+
+def test_offline_inspection_rejects_unknown_uri_and_configured_name_collision(
+    layout, tmp_path
+):
+    from toolang.cli.common.workspaces import inspect_workspace_selection
+
+    selection = resolve_workspaces(layout, procdir=tmp_path, workdir="missing://")
+    with pytest.raises(ToolangError, match="workspace is not available"):
+        inspect_workspace_selection(layout, selection)
+    layout.config.write_text(f'[workspaces]\nrepo = "{tmp_path}"\n')
+    selection = resolve_workspaces(layout, procdir=tmp_path, paths=[f"repo={tmp_path}"])
+    with pytest.raises(ValueError, match="temporary workspace name already exists"):
+        inspect_workspace_selection(layout, selection)

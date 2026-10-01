@@ -7,12 +7,14 @@ from toolang.cli.common.workspaces import (
     WorkdirOption,
     NoAutoWorkspaceOption,
     resolve_workspaces,
-    running_workspaces,
+    running_workspace_inspection,
+    validate_running_workspace_additions,
 )
 
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Mapping
 import shutil
 from typing import Annotated, cast
 
@@ -190,7 +192,6 @@ def info_agent(
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto_workspace,
-        existing=running_workspaces(layout) if workdir else None,
     )
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
@@ -201,7 +202,9 @@ def info_agent(
         runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
     except (OSError, ValueError):
         runtime_state, runtime_identity = {}, None
-    state = _prepare_state(layout)
+    state = _prepare_state(
+        layout, {} if status.status == "running" else selection.additions
+    )
     model_catalog = resolve_model_catalog_option(model_catalog)
     watcher = (
         SetupWatcher(layout, model_catalog=model_catalog)
@@ -218,21 +221,21 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
-    workspace_grants = {**state.workspaces, **selection.additions}
-    runtime_workspaces = runtime_state.get("workspace_additions")
-    if status.status == "running" and isinstance(runtime_workspaces, dict):
-        workspace_grants.update(
-            (name, path)
-            for name, path in runtime_workspaces.items()
-            if isinstance(name, str) and isinstance(path, str)
+    workspace_names = tuple(setup.workspace_grants(state.workspaces))
+    if status.status == "running":
+        inspection = user_call(
+            running_workspace_inspection, layout, workdir=selection.workdir
         )
+        if inspection is not None:
+            user_call(validate_running_workspace_additions, inspection, selection)
+            workspace_names = tuple(item.name for item in inspection.items)
     rows = [
         ("Home", shorten_home_path(layout.home)),
         ("Tools", _tools_summary(setup)),
         ("Models", _models_summary(setup)),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Workspaces", ", ".join(setup.workspace_grants(workspace_grants))),
+        ("Workspaces", ", ".join(workspace_names)),
         ("Status", status_value),
     ]
     if status.status == "stopped":
@@ -269,7 +272,7 @@ def _caps_summary(state: AgentState) -> str:
     )
 
 
-def _prepare_state(layout: AgentLayout) -> AgentState:
+def _prepare_state(layout: AgentLayout, additions: Mapping[str, str]) -> AgentState:
     progress = make_cli_progress()
     try:
         with progress:
@@ -279,6 +282,7 @@ def _prepare_state(layout: AgentLayout) -> AgentState:
                     prepare_agent_state,
                     layout,
                     progress=progress.sink,
+                    workspace_additions=additions,
                 ),
             )
             return state

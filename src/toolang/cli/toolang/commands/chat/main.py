@@ -69,7 +69,7 @@ from toolang.cli.common.tmux import (
     resolve_launcher,
     resolve_marks,
 )
-from toolang.cli.common.workspaces import resolve_workspaces, running_workspaces
+from toolang.cli.common.workspaces import resolve_workspaces
 from . import slashes as chat_slashes
 from .base import (
     AppContext,
@@ -320,7 +320,6 @@ def _chat_runtime(
         procdir=Path.cwd(),
         paths=workspace or (),
         workdir=workdir,
-        existing=running_workspaces(layout) if workdir and "://" in workdir else None,
     )
     compact_override = user_call(resolve_compact_override, {}, compact_model)
     try:

@@ -38,6 +38,7 @@ from toolang.state.state import (
 )
 from toolang.state.collections import cap_dataset
 from toolang.state.types import EntryKind
+from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 
 _Runnable = AgicDecl | FlowDecl
 
@@ -384,3 +385,29 @@ def _query_operations(
         for directive in directives
         if directive.values != ("none",) or directive.operator == "="
     )
+
+
+def workspace_inspection(
+    setup: AgentSetup, state: AgentState, *, workdir: str | None = None
+) -> WorkspaceInspection:
+    """Inspect captured grants using only the runtime's mapped filesystem roots."""
+    from toolang.base.utils.workspace_paths import parse_cwd, authorize_workspace_path
+
+    grants = setup.workspace_grants(state.workspaces)
+    roots = setup.workspace_roots(state.workspaces)
+    items = tuple(
+        WorkspaceInfo(
+            name=name, path=path, available=name in roots and roots[name].is_dir()
+        )
+        for name, path in grants.items()
+    )
+    available = tuple(item.name for item in items if item.available)
+    if not available or available[0] != "lab":
+        raise ToolangError("implicit lab workspace is unavailable")
+    selected = workdir or f"{available[-1]}://"
+    name, relative = parse_cwd(selected)
+    if name not in available:
+        raise ToolangError(f"workspace is not available: {name}")
+    if not authorize_workspace_path(roots[name] / relative, roots[name]).is_dir():
+        raise ToolangError(f"workdir is not a directory: {selected}")
+    return WorkspaceInspection(revision=state.revision, items=items, workdir=selected)

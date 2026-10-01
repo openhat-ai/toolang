@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from toolang.common.layout import AgentLayout
+from toolang.state.prepare import prepare_agent_state
+
 import pytest
 
 from toolang.base.types.sandbox import SandboxMount
@@ -112,7 +115,13 @@ def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None
         f'lab = "{configured_lab}"\nmissing = "{missing}"\n'
     )
     hosted_home = Path("/root/.toolang/agents/alice")
-    mounts, mapping = prepare_workspace_mounts(local_home, hosted_home)
+    mounts, mapping = prepare_workspace_mounts(
+        local_home,
+        hosted_home,
+        workspaces=prepare_agent_state(
+            AgentLayout.resident(tmp_path, "alice")
+        ).workspaces,
+    )
     lab_root = local_home / "lab"
     hosted_lab = hosted_home / ".workspaces/lab"
     assert lab_root.is_dir()
@@ -139,7 +148,13 @@ def test_workspace_mounts_include_configured_tmp_as_ordinary_grant(
     (local_home / "config.toml").write_text(f'[workspaces]\ntmp = "{configured}"\n')
     hosted_home = Path("/root/.toolang/agents/alice")
 
-    mounts, mapping = prepare_workspace_mounts(local_home, hosted_home)
+    mounts, mapping = prepare_workspace_mounts(
+        local_home,
+        hosted_home,
+        workspaces=prepare_agent_state(
+            AgentLayout.resident(tmp_path, "alice")
+        ).workspaces,
+    )
 
     lab_root = local_home / "lab"
     assert mapping == {
@@ -159,7 +174,9 @@ def test_workspace_mounts_reject_symlink_lab_directory(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError, match="implicit lab workspace must not be a symlink"
     ):
-        prepare_workspace_mounts(local_home, Path("/root/.toolang/agents/alice"))
+        prepare_workspace_mounts(
+            local_home, Path("/root/.toolang/agents/alice"), workspaces={}
+        )
 
 
 def test_workspace_mounts_reject_file_at_lab_path(tmp_path: Path) -> None:
@@ -168,7 +185,9 @@ def test_workspace_mounts_reject_file_at_lab_path(tmp_path: Path) -> None:
     (local_home / "lab").write_text("not a directory")
 
     with pytest.raises(FileExistsError):
-        prepare_workspace_mounts(local_home, Path("/root/.toolang/agents/alice"))
+        prepare_workspace_mounts(
+            local_home, Path("/root/.toolang/agents/alice"), workspaces={}
+        )
 
 
 def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) -> None:
@@ -180,7 +199,13 @@ def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) 
     (local_home / "config.toml").write_text(
         f'[workspaces]\naa = "{child}"\nzz = "{root}"\n'
     )
-    mounts, mapping = prepare_workspace_mounts(local_home, Path("/guest/alice"))
+    mounts, mapping = prepare_workspace_mounts(
+        local_home,
+        Path("/guest/alice"),
+        workspaces=prepare_agent_state(
+            AgentLayout.resident(tmp_path, "alice")
+        ).workspaces,
+    )
     assert [mount.local_path for mount in mounts] == [
         root.resolve(),
         child.resolve(),
@@ -188,3 +213,19 @@ def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) 
     ]
     assert mapping["aa"][1] == "/guest/alice/.workspaces/zz/child"
     assert mounts[1].hosted_path.is_relative_to(mounts[0].hosted_path)
+
+
+def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    layout.config.write_text(f'[workspaces]\nrepo = "{old}"\n')
+    state = prepare_agent_state(layout)
+    layout.config.write_text(f'[workspaces]\nrepo = "{new}"\n')
+    _, mapping = prepare_workspace_mounts(
+        layout.home, Path("/guest"), workspaces=state.workspaces
+    )
+    assert mapping["repo"][0] == str(old)

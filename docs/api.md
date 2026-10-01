@@ -924,8 +924,21 @@ script runs and TUI execution do not consume this endpoint.
 - `GET /api/v1/profile`
 - `GET /api/v1/models`
 - `GET /api/v1/tools`
+- `GET /api/v1/workspaces`
 - `GET /api/v1/agics`
 - `GET /api/v1/flows`
+
+`GET /api/v1/workspaces` reads the server's current Setup and State. It returns
+`revision`, ordered `items` (`name`, source `path`, and runtime `available`), and
+`workdir`. Optional `workdir=NAME://path` validates a location in that runtime;
+invalid or unavailable locations return HTTP 400. In a guest sandbox,
+availability requires a matching captured mount and an existing guest directory.
+
+`too AGENT workspace list` uses this endpoint while the agent is running. Without
+a server it prepares local State and inspects host directories. Execution CLI
+commands parse local directory grants but leave named workspace URI validation
+to the embedded executor or remote server; client configuration and filesystem
+paths do not determine remote availability.
 
 `/api/v1/profile` returns:
 
@@ -1062,6 +1075,13 @@ Configured write bodies use:
 
 - `scope`: `home` or `root`; defaults to `home`
 - `ref`: external cap ref
+
+Capability mutations write through the authored/configured catalogs, then await
+State publication. PUT responses read the exact published root/home layer,
+including a cap shadowed by a higher scope or excluded by runtime allow policy.
+DELETE responses wait for publication too. If the source change is saved but
+State rejects the candidate, HTTP 409 reports that distinction; the last valid
+State remains active. Publication does not apply a reload to an existing run.
 
 Delete routes accept `scope=home|root` as a query parameter. Cap read
 items include:

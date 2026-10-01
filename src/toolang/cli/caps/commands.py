@@ -19,7 +19,11 @@ from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
-from toolang.state.prepare import inspect_root_caps, prepare_agent_state
+from toolang.state.prepare import (
+    inspect_root_caps,
+    load_state_caps,
+    prepare_agent_state,
+)
 from ..common.context import context_agent, context_layout, context_root, user_call
 from ..common.help import CliCommand
 from ..common.output import echo_block, echo_collection_summary, echo_table
@@ -312,12 +316,15 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         try:
-            existing = _authored_caps(context_root(ctx), agent_name, scope).get(
-                kind, name
+            existing = _named_entry(
+                context_root(ctx),
+                agent_name,
+                scope=scope,
+                kind=kind,
+                name=name,
+                source_form="authored",
             )
-            if existing is None:
-                raise FileNotFoundError(name)
-            text = existing.content
+            text = existing.read_text()
         except FileNotFoundError as exc:
             raise ClickException(f"{title} {name} not found") from exc
         updated_text = edit_markdown(text)
@@ -445,10 +452,9 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=kind,
             name=name,
             source_origin="local",
+            source_form="authored",
         )
-        deleted_path = context_root(ctx) / entry.path
-        if entry.shape == "dir":
-            deleted_path = deleted_path.parent
+        deleted_path = context_root(ctx) / entry.source.path
         user_call(
             _authored_caps(context_root(ctx), agent_name, scope).remove,
             kind,
@@ -551,14 +557,9 @@ def _named_entry(
     source_origin: Literal["local", "remote"] | None = None,
     source_form: cap_state.CapForm | None = None,
 ) -> "StateCap":
-    entries = cap_state.list_entries(
-        toolang_root,
-        agent_name,
-        scope=scope,
-        kinds={kind},
-    )
+    entries = _scope_cap_entries(toolang_root, agent_name, scope=scope, kind=kind)
     for entry in entries:
-        if entry.name != name:
+        if entry.kind != kind or entry.name != name:
             continue
         if source_origin is not None and entry.source.origin != source_origin:
             continue
@@ -576,7 +577,25 @@ def _local_entry_exists(
     kind: EntryKind,
     name: str,
 ) -> bool:
-    return _authored_caps(toolang_root, agent_name, scope).get(kind, name) is not None
+    return any(
+        entry.kind == kind and entry.name == name and entry.source.form == "authored"
+        for entry in _scope_cap_entries(
+            toolang_root, agent_name, scope=scope, kind=kind
+        )
+    )
+
+
+def _scope_cap_entries(
+    toolang_root: Path, agent_name: str, *, scope: MutableScope, kind: EntryKind
+) -> tuple["StateCap", ...]:
+    layout = AgentLayout.resident(toolang_root, agent_name)
+    if scope == "root":
+        if not toolang_root.exists():
+            return ()
+        entries, _ = user_call(inspect_root_caps, layout, kinds={kind})
+        return entries
+    state = user_call(prepare_agent_state, layout)
+    return load_state_caps(layout, state, scope=scope)
 
 
 def _cap_directory(

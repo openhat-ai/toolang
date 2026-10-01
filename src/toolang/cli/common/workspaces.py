@@ -14,11 +14,10 @@ import typer
 from toolang.base.utils.workspace_paths import (
     parse_cwd,
     workspace_uri,
-    authorize_workspace_path,
 )
 from toolang.common.layout import AgentLayout
+from toolang.state.schemas import WorkspaceInspection
 from toolang.state.config import (
-    ConfiguredWorkspaces,
     normalize_workspace_name,
     validate_workspace_name,
 )
@@ -68,17 +67,10 @@ def resolve_workspaces(
     workdir: str | Sequence[str] | None = None,
     srcdir: Path | None = None,
     no_auto: bool = False,
-    existing: Mapping[str, str] | None = None,
 ) -> InvocationWorkspaces:
-    """Validate the whole invocation before preparing state or starting a runtime."""
+    """Parse local grants; defer named workspaces to the selected runtime's State."""
     workdir = single_workdir(workdir)
-    configured = ConfiguredWorkspaces(layout.config).list()
-    configured.pop("lab", None)  # The implicit grant owns this reserved name.
-    grants = {"lab": str(layout.home / "lab"), **configured}
-    origins = {name: f"configuration ({path})" for name, path in grants.items()}
-    # Existing bindings are a selection context, not new declarations. The server
-    # acquisition boundary checks compatibility with explicit invocation grants.
-    grants.update(existing or {})
+    origins = {"lab": "implicit workspace"}
     additions: dict[str, str] = {}
 
     def add(value: str, origin: str) -> str:
@@ -104,7 +96,6 @@ def resolve_workspaces(
                 f"workspace name {name!r} conflicts: {origins[name]} and {origin}; use NAME=PATH"
             )
         additions[name] = str(resolved)
-        grants[name] = str(resolved)
         origins[name] = origin
         return workspace_uri(name)
 
@@ -113,14 +104,9 @@ def resolve_workspaces(
         selected = add(value, f"-w {value}")
     if workdir is not None:
         if _URI.match(workdir):
-            name, relative = parse_cwd(workdir)
-            if name not in grants:
-                raise ValueError(f"workspace is not available: {name}")
-            root = Path(grants[name]).resolve()
-            target = authorize_workspace_path(root / relative, root)
-            # lab is created by state preparation, after this preflight.
-            if not target.is_dir() and not (name == "lab" and not relative):
-                raise ValueError(f"workdir is not a directory: {target}")
+            parse_cwd(workdir)
+            # Host, embedded, and guest runtimes validate against their own
+            # captured Setup/State, including mounts and last-good publications.
             selected = workdir
         else:
             selected = add(workdir, f"--workdir {workdir}")
@@ -144,7 +130,7 @@ def inspect_workspaces(
     if context_agent(ctx) is None:
         raise typer.BadParameter("workspace options require an agent target")
     layout = context_layout(ctx)
-    return user_call(
+    selection = user_call(
         resolve_workspaces,
         layout,
         procdir=Path.cwd(),
@@ -154,8 +140,11 @@ def inspect_workspaces(
         if layout.placement == "roaming"
         else None,
         no_auto=no_auto,
-        existing=running_workspaces(layout) if workdir else None,
     )
+
+    if paths or workdir is not None:
+        user_call(inspect_workspace_selection, layout, selection)
+    return selection
 
 
 def single_workdir(values: str | Sequence[str] | None) -> str | None:
@@ -168,19 +157,50 @@ def single_workdir(values: str | Sequence[str] | None) -> str | None:
     return values[0] if values else None
 
 
-def running_workspaces(layout: AgentLayout) -> Mapping[str, str]:
-    """Expose captured temporary grants only while their server is running."""
-    from toolang.up.process import AgentProcess
+def running_workspace_inspection(
+    layout: AgentLayout, *, workdir: str | None = None
+) -> WorkspaceInspection | None:
+    """Read workspace availability in the running agent's filesystem."""
+    from urllib.parse import urlencode
 
-    process = AgentProcess(layout)
-    status = process.status(ui_base_url="")
+    from toolang.up.process import AgentProcess
+    from .client import RuntimeClient
+
+    status = AgentProcess(layout).status(ui_base_url="")
     if status is None or status.status != "running":
-        return {}
-    captured = (process.state() or {}).get("workspace_additions", {})
-    if not isinstance(captured, dict):
-        return {}
-    return {
-        str(name): str(path)
-        for name, path in captured.items()
-        if isinstance(name, str) and isinstance(path, str)
-    }
+        return None
+    if status.endpoint is None:
+        raise ValueError("running agent has no endpoint")
+    query = "?" + urlencode({"workdir": workdir}) if workdir else ""
+    return WorkspaceInspection.model_validate(
+        RuntimeClient(status.endpoint).get("/api/v1/workspaces" + query)
+    )
+
+
+def inspect_workspace_selection(
+    layout: AgentLayout, selection: InvocationWorkspaces
+) -> WorkspaceInspection:
+    """Inspect live runtime grants, or prepare a standalone host State."""
+    inspection = running_workspace_inspection(layout, workdir=selection.workdir)
+    if inspection is not None:
+        validate_running_workspace_additions(inspection, selection)
+        return inspection
+
+    from toolang.state.prepare import prepare_agent_state
+    from toolang.setup import AgentSetup
+    from toolang.execution.executor.resources import workspace_inspection
+
+    state = prepare_agent_state(layout, workspace_additions=selection.additions)
+    return workspace_inspection(
+        AgentSetup(layout=layout, envs={}), state, workdir=selection.workdir
+    )
+
+
+def validate_running_workspace_additions(
+    inspection: WorkspaceInspection, selection: InvocationWorkspaces
+) -> None:
+    bindings = {item.name: item.path for item in inspection.items}
+    if any(bindings.get(name) != path for name, path in selection.additions.items()):
+        raise ValueError(
+            "workspace bindings differ from the running server; stop it before adding local directories"
+        )
