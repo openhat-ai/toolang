@@ -23,6 +23,9 @@ effective resources. Column order is fixed in both views.
 `REF` is at most 40 display cells wide; longer refs wrap, preferably after `/`,
 without losing characters. Arrays display comma-separated values; missing values
 and empty arrays display `-`. Locations remain complete for copying.
+Model REF continuation lines are right-aligned; other fields start on the second
+line when the ref wraps. Model `CONTEXT` and `MAX_OUTPUT` display comma thousands
+separators, while JSON and query values remain integers.
 
 ### Canonical and inspection records
 

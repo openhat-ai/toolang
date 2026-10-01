@@ -225,9 +225,12 @@ The renderer selects keys from the record; it does not derive new fields.
 `REF` columns have a maximum width of 40 display cells. Wrap long values,
 preferably after `/`, without truncating or inserting visible characters. Short
 refs stay on one line; JSON and query values remain unchanged.
+In model tables, continuation lines align to the right edge of the REF column;
+the other cells of a wrapped row start on its second line.
 
 Human cells render arrays as comma-separated values in record order, and null
-or empty arrays as `-`. Numeric limits remain unscaled integers; `price` and
+or empty arrays as `-`. Model `CONTEXT` and `MAX_OUTPUT` cells use comma thousands
+separators, while JSON/query values remain unscaled integers; `price` and
 `models` use their already formatted inspection strings unchanged.
 
 Resource lists keep JSON arrays,

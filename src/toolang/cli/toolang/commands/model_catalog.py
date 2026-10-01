@@ -73,7 +73,10 @@ def models_command(
     models = setup.models() if all_ else setup.models_effective()
     selected = user_call(filter_models, models, query)
     echo_records(
-        [model_record(model) for model in selected], MODEL_COLUMNS, json_=json_
+        [model_record(model) for model in selected],
+        MODEL_COLUMNS,
+        json_=json_,
+        align_ref_continuations=True,
     )
     if not json_:
         echo_collection_summary(

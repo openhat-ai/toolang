@@ -231,7 +231,7 @@ def test_models_loads_catalog_limits_that_models_dev_reports_as_zero(
     stdout = strip_ansi(table.stdout)
     assert "CONTEXT" in stdout
     assert "MAX_OUTPUT" in stdout
-    assert "8192" in stdout
+    assert "8,192" in stdout
     exported = runner.invoke(
         cli.app,
         [
