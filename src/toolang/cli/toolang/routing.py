@@ -76,7 +76,9 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             placements=_ALL_PLACEMENTS,
             prepare="program",
         ),
-        _command("shell", "none", "before", placements=_RESIDENT, prepare="layout"),
+        _command(
+            "home", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+        ),
         _command(
             "serve",
             "before",
@@ -242,8 +244,8 @@ def dispatch_roaming(
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
         try:
-            layout = _roaming_layout(source, spec.prepare)
-        except (FileExistsError, FileNotFoundError, ValueError) as exc:
+            layout = _roaming_layout(source, _preparation(spec, body, position))
+        except (OSError, ValueError) as exc:
             echo_error(str(exc))
             return 1
         return run_app(
@@ -273,7 +275,8 @@ def dispatch_visiting(
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
-    progress = make_cli_progress(enabled=spec.prepare == "program")
+    prepare = _preparation(spec, body, position)
+    progress = make_cli_progress(enabled=prepare == "program")
     try:
         with progress:
             layout = (
@@ -281,7 +284,7 @@ def dispatch_visiting(
                     selector,
                     progress=progress.sink,
                 )
-                if spec.prepare == "program"
+                if prepare == "program"
                 else agents.visiting_layout(selector)
             )
     except KeyboardInterrupt:
@@ -393,6 +396,18 @@ def _selected_command_args(
     if "after" in command_spec(command).targets:
         return [command, target, *rest]
     return [command, *rest]
+
+
+def _preparation(
+    spec: CommandSpec, body: list[str], position: TargetPosition
+) -> Preparation | None:
+    if spec.name == "home":
+        from .commands.home import should_prepare_target
+
+        arguments = _selected_command_args(body, position, target="")[1:]
+        if not should_prepare_target(arguments):
+            return "layout"
+    return spec.prepare
 
 
 def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
