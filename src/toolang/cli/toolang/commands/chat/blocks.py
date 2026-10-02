@@ -18,6 +18,7 @@ from rich.text import Text
 from toolang.base.types.message import Part
 from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
+from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import ErrorMessage, ErrorRef
@@ -56,7 +57,6 @@ from .slashes import (
     SlashTable,
     SlashOutcome,
     outcome_lines,
-    model_reasoning_value,
 )
 from .tables import table_lines
 

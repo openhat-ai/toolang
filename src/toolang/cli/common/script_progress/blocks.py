@@ -15,6 +15,7 @@ from ..execution_progress.facts import elapsed_fact
 from ..execution_progress.formatting import display_width
 from ..execution_progress.rich_rendering import run_footer_renderable
 from ..execution_progress.state import Metrics
+from ..model_formatting import model_reasoning_value
 from .console import ProgressConsole
 
 
@@ -35,13 +36,7 @@ class RunContext:
         )
         fields = ["model unspecified"]
         if self.model is not None:
-            reasoning = self.model.reasoning
-            effort = "auto"
-            if reasoning is not None:
-                if reasoning.effort is not None:
-                    effort = reasoning.effort
-                elif reasoning.budget_tokens is not None:
-                    effort = str(reasoning.budget_tokens)
+            effort = model_reasoning_value(self.model) or "auto"
             fields = [_context_text(self.model.ref), _context_text(effort)]
         prefix = "‣ " if width > 2 else ""
         left = prefix + runnable

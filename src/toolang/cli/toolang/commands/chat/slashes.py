@@ -17,6 +17,7 @@ from toolang.cli.common.execution_progress.formatting import (
     wrap_display,
 )
 from toolang.cli.common.model_selection import materialize_model_selection
+from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
 from toolang.execution.policy import parse_setting_override
@@ -1249,17 +1250,6 @@ def model_effort_applicability(
         None,
     )
     return model_effort_applicable(item) if item is not None else None
-
-
-def model_reasoning_value(model: ModelRequest) -> str | None:
-    """Return one explicit effort level or token budget for display."""
-
-    reasoning = model.reasoning
-    if reasoning is None:
-        return None
-    if reasoning.effort is not None:
-        return reasoning.effort
-    return str(reasoning.budget_tokens) if reasoning.budget_tokens is not None else None
 
 
 def model_effort_applicable(item: Mapping[str, Any]) -> bool | None:

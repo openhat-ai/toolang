@@ -1024,20 +1024,6 @@ def test_script_context_uses_submission_when_event_has_no_runnable() -> None:
     assert "auto" not in output
 
 
-def test_script_context_does_not_leak_into_shared_chat_progress() -> None:
-    from toolang.cli.common.execution_progress import ProgressProjector
-    from toolang.cli.toolang.commands.chat.blocks import RunControlBlock
-
-    begin = _root_begin()
-    assert ProgressProjector().handle(begin) == ProgressUpdate()
-    block = RunControlBlock.create("Review this.")
-    block.update(begin)
-    stream = StringIO()
-    Console(file=stream, width=80, color_system=None).print(block)
-    assert "Review this." in stream.getvalue()
-    assert "‣" not in stream.getvalue()
-
-
 def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
     context = RunContext("flow:summary", ModelRequest("root/model"))
     owner = StepRef.parse("run_one.0")

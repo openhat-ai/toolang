@@ -49,27 +49,19 @@ class ScriptRunPresenter(RunTracer):
             self._begin_root(event)
 
         update = self._projector.handle(event)
-        self.console.apply(update)
-        if any(block.rows for block in update.committed):
-            self._context_gap_pending = False
-
         if (
             not self.console.tty
             and isinstance(event, StepBegin)
             and runtime_tool_name(event) == "compact"
         ):
-            self.console.apply(
-                ProgressUpdate(
-                    committed=(
-                        ProgressBlock(
-                            f"step:{event.step}",
-                            trace_live_rows(event, ""),
-                            gap_before=self._context_gap_pending,
-                        ),
-                    )
-                )
+            update = replace(
+                update,
+                committed=(
+                    *update.committed,
+                    ProgressBlock(f"step:{event.step}", trace_live_rows(event, "")),
+                ),
             )
-            self._context_gap_pending = False
+        self._apply_progress(update)
         if self.console.tty and self._projector.has_timed_activity:
             if self._refresh_task is None:
                 self._refresh_task = asyncio.create_task(self._refresh())
@@ -78,6 +70,25 @@ class ScriptRunPresenter(RunTracer):
 
         if isinstance(event, RunEnd) and event.run == self.run_id:
             self._end_root(event)
+
+    def _apply_progress(self, update: ProgressUpdate) -> None:
+        """Apply progress with one header gap before the first committed output."""
+
+        if self._context_gap_pending:
+            for index, block in enumerate(update.committed):
+                if not block.rows:
+                    continue
+                update = replace(
+                    update,
+                    committed=(
+                        *update.committed[:index],
+                        replace(block, gap_before=True),
+                        *update.committed[index + 1 :],
+                    ),
+                )
+                self._context_gap_pending = False
+                break
+        self.console.apply(update)
 
     def close(self) -> None:
         """Remove the bounded live area without changing committed scrollback."""
@@ -93,7 +104,7 @@ class ScriptRunPresenter(RunTracer):
     async def _refresh(self) -> None:
         while True:
             await asyncio.sleep(1)
-            self.console.apply(self._projector.refresh())
+            self._apply_progress(self._projector.refresh())
 
     def _begin_root(self, event: RunBegin) -> None:
         if self._root is not None:
