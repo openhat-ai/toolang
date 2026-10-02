@@ -1114,7 +1114,7 @@ State publication. PUT responses read the exact published root/home layer,
 including a cap shadowed by a higher scope or excluded by runtime allow policy.
 DELETE responses wait for publication too. If the source change is saved but
 State rejects the candidate, HTTP 409 reports that distinction; the last valid
-State remains active. Publication does not apply a reload to an existing run.
+State remains active. Publication does not rebind an existing run.
 
 Delete routes accept `scope=home|root` as a query parameter. Cap read
 items include:
@@ -1548,7 +1548,7 @@ the Part; signatures can also occur on normal text and tool-call Parts. Signatur
 fragments are not separate events. Deltas are live only; completed Parts are
 durable and available through existing output/inspection endpoints.
 
-The Part format requires execution-store schema **48**. Opening an incompatible
+The Part format requires execution-store schema **49**. Opening an incompatible
 store fails without modifying it; no migration or reset is performed. See the
 [model adapter contract](plugins.md#model-adapter) for the required indexed
 stream interface. Human output continues to omit reasoning and native fields.

@@ -79,7 +79,7 @@ for queries.
 Current kinds are:
 
 ```text
-run | rerun | retry | reload | execute | steer | cancel
+run | rerun | retry | execute | steer | cancel
 create | fork | rewind
 ```
 

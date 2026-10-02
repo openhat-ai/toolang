@@ -25,7 +25,6 @@ from toolang.execution.records import (
     CancelControlPayload,
     ControlRecord,
     ExecuteControlPayload,
-    ReloadControlPayload,
     RetryControlPayload,
     RunControlPayload,
     SteerControlPayload,
@@ -553,10 +552,9 @@ def test_retry_payload_stores_only_attempt_settings_and_anchor() -> None:
     )
 
 
-def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_duplication() -> (
+def test_inherited_preparation_payload_round_trips_without_revision_duplication() -> (
     None
 ):
-    reload_payload = ReloadControlPayload(state="a" * 64)
     child_payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
@@ -566,19 +564,9 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         input=CallInput({}),
     )
 
-    assert (
-        control_payload_from_data("reload", control_payload_to_data(reload_payload))
-        == reload_payload
-    )
     child_data = control_payload_to_data(child_payload)
     assert "state" not in child_data
     assert control_payload_from_data("run", child_data) == child_payload
-
-
-@pytest.mark.parametrize("revision", ("", "A" * 64, "a" * 63, "g" * 64))
-def test_reload_payload_rejects_noncanonical_revisions(revision: str) -> None:
-    with pytest.raises(ValueError, match="lowercase SHA-256"):
-        ReloadControlPayload(state=revision)
 
 
 def test_execute_payload_round_trips_source_pointing_locals() -> None:

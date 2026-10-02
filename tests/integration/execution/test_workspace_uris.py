@@ -22,6 +22,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
 )
 from tests.support.execution_harness import (
+    RecordingTool,
     AsyncGate,
     RecordingRunTracer,
     PublicationTracer,
@@ -354,19 +355,20 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
     asyncio.run(scenario())
 
 
-def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_path):
+def test_publication_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_path):
     harness, _repo, _pub = _harness(
         tmp_path,
         [
             _calls(_call("before-write", path="moving://file", text="before")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}),
+                ToolCall("publication", "publication", "test__checkpoint", {}),
                 _call("removed", path="removed://file", text="bad"),
                 _call("moved", path="moving://file", text="after"),
                 _call("added", path="added://file", text="new"),
             ),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     roots = {name: tmp_path / name for name in ("old", "new", "removed", "added")}
     for root in roots.values():
@@ -378,7 +380,7 @@ def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_pat
         harness, {"moving": roots["new"], "added": roots["added"]}
     )
     assert initial.revision != changed.revision
-    tracer = PublicationTracer(harness, {"reload": changed})
+    tracer = PublicationTracer(harness, {"publication": changed})
 
     async def scenario():
         async with harness:
@@ -386,7 +388,7 @@ def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_pat
             assert run.status == "succeeded", run.error
             assert harness.published is changed
             results = _results(harness, run)
-            assert results["reload"].error is None
+            assert results["publication"].error is None
             assert _workspace_lists(harness.adapter.invocations[0].call)[-1:] == [
                 "lab,moving,removed"
             ]
@@ -413,12 +415,13 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
         [
             _calls(_call("first", path=uri, text="first")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}),
+                ToolCall("publication", "publication", "test__checkpoint", {}),
                 _call("changed", path=uri, text="changed"),
             ),
             _calls(_call("retry", path=uri, text="done")),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     old, new = tmp_path / "old", tmp_path / "new"
     old.mkdir()
@@ -428,7 +431,7 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
         (new / "AGENTS.md").write_text("New rules.")
     initial = _workspace_state(harness, {"repo": old})
     changed = _workspace_state(harness, {} if change == "remove" else {"repo": new})
-    tracer = PublicationTracer(harness, {"reload": changed})
+    tracer = PublicationTracer(harness, {"publication": changed})
 
     async def scenario():
         async with harness:
@@ -436,7 +439,7 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
             assert run.status == "succeeded", run.error
             assert harness.published is changed
             results = _results(harness, run)
-            assert results["reload"].error is None
+            assert results["publication"].error is None
             controls = _recalls(harness, run)
             assert controls[0].payload.content == "Old rules."
             assert (old / "file").read_text() == "done"
@@ -449,7 +452,9 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_during_a_tool_keeps_paths_for_subsequent_steps(tmp_path, monkeypatch):
+def test_publication_during_a_tool_keeps_paths_for_subsequent_steps(
+    tmp_path, monkeypatch
+):
     gate = AsyncGate()
     original_invoke = _FilesystemTool.invoke
 
@@ -480,10 +485,7 @@ def test_reload_during_a_tool_keeps_paths_for_subsequent_steps(tmp_path, monkeyp
             handle = harness.executor.run(_spec(harness, initial), tracer=tracer)
             try:
                 await asyncio.wait_for(gate.wait_until_entered(), timeout=2)
-                control = handle.reload(changed)
-                await harness.executor._apply_reload_controls(
-                    harness.executor._active[handle.run_id]
-                )
+                harness.published = changed
             finally:
                 gate.release()
             run = await asyncio.wait_for(handle, timeout=2)
@@ -491,7 +493,7 @@ def test_reload_during_a_tool_keeps_paths_for_subsequent_steps(tmp_path, monkeyp
             assert (old / "file").read_text() == "new"
             assert not (new / "file").exists()
             before, after = _tool_steps(harness, run)
-            assert before.state != control.ref
+            assert before.state == run.state
             assert after.state == before.state
             assert_run_event_integrity(tracer.events)
 
@@ -499,7 +501,7 @@ def test_reload_during_a_tool_keeps_paths_for_subsequent_steps(tmp_path, monkeyp
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_parallel_children_keep_workspace_rules_after_root_reload(tmp_path):
+def test_parallel_children_keep_workspace_rules_after_root_publication(tmp_path):
     initial_gates = (AsyncGate(), AsyncGate())
     gates = (AsyncGate(), AsyncGate())
     uri = "repo://file"
@@ -567,10 +569,7 @@ flow parent(_: Part[]) -> Text[]:
                     asyncio.gather(*(gate.wait_until_entered() for gate in gates)),
                     timeout=2,
                 )
-                handle.reload(changed)
-                await harness.executor._apply_reload_controls(
-                    harness.executor._active[handle.run_id]
-                )
+                harness.published = changed
             finally:
                 for gate in (*initial_gates, *gates):
                     gate.release()

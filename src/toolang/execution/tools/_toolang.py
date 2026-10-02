@@ -25,7 +25,7 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["reload", "run", "execute", "pick", "honor", "compact", "chdir"]
+    name: Literal["run", "execute", "pick", "honor", "compact", "chdir"]
     description: str
     parameters: dict[str, object]
 
@@ -39,7 +39,6 @@ class ToolangTool(Tool):
     ) -> str | None:
         labels = {
             "pick": "guidance",
-            "reload": "agent state",
             "compact": "thread history",
             "honor": "rules",
         }
@@ -49,8 +48,6 @@ class ToolangTool(Tool):
             ("compact", "Compacting", "Compacted")
             if self.name == "compact"
             else ("load", "Loading", "Loaded")
-            if self.name in {"pick", "honor"}
-            else ("reload", "Reloading", "Reloaded")
         )
         target = labels[self.name]
         if self.name == "pick" and isinstance(arguments.get("ref"), str):
@@ -141,10 +138,6 @@ class ToolangTool(Tool):
             if not isinstance(ref, str) or not ref or ref != ref.strip():
                 raise ToolangError("_toolang/pick requires an exact capability ref")
             return await runtime.pick(kind, ref)
-        if self.name == "reload":
-            if arguments:
-                raise ToolangError("_toolang/reload does not accept input")
-            return await runtime.reload()
         unknown = sorted(set(arguments) - {"runnable", "input"})
         if unknown:
             raise ToolangError(
@@ -166,7 +159,7 @@ class ToolangTool(Tool):
 @dataclass(frozen=True, slots=True)
 class ToolangToolset(Toolset):
     name: str = TOOLSET_NAME
-    description: str | None = "Run, transfer, reload, and recall guidance."
+    description: str | None = "Run, transfer, and recall guidance."
 
     def tools(self) -> Mapping[str, Tool]:
         return {tool.name: tool for tool in _TOOLS}
@@ -277,18 +270,6 @@ _TOOLS = (
         "The caller never resumes, and this must be the only tool call in the "
         "Model Call. Prefer run when either behavior would satisfy the intent.",
         _RUN_PARAMETERS,
-    ),
-    ToolangTool(
-        "reload",
-        "Explicitly reload the published runnable catalog. New named Runs and "
-        "model-call catalogs already use published updates automatically. "
-        "This does not prepare source or change active Run code, caps, or permissions.",
-        {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
     ),
 )
 

@@ -321,20 +321,13 @@ class CwdControlPayload:
     """One durable Run-local working location transition."""
 
     cwd: str
-    cause: Literal["chdir", "invalidated"] = "chdir"
+    cause: Literal["chdir"] = "chdir"
     state: ControlRef | None = None
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
-        if self.cause not in {"chdir", "invalidated"}:
+        if self.cause != "chdir":
             raise ValueError("invalid working location cause")
-        if self.cause == "invalidated":
-            # Empty cwd is accepted when loading controls written before
-            # invalidations adopted an implicit workspace fallback.
-            if self.cwd and parse_cwd(self.cwd)[0] is None:
-                raise ValueError("workspace invalidation requires a fallback workdir")
-            if self.state is None:
-                raise ValueError("workspace invalidation requires a State control")
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,16 +342,6 @@ class RetryControlPayload:
     def __post_init__(self) -> None:
         if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
             raise TypeError("retry payload requires a StepRef or None")
-
-
-@dataclass(frozen=True, slots=True)
-class ReloadControlPayload:
-    """One durable Agent State revision adopted by an active root run."""
-
-    state: str
-
-    def __post_init__(self) -> None:
-        _validate_state_revision(self.state, label="reload payload State")
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,7 +459,6 @@ class RewindControlPayload:
 PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
-    | ReloadControlPayload
     | CwdControlPayload
     | CompactControlPayload
     | ExecuteControlPayload
@@ -490,7 +472,6 @@ _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "cwd": CwdControlPayload,
     "retry": RetryControlPayload,
-    "reload": ReloadControlPayload,
     "compact": CompactControlPayload,
     "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
@@ -1017,18 +998,14 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
     if kind == "cwd":
         raw_cwd = payload.get("cwd")
         raw_cause = payload.get("cause")
-        if not isinstance(raw_cwd, str) or raw_cause not in {"chdir", "invalidated"}:
+        if not isinstance(raw_cwd, str) or raw_cause != "chdir":
             raise ValueError("cwd control requires a location and cause")
         return CwdControlPayload(
             cwd=raw_cwd,
-            cause=cast(Literal["chdir", "invalidated"], raw_cause),
+            cause=cast(Literal["chdir"], raw_cause),
             state=ControlRef.parse(cast(str, payload["state"]))
             if payload.get("state") is not None
             else None,
-        )
-    if kind == "reload":
-        return ReloadControlPayload(
-            state=_required_payload_text(payload, "state"),
         )
     if kind == "compact":
         return CompactControlPayload(
@@ -1096,8 +1073,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
             "cause": payload.cause,
             "state": str(payload.state) if payload.state else None,
         }
-    if isinstance(payload, ReloadControlPayload):
-        return {"state": payload.state}
     if isinstance(payload, CompactControlPayload):
         return {"horizon": str(payload.horizon)}
     if isinstance(payload, ExecuteControlPayload):

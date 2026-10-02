@@ -600,7 +600,7 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("action", ["cancel", "steer", "reload"])
+@pytest.mark.parametrize("action", ["cancel", "steer", "publication"])
 def test_waiting_compact_reprepares_after_controls(tmp_path, action):
     harness = seeded_harness(tmp_path)
     entered = asyncio.Event()
@@ -647,7 +647,7 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
                         encoding="utf-8",
                     )
                     state = prepare_agent_state(harness.setup.layout)
-                    handle.reload(state=state)
+                    harness.published = state
                 harness.adapter._responses.extend(
                     [
                         *compact_responses(thread, end),

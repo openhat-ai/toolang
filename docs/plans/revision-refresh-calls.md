@@ -2,11 +2,11 @@
 
 ## Status and Goal
 
-Design draft reflecting the agreed semantics; no implementation in this change.
+Approved design, including removal of explicit reload without compatibility.
 New named runnable invocations use published updates while accepted Runs keep
 their plans. No new syntax or AST refresh flag.
 
-Once approved, this replaces the tree-wide State switching described in
+This replaces the tree-wide State switching described in
 [reload controls](root-run-agent-state-application.md) and
 [Agic runtime calls](agic-runtime-calls.md); unrelated controls remain unchanged.
 
@@ -75,8 +75,10 @@ When accepting its child Run, select latest State again and compare with the
 advertised identity/signature. Compatible updates work; deletion or signature
 changes fail. New targets need no definition in the original Agic State.
 
-Reload is no longer required for discovery. Retain its public entry points as
-explicit published-catalog reloads without rebinding active code or caps.
+Remove the model reload tool, executor entry points, dedicated runtime tasks,
+and reload control persistence. Publication and discovery are automatic; no
+compatibility shim or historical reload codec remains. Bump the execution
+database schema version so unsupported old databases fail at open.
 Existing same-Run execute transfers remain explicit binding changes, recorded
 by execute controls. Resolve them from the model's advertised catalog snapshot
 and preserve their output/lineage checks; they are not new child Run acceptance.
@@ -98,11 +100,11 @@ and preserve their output/lineage checks; they are not new child Run acceptance.
   input, and resources. Existing errors report target, revisions, and reason.
   Freeze the complete advertised route identities/signatures for the model
   batch. Newly published but unadvertised targets wait for the next model call.
-- Read legacy inherited/reload references unchanged. Historical reads never
-  substitute current for missing snapshots; keep referenced State available.
+- Historical reads never substitute current for missing snapshots; keep
+  referenced State available within the supported database schema.
 - Preserve explicit retry's succeeded-prefix/invalid-suffix behavior. New
   invocations in the reexecuted suffix select latest State. Keep existing
-  reload/execute exclusions; add no replay, per-item recovery, or mixed-version
+  execute exclusion; add no replay, per-item recovery, or mixed-version
   retry prohibition.
 
 One Toolang PR: `feat(execution): bind new named runs to latest state`.
@@ -125,9 +127,11 @@ still fail validation.
   old caps, relocated inline declarations, and stable unnamed flow exports.
 - Models discover new/updated flows without reload. Publication between model
   advertisement and acceptance cannot bypass signature or permission checks.
-- Cover atomic acceptance, legacy/mixed-version history, catalog provenance,
+- Cover atomic acceptance, mixed-version history, catalog provenance,
   explicit retry/execute, preserved ancestor-cycle checks, and missing-snapshot
   errors. Failed acceptance must leave no partially prepared child.
+- Verify reload is absent from tool discovery and unsupported database schemas
+  are rejected before execution. Keep publication coverage independent of tools.
 - Run required Ruff, format, ty, and offline pytest checks.
 
 This changes default named-call behavior. Valid deletion or incompatible

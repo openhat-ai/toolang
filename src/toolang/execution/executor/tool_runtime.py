@@ -61,14 +61,6 @@ class _ToolRuntime(ToolRuntime):
             raise ToolangError(f"chdir target is not a directory: {path}")
         return ToolResult({"cwd": workspace_uri(name, relative)})
 
-    async def reload(self) -> ToolResult:
-        execution = self.state.execution
-        if execution is None:
-            raise RuntimeError("Agic runtime execution is unavailable")
-        return await execution.executor.model_reload(
-            run_id=self.step.run_id, triggered_by=self.step
-        )
-
     async def compact(self) -> ToolResult:
         from .runs.compact import invoke
 

@@ -735,7 +735,7 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_preserves_recall_without_reading_state_during_replay(
+def test_publication_preserves_recall_without_reading_state_during_replay(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -772,13 +772,7 @@ def test_reload_preserves_recall_without_reading_state_during_replay(
                 encoding="utf-8",
             )
             state = prepare_agent_state(layout)
-            reload = handle.reload(state)
-            await asyncio.wait_for(
-                harness.executor._wait_for_control(
-                    harness.executor._active[handle.run_id], reload
-                ),
-                2,
-            )
+            harness.published = state
             gate.release()
             run = await asyncio.wait_for(handle, 2)
             assert run.status == "succeeded", run.error

@@ -11,6 +11,7 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
 )
 from tests.support.execution_harness import (
+    RecordingTool,
     ExecutionHarness,
     RecordingRunTracer,
     PublicationTracer,
@@ -72,7 +73,7 @@ def _answer():
     return ModelCallResult(message=Message.assistant("done"))
 
 
-def _harness(tmp_path, responses, *, source=SOURCE):
+def _harness(tmp_path, responses, *, source=SOURCE, tools=None):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(source)
@@ -80,7 +81,7 @@ def _harness(tmp_path, responses, *, source=SOURCE):
         tmp_path,
         source=source,
         responses=responses,
-        tools=load_tools(queries=("fs/*", "shell/*")),
+        tools={**load_tools(queries=("fs/*", "shell/*")), **(tools or {})},
         state=prepare_agent_state(layout),
     )
     repo = harness.setup.layout.home / "repo"
@@ -735,23 +736,25 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_preserves_the_workspace_at_the_tool_boundary(tmp_path):
+def test_publication_preserves_the_workspace_at_the_tool_boundary(tmp_path):
     harness, repo, publication = _harness(
         tmp_path,
         [
             _calls(_call("first")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}), _call("changed")
+                ToolCall("publication", "publication", "test__checkpoint", {}),
+                _call("changed"),
             ),
             _calls(_call("retry")),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     new_repo = repo.with_name("new-repo")
     (new_repo / "src").mkdir(parents=True)
     (new_repo / "AGENTS.md").write_text("New root rules.")
     next_publication = _workspace_state(harness, {"repo": new_repo})
-    tracer = PublicationTracer(harness, {"reload": next_publication})
+    tracer = PublicationTracer(harness, {"publication": next_publication})
 
     async def scenario():
         async with harness:

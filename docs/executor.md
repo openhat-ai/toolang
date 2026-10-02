@@ -66,14 +66,6 @@ class RunExecutor:
         request_id: str | None = None,
     ) -> ControlRecord: ...
 
-    def reload(
-        self,
-        *,
-        run_id: str,
-        state: AgentState,
-        request_id: str | None = None,
-    ) -> ControlRecord: ...
-
     def cancel_control(
         self,
         *,
@@ -146,7 +138,7 @@ omitted retry anchor uses the latest visible failed, canceled, or running Step.
 For a failed or canceled Run with no incomplete Step, it uses the latest visible
 Step. For a succeeded Run, it prefers the latest non-value Step and falls back
 to the latest value Step. The handle exposes its run ID, executor, and task, and
-delegates same-process `cancel()`, `steer()`, `reload()`, and
+delegates same-process `cancel()`, `steer()`, and
 `cancel_control()` operations.
 Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.
@@ -185,8 +177,7 @@ root, resolves and records its anchor, physically deletes the invalid structural
 step suffix and its child Runs, fails stale pending controls, and reopens the
 root as pending. New steps reuse the trimmed indexes. Before mutation, retry
 rejects any root tree captured by a durable fork prefix, as well as applied
-reload and execute-control history
-because it cannot replay either prior execution timeline. It also requires the
+execute-control history because it cannot replay those prior execution timelines. It also requires the
 source preparation to have sandbox
 provenance and requires it to equal the current canonical sandbox. Accepted
 retry controls repeat that value. A flow retry restores typed locals from the
@@ -323,7 +314,7 @@ effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,
-`_toolang__execute`, `_toolang__reload`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
+`_toolang__execute`, `_toolang__chdir`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
 execute targets; they do not select definitions. All tools use plugin registration
 and the same Tool Step lifecycle. Every call includes `toolang:hands` and
 `toolang:handoffs` in messages, as siblings before `toolang:context`, even with
@@ -337,8 +328,9 @@ The limits are 64 unique targets and 32,768 UTF-8 bytes across both snapshots,
 including escaped framing. Overflow rejects preparation with an error asking
 the author to narrow hands/handoffs; lists are never silently truncated.
 Runtime calls in one model batch
-use that Model Call's captured routes, even if reload and ordinary tools adopt
-new State between calls. The next Model Call captures the new routes.
+use that Model Call's captured routes and prepared frame. Child acceptance
+selects latest State and checks the advertised contract. The next Model Call
+captures the latest published routes within the Run's bound authority.
 
 `AgentSetup.models_effective()` and `AgentSetup.tools()` provide the filtered
 runtime collections. They are lazily materialized and memoized in the pinned
@@ -349,8 +341,7 @@ stable model entry keys. A ceiling cannot expand the published base. Invalid
 queries are rejected before the run is durably accepted.
 Every child agic/flow inherits its immediate parent's effective resources,
 intersected with module visibility by stable identity. Public calls and execute
-transfers use the same boundary; reload reapplies it rather than resetting to
-agent resources. Immutable per-run configuration inherits separately and permits
+transfers use the same authority boundary. Immutable per-run configuration inherits separately and permits
 explicit overrides. Inherited instruct/context retain their declaring module.
 
 The root runtime owns one thread-history snapshot. Only root agics automatically
@@ -497,11 +488,6 @@ operations only mutate shared SQLite truth. `run(spec)` is also process-safe,
 but the process that calls it owns and executes that run; run is not a
 cross-process dispatch queue.
 
-`reload()` is intentionally different: only the owning executor accepts it.
-It requires a concrete durable State from the same `AgentLayout`, normalizes a
-child ID to the active root, retains the object, and writes a root-targeted
-`reload` control with `immediate` timing.
-
 Every inserted or changed control receives a global monotonic revision inside
 the same SQLite write transaction. The owner process polls only revisions
 newer than its cursor. An unchanged control table returns no rows. Changed
@@ -521,13 +507,10 @@ it. A cancellation updates only an unclaimed pending control, making
 application and cancellation linearizable without exposing an intermediate
 public status.
 
-Reload application and every physical `StepBegin` use the same root
-`asyncio.Lock`. Applying a reload claims and marks its control `applied`, then
-swaps the in-memory State/ref pair without awaiting. Beginning a step persists
-the current ref and captures the matching immutable object before releasing
-the lock. Parallel Flow branches serialize only this short boundary; their work
-remains concurrent. A started step never changes State, and a child accepted by
-that step uses the captured object and ref.
+Every physical `StepBegin` persists the executing Run's bound State reference
+under the root event lock. Named child acceptance independently captures the
+latest published State once, validates its contract and authority, and persists
+its own entry revision before execution. Accepted and queued Runs never rebind.
 
 
 ## Event Ordering

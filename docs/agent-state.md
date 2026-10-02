@@ -4,9 +4,9 @@ Agent State is the immutable runtime input derived from an agent's Programs,
 configuration, and capabilities. A module is a term for one named, sourced
 Program in State; it is not a separate runtime type. Agent State holds the
 complete module-name-to-Program index rather than a separate primary Program.
-It combines one root layer with one home layer. A top-level run starts with one
-Agent State revision. An explicit executor reload can change the State used by
-later step boundaries in that run tree without changing already-started work.
+It combines one root layer with one home layer. Each accepted Run keeps one
+Agent State revision. New named children select the latest valid publication
+independently; inline bodies retain their containing plan.
 
 Tasks and chores stored as independent Markdown files are work data, not Agent
 State. Task and chore declarations inside `agent.too` are part of State because
@@ -227,19 +227,15 @@ current-agent `me` tools.
 
 ## Execution Records
 
-Root `run` and `rerun` controls store the initial Agent State revision. A
-process-local `reload` control stores a replacement revision. Every run and
-physical step stores a `ControlRef` named `state` that identifies the control
-which introduced the exact State it used. New child-run and retry controls do
-not duplicate the revision; their run record is authoritative.
+Every Run entry stores its accepted Agent State revision, including named and
+inline children. Run and Step records carry a `ControlRef` named `state` pointing
+to that entry or an explicit execute transfer. Retry retains its existing
+entry reference.
 
-The executor holds the corresponding immutable `AgentState` object with that
-reference. Reload application and `StepBegin` share one root-tree lock, so a
-started step keeps its captured State and the next boundary uses the reload.
-A child run inherits the State captured by its calling step. Watcher
-publication alone never reloads an active run.
+The executor retains immutable State for active bindings and loads historical
+revisions from durable snapshots. Watcher publication affects future named
+acceptance and model catalogs, without changing accepted code or caps.
 
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. The runs
-database migrates version 28 model-step continuation keys from `state` to
-`cont` without modifying preparation-control Agent State fields.
+database accepts schema version 49 and rejects unsupported versions at open.

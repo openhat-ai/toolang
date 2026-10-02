@@ -149,7 +149,7 @@ matching assistant history. Before propagating graceful failure/cancellation,
 flush buffered readable reasoning and clear native fields on incomplete units.
 Call-level continuation must not accumulate per-Part reasoning or signatures.
 
-This contract uses execution-store schema **48**. Incompatible stores are rejected
+This contract uses execution-store schema **49**. Incompatible stores are rejected
 before decoding or writing; there is no automatic migration or reset. External
 adapters must adopt the indexed stream contract alongside this data-format change.
 

@@ -11,7 +11,6 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.types.tool import ToolResult
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -56,8 +55,6 @@ from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
 from toolang.state.state import AgentState, state_program
-from toolang.state.cache import agent_revision_dir, validate_agent_revision
-from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import build_model_accounting, selected_usd_cost
@@ -73,7 +70,6 @@ from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     CompactControlPayload,
     RecallControlPayload,
-    ReloadControlPayload,
     RunControlPayload,
     run_preparation,
     ControlRecord,
@@ -82,7 +78,6 @@ from ..records import (
     StoredModelStepGiven,
 )
 from ..store import RunStore
-from ..assembly.tool_replies import control_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ModelAccounting,
@@ -160,16 +155,7 @@ _CONTROL_POLL_INTERVAL = 0.05
 SetupSource = Callable[[], AgentSetup]
 StateSource = Callable[[], AgentState]
 StateLoad = Callable[[str], AgentState]
-StateRefreshSource = Callable[[], Awaitable[object]]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
-
-
-def _finish_control_waiter(
-    waiter: asyncio.Future[ControlRecord],
-    control: ControlRecord,
-) -> None:
-    if not waiter.done():
-        waiter.set_result(control)
 
 
 class _RunCanceled(asyncio.CancelledError):
@@ -183,7 +169,6 @@ class _ActiveRun:
     task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
     root_run_id: str
-    root_setup: AgentSetup
     loop: asyncio.AbstractEventLoop = field(repr=False)
     interruption: ControlRecord | None = None
     controls: dict[str, dict[int, ControlRecord]] = field(
@@ -193,18 +178,6 @@ class _ActiveRun:
     event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     ended: set[str] = field(default_factory=set, repr=False)
     execution: _Execution | None = field(default=None, repr=False)
-    reload_states: dict[int, AgentState] = field(default_factory=dict, repr=False)
-    reload_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    reload_scheduled: bool = field(default=False, repr=False)
-    reload_task: asyncio.Task[None] | None = field(default=None, repr=False)
-    runtime_tool_lock: asyncio.Lock = field(
-        default_factory=asyncio.Lock,
-        repr=False,
-    )
-    control_waiters: dict[
-        tuple[str, int],
-        set[asyncio.Future[ControlRecord]],
-    ] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,22 +242,8 @@ class LocalRunHandle(Awaitable[RunRecord]):
             request_id=request_id,
         )
 
-    def reload(
-        self,
-        state: AgentState,
-        *,
-        request_id: str | None = None,
-    ) -> ControlRecord:
-        """Record an explicit catalog reload without rebinding accepted Runs."""
-
-        return self.executor.reload(
-            run_id=self.run_id,
-            state=state,
-            request_id=request_id,
-        )
-
     def cancel_control(self, index: int) -> ControlRecord:
-        """Revoke one pending reload, steer, or cancel control for this run."""
+        """Revoke one pending steer or cancel control for this run."""
 
         return self.executor.cancel_control(run_id=self.run_id, index=index)
 
@@ -313,13 +272,9 @@ class RunExecutor:
         setup: SetupSource | None = None,
         state: StateSource | None = None,
         load_state: StateLoad | None = None,
-        refresh_state: StateRefreshSource | None = None,
         include: IncludeSource | None = None,
         default_workdir: str | None = None,
     ) -> None:
-        """Use published State; refresh_state is a deprecated, ignored argument."""
-
-        del refresh_state
         if (setup is None) != (state is None) or (setup is None) != (
             load_state is None
         ):
@@ -871,7 +826,6 @@ class RunExecutor:
             task=task,
             tracer=tracer,
             root_run_id=bound.root_run_id,
-            root_setup=bound.setup,
             loop=loop,
         )
         with self._active_lock:
@@ -911,7 +865,6 @@ class RunExecutor:
         )
         with self._active_lock:
             active.execution = execution
-        self._schedule_reload_application(active)
         timeout = execution.schedule_time_limit(task)
         try:
             await execution.execute(
@@ -993,106 +946,8 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
-    def reload(
-        self,
-        *,
-        run_id: str,
-        state: AgentState,
-        request_id: str | None = None,
-    ) -> ControlRecord:
-        """Record a catalog reload without changing accepted Run bindings."""
-
-        return self._accept_reload(
-            run_id=run_id,
-            state=state,
-            request_id=request_id,
-        )
-
-    def _accept_reload(
-        self,
-        *,
-        run_id: str,
-        state: AgentState,
-        request_id: str | None,
-        triggered_by: StepRef | None = None,
-    ) -> ControlRecord:
-        """Persist a reload and retain its process-local State snapshot."""
-
-        self._require_available()
-        if not isinstance(state, AgentState):
-            raise TypeError("reload requires an Agent State")
-        with self._active_lock:
-            active = self._active.get(run_id)
-            if active is None:
-                raise ValueError(f"run is not owned by this executor: {run_id}")
-            root_run_id = active.root_run_id
-            layout = active.root_setup.layout
-            expected_dir = agent_revision_dir(
-                layout,
-                state.revision,
-            ).resolve()
-            state_revision_dir = state.revision_dir
-            revision_dir = (
-                state_revision_dir.resolve() if state_revision_dir is not None else None
-            )
-            if revision_dir is None or not revision_dir.is_dir():
-                raise ValueError("reload requires a durable Agent State")
-            if revision_dir != expected_dir:
-                raise ValueError("reload Agent State belongs to another layout")
-        try:
-            validate_agent_revision(layout, state.revision)
-            durable_state = load_agent_state(layout, state.revision)
-        except (OSError, KeyError, TypeError, ValueError) as exc:
-            raise ValueError("reload requires a durable Agent State") from exc
-        if durable_state != state:
-            raise ValueError("reload Agent State does not match its durable revision")
-        with active.reload_lock:
-            with self._active_lock:
-                if self._active.get(root_run_id) is not active:
-                    raise ValueError(f"run is not owned by this executor: {run_id}")
-            control = self.store.accept_reload_control(
-                run_id=root_run_id,
-                state=state.revision,
-                request_id=request_id,
-                created_at=utc_now(),
-                triggered_by=triggered_by,
-            )
-            with self._active_lock:
-                active.reload_states[control.index] = state
-            self._observe_control(control)
-        return control
-
-    async def model_reload(self, *, run_id: str, triggered_by: StepRef) -> ToolResult:
-        """Record an explicit reload of the already published catalog."""
-
-        with self._active_lock:
-            active = self._active.get(run_id)
-        if active is None:
-            raise ValueError(f"run is not owned by this executor: {run_id}")
-        if self._state is None:
-            raise ToolangError("Published Agent State is unavailable in this executor")
-        async with active.runtime_tool_lock:
-            published = self._state()
-            control = self._accept_reload(
-                run_id=run_id,
-                state=published,
-                request_id=None,
-                triggered_by=triggered_by,
-            )
-            terminal = await self._wait_for_control(active, control)
-            if terminal.status != "applied":
-                raise ToolangError(
-                    terminal.error
-                    or f"State reload control {terminal.status}: "
-                    f"{terminal.target}@{terminal.index}"
-                )
-            assert isinstance(terminal.payload, ReloadControlPayload)
-            return ToolResult(
-                {"controls": [control_summary(terminal.ref, terminal.payload)]}
-            )
-
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
-        """Revoke one pending reload, steer, or cancel control."""
+        """Revoke one pending steer or cancel control."""
 
         self._require_available()
         control = self.store.cancel_run_control(
@@ -1119,16 +974,6 @@ class RunExecutor:
                 return_exceptions=True,
             )
         await asyncio.sleep(0)
-        reload_tasks = {
-            active.reload_task
-            for _task, (_run_id, active) in owned
-            if active.reload_task is not None
-        }
-        for task in reload_tasks:
-            if not task.done():
-                task.cancel()
-        if reload_tasks:
-            await asyncio.gather(*reload_tasks, return_exceptions=True)
         for _task, (run_id, active) in owned:
             await self._ensure_terminal(
                 run_id,
@@ -1287,7 +1132,6 @@ class RunExecutor:
             return
         cancel: asyncio.Task[RunRecord] | None = None
         loop: asyncio.AbstractEventLoop | None = None
-        apply_reload: _ActiveRun | None = None
         with self._active_lock:
             active = self._active.get(str(control.target))
             if active is None:
@@ -1303,15 +1147,10 @@ class RunExecutor:
                 ):
                     cancel = active.task
                     loop = active.loop
-                if control.kind == "reload":
-                    apply_reload = active
             else:
                 controls.pop(control.index, None)
                 if not controls:
                     active.controls.pop(str(control.target), None)
-                if control.kind == "reload":
-                    active.reload_states.pop(control.index, None)
-                    apply_reload = active
         if cancel is not None and loop is not None and not cancel.done():
 
             def interrupt() -> None:
@@ -1343,186 +1182,6 @@ class RunExecutor:
                 cancel.cancel()
 
             loop.call_soon_threadsafe(interrupt)
-        if apply_reload is not None:
-            self._schedule_reload_application(apply_reload)
-        self._notify_control_waiters(control)
-
-    def _notify_control_waiters(self, control: ControlRecord) -> None:
-        if control.status == "pending":
-            return
-        with self._active_lock:
-            active = self._active.get(str(control.target))
-            if active is None:
-                return
-            waiters = tuple(
-                active.control_waiters.pop((str(control.target), control.index), ())
-            )
-        for waiter in waiters:
-            if not waiter.done():
-                active.loop.call_soon_threadsafe(
-                    _finish_control_waiter,
-                    waiter,
-                    control,
-                )
-
-    async def _wait_for_control(
-        self,
-        active: _ActiveRun,
-        control: ControlRecord,
-    ) -> ControlRecord:
-        if control.status != "pending":
-            return control
-        loop = asyncio.get_running_loop()
-        waiter: asyncio.Future[ControlRecord] = loop.create_future()
-        key = (str(control.target), control.index)
-        with self._active_lock:
-            active.control_waiters.setdefault(key, set()).add(waiter)
-        terminal = self.store.get_run_control(
-            run_id=str(control.target),
-            index=control.index,
-        )
-        if terminal is None:
-            with self._active_lock:
-                active.control_waiters.get(key, set()).discard(waiter)
-            raise RuntimeError(
-                f"run control disappeared: {control.target}@{control.index}"
-            )
-        if terminal.status != "pending":
-            self._notify_control_waiters(terminal)
-        try:
-            return await asyncio.shield(waiter)
-        except asyncio.CancelledError:
-            try:
-                self.cancel_control(
-                    run_id=str(control.target),
-                    index=control.index,
-                )
-            except ValueError:
-                terminal = self.store.get_run_control(
-                    run_id=str(control.target),
-                    index=control.index,
-                )
-                if terminal is not None and terminal.status != "pending":
-                    self._notify_control_waiters(terminal)
-            await asyncio.shield(waiter)
-            raise
-        finally:
-            with self._active_lock:
-                waiters = active.control_waiters.get(key)
-                if waiters is not None:
-                    waiters.discard(waiter)
-                    if not waiters:
-                        active.control_waiters.pop(key, None)
-
-    def _schedule_reload_application(self, active: _ActiveRun) -> None:
-        with self._active_lock:
-            if (
-                active.reload_scheduled
-                or active.task.done()
-                or active.execution is None
-            ):
-                return
-            controls = active.controls.get(active.root_run_id, {})
-            candidate = next(
-                (
-                    control
-                    for _index, control in sorted(controls.items())
-                    if control.kind == "reload" and control.status == "pending"
-                ),
-                None,
-            )
-            if candidate is None or candidate.index not in active.reload_states:
-                return
-            active.reload_scheduled = True
-
-        def start() -> None:
-            task = asyncio.create_task(
-                self._apply_reload_controls(active),
-                name=f"toolang-reload-{active.root_run_id}",
-            )
-            with self._active_lock:
-                active.reload_task = task
-
-        active.loop.call_soon_threadsafe(start)
-
-    async def _apply_reload_controls(self, active: _ActiveRun) -> None:
-        try:
-            while True:
-                async with active.event_lock:
-                    with self._active_lock:
-                        execution = active.execution
-                        controls = active.controls.get(active.root_run_id, {})
-                        candidate = next(
-                            (
-                                control
-                                for _index, control in sorted(controls.items())
-                                if control.kind == "reload"
-                                and control.status == "pending"
-                            ),
-                            None,
-                        )
-                        state = (
-                            active.reload_states.get(candidate.index)
-                            if candidate is not None
-                            else None
-                        )
-                    if execution is None or candidate is None or state is None:
-                        return
-                    claimed = self.store.claim_run_controls(
-                        run_id=active.root_run_id,
-                        indexes=(candidate.index,),
-                    )
-                    if candidate.index not in claimed:
-                        with self._active_lock:
-                            controls.pop(candidate.index, None)
-                            active.reload_states.pop(candidate.index, None)
-                        continue
-                    self.store.finish_run_controls(
-                        run_id=active.root_run_id,
-                        indexes=(candidate.index,),
-                        finished_at=utc_now(),
-                    )
-                    execution._preceding_controls.append(candidate.ref)
-                    with self._active_lock:
-                        controls.pop(candidate.index, None)
-                        active.reload_states.pop(candidate.index, None)
-                    terminal = self.store.get_run_control(
-                        run_id=active.root_run_id,
-                        index=candidate.index,
-                    )
-                    if terminal is not None:
-                        self._observe_control(terminal)
-        except Exception as exc:
-            error = str(exc) or type(exc).__name__
-            with self._active_lock:
-                controls = active.controls.get(active.root_run_id, {})
-                indexes = tuple(
-                    index
-                    for index, control in controls.items()
-                    if control.kind == "reload" and control.status == "pending"
-                )
-            self.store.fail_run_controls(
-                run_id=active.root_run_id,
-                indexes=indexes,
-                finished_at=utc_now(),
-                error=error,
-            )
-            for index in indexes:
-                terminal = self.store.get_run_control(
-                    run_id=active.root_run_id,
-                    index=index,
-                )
-                if terminal is not None:
-                    self._observe_control(terminal)
-            _LOGGER.exception(
-                "State reload application failed run=%s",
-                active.root_run_id,
-            )
-        finally:
-            with self._active_lock:
-                active.reload_scheduled = False
-                active.reload_task = None
-            self._schedule_reload_application(active)
 
     def _pending_controls(
         self,

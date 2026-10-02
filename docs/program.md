@@ -453,7 +453,7 @@ then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed public refs
 remain authored routes and become available in the next model-call catalog after
-the watcher publishes them. Reload is optional.
+the watcher publishes them. No explicit refresh action is needed.
 Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. The three
 inner runtime tool definitions remain available independently of these lists.
@@ -750,9 +750,9 @@ grants service tools.
   `<toolang:workspace list="lab,repo1"/>` and its current workdir in
   `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
   workspace roots are not exposed.
-- Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
-  not themselves add a model-facing lifecycle message. Reload can change the
-  instructions and resource declarations at a later call boundary.
+- Lifecycle controls such as run, retry, execute, fork, and rewind do not
+  themselves add a model-facing lifecycle message. Published updates change
+  future named Runs and model catalogs; accepted code and caps remain bound.
 
 Skill/service recall is distinct from far/near conversation recall. A far
 summary or trigger does not count as a visible guidance body. Recalling

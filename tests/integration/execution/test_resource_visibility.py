@@ -20,7 +20,11 @@ from tests.integration.execution.test_pick_guidance import (
     _write_guidance,
 )
 from tests.support.execution_assertions import assert_replayed, route_snapshots
-from tests.support.execution_harness import PublicationTracer, RecordingRunTracer
+from tests.support.execution_harness import (
+    PublicationTracer,
+    RecordingRunTracer,
+    RecordingTool,
+)
 from toolang.base.types.message import ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
@@ -158,18 +162,20 @@ def test_published_remap_keeps_active_rule_bindings(tmp_path):
         [
             _calls(write("first")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}), write("changed")
+                ToolCall("publication", "publication", "test__checkpoint", {}),
+                write("changed"),
             ),
             _calls(write("retry")),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     other = repo.with_name("other")
     (other / "src").mkdir(parents=True)
     (other / "AGENTS.md").write_text("Root rules.")
     (other / "src/AGENTS.md").write_text("Scoped rules.")
     changed = _workspace_state(harness, {"repo": other})
-    tracer = PublicationTracer(harness, {"reload": changed})
+    tracer = PublicationTracer(harness, {"publication": changed})
 
     async def scenario():
         async with harness:
@@ -195,21 +201,25 @@ def test_published_remap_keeps_active_rule_bindings(tmp_path):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_preserves_bound_psyches_and_runnable_authority(tmp_path):
+def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
     source = "agic helper:\n  Help.\n" + SOURCE.replace(
         "context = none", "hands = helper\n  context = none"
     )
     harness, _ = capability_harness(
         tmp_path,
-        [_calls(ToolCall("reload", "reload", "_toolang__reload", {})), _answer()],
+        [
+            _calls(ToolCall("publication", "publication", "test__checkpoint", {})),
+            _answer(),
+        ],
         source=source,
         psyche="Resident advice.",
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     harness.setup.layout.program.write_text(
         source.replace("hands = helper", "psyches = none")
     )
     tracer = PublicationTracer(
-        harness, {"reload": prepare_agent_state(harness.setup.layout)}
+        harness, {"publication": prepare_agent_state(harness.setup.layout)}
     )
 
     async def scenario():
@@ -236,7 +246,7 @@ def test_reload_preserves_bound_psyches_and_runnable_authority(tmp_path):
 
 
 @pytest.mark.parametrize("context", ["none", "custom"])
-def test_reload_cannot_expand_bound_route_authority_and_replays(tmp_path, context):
+def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, context):
     states = []
 
     def source(hands, handoffs, type_name="Text"):
@@ -263,12 +273,13 @@ def test_reload_cannot_expand_bound_route_authority_and_replays(tmp_path, contex
         tmp_path,
         [
             *(
-                _calls(ToolCall(str(i), str(i), "_toolang__reload", {}))
+                _calls(ToolCall(str(i), str(i), "test__checkpoint", {}))
                 for i in range(len(versions) - 1)
             ),
             _answer(),
         ],
         source=source(*versions[0]),
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     for version in versions[1:]:
         harness.setup.layout.program.write_text(source(*version))
@@ -341,12 +352,16 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
 
     harness, _ = capability_harness(
         tmp_path,
-        [_calls(ToolCall("reload", "reload", "_toolang__reload", {})), _answer()],
+        [
+            _calls(ToolCall("publication", "publication", "test__checkpoint", {})),
+            _answer(),
+        ],
         source=source("Short description."),
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     harness.setup.layout.program.write_text(source("界" * 512))
     tracer = PublicationTracer(
-        harness, {"reload": prepare_agent_state(harness.setup.layout)}
+        harness, {"publication": prepare_agent_state(harness.setup.layout)}
     )
 
     async def scenario():
@@ -375,11 +390,13 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
 def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
     states = []
 
-    def reload(index):
-        return _calls(ToolCall(str(index), str(index), "_toolang__reload", {}))
+    def publication(index):
+        return _calls(ToolCall(str(index), str(index), "test__checkpoint", {}))
 
     harness, repo, initial = _harness(
-        tmp_path, [*(reload(i) for i in range(5)), _answer()]
+        tmp_path,
+        [*(publication(i) for i in range(5)), _answer()],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     states.extend(
         [
@@ -421,21 +438,22 @@ def test_definition_changes_preserve_bound_guidance(tmp_path, kind, name):
         "context = none", f"{kind}s = {kind}/{name}\n  context = none"
     )
 
-    def reload(index):
-        return _calls(ToolCall(str(index), str(index), "_toolang__reload", {}))
+    def publication(index):
+        return _calls(ToolCall(str(index), str(index), "test__checkpoint", {}))
 
     harness, _ = capability_harness(
         tmp_path,
         [
             _calls(_pick(kind=kind)),
-            reload(1),
+            publication(1),
             _calls(_pick("again", kind=kind)),
-            reload(2),
-            reload(3),
+            publication(2),
+            publication(3),
             _answer(),
         ],
         source=source,
         content="Original guidance.",
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     path = harness.setup.layout.home / (
         "skills/testing/SKILL.md" if kind == "skill" else "services/github.md"

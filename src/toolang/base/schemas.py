@@ -9,14 +9,9 @@ class RecallControlSummary(TypedDict):
     revision: str
 
 
-class ReloadControlSummary(TypedDict):
-    ref: str
-    state: str
-
-
 class CompactControlSummary(TypedDict):
     ref: str
     horizon: str
 
 
-ControlSummary = RecallControlSummary | ReloadControlSummary | CompactControlSummary
+ControlSummary = RecallControlSummary | CompactControlSummary

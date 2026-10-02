@@ -350,7 +350,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
 
 
 @pytest.mark.parametrize("child", [False, True])
-def test_reload_and_inputs_are_adopted_in_control_order(
+def test_publication_and_inputs_are_adopted_in_control_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, child: bool
 ) -> None:
     source = """instruct chat_instruct: original instructions
@@ -374,7 +374,7 @@ flow parent() -> Text:
         source.replace("original instructions", "updated instructions"),
         encoding="utf-8",
     )
-    reloaded = prepare_agent_state(harness.setup.layout)
+    published = prepare_agent_state(harness.setup.layout)
     gate = AsyncGate()
     tracer = RecordingRunTracer()
     begin = _Execution.begin_step
@@ -405,14 +405,7 @@ flow parent() -> Text:
                 message=Message.user("change"),
                 timing="next_call",
             )
-            reload = handle.reload(reloaded)
-            applied = await asyncio.wait_for(
-                harness.executor._wait_for_control(
-                    harness.executor._active[handle.run_id], reload
-                ),
-                timeout=2,
-            )
-            assert applied.status == "applied"
+            harness.published = published
             recall = harness.store.accept_recall_control(
                 run_id=model_run_id,
                 payload=RecallControlPayload(
@@ -426,11 +419,7 @@ flow parent() -> Text:
             assert run.status == "succeeded", run.error
             (step,) = harness.store.list_steps(run_id=model_run_id)
             entry = ControlRef.for_run(model_run_id, 0)
-            expected = (
-                (reload.ref, entry, steer.ref, recall.ref)
-                if child
-                else (entry, steer.ref, reload.ref, recall.ref)
-            )
+            expected = (entry, steer.ref, recall.ref)
             assert step.preceded_by == (
                 *expected,
                 harness.store.list_run_controls(run_id=model_run_id)[-1].ref,

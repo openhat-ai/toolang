@@ -20,6 +20,7 @@ from tests.support.execution_assertions import (
     route_snapshots,
 )
 from tests.support.execution_harness import (
+    RecordingTool,
     AsyncGate,
     ExecutionHarness,
     RecordingRunTracer,
@@ -77,6 +78,7 @@ def _harness(
     content=GUIDANCE,
     psyche: str | None = None,
     description: str = "Test guidance",
+    tools=None,
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     skill = layout.home / "skills/testing/SKILL.md"
@@ -99,6 +101,7 @@ def _harness(
         source=source,
         state=prepare_agent_state(layout),
         responses=responses,
+        tools=tools,
     )
     return harness, skill
 
@@ -672,12 +675,13 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
         [
             _calls(_pick("before", ref="skill/private")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}),
+                ToolCall("publication", "publication", "test__checkpoint", {}),
                 _pick("denied", ref="skill/private"),
                 _pick("allowed"),
             ),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     class Tracer(RecordingRunTracer):
@@ -695,6 +699,7 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
                     ),
                     encoding="utf-8",
                 )
+                harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
 
@@ -732,8 +737,14 @@ def test_bound_guidance_survives_published_revision_reversals(
     a, b = "Revision A.", "Revision B."
     batches = [
         (_pick("a"),),
-        (ToolCall("reload-b", "reload-b", "_toolang__reload", {}), _pick("b")),
-        (ToolCall("reload-a", "reload-a", "_toolang__reload", {}), _pick("a-again")),
+        (
+            ToolCall("publication-b", "publication-b", "test__checkpoint", {}),
+            _pick("b"),
+        ),
+        (
+            ToolCall("publication-a", "publication-a", "test__checkpoint", {}),
+            _pick("a-again"),
+        ),
     ]
     harness, skill = _harness(
         tmp_path,
@@ -747,6 +758,7 @@ def test_bound_guidance_survives_published_revision_reversals(
             _answer(),
         ],
         content=a,
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     class Tracer(RecordingRunTracer):

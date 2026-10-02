@@ -37,7 +37,7 @@ def runtime_tool_name(begin: StepBegin) -> str | None:
     given = begin.given
     if isinstance(given, ToolStepGiven) and given.plugin == "_toolang":
         name = given.call.name.removeprefix("_toolang__")
-        if name in {"pick", "reload", "compact", "honor"}:
+        if name in {"pick", "compact", "honor"}:
             return name
     return None
 

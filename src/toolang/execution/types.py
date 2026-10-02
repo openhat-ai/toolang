@@ -1957,7 +1957,6 @@ ControlKind = Literal[
     "cwd",
     "recall",
     "retry",
-    "reload",
     "compact",
     "execute",
     "steer",
