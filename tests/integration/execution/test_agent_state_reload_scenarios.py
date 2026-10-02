@@ -118,7 +118,7 @@ async def _wait_until_applied(
         (3, "none", "near", "near"),
     ],
 )
-def test_reload_refreshes_inherited_recall_through_active_flows(
+def test_reload_preserves_inherited_recall_through_active_flows(
     tmp_path: Path, depth: int, before: str, after: str, override: str | None
 ) -> None:
     source = """
@@ -176,6 +176,7 @@ agic worker:
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = reloaded
             control = handle.reload(reloaded, request_id="reload-inherited-recall")
             await _wait_until_applied(harness, handle.run_id, control.index)
             first_call.release()
@@ -184,7 +185,7 @@ agic worker:
             assert root.status == "succeeded", root.error
             for invocation, recall in zip(
                 harness.adapter.invocations[1:],
-                (override or before, override or after),
+                (override or before, override or before),
                 strict=True,
             ):
                 text = message_text(
@@ -260,6 +261,7 @@ flow parent:
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = reloaded
             control = handle.reload(reloaded, request_id="reload-execute-defaults")
             await _wait_until_applied(harness, handle.run_id, control.index)
             first_call.release()
@@ -336,6 +338,7 @@ agic parent:
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = reloaded
             control = handle.reload(reloaded, request_id="reload-inherited-prompts")
             await _wait_until_applied(harness, handle.run_id, control.index)
             first_call.release()
@@ -388,6 +391,7 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
                 if run.parent is not None
             )
+            harness.published = reloaded
             control = harness.executor.reload(
                 run_id=first_child.id,
                 state=reloaded,
@@ -420,7 +424,7 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
             ]
             assert [step.state for step in parent_steps] == [
                 ControlRef.for_run(root.id, 0),
-                ControlRef.for_run(root.id, control.index),
+                ControlRef.for_run(root.id, 0),
             ]
             children = [
                 run
@@ -429,13 +433,17 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
             ]
             children_by_parent = {child.parent: child for child in children}
             assert [children_by_parent[step.ref].state for step in parent_steps] == [
-                step.state for step in parent_steps
+                ControlRef.for_run(children_by_parent[step.ref].id, 0)
+                for step in parent_steps
             ]
             for child in children:
                 entry = harness.store.get_run_control(run_id=child.id, index=0)
                 assert entry is not None
                 assert isinstance(entry.payload, RunControlPayload)
-                assert entry.payload.state is None
+                assert entry.payload.state in {
+                    harness.state.revision,
+                    reloaded.revision,
+                }
             assert "old state" in harness.adapter.invocations[0].call.instructions
             assert "new state" in harness.adapter.invocations[1].call.instructions
 
@@ -503,6 +511,7 @@ def test_concurrent_reloads_apply_in_control_index_order(
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = second_state
             first_reload = asyncio.create_task(
                 asyncio.to_thread(
                     handle.reload,
@@ -551,7 +560,7 @@ def test_concurrent_reloads_apply_in_control_index_order(
     asyncio.run(scenario())
 
 
-def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> None:
+def test_reload_preserves_the_next_step_of_an_active_agic(tmp_path: Path) -> None:
     first_call = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
@@ -577,6 +586,7 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = reloaded
             control = handle.reload(reloaded, request_id="reload-active-agic")
             await _wait_until_applied(harness, handle.run_id, control.index)
             handle.steer(Message.user("continue"), timing="next_call")
@@ -591,10 +601,10 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
             ]
             assert [step.state for step in steps] == [
                 ControlRef.for_run(root.id, 0),
-                ControlRef.for_run(root.id, control.index),
+                ControlRef.for_run(root.id, 0),
             ]
             assert "old state" in harness.adapter.invocations[0].call.instructions
-            assert "new state" in harness.adapter.invocations[1].call.instructions
+            assert "old state" in harness.adapter.invocations[1].call.instructions
             assert harness.adapter.invocations[0].call.output_schema == {
                 "type": "number"
             }
@@ -675,6 +685,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
                 ),
                 timeout=1,
             )
+            harness.published = reloaded
             control = handle.reload(reloaded, request_id="reload-parallel")
             await _wait_until_applied(harness, handle.run_id, control.index)
             allow_second_child.set()
@@ -698,10 +709,12 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
                 if run.parent is not None
             ]
             assert len(children) == 2
-            assert {child.state for child in children} == {
-                ControlRef.for_run(root.id, 0),
-                ControlRef.for_run(root.id, control.index),
-            }
+            assert {
+                harness.store.resolve_state_revision(child.state) for child in children
+            } == {harness.state.revision, reloaded.revision}
+            assert all(
+                child.state == ControlRef.for_run(child.id, 0) for child in children
+            )
             child_steps = [
                 step
                 for child in children
@@ -712,12 +725,14 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             by_instruction = {
                 calls[step.ref]
                 .instructions.partition("<toolang:instruct>\n")[2]
-                .partition("\n</toolang:instruct>")[0]: step.state
+                .partition("\n</toolang:instruct>")[
+                    0
+                ]: harness.store.resolve_state_revision(step.state)
                 for step in child_steps
             }
             assert by_instruction == {
-                "old state": ControlRef.for_run(root.id, 0),
-                "new state": ControlRef.for_run(root.id, control.index),
+                "old state": harness.state.revision,
+                "new state": reloaded.revision,
             }
 
     asyncio.run(scenario())
@@ -851,7 +866,7 @@ def test_revoked_reload_releases_its_retained_state(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("layer", ["message", "context"])
 @pytest.mark.parametrize("initial_depth,updated_depth", [(0, 2), (2, 0)])
-def test_until_reload_uses_the_current_condition_history_requirement(
+def test_until_reload_preserves_the_bound_condition_history_requirement(
     tmp_path: Path, layer: str, initial_depth: int, updated_depth: int
 ) -> None:
     def condition(depth: int) -> str:
@@ -881,7 +896,7 @@ flow parent:
             ),
             *(
                 ModelCallResult(message=Message.assistant(f"round {index + 2}"))
-                for index in range(updated_depth)
+                for index in range(initial_depth)
             ),
             ModelCallResult(message=Message.assistant("true")),
         ),
@@ -899,6 +914,7 @@ flow parent:
                 )
             )
             await first_call.wait_until_entered()
+            harness.published = reloaded
             control = handle.reload(reloaded)
             await _wait_until_applied(harness, handle.run_id, control.index)
             first_call.release()
@@ -906,9 +922,9 @@ flow parent:
             assert root.status == "succeeded", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            assert len(harness.adapter.invocations) == updated_depth + 2
+            assert len(harness.adapter.invocations) == initial_depth + 2
             assert harness.store.run_output_text(run_id=root.id) == (
-                f"round {updated_depth + 1}"
+                f"round {initial_depth + 1}"
             )
 
     asyncio.run(scenario())
@@ -918,7 +934,7 @@ flow parent:
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("output", ["Text", "Text[]", "Item", "Item[]"])
 @pytest.mark.parametrize("changes_contract", [True, False])
-def test_collection_reload_preserves_the_operation_output_contract(
+def test_collection_publication_preserves_the_operation_output_contract(
     tmp_path: Path, operation: str, kind: str, output: str, changes_contract: bool
 ) -> None:
     updated_output = output.replace("Text", "Number") if changes_contract else output
@@ -994,8 +1010,7 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
                 harness.run_spec(thread=thread, runnable="flow:parent")
             )
             await asyncio.wait_for(first_call.wait_until_entered(), timeout=1)
-            control = handle.reload(reloaded)
-            await _wait_until_applied(harness, handle.run_id, control.index)
+            harness.published = reloaded
             first_call.release()
             root = await handle
 
@@ -1003,7 +1018,7 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
                 assert root.status == "failed"
                 assert len(harness.adapter.invocations) == 2
                 assert root.error is not None
-                assert f"requires {output} output" in harness.store.resolve_error(
+                assert "runnable signature changed" in harness.store.resolve_error(
                     root.error
                 )
                 step = harness.store.list_steps(run_id=root.id)[-1]

@@ -147,9 +147,9 @@ agic chat(_: Part[]) -> Part[]:
             assert run.status == "succeeded", run.error
             first, second = harness.adapter.invocations
             assert "original instructions" in first.call.instructions
-            assert "updated instructions" in second.call.instructions
+            assert "original instructions" in second.call.instructions
             texts = [message_text(message.parts) for message in second.call.messages]
-            assert any("updated context" in text for text in texts)
+            assert any("original context" in text for text in texts)
             assert any("Use tests." in text for text in texts)
             assert first.call.tools and second.call.tools
 

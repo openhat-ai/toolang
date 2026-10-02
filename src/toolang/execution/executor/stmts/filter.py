@@ -54,7 +54,7 @@ async def execute(
     step = par_step if statement.runnable is not None else value_step
     return await step.execute(
         execution.emit,
-        begin_step=execution.begin_step,
+        begin_step=execution.step_starter(binding),
         binding=binding,
         path=path,
         statement=statement,

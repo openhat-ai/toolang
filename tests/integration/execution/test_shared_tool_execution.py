@@ -273,7 +273,7 @@ flow blocked(_: Text) -> Text:
                 == "runnable is not authorized by hands: flow:blocked"
             )
             assert results["permitted"].error is None
-            assert results["next"].error is None
+            assert results["next"].error == results["blocked"].error
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

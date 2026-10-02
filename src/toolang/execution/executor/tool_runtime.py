@@ -18,7 +18,6 @@ from ..assembly.run_results import run_receipt
 from ..runnables import (
     AgicRoutes,
     ResolvedRunnable,
-    parse_runnable_ref,
     resolve_public_runnable,
 )
 from ..types import (
@@ -132,8 +131,7 @@ class _ToolRuntime(ToolRuntime):
             for c in pending
             if isinstance(c.payload, RecallControlPayload)
         )
-        # A reload may precede honor in the same tool batch. Retire the old
-        # binding's rules before freshly loaded rules enter the next call.
+        # Reconcile inherited rule declarations with this Run's bound workspaces.
         for payload in required_declarations(
             workspace_declarations(
                 self.state.prepared.run.setup.workspace_grants(captured.workspaces)
@@ -182,7 +180,10 @@ class _ToolRuntime(ToolRuntime):
                 resolution="state",
                 raw_input=input,
                 authorize=lambda target: self._authorize("run", target),
-                state_snapshot=execution.state_for_step(self.step),
+                state_snapshot=(
+                    state.model_frame.catalog or state.model_frame.run.state,
+                    state.model_frame.run.state_ref,
+                ),
             )
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
@@ -203,12 +204,11 @@ class _ToolRuntime(ToolRuntime):
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured, state_ref = execution.state_for_step(self.step)
-        name, kind = parse_runnable_ref(runnable)
-        target = resolve_public_runnable(
-            captured,
-            name,
-            kind=kind,
+        captured = state.model_frame.catalog or state.model_frame.run.state
+        state_ref = state.model_frame.run.state_ref
+        target = resolve_public_runnable(captured, runnable)
+        execution.require_inactive_runnable(
+            state.prepared.run, target, action="_toolang/execute"
         )
         self._authorize("execute", target)
         try:

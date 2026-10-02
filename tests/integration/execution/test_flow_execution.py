@@ -250,6 +250,7 @@ async def _start(
     request_id: str | None = None,
     tracer: RunTracer | None = None,
 ) -> Any:
+    executor._state = lambda: state
     return await executor.run(
         _spec(
             setup=setup,
@@ -728,7 +729,7 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         "alpha__one": RecordingTool("alpha__one", output={}),
         "beta__two": RecordingTool("beta__two", output={}),
     }
-    base_setup = _setup(tmp_path)
+    base_setup = _model_setup(tmp_path)
     setup = materialized_setup(
         revision="test-setup",
         layout=base_setup.layout,
@@ -738,6 +739,7 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         tools=ToolCollection.from_tools(tools),
         envs=base_setup.envs,
         environment=base_setup.environment,
+        defaults=base_setup.defaults,
     )
     observed: list[tuple[str, tuple[str, ...]]] = []
 

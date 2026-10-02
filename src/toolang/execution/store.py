@@ -360,11 +360,12 @@ class RunStore:
             if state_ref is not None:
                 raise ValueError("root run State reference is its entry control")
             state_ref = control_ref
-        else:
-            if state is not None:
-                raise ValueError("child run must not repeat its Agent State revision")
-            if state_ref is None:
-                raise ValueError("child run requires an Agent State control reference")
+        elif state is not None:
+            if state_ref is not None:
+                raise ValueError("owned Run State reference is its entry control")
+            state_ref = control_ref
+        elif state_ref is None:
+            raise ValueError("child run requires an Agent State control reference")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -410,10 +411,14 @@ class RunStore:
                         raise ValueError(f"parent step not found: {parent}")
                     if str(parent_row["thread"]) != thread:
                         raise ValueError("child run must share its parent's thread")
-                    parent_state = ControlRef.parse(str(parent_row["state"]))
-                    if state_ref.target != parent_state.target:
-                        raise ValueError("child run State must belong to its root tree")
-                    self._state_revision_for_ref_locked(state_ref)
+                    if state is None:
+                        if str(state_ref.target) not in self.run_ancestry(
+                            run_id=parent.run_id
+                        ):
+                            raise ValueError(
+                                "inherited child State must belong to its ancestry"
+                            )
+                        self._state_revision_for_ref_locked(state_ref)
                 self._conn.execute(
                     """
                     INSERT INTO runs(
@@ -2842,6 +2847,7 @@ class RunStore:
                     setup=given.setup,
                     call=given.call,
                     messages=given.messages,
+                    catalog_state=given.catalog_state,
                 )
                 if isinstance(given, ModelStepGiven)
                 else cast(StoredStepGiven, given)
@@ -3053,6 +3059,7 @@ class RunStore:
         setup: str,
         call: ModelCall,
         messages: ModelMessages | None = None,
+        catalog_state: str | None = None,
     ) -> StoredModelStepGiven:
         """Persist call settings and the new message templates for this boundary."""
 
@@ -3129,6 +3136,7 @@ class RunStore:
         from .records import ModelCallRefs
 
         return StoredModelStepGiven(
+            catalog_state=catalog_state,
             model=model,
             setup=setup,
             call=ModelCallRefs(

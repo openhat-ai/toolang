@@ -251,7 +251,7 @@ async def _execute(
         runtime_tools = (
             prepared.run.setup.tools().runtime if trigger == "runtime" else {}
         )
-        # Bind the operation to the Step's State even if reload removed its Agic.
+        # Keep the accepted binding even if a publication removed its Agic.
         if (
             _plugin_name(runtime_tools.get(call.name) or prepared.tools.get(call.name))
             != "_toolang"

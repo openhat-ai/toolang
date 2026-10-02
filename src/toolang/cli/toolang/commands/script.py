@@ -1230,6 +1230,9 @@ async def _execute(
     executor = RunExecutor(
         store,
         ids,
+        setup=setup_watcher.current,
+        state=state_watcher.current,
+        load_state=state_watcher.load,
         refresh_state=state_watcher.refresh_result,
     )
     spec = resolve_spec(
@@ -1269,6 +1272,8 @@ async def _execute(
         else None
     )
     executor.start()
+    stop_watching = asyncio.Event()
+    watching = asyncio.create_task(state_watcher.run(stop_signal=stop_watching))
     try:
         handle = executor.run(
             spec,
@@ -1280,8 +1285,12 @@ async def _execute(
         try:
             await executor.stop()
         finally:
-            if tracer is not None:
-                tracer.close()
+            stop_watching.set()
+            try:
+                await watching
+            finally:
+                if tracer is not None:
+                    tracer.close()
 
 
 async def await_script_run(handle: LocalRunHandle) -> RunRecord:

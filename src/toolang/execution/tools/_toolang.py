@@ -267,7 +267,8 @@ _TOOLS = (
         "Schedule an authorized hand as a child Run. The tool reply acknowledges "
         "scheduling; a separate runtime message supplies its outcome before you continue. "
         "Call it only when its result is required now. Read the target input "
-        "signature and do not invent missing values.",
+        "signature and do not invent missing values. Acceptance selects the latest "
+        "published version and rejects missing targets or changed signatures.",
         _RUN_PARAMETERS,
     ),
     ToolangTool(
@@ -279,8 +280,9 @@ _TOOLS = (
     ),
     ToolangTool(
         "reload",
-        "Apply the newest valid Agent State when this Run must observe authored "
-        "changes now. A future root Run uses the latest valid State without reload.",
+        "Explicitly reload the published runnable catalog. New named Runs and "
+        "model-call catalogs already use published updates automatically. "
+        "This does not prepare source or change active Run code, caps, or permissions.",
         {
             "type": "object",
             "properties": {},

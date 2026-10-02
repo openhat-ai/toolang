@@ -428,9 +428,9 @@ def test_compact_preparation_survives_failed_begin(
     persist = harness.store.begin_step
     target = ""
 
-    async def reprepare(execution, build):
+    async def reprepare(execution, build, *, run_id=None):
         if execution._active.root_run_id == target and not gate.entered:
-            build(*execution._current_state)
+            build(*execution.state_snapshot(run_id))
             await gate.wait()
 
             def fail_write(**kwargs):
@@ -440,14 +440,14 @@ def test_compact_preparation_survives_failed_begin(
             with monkeypatch.context() as patch:
                 patch.setattr(harness.store, "begin_step", fail_write)
                 with pytest.raises(RuntimeError, match="injected rollback"):
-                    await begin(execution, build)
+                    await begin(execution, build, run_id=run_id)
             assert execution.horizon_for(target) == execution.horizon_for(
                 target, pending=True
             )
             assert execution.horizon_for(target) is not None
             assert harness.store.list_steps(run_id=target) == []
             assert len(harness.adapter.invocations) == 2
-        return await begin(execution, build)
+        return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", reprepare)
 
@@ -735,7 +735,7 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_captures_recall_without_reading_state_during_replay(
+def test_reload_preserves_recall_without_reading_state_during_replay(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -791,15 +791,15 @@ def test_reload_captures_recall_without_reading_state_during_replay(
                 Message.assistant("first reply"),
                 Message.user("current"),
             ]
-            # Disabling recall removes all historical messages, including tails.
-            assert after[0] == before[-1]
-            assert Message.assistant("first reply") not in after
+            # A published recall change applies only to new Run bindings.
+            assert after[: len(before)] == before
+            assert Message.assistant("first reply") in after
             givens = [
                 s.given
                 for s in harness.store.list_steps(run_id=run.id)
                 if isinstance(s.given, StoredModelStepGiven)
             ]
-            assert len({g.call.messages.head for g in givens}) == 2
+            assert len({g.call.messages.head for g in givens}) == 1
 
     asyncio.run(scenario())
     for index, path in enumerate(

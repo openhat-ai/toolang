@@ -178,9 +178,13 @@ def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
     assert "Validate with that runtime" in authoring
     assert "Do not edit immutable State or execution records" in authoring
     assert "treat a source write as adopted State" in authoring
-    assert "Use reload when the current run needs newly authored State" in authoring
-    assert "load current guidance before using changed skills or services" in (
-        authoring
+    assert (
+        "New named Runs select the latest publication; accepted Runs keep their code and caps"
+        in authoring
+    )
+    assert (
+        "Reload is optional and does not update active code, caps, or permissions"
+        in (authoring)
     )
     assert "or assume it grants permissions" in authoring
 

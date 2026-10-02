@@ -678,6 +678,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given == ModelStepGiven(
+            catalog_state=state.revision,
             setup="test-setup",
             model="test/model",
             call=adapter.requests[0],

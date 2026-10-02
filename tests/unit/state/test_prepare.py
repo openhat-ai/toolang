@@ -106,8 +106,8 @@ def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
     layout.program.write_text("agic:\n  Hello.\n")
     parse = ProgramSource.parse
 
-    def legacy_parse(self):
-        program = parse(self)
+    def legacy_parse(self, **kwargs):
+        program = parse(self, **kwargs)
         return replace(
             program,
             agics=tuple(replace(agic, name="default") for agic in program.agics),
@@ -1406,8 +1406,8 @@ def test_prepare_rebinds_parameter_docs_without_rewriting_history(
     )
     parse = ProgramSource.parse
 
-    def legacy_parse(self):
-        program = parse(self)
+    def legacy_parse(self, **kwargs):
+        program = parse(self, **kwargs)
         return replace(
             program,
             doc=None,
@@ -1442,3 +1442,28 @@ def test_prepare_rebinds_parameter_docs_without_rewriting_history(
     assert load_agent_state(layout, old.revision).modules == old.modules
     assert old_home.read_bytes() == old_document
     assert prepare_agent_state(layout).revision == current.revision
+
+
+@pytest.mark.parametrize("target", ["research", "private_helper"])
+def test_flow_modules_cannot_import_other_module_runnables(tmp_path, target):
+    layout = _layout(tmp_path)
+    (layout.home / "flows").mkdir(parents=True)
+    layout.program.write_text("agic private_helper():\n  Main helper.\n")
+    (layout.home / "flows" / "research.too").write_text("flow():\n  pass\n")
+    (layout.home / "flows" / "review.too").write_text(f"flow():\n  run {target}\n")
+    with pytest.raises(StatePreparationError, match="unknown runnable"):
+        prepare_agent_state(layout)
+
+
+def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
+    layout = _layout(tmp_path)
+    (layout.home / "flows").mkdir(parents=True)
+    (layout.home / "flows" / "research.too").write_text(
+        "struct Secret:\n  value: Text\nagic private_helper():\n  Help.\nflow():\n  run private_helper\n"
+    )
+    layout.program.write_text("flow parent():\n  run private_helper\n")
+    with pytest.raises(StatePreparationError, match="unknown runnable"):
+        prepare_agent_state(layout)
+    layout.program.write_text("flow parent(_: Secret):\n  run research\n")
+    with pytest.raises(StatePreparationError, match="unknown Toolang type"):
+        prepare_agent_state(layout)

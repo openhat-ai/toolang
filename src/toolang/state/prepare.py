@@ -12,7 +12,7 @@ import re
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import Program
+from ..lang.ast import FlowDecl, Program
 from .state import (
     AgentState,
     agent_state_revision,
@@ -21,6 +21,7 @@ from .state import (
     flow_export,
     flow_module_name,
     public_runnable_index,
+    program_runnable_index,
     _allowed_caps,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
@@ -493,6 +494,7 @@ def _prepare_layer_revision(
                     here_entries, here_files = materialize_program_caps(
                         authored,
                         module_source,
+                        program=program,
                         remote_cache=module_cache or None,
                         progress=progress,
                     )
@@ -625,9 +627,23 @@ def _program_drafts(
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
-    for source in sources:
+    external_flows: dict[str, FlowDecl] = {}
+    for source in sorted(sources, key=lambda source: source.kind == "agent"):
         try:
-            programs.append((source, source.parse()))
+            program = (
+                source.parse(external_flows=external_flows)
+                if source.kind == "agent" and external_flows
+                else source.parse()
+            )
+            programs.append((source, program))
+            if source.kind == "flow":
+                try:
+                    public_name, local_name = flow_export(source.authored_path, program)
+                except ValueError:
+                    continue  # Report invalid exports at the flow-extension layer below.
+                declaration = program_runnable_index(program)[local_name]
+                assert isinstance(declaration, FlowDecl)
+                external_flows[public_name] = declaration
         except Exception as exc:
             diagnostics.append(
                 _diagnostic(

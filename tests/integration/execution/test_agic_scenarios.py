@@ -1164,9 +1164,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                 )
                 assert part.output == {"controls": [str(control.ref)]}
             else:
-                assert (
-                    part.error == "Agent State refresh is unavailable in this executor"
-                )
+                assert part.error == "reload requires a durable Agent State"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

@@ -669,7 +669,7 @@ flow research() -> Text:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
+def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
     harness, _ = _harness(
         tmp_path,
         [
@@ -712,19 +712,16 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
             )
             assert run.status == "succeeded", run.error
             results = _results(harness, run)
-            assert (
-                results["denied"].error and "not available" in results["denied"].error
-            )
+            assert results["denied"].error is None
             assert results["allowed"].error is None
             assert [c.payload.content for c in _recalls(harness, run)] == [
                 "Unselected guidance.",
                 GUIDANCE,
-                "",
             ]
             before = harness.adapter.invocations[0].call.instructions
             after = harness.adapter.invocations[-1].call.instructions
             assert 'ref="skill/private"' in before
-            assert 'ref="skill/private"' not in after
+            assert 'ref="skill/private"' in after
             assert 'ref="skill/testing"' in after
 
     asyncio.run(scenario())
@@ -732,7 +729,7 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
 
 
 @pytest.mark.parametrize("same_batch", [False, True])
-def test_revision_reversal_is_not_reused_across_newer_content(
+def test_bound_guidance_survives_published_revision_reversals(
     tmp_path: Path, same_batch
 ):
     a, b = "Revision A.", "Revision B."
@@ -765,8 +762,10 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             ):
                 if event.output.local.value.tool_call_id == "a":
                     _write_guidance(skill, b)
+                    harness.published = prepare_agent_state(harness.setup.layout)
                 elif event.output.local.value.tool_call_id == "b":
                     _write_guidance(skill, a)
+                    harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
 
@@ -781,9 +780,12 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             )
             assert run.status == "succeeded", run.error
             controls = _recalls(harness, run)
-            assert [c.payload.content for c in controls] == [a, b, a]
+            assert [c.payload.content for c in controls] == [a]
             results = _results(harness, run)
-            assert results["a"].output != results["a-again"].output
+            if same_batch:
+                assert results["a"].output == results["a-again"].output
+            else:
+                assert results["a-again"].output == {"controls": []}
             assert results["visible"].output == {"controls": []}
             assert all(result.error is None for result in results.values())
             assert_run_event_integrity(tracer.events)

@@ -650,7 +650,7 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
                     handle.reload(state=state)
                 harness.adapter._responses.extend(
                     [
-                        *(compact_responses(thread, end) if action == "steer" else []),
+                        *compact_responses(thread, end),
                         reply("done"),
                     ]
                 )

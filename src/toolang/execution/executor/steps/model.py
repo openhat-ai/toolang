@@ -372,7 +372,7 @@ def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
     prepared, _messages, controls, request, _recorded = _candidate(
-        state, *state.execution.state_snapshot()
+        state, *state.execution.state_snapshot(state.prepared.run.run_id)
     )
     return _boundary(state, prepared, request, controls)
 
@@ -382,7 +382,9 @@ def compaction_summary_fits(
 ) -> bool:
     assert state.execution is not None
     prepared, _, _, request, _ = _candidate(
-        state, *state.execution.state_snapshot(), compacted=(end, summary)
+        state,
+        *state.execution.state_snapshot(state.prepared.run.run_id),
+        compacted=(end, summary),
     )
     return (
         prepared.input_budget is not None
@@ -398,7 +400,9 @@ def recover_context_overflow(state: _AgicState, error: ModelResponseError) -> bo
 
     if state.execution is None or not is_context_overflow(error):
         return False
-    prepared, _, _, request, _ = _candidate(state, *state.execution.state_snapshot())
+    prepared, _, _, request, _ = _candidate(
+        state, *state.execution.state_snapshot(state.prepared.run.run_id)
+    )
     if (
         prepared.history is None
         or len(prepared.history.units) < 2
@@ -465,6 +469,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             given=ModelStepGiven(
                 model=prepared.model.ref,
                 setup=prepared.run.setup.revision,
+                catalog_state=(prepared.catalog or prepared.run.state).revision,
                 call=request,
                 messages=recorded,
             ),

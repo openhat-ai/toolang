@@ -452,12 +452,21 @@ A hand is a child Run: the runtime acknowledges scheduling, executes the child,
 then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed public refs
-remain authored routes and may become available after an explicit State reload.
+remain authored routes and become available in the next model-call catalog after
+the watcher publishes them. Reload is optional.
 Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. The three
 inner runtime tool definitions remain available independently of these lists.
 
-Configuration changes affect the runnable and its descendants without mutating
+Each newly accepted named child Run selects the latest published State and checks
+its signature against the caller's bound definition or advertised model catalog.
+Missing targets and changed signatures reject the call. Accepted Runs retain
+their code, types, prompts, caps, and Step revision; inline Agics belong to that
+same plan. Collection items select independently when accepted. Main-module
+flows can call their own runnables and exported flow modules; a flow module can
+call only its own runnables. Explicit same-Run handoffs use the advertised catalog.
+
+Configuration changes affect newly accepted runnables without mutating active
 parents or siblings. Lane defaults are 4 per parallel operation; a statement
 `in N lanes` overrides only that operation.
 

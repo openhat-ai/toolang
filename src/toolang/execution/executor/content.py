@@ -24,8 +24,7 @@ def evaluate_content(
     path: StepRef,
     content: str,
 ) -> Local:
-    state, state_ref = execution.state_for_step(path)
-    binding = execution.current_binding(binding, state, state_ref)
+    state = binding.state
     program = state_program(state, binding.module)
     resources = binding.resources
     if resources is None:

@@ -87,7 +87,7 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
 
 
 @pytest.mark.parametrize("change", ["remap", "remove", "unavailable"])
-def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, change):
+def test_reload_preserves_committed_cwd_before_next_model_call(tmp_path, change):
     from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
     from toolang.execution.records import CwdControlPayload
     from toolang.state.prepare import prepare_agent_state
@@ -148,7 +148,7 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
                     if applied is not None and applied.status == "applied":
                         break
                     await asyncio.sleep(0.01)
-            assert harness.store.current_cwd(handle.run_id) == "lab://"
+            assert harness.store.current_cwd(handle.run_id) == "repo://"
             changes = [
                 c
                 for c in harness.store.list_run_controls(
@@ -157,15 +157,12 @@ def test_reload_invalidates_committed_cwd_before_next_model_call(tmp_path, chang
                 if isinstance(c.payload, CwdControlPayload)
                 and c.payload.cause == "invalidated"
             ]
-            assert len(changes) == 1
-            invalidation = changes[0].payload
-            assert isinstance(invalidation, CwdControlPayload)
-            assert invalidation.state == control.ref
+            assert changes == []
             gate.release()
             result = await handle
             assert result.status == "succeeded", result.error
             assert _locations(harness.adapter.invocations[-1].call)[-1] == (
-                '<toolang:workdir path="lab://"/>'
+                '<toolang:workdir path="repo://"/>'
             )
 
     asyncio.run(scenario())
@@ -1115,7 +1112,7 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
     asyncio.run(scenario())
 
 
-def test_reload_invalidates_active_child_cwd_without_retargeting_its_parent(tmp_path):
+def test_reload_preserves_active_child_and_parent_cwd(tmp_path):
     from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
     from toolang.execution.records import CwdControlPayload
     from toolang.state.prepare import prepare_agent_state
@@ -1181,8 +1178,8 @@ flow parent:
                         break
                     await asyncio.sleep(0.01)
             assert [harness.store.current_cwd(run.id) for run in (parent, child)] == [
-                "lab://",
-                "lab://",
+                "repo://",
+                "repo://src",
             ]
             for run in (parent, child):
                 invalidations = [
@@ -1191,14 +1188,13 @@ flow parent:
                     if isinstance(c.payload, CwdControlPayload)
                     and c.payload.cause == "invalidated"
                 ]
-                assert len(invalidations) == 1
-                assert invalidations[0].state == control.ref
+                assert invalidations == []
             gate.release()
             result = await handle
             assert result.status == "succeeded", result.error
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
-                == '<toolang:workdir path="lab://"/>'
+                == '<toolang:workdir path="repo://src"/>'
             )
 
     asyncio.run(scenario())
@@ -1263,7 +1259,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             gate.release()
             completed = await handle
             assert completed.status == "succeeded", completed.error
-            assert harness.store.current_cwd(completed.id) == "lab://"
+            assert harness.store.current_cwd(completed.id) == "repo://src"
             first_step = harness.store.list_steps(run_id=completed.id)[0].ref
             with pytest.raises(ValueError, match="applied Agent State reloads"):
                 harness.executor.retry(
@@ -1277,7 +1273,7 @@ def test_retry_rejects_applied_reload_and_rerun_uses_new_root(tmp_path):
             )
             assert fresh.status == "succeeded", fresh.error
             assert fresh.id != completed.id
-            assert harness.store.current_cwd(completed.id) == "lab://"
+            assert harness.store.current_cwd(completed.id) == "repo://src"
             assert harness.store.current_cwd(fresh.id) == "repo://"
 
     asyncio.run(scenario())

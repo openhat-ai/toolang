@@ -83,7 +83,7 @@ class AgicRoutes:
         """Return whether authored routing authority permits one target."""
 
         return any(
-            route.runnable.ref == target.ref and action in route.actions
+            route.runnable.qualified == target.qualified and action in route.actions
             for route in self.resolved
         )
 
@@ -96,8 +96,15 @@ def resolve_public_runnable(
 ) -> ResolvedRunnable:
     """Resolve one public runnable with its effective name and owner module."""
 
-    module, executable = resolve_state_runnable(state, name, kind=kind)
-    return ResolvedRunnable(name=name, module=module, executable=executable)
+    parsed = parse_runnable_ref_parts(name)
+    if kind is not None and parsed.kind is not None and kind != parsed.kind:
+        raise ToolangError(f"Runnable kind does not match: {name}")
+    module, executable = resolve_state_runnable(
+        state, parsed.name, kind=kind or parsed.kind
+    )
+    if parsed.module is not None and parsed.module != module:
+        raise ToolangError(f"Runnable not found: {name}")
+    return ResolvedRunnable(name=parsed.name, module=module, executable=executable)
 
 
 def resolve_agic_routes(
@@ -333,6 +340,33 @@ def resolve_bound_runnable(
         kind=kind,
     )
     return runnable
+
+
+def resolve_call_target(
+    state: AgentState, module: str, reference: str
+) -> ResolvedRunnable:
+    """Resolve an authored call without crossing a flow module's boundary."""
+
+    parsed = parse_runnable_ref_parts(reference)
+    if parsed.module is None or parsed.module == module:
+        try:
+            name, runnable = resolve_module_runnable(
+                state, module, parsed.name, kind=parsed.kind
+            )
+            return ResolvedRunnable(name, module, runnable)
+        except ToolangError as exc:
+            if not str(exc).startswith("Runnable not found:"):
+                raise
+        if parsed.module is not None:
+            raise ToolangError(f"Runnable not found: {reference}")
+    if module != "agent":
+        raise ToolangError(f"Runnable not found in module {module}: {reference}")
+    target = resolve_public_runnable(state, parsed.name, kind=parsed.kind)
+    if not isinstance(target.executable, FlowDecl) or (
+        parsed.module is not None and parsed.module != target.module
+    ):
+        raise ToolangError(f"Runnable not found: {reference}")
+    return target
 
 
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:

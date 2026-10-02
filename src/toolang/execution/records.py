@@ -607,12 +607,15 @@ class StoredModelStepGiven:
     model: str
     call: ModelCallRefs
     setup: str = field(kw_only=True)
+    catalog_state: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
             raise ValueError("stored model given requires a model identity")
         if not isinstance(self.setup, str) or not self.setup:
             raise TypeError("stored model setup requires a revision string")
+        if self.catalog_state is not None:
+            _validate_state_revision(self.catalog_state, label="model catalog State")
         if not isinstance(self.call, ModelCallRefs):
             raise TypeError("stored model given requires ModelCallRefs")
 
@@ -1230,7 +1233,14 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
 
     if kind == "model":
         payload = _canonical_object(
-            data, fields={"model", "setup", "call"}, label="model given"
+            data,
+            fields={"model", "setup", "call"}
+            | (
+                {"catalog_state"}
+                if isinstance(data, Mapping) and "catalog_state" in data
+                else set()
+            ),
+            label="model given",
         )
         model = payload["model"]
         if not isinstance(model, str):
@@ -1238,6 +1248,11 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
         return ModelStepGiven(
             model=model,
             setup=_required_text(payload["setup"], label="setup revision"),
+            catalog_state=_required_text(
+                payload["catalog_state"], label="catalog State revision"
+            )
+            if "catalog_state" in payload
+            else None,
             call=model_call_from_data(payload["call"]),
         )
     if kind == "tool":
@@ -1275,6 +1290,11 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
     validate_step_given(kind, given)
     if isinstance(given, ModelStepGiven):
         return {
+            **(
+                {"catalog_state": given.catalog_state}
+                if given.catalog_state is not None
+                else {}
+            ),
             "model": given.model,
             "setup": given.setup,
             "call": model_call_to_data(given.call),
@@ -1300,7 +1320,14 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     if kind != "model":
         return cast(StoredStepGiven, step_given_from_data(kind, data))
     payload = _canonical_object(
-        data, fields={"model", "setup", "call"}, label="model given"
+        data,
+        fields={"model", "setup", "call"}
+        | (
+            {"catalog_state"}
+            if isinstance(data, Mapping) and "catalog_state" in data
+            else set()
+        ),
+        label="model given",
     )
     model = payload["model"]
     if not isinstance(model, str) or not model:
@@ -1340,6 +1367,11 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     return StoredModelStepGiven(
         model=model,
         setup=_required_text(payload["setup"], label="setup revision"),
+        catalog_state=_required_text(
+            payload["catalog_state"], label="catalog State revision"
+        )
+        if "catalog_state" in payload
+        else None,
         call=ModelCallRefs(
             instructions=instructions,
             version=call["version"],
@@ -1376,6 +1408,11 @@ def stored_step_given_to_data(
         if kind != "model":
             raise TypeError(f"{kind} Step cannot store model given facts")
         return {
+            **(
+                {"catalog_state": given.catalog_state}
+                if given.catalog_state is not None
+                else {}
+            ),
             "model": given.model,
             "setup": given.setup,
             "call": {

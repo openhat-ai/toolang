@@ -313,6 +313,7 @@ class ExecutionHarness:
     executor: RunExecutor
     threads: ThreadManager
     adapter: ScriptedModelAdapter
+    published: AgentState | None = None
 
     @classmethod
     def create(
@@ -381,7 +382,7 @@ class ExecutionHarness:
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")
-        return cls(
+        harness = cls(
             setup=setup,
             state=state,
             store=store,
@@ -402,6 +403,9 @@ class ExecutionHarness:
             threads=ThreadManager(store, ids),
             adapter=adapter,
         )
+
+        harness.executor._state = lambda: harness.published or harness.state
+        return harness
 
     def run_spec(
         self,

@@ -10,10 +10,12 @@ from toolang.lang.contracts import OutputContract
 from toolang.common.errors import ToolangError
 from toolang.lang.input import coerce_output
 
+from toolang.state.state import state_program
+from ...runnables import resolve_call_target
 from ...records import ControlRecord, StepRef
 from ...types import IterationOccurrence, Occurrence, OccurrencePosition
 from ..common import BoundRun
-from ..common import Local, require_list, program_structs
+from ..common import Local, require_list
 from ..content import evaluate_content
 from ..iteration import IterationScope, IterationFrame, snapshot, iteration_scope
 from ..steps import loop as loop_step
@@ -59,9 +61,11 @@ async def execute(
                 binding, path, statement.runnable, {**locals, "_": element(index)}
             )
         output_type = reducer.output or "Text"
-        structs = program_structs(
-            execution.current_binding(binding, *execution.state_for_step(path))
-        )
+        target = resolve_call_target(binding.state, binding.module, statement.runnable)
+        structs = {
+            item.name: item
+            for item in state_program(binding.state, target.module).structs
+        }
         output_contract = OutputContract.resolve(output_type, structs=structs)
         if statement.initial is None:
             if output_type != item_type:
@@ -113,7 +117,7 @@ async def execute(
 
     return await loop_step.execute(
         execution.emit,
-        begin_step=execution.begin_step,
+        begin_step=execution.step_starter(binding),
         binding=binding,
         path=path,
         statement=statement,

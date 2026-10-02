@@ -90,6 +90,7 @@ def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
     (repo / "src/AGENTS.md").write_text("Scoped rules.")
     (repo / "src/unused/AGENTS.md").write_text("Unused rules.")
     publication = _workspace_state(harness, {"repo": repo})
+    harness.published = publication
     return harness, repo, publication
 
 
@@ -735,7 +736,7 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
+def test_reload_preserves_the_workspace_at_the_tool_boundary(tmp_path):
     next_publication = None
 
     async def refresh():
@@ -764,17 +765,13 @@ def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
         async with harness:
             run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
             assert run.status == "succeeded", run.error
-            assert not (repo / "src/result").exists()
-            assert (new_repo / "src/result").read_text() == "done"
+            assert (repo / "src/result").read_text() == "done"
+            assert not (new_repo / "src/result").exists()
             payloads = [c.payload for c in _recalls(harness, run)]
             assert [p.content for p in payloads] == [
                 "Root rules.",
                 "Scoped rules.",
-                "",
-                "",
-                "New root rules.",
             ]
-            assert all(p.revision == "0" for p in payloads[2:4])
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
