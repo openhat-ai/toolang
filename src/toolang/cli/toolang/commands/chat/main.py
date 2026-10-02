@@ -390,6 +390,12 @@ def _chat_runtime(
                 ),
             )
             try:
+                for diagnostic in local.state_watcher.diagnostics():
+                    typer.secho(
+                        f"Warning: Using previous agent state: {diagnostic.message}",
+                        fg=typer.colors.YELLOW,
+                        err=True,
+                    )
                 yield local
             finally:
                 local.close()
