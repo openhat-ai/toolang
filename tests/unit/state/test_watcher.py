@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 from pathlib import Path
 import threading
@@ -11,6 +12,33 @@ from toolang.common.layout import AgentLayout
 from toolang.state import collections as state_collections
 from toolang.state import watcher as state_watcher
 from toolang.state.prepare import prepare_agent_state
+
+
+def test_obsolete_publications_are_released_but_history_remains_loadable(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic answer:\n  First.\n")
+    watcher = state_watcher.StateWatcher(layout)
+
+    async def publish_versions():
+        # An accepted Run holds its own strong reference to this publication.
+        accepted = await watcher.refresh()
+        for version in range(12):
+            layout.program.write_text(f"agic answer:\n  Version {version}.\n")
+            await watcher.refresh()
+        gc.collect()
+        assert watcher.load(accepted.revision) is accepted
+        assert len(watcher._states) == 2
+        return accepted.revision
+
+    old_revision = asyncio.run(publish_versions())
+    gc.collect()
+    assert len(watcher._states) == 1
+    current = watcher.current()
+    historical = watcher.load(old_revision)
+    assert historical.modules["agent"].agics[0].messages[0].content == "First."
+    assert watcher.current() is current
+    assert watcher.load(old_revision) is historical
 
 
 def test_current_requires_initial_refresh(tmp_path: Path) -> None:

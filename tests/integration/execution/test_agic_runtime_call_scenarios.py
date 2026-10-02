@@ -1,4 +1,4 @@
-"""Agic-owned runtime reload and public runnable call scenarios."""
+"""Agic-owned published State and public runnable call scenarios."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingRunTracer,
+    PublicationTracer,
     RecordingTool,
 )
 from toolang.base.types.message import Message, ToolResultPart, message_text
@@ -29,7 +30,6 @@ from toolang.execution.values import parts_from_local
 from toolang.execution.records import (
     ExecuteControlPayload,
     RunControlPayload,
-    ReloadControlPayload,
 )
 from toolang.execution.types import (
     ErrorMessage,
@@ -228,7 +228,6 @@ agic child(_: Text) -> Text:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
             }
             assert_run_event_integrity(tracer.events)
@@ -691,7 +690,7 @@ flow outer(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_dynamic_run_rejects_reloaded_ancestor_by_public_identity(
+def test_dynamic_run_rejects_published_ancestor_by_public_identity(
     tmp_path: Path,
 ) -> None:
     source = """
@@ -709,7 +708,7 @@ agic caller(_: Text) -> Text:
 flow -> Text:
   run caller
 """
-    reloaded_flow = initial_flow.replace(
+    published_flow = initial_flow.replace(
         "flow -> Text:", "flow outer(_: Text) -> Text:"
     )
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -725,19 +724,18 @@ flow -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        tool_call_id="reload-ancestor",
-                        call_id="provider-reload-ancestor",
-                        name="_toolang__reload",
+                        tool_call_id="publication-ancestor",
+                        call_id="provider-publication-ancestor",
+                        name="test__checkpoint",
                         input={},
                     ),
                     ToolCall(
-                        tool_call_id="run-reloaded-ancestor",
-                        call_id="provider-run-reloaded-ancestor",
+                        tool_call_id="run-published-ancestor",
+                        call_id="provider-run-published-ancestor",
                         name="_toolang__run",
                         input={
                             "runnable": "flow:outer",
@@ -748,11 +746,15 @@ flow -> Text:
             ),
             ModelCallResult(message=Message.assistant("recovered")),
         ),
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     async def scenario() -> None:
         await watcher.refresh()
-        flow_source.write_text(reloaded_flow, encoding="utf-8")
+        flow_source.write_text(published_flow, encoding="utf-8")
+        tracer = PublicationTracer(
+            harness, {"publication-ancestor": await watcher.refresh()}
+        )
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             root = await harness.executor.run(
@@ -760,7 +762,8 @@ flow -> Text:
                     thread=thread,
                     runnable="flow:outer",
                     primary=resolve_input_parts("start"),
-                )
+                ),
+                tracer=tracer,
             )
 
             assert root.status == "succeeded", root.error
@@ -941,143 +944,7 @@ agic child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_reload_records_a_tool_step_and_new_flow_runs_in_same_root(
-    tmp_path: Path,
-) -> None:
-    source = """
-agic parent(_: Text) -> Text:
-  recall = none
-  hands = flow:new_flow
-  context = none
-  instruct = none
-  user: {{_}}
-"""
-    layout = AgentLayout.resident(tmp_path, "alice")
-    layout.home.mkdir(parents=True, exist_ok=True)
-    layout.program.write_text(source, encoding="utf-8")
-    initial = prepare_agent_state(layout)
-    watcher = StateWatcher(layout)
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        state=initial,
-        refresh_state=watcher.refresh_result,
-        responses=(
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        tool_call_id="call-reload",
-                        call_id="provider-reload",
-                        name="_toolang__reload",
-                        input={},
-                    ),
-                )
-            ),
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        tool_call_id="call-new-flow",
-                        call_id="provider-new-flow",
-                        name="_toolang__run",
-                        input={
-                            "runnable": "flow:new_flow",
-                            "input": {
-                                "_": "topic",
-                                "brief": {"title": "generated"},
-                            },
-                        },
-                    ),
-                )
-            ),
-            ModelCallResult(message=Message.assistant("finished")),
-        ),
-    )
-
-    async def scenario() -> None:
-        await watcher.refresh()
-        flows = layout.home / "flows"
-        flows.mkdir(parents=True, exist_ok=True)
-        (flows / "new_flow.too").write_text(
-            """struct Brief:
-  title: Text
-
-flow new_flow(_: Text, brief: Brief) -> Text:
-  let result =
-    {{brief.title}} {{_}}
-""",
-            encoding="utf-8",
-        )
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="agic:parent",
-                    primary=resolve_input_parts("start"),
-                )
-            )
-
-            assert root.status == "succeeded", root.error
-            steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == [
-                "model",
-                "tool",
-                "model",
-                "tool",
-                "model",
-            ]
-            assert steps[0].state == steps[1].state
-            assert steps[0].state != steps[2].state
-            assert steps[2].state == steps[3].state == steps[4].state
-            controls = harness.store.list_run_controls(run_id=root.id)
-            reload_control = next(item for item in controls if item.kind == "reload")
-            assert reload_control.status == "applied"
-            second_call = harness.adapter.invocations[1].call
-            reload_result = next(
-                part
-                for message in second_call.messages
-                for part in message.parts
-                if isinstance(part, ToolResultPart)
-                and part.tool_name == "_toolang__reload"
-            )
-            assert isinstance(reload_result, ToolResultPart)
-            assert reload_result.error is None
-            assert isinstance(reload_control.payload, ReloadControlPayload)
-            assert reload_result.output == {
-                "controls": [
-                    {
-                        "ref": str(reload_control.ref),
-                        "state": reload_control.payload.state,
-                    }
-                ]
-            }
-            assert "flow:new_flow" in {
-                item["ref"] for item in route_snapshots(second_call)["hands"]
-            }
-            dynamic = steps[3]
-            assert isinstance(dynamic.given, ToolStepGiven)
-            assert dynamic.given.call.input["runnable"] == "flow:new_flow"
-            assert reload_control.triggered_by == steps[1].ref
-            assert not [control for control in controls if control.kind == "recall"]
-            assert steps[2].preceded_by == (reload_control.ref,)
-            assert [
-                harness.store.rebuild_model_call(step)
-                for step in steps
-                if step.kind == "model"
-            ] == [item.call for item in harness.adapter.invocations]
-            history = harness.store.recent_conversation_messages(
-                thread_id=thread,
-            )
-            assert any(
-                isinstance(part, ToolResultPart) and part.tool_call_id == "call-reload"
-                for message in history
-                for part in message.parts
-            )
-
-    asyncio.run(scenario())
-
-
-def test_reload_then_run_does_not_rebuild_the_calling_agic_frame(
+def test_publication_then_run_does_not_rebuild_the_calling_agic_frame(
     tmp_path: Path,
 ) -> None:
     source = """
@@ -1092,7 +959,7 @@ flow target(_: Text) -> Text:
   let result =
     completed {{_}}
 """
-    reloaded_source = """
+    published_source = """
 flow target(_: Text) -> Text:
   let result =
     completed {{_}}
@@ -1106,19 +973,18 @@ flow target(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        tool_call_id="reload-with-run",
-                        call_id="provider-reload-with-run",
-                        name="_toolang__reload",
+                        tool_call_id="publication-with-run",
+                        call_id="provider-publication-with-run",
+                        name="test__checkpoint",
                         input={},
                     ),
                     ToolCall(
-                        tool_call_id="run-after-reload",
-                        call_id="provider-run-after-reload",
+                        tool_call_id="run-after-publication",
+                        call_id="provider-run-after-publication",
                         name="_toolang__run",
                         input={
                             "runnable": "flow:target",
@@ -1127,12 +993,15 @@ flow target(_: Text) -> Text:
                     ),
                 )
             ),
+            ModelCallResult(message=Message.assistant("continued")),
         ),
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     async def scenario() -> None:
         await watcher.refresh()
-        layout.program.write_text(reloaded_source, encoding="utf-8")
+        layout.program.write_text(published_source, encoding="utf-8")
+        harness.published = await watcher.refresh()
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             root = await harness.executor.run(
@@ -1143,15 +1012,15 @@ flow target(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "failed"
-            assert "Runnable not found: parent" in str(root.error)
+            assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
                 ("tool", "succeeded"),
                 ("tool", "succeeded"),
+                ("model", "succeeded"),
             ]
-            assert steps[0].state != steps[2].state
+            assert steps[0].state == steps[2].state
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
@@ -1162,12 +1031,12 @@ flow target(_: Text) -> Text:
                 step.status != "running"
                 for step in harness.store.list_steps(run_id=child.id)
             )
-            assert len(harness.adapter.invocations) == 1
+            assert len(harness.adapter.invocations) == 2
 
     asyncio.run(scenario())
 
 
-def test_model_reload_applies_state_and_next_model_step_reports_missing_agic(
+def test_model_publication_keeps_an_active_agic_deleted_from_latest_state(
     tmp_path: Path,
 ) -> None:
     source = """
@@ -1186,15 +1055,14 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        tool_call_id="incompatible-reload",
+                        tool_call_id="incompatible-publication",
                         call_id="provider-incompatible",
-                        name="_toolang__reload",
-                        input={},
+                        name="_toolang__chdir",
+                        input={"path": "lab://"},
                     ),
                 )
             ),
@@ -1208,6 +1076,7 @@ agic parent(_: Text) -> Text:
             source.replace("parent", "replacement"),
             encoding="utf-8",
         )
+        harness.published = await watcher.refresh()
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             root = await harness.executor.run(
@@ -1218,18 +1087,9 @@ agic parent(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "failed"
+            assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "tool"]
-            reload_control = next(
-                item
-                for item in harness.store.list_run_controls(run_id=root.id)
-                if item.kind == "reload"
-            )
-            assert reload_control.status == "applied"
-            assert reload_control.error is None
-            assert "Runnable not found: parent" in str(root.error)
-            assert watcher.current().revision != initial.revision
+            assert [step.kind for step in steps] == ["model", "tool", "model"]
 
     asyncio.run(scenario())
 
@@ -1299,229 +1159,6 @@ flow child(_: Text) -> Text:
             assert steps[1].error == ErrorMessage("child persistence failed")
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert len(harness.adapter.invocations) == 1
-
-    asyncio.run(scenario())
-
-
-def test_reload_returns_candidate_diagnostics_without_a_control(
-    tmp_path: Path,
-) -> None:
-    source = """
-agic parent(_: Text) -> Text:
-  recall = none
-  context = none
-  instruct = none
-  user: {{_}}
-"""
-    layout = AgentLayout.resident(tmp_path, "alice")
-    layout.home.mkdir(parents=True, exist_ok=True)
-    layout.program.write_text(source, encoding="utf-8")
-    initial = prepare_agent_state(layout)
-    watcher = StateWatcher(layout)
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        state=initial,
-        refresh_state=watcher.refresh_result,
-        responses=(
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        tool_call_id="invalid-reload",
-                        call_id="provider-invalid",
-                        name="_toolang__reload",
-                        input={},
-                    ),
-                )
-            ),
-            ModelCallResult(message=Message.assistant("continued")),
-        ),
-    )
-
-    async def scenario() -> None:
-        await watcher.refresh()
-        flows = layout.home / "flows"
-        flows.mkdir(parents=True, exist_ok=True)
-        (flows / "research.too").write_text(
-            "flow other:\n  pass\n",
-            encoding="utf-8",
-        )
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="agic:parent",
-                    primary=resolve_input_parts("start"),
-                )
-            )
-
-            assert root.status == "succeeded", root.error
-            assert all(
-                item.kind != "reload"
-                for item in harness.store.list_run_controls(run_id=root.id)
-            )
-            result = last_tool_result(harness.adapter.invocations[1].call)
-            assert isinstance(result, ToolResultPart)
-            assert result.error == "Agent State refresh failed"
-            assert set(result.output) == {"diagnostics"}
-            diagnostics = result.output["diagnostics"]
-            assert diagnostics[0]["code"] == "invalid-flow-export"
-
-    asyncio.run(scenario())
-
-
-def test_reload_of_unchanged_state_records_an_applied_noop_control(
-    tmp_path: Path,
-) -> None:
-    source = """
-agic parent(_: Text) -> Text:
-  recall = none
-  context = none
-  instruct = none
-  user: {{_}}
-"""
-    layout = AgentLayout.resident(tmp_path, "alice")
-    layout.home.mkdir(parents=True, exist_ok=True)
-    layout.program.write_text(source, encoding="utf-8")
-    initial = prepare_agent_state(layout)
-    watcher = StateWatcher(layout)
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        state=initial,
-        refresh_state=watcher.refresh_result,
-        responses=(
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        tool_call_id="unchanged-reload",
-                        call_id="provider-unchanged",
-                        name="_toolang__reload",
-                        input={},
-                    ),
-                )
-            ),
-            ModelCallResult(message=Message.assistant("continued")),
-        ),
-    )
-
-    async def scenario() -> None:
-        await watcher.refresh()
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="agic:parent",
-                    primary=resolve_input_parts("start"),
-                )
-            )
-
-            assert root.status == "succeeded", root.error
-            steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "tool", "model"]
-            assert steps[0].state != steps[2].state
-            assert harness.store.resolve_state_revision(steps[0].state) == (
-                harness.store.resolve_state_revision(steps[2].state)
-            )
-            reload_control = next(
-                item
-                for item in harness.store.list_run_controls(run_id=root.id)
-                if item.kind == "reload"
-            )
-            assert reload_control.status == "applied"
-            result = last_tool_result(harness.adapter.invocations[1].call)
-            assert isinstance(result, ToolResultPart)
-            assert result.error is None
-            assert isinstance(reload_control.payload, ReloadControlPayload)
-            assert result.output == {
-                "controls": [
-                    {
-                        "ref": str(reload_control.ref),
-                        "state": reload_control.payload.state,
-                    }
-                ]
-            }
-
-    asyncio.run(scenario())
-
-
-def test_reload_worker_failure_finishes_control_and_wakes_model(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = """
-agic parent(_: Text) -> Text:
-  recall = none
-  context = none
-  instruct = none
-  user: {{_}}
-"""
-    layout = AgentLayout.resident(tmp_path, "alice")
-    layout.home.mkdir(parents=True, exist_ok=True)
-    layout.program.write_text(source, encoding="utf-8")
-    initial = prepare_agent_state(layout)
-    watcher = StateWatcher(layout)
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        state=initial,
-        refresh_state=watcher.refresh_result,
-        responses=(
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        tool_call_id="failed-reload",
-                        call_id="provider-failed-reload",
-                        name="_toolang__reload",
-                        input={},
-                    ),
-                )
-            ),
-            ModelCallResult(message=Message.assistant("recovered")),
-        ),
-    )
-    finish = harness.store.finish_run_controls
-
-    def fail_reload_control(**kwargs: Any) -> None:
-        indexes = tuple(kwargs["indexes"])
-        controls = tuple(
-            harness.store.get_run_control(run_id=kwargs["run_id"], index=index)
-            for index in indexes
-        )
-        if any(
-            control is not None and control.kind == "reload" for control in controls
-        ):
-            raise RuntimeError("reload persistence failed")
-        finish(**kwargs)
-
-    monkeypatch.setattr(harness.store, "finish_run_controls", fail_reload_control)
-
-    async def scenario() -> None:
-        await watcher.refresh()
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="agic:parent",
-                    primary=resolve_input_parts("start"),
-                )
-            )
-
-            assert root.status == "succeeded", root.error
-            reload_control = next(
-                item
-                for item in harness.store.list_run_controls(run_id=root.id)
-                if item.kind == "reload"
-            )
-            assert reload_control.status == "wontapply"
-            assert reload_control.error == "reload persistence failed"
-            result = last_tool_result(harness.adapter.invocations[1].call)
-            assert isinstance(result, ToolResultPart)
-            assert result.tool_call_id == "failed-reload"
-            assert result.error == "reload persistence failed"
 
     asyncio.run(scenario())
 
@@ -1612,7 +1249,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flow:research"
+            assert accepted.payload.runnable == "flows::research::flow:research"
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
@@ -1718,7 +1355,6 @@ agic target(_: Text) -> Text:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "web__search",
             }
@@ -1726,7 +1362,6 @@ agic target(_: Text) -> Text:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "web__search",
             }
@@ -1736,7 +1371,6 @@ agic target(_: Text) -> Text:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "web__search",
             }
@@ -1914,7 +1548,6 @@ agic caller() -> Text:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
             }
             assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
@@ -1924,55 +1557,6 @@ agic caller() -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
-
-    asyncio.run(scenario())
-
-
-def test_reload_without_refresh_returns_a_correlated_runtime_error(
-    tmp_path: Path,
-) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-agic caller() -> Text:
-  recall = none
-  context = none
-  instruct = none
-  Call.
-""",
-        responses=(
-            ModelCallResult(
-                tool_calls=(
-                    ToolCall(
-                        "reload",
-                        "provider-reload",
-                        "_toolang__reload",
-                        {},
-                    ),
-                )
-            ),
-            ModelCallResult(message=Message.assistant("recovered")),
-        ),
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.run(
-                harness.run_spec(thread=thread, runnable="agic:caller")
-            )
-
-            assert root.status == "succeeded", root.error
-            assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
-                "model",
-                "tool",
-                "model",
-            ]
-            assert not harness.store.list_run_controls(run_id=root.id, kind="reload")
-            result = last_tool_result(harness.adapter.invocations[1].call)
-            assert isinstance(result, ToolResultPart)
-            assert result.tool_call_id == "reload"
-            assert result.error == "Agent State refresh is unavailable in this executor"
 
     asyncio.run(scenario())
 
@@ -2353,7 +1937,7 @@ agic target() -> Text:
     asyncio.run(scenario())
 
 
-def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
+def test_dynamic_public_agic_keeps_its_resource_scope_after_publication(
     tmp_path: Path,
 ) -> None:
     source = """instruct target_instruct:
@@ -2389,7 +1973,6 @@ agic target(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         tools=tools,
         responses=(
             ModelCallResult(
@@ -2408,10 +1991,10 @@ agic target(_: Text) -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        tool_call_id="reload-public-target",
-                        call_id="provider-reload-public-target",
-                        name="_toolang__reload",
-                        input={},
+                        tool_call_id="publication-public-target",
+                        call_id="provider-publication-public-target",
+                        name="_toolang__chdir",
+                        input={"path": "lab://"},
                     ),
                 )
             ),
@@ -2426,6 +2009,9 @@ agic target(_: Text) -> Text:
             source.replace("old target state", "new target state"),
             encoding="utf-8",
         )
+        tracer = PublicationTracer(
+            harness, {"publication-public-target": await watcher.refresh()}
+        )
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             root = await harness.executor.run(
@@ -2433,31 +2019,30 @@ agic target(_: Text) -> Text:
                     thread=thread,
                     runnable="flow:outer",
                     primary=resolve_input_parts("start"),
-                )
+                ),
+                tracer=tracer,
             )
 
             assert root.status == "succeeded", root.error
-            before_reload = harness.adapter.invocations[1].call
-            after_reload = harness.adapter.invocations[2].call
-            assert {tool.name for tool in before_reload.tools} == {
+            before_publication = harness.adapter.invocations[1].call
+            after_publication = harness.adapter.invocations[2].call
+            assert {tool.name for tool in before_publication.tools} == {
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "beta__use",
             }
-            assert {tool.name for tool in after_reload.tools} == {
+            assert {tool.name for tool in after_publication.tools} == {
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "beta__use",
             }
-            assert "old target state" in before_reload.instructions
-            assert "new target state" in after_reload.instructions
-            assert f"bound route {target}" in before_reload.instructions
-            assert f"bound route {target}" in after_reload.instructions
+            assert "old target state" in before_publication.instructions
+            assert "old target state" in after_publication.instructions
+            assert f"bound route {target}" in before_publication.instructions
+            assert f"bound route {target}" in after_publication.instructions
 
     asyncio.run(scenario())

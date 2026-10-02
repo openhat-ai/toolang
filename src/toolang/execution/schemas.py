@@ -811,7 +811,10 @@ class StepData:
             if call is None:
                 raise ValueError(f"model call is missing for Step {step.ref}")
             given: StepGiven = ModelStepGiven(
-                model=step.given.model, setup=step.given.setup, call=call
+                model=step.given.model,
+                setup=step.given.setup,
+                call=call,
+                catalog_state=step.given.catalog_state,
             )
         else:
             given = step.given

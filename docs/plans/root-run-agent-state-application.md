@@ -1,5 +1,10 @@
 # Define Agent State Reload Controls
 
+State switching and reload in this historical plan are superseded by
+[Latest-State Run Binding](revision-refresh-calls.md). The reload tool and
+control have been removed.
+
+
 ## Status
 
 Approved. Amended on 2026-08-28 so every future Run and Step boundary reads the

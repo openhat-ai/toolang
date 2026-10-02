@@ -15,9 +15,11 @@ from toolang.execution.remote import RemoteRunClient
 from toolang.up.types import AgentServerRef
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
 def test_acquire_run_client_uses_local_embedding_without_a_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    interrupted: bool,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     catalog = tmp_path / "models.json"
@@ -26,6 +28,15 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
     state = Mock(refresh=AsyncMock())
     executor = Mock(stop=AsyncMock())
     local_client = Mock(connect=AsyncMock(), disconnect=AsyncMock())
+    watching = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def watch(*, stop_signal: asyncio.Event) -> None:
+        watching.set()
+        await stop_signal.wait()
+        stopped.set()
+
+    state.run = AsyncMock(side_effect=watch)
 
     def open_store(path: Path) -> Mock:
         assert path == layout.run_store
@@ -87,9 +98,19 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
             assert selected is local_client
             store.close.assert_not_called()
             executor.stop.assert_not_awaited()
+            await asyncio.wait_for(watching.wait(), 1)
+            assert not stopped.is_set()
+            if interrupted:
+                raise asyncio.CancelledError
 
-    asyncio.run(scenario())
+    if interrupted:
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(scenario())
+    else:
+        asyncio.run(scenario())
 
+    assert stopped.is_set()
+    state.run.assert_awaited_once()
     state.refresh.assert_awaited_once_with()
     setup.refresh.assert_awaited_once_with()
     executor.start.assert_called_once_with()

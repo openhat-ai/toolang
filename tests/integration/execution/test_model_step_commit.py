@@ -62,23 +62,23 @@ agic chat(_: Part[]) -> Part[]:
             persist(**kwargs)
         raise RuntimeError("injected begin failure")
 
-    async def reprepare(execution, build):
+    async def reprepare(execution, build, *, run_id):
         nonlocal prepared
         if not prepared:
             prepared = True
             before = tuple(execution._preceding_controls)
             assert before
             if boundary == "prepare":
-                build(*execution._current_state)
+                build(*execution.state_snapshot(run_id))
             else:
                 with monkeypatch.context() as patch:
                     patch.setattr(harness.store, "begin_step", fail_write)
                     with pytest.raises(RuntimeError, match="injected begin failure"):
-                        await begin(execution, build)
+                        await begin(execution, build, run_id=run_id)
                 assert tuple(execution._preceding_controls) == before
                 assert harness.store.list_steps(run_id=str(before[0].target)) == []
                 assert harness.adapter.invocations == []
-        return await begin(execution, build)
+        return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", reprepare)
 
@@ -119,10 +119,10 @@ def test_cancel_during_model_begin_records_one_canceled_step(
     )
     begin = _Execution.begin_step
 
-    async def wait_before_begin(execution, build):
+    async def wait_before_begin(execution, build, *, run_id):
         if not committed and not gate.entered:
             await gate.wait()
-        return await begin(execution, build)
+        return await begin(execution, build, run_id=run_id)
 
     class Tracer(RecordingRunTracer):
         async def on_event(self, event: RunEvent) -> None:
@@ -180,7 +180,7 @@ def test_controls_received_before_model_begin_enter_that_call(
     begin = _Execution.begin_step
     expected_controls: list[ControlRecord] = []
 
-    async def wait_before_begin(execution, build):
+    async def wait_before_begin(execution, build, *, run_id):
         if not gate.entered:
             if prepared:
                 root_id = execution._active.root_run_id
@@ -191,9 +191,9 @@ def test_controls_received_before_model_begin_enter_that_call(
                         timing="next_call",
                     )
                 )
-                build(*execution._current_state)
+                build(*execution.state_snapshot(run_id))
             await gate.wait()
-        return await begin(execution, build)
+        return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", wait_before_begin)
 
@@ -294,9 +294,9 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
     tracer = Tracer()
     begin = _Execution.begin_step
 
-    async def reprepare(execution, build):
-        build(*execution._current_state)
-        return await begin(execution, build)
+    async def reprepare(execution, build, *, run_id):
+        build(*execution.state_snapshot(run_id))
+        return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", reprepare)
 
@@ -350,7 +350,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
 
 
 @pytest.mark.parametrize("child", [False, True])
-def test_reload_and_inputs_are_adopted_in_control_order(
+def test_publication_and_inputs_are_adopted_in_control_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, child: bool
 ) -> None:
     source = """instruct chat_instruct: original instructions
@@ -374,19 +374,19 @@ flow parent() -> Text:
         source.replace("original instructions", "updated instructions"),
         encoding="utf-8",
     )
-    reloaded = prepare_agent_state(harness.setup.layout)
+    published = prepare_agent_state(harness.setup.layout)
     gate = AsyncGate()
     tracer = RecordingRunTracer()
     begin = _Execution.begin_step
     model_run_id = ""
 
-    async def wait_before_begin(execution, build):
+    async def wait_before_begin(execution, build, *, run_id):
         nonlocal model_run_id
-        candidate = build(*execution._current_state)
+        candidate = build(*execution.state_snapshot(run_id))
         if candidate.kind == "model":
             model_run_id = candidate.step.run_id
             await gate.wait()
-        return await begin(execution, build)
+        return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", wait_before_begin)
 
@@ -405,14 +405,7 @@ flow parent() -> Text:
                 message=Message.user("change"),
                 timing="next_call",
             )
-            reload = handle.reload(reloaded)
-            applied = await asyncio.wait_for(
-                harness.executor._wait_for_control(
-                    harness.executor._active[handle.run_id], reload
-                ),
-                timeout=2,
-            )
-            assert applied.status == "applied"
+            harness.published = published
             recall = harness.store.accept_recall_control(
                 run_id=model_run_id,
                 payload=RecallControlPayload(
@@ -426,19 +419,15 @@ flow parent() -> Text:
             assert run.status == "succeeded", run.error
             (step,) = harness.store.list_steps(run_id=model_run_id)
             entry = ControlRef.for_run(model_run_id, 0)
-            expected = (
-                (reload.ref, entry, steer.ref, recall.ref)
-                if child
-                else (entry, steer.ref, reload.ref, recall.ref)
-            )
+            expected = (entry, steer.ref, recall.ref)
             assert step.preceded_by == (
                 *expected,
                 harness.store.list_run_controls(run_id=model_run_id)[-1].ref,
             )
-            assert step.state == reload.ref
+            assert step.state == entry
             (call,) = harness.adapter.invocations
-            assert "updated instructions" in call.call.instructions
-            assert "original instructions" not in call.call.instructions
+            assert "original instructions" in call.call.instructions
+            assert "updated instructions" not in call.call.instructions
             assert call.call.messages[1] == steer_message("change")
 
     asyncio.run(scenario())

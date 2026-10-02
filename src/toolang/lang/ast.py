@@ -386,7 +386,9 @@ class Program(Node):
         return next((item for item in self.contexts if item.name == name), None)
 
     @classmethod
-    def from_source(cls, source: str) -> Program:
+    def from_source(
+        cls, source: str, *, external_flows: Mapping[str, FlowDecl] | None = None
+    ) -> Program:
         from .lower import _lower
         from .validate import _validate
         from .errors import ToolangSourceError, source_location
@@ -394,7 +396,7 @@ class Program(Node):
         try:
             with source_location(1):
                 program = _lower(_parse_source(source))
-                _validate(program)
+                _validate(program, external_flows=external_flows)
         except ToolangSourceError as exc:
             if exc.column is None:
                 lines = source_lines(source)

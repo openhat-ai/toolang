@@ -106,7 +106,6 @@ def _end(begin, status="succeeded", output=None):
             {"kind": "service", "ref": "home://services/github"},
             "Loaded guidance: service/github",
         ),
-        ("reload", {}, "Reloaded agent state"),
         ("compact", {}, "Compacted thread history in 1m20s"),
     ],
 )
@@ -161,7 +160,7 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
             assert "✧" in rendered
 
 
-@pytest.mark.parametrize("name", ["pick", "reload", "compact", "honor"])
+@pytest.mark.parametrize("name", ["pick", "compact", "honor"])
 @pytest.mark.parametrize("status", ["failed", "canceled"])
 def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, status):
     begin = _begin(name)

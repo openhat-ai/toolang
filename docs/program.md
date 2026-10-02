@@ -38,16 +38,17 @@ agent.too
 flows/<name>.too
 ```
 
-Every file is parsed and semantically validated as an independent Toolang
-program. A flow module cannot use structs, contexts, instructs, caps, agics, or
-flows declared in another file.
+Every file has its own declarations and private type namespace. State composition
+also validates main-module calls to exported flows. A flow module cannot use
+structs, contexts, instructs, caps, agics, or flows declared in another file.
 
 The agent module publicly exports all of its agics and flows. A flow module
 exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
 `<name>` exactly matches its filename stem. State uses the filename as the
 public name and binds the unnamed Flow locally as its lined entry identity
 `<entry:LINE>`, so renaming the file also renames the public Flow. Other
-declarations in that module are private static helpers.
+declarations in that module are private helpers, available to its flow statements
+and model routing.
 
 Public runnable names must be unique across the complete home. Direct files
 under `flows/` are discovered; nested files, non-`.too` files, and a root-level
@@ -436,8 +437,10 @@ Only root agics prepend historical messages automatically; child agics reference
 these variables explicitly. Compaction updates subsequent frames throughout
 the run tree.
 
-`hands` and `handoffs` select exact public runnable references with `=`.
-`none` disables routes; `*` selects all public runnables. They do not accept queries. An explicit
+`hands` and `handoffs` select exact runnable references with `=`. The main module
+can select its own runnables and exported flows; a flow module can select only
+its own declarations, including private helpers. `none` disables routes; `*`
+selects all visible runnables. They do not accept queries. An explicit
 selection replaces inherited routes independently of resource restrictions:
 
 ```too
@@ -451,13 +454,22 @@ agic coordinate(_: Text) -> Report:
 A hand is a child Run: the runtime acknowledges scheduling, executes the child,
 then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
-at the next Step and owns the Run's result. Missing but well-formed public refs
-remain authored routes and may become available after an explicit State reload.
+at the next Step and owns the Run's result. Missing but well-formed refs
+remain authored routes and become available in the next model-call catalog after
+the watcher publishes them. No explicit refresh action is needed.
 Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
-through `tools`; use `hands` or `handoffs` to authorize targets. The three
-inner runtime tool definitions remain available independently of these lists.
+through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
+definitions remain available independently of these lists.
 
-Configuration changes affect the runnable and its descendants without mutating
+Each newly accepted named child Run selects the latest published State and checks
+its signature against the caller's bound definition or advertised model catalog.
+Missing targets and changed signatures reject the call. Accepted Runs retain
+their code, types, prompts, caps, and Step revision; inline Agics belong to that
+same plan. Collection items select independently when accepted. Main-module
+flows can call their own runnables and exported flow modules; a flow module can
+call only its own runnables. Explicit same-Run handoffs use the advertised catalog.
+
+Configuration changes affect newly accepted runnables without mutating active
 parents or siblings. Lane defaults are 4 per parallel operation; a statement
 `in N lanes` overrides only that operation.
 
@@ -741,9 +753,9 @@ grants service tools.
   `<toolang:workspace list="lab,repo1"/>` and its current workdir in
   `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
   workspace roots are not exposed.
-- Lifecycle controls such as run, retry, reload, execute, fork, and rewind do
-  not themselves add a model-facing lifecycle message. Reload can change the
-  instructions and resource declarations at a later call boundary.
+- Lifecycle controls such as run, retry, execute, fork, and rewind do not
+  themselves add a model-facing lifecycle message. Published updates change
+  future named Runs and model catalogs; accepted code and caps remain bound.
 
 Skill/service recall is distinct from far/near conversation recall. A far
 summary or trigger does not count as a visible guidance body. Recalling

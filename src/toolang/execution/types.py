@@ -1448,6 +1448,7 @@ class ModelStepGiven:
     model: str
     call: ModelCall
     setup: str = field(kw_only=True)
+    catalog_state: str | None = field(default=None, kw_only=True)
     # Internal recording metadata; public event codecs expose only the call.
     messages: ModelMessages | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
@@ -1956,7 +1957,6 @@ ControlKind = Literal[
     "cwd",
     "recall",
     "retry",
-    "reload",
     "compact",
     "execute",
     "steer",

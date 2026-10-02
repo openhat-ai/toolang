@@ -246,17 +246,11 @@ async def _execute(
         agent_state: AgentState,
         state_ref: ControlRef,
     ) -> StepBegin:
-        nonlocal prepared, plugin_name, summary_context
+        nonlocal plugin_name, summary_context
         nonlocal operation, context, runtime
         runtime_tools = (
             prepared.run.setup.tools().runtime if trigger == "runtime" else {}
         )
-        # Bind the operation to the Step's State even if reload removed its Agic.
-        if (
-            _plugin_name(runtime_tools.get(call.name) or prepared.tools.get(call.name))
-            != "_toolang"
-        ):
-            prepared = state.frame_for_step(agent_state, state_ref)
         tools = {**prepared.tools, **runtime_tools} if runtime_tools else prepared.tools
         tool = tools.get(call.name)
         plugin_name = _plugin_name(tool)
@@ -334,7 +328,6 @@ async def _execute(
         # Preflight runs before begin is persisted; honor takes this next slot.
         state.next_step = step_index
         raise
-    state.prepared = prepared
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=tool tool=%s",
         run.thread,

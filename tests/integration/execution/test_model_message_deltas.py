@@ -82,7 +82,7 @@ agic chat(_: Part[]) -> Part[]:
         ServiceRecallTarget("github"),
     ],
 )
-def test_replay_after_reload_needs_only_execution_records(
+def test_replay_after_publication_needs_only_execution_records(
     tmp_path: Path, target: RecallTarget
 ) -> None:
     source = """instruct chat_instruct: original instructions
@@ -128,14 +128,7 @@ agic chat(_: Part[]) -> Part[]:
             layout.program.write_text(
                 source.replace("original", "updated"), encoding="utf-8"
             )
-            reload = handle.reload(prepare_agent_state(layout))
-            applied = await asyncio.wait_for(
-                harness.executor._wait_for_control(
-                    harness.executor._active[handle.run_id], reload
-                ),
-                timeout=2,
-            )
-            assert applied.status == "applied"
+            harness.published = prepare_agent_state(layout)
             harness.store.accept_recall_control(
                 run_id=handle.run_id,
                 payload=RecallControlPayload(target, "v1", "Use tests."),
@@ -147,9 +140,9 @@ agic chat(_: Part[]) -> Part[]:
             assert run.status == "succeeded", run.error
             first, second = harness.adapter.invocations
             assert "original instructions" in first.call.instructions
-            assert "updated instructions" in second.call.instructions
+            assert "original instructions" in second.call.instructions
             texts = [message_text(message.parts) for message in second.call.messages]
-            assert any("updated context" in text for text in texts)
+            assert any("original context" in text for text in texts)
             assert any("Use tests." in text for text in texts)
             assert first.call.tools and second.call.tools
 

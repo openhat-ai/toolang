@@ -513,7 +513,7 @@ def state_module_caps(
     return cast(tuple[StateCap, ...], tuple(getattr(state, "caps", ())))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class AgentState:
     """One immutable prepared State, including effective caps and workspaces."""
 
@@ -1445,6 +1445,7 @@ def materialize_program_caps(
     authored: SourceSnapshot,
     source: ProgramSource,
     *,
+    program: Program,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
@@ -1455,6 +1456,7 @@ def materialize_program_caps(
         scope="home",
         materialize=True,
         program_source=source,
+        program=program,
     )
     referenced, referenced_files = _collect_program_use_entries(
         authored,
@@ -1463,6 +1465,7 @@ def materialize_program_caps(
         remote_cache=remote_cache,
         progress=progress,
         program_source=source,
+        program=program,
     )
     files = dict(embedded_files)
     files.update(referenced_files)
@@ -1850,11 +1853,12 @@ def _collect_program_use_entries(
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
     program_source: ProgramSource | None = None,
+    program: Program | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     if scope == "root" or (program_source is None and authored.program_path is None):
         return (), {}
     program_source = program_source or authored.load_program()
-    program = program_source.parse()
+    program = program if program is not None else program_source.parse()
     relative_program_path = Path(program_source.source_path)
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
@@ -1890,12 +1894,13 @@ def _collect_program_embedded_entries(
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     program_source: ProgramSource | None = None,
+    program: Program | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     del materialize
     if scope == "root" or (program_source is None and authored.program_path is None):
         return (), {}
     program_source = program_source or authored.load_program()
-    program = program_source.parse()
+    program = program if program is not None else program_source.parse()
     relative_program_path = Path(program_source.source_path)
     entries: list[StateCap] = []
     files: dict[str, bytes] = {}

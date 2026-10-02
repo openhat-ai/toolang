@@ -122,7 +122,6 @@ start()                                             -> None
 run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
 cancel(run_id, timing, request_id?, reason?)         -> ControlRecord
 steer(run_id, message, timing, request_id?)          -> ControlRecord
-reload(run_id, state, request_id?)                   -> ControlRecord
 cancel_control(run_id, index)                        -> ControlRecord
 stop()                                               -> None
 ```
@@ -131,14 +130,13 @@ stop()                                               -> None
 creates the owner task, and immediately
 returns an awaitable `LocalRunHandle`. Awaiting the handle returns the terminal
 `RunRecord`; canceling one waiter does not cancel execution. The handle also
-provides same-process `cancel()`, `steer()`, `reload()`, and
+provides same-process `cancel()`, `steer()`, and
 `cancel_control()` conveniences.
 Cross-process callers address the run by ID through their local `RunExecutor`.
 
 `steer()` and `cancel()` only accept durable controls; `cancel_control()` changes
-one pending reload, steer, or cancel to `revoked`. Steer, cancel, and control
-revocation do not need the target run to be owned by the submitting process;
-reload does. Run execution remains local:
+one pending steer or cancel to `revoked`. These controls do not require the
+target run to be owned by the submitting process. Run execution remains local:
 the process that calls `run(spec)` accepts and executes that run. `stop()` is
 terminal and cancels the run tasks owned by that executor instance. The process
 owner closes the shared `RunStore` after the executor stops.
@@ -213,7 +211,7 @@ observe only higher-level events.
 ## Run Controls
 
 Preparation control kinds are `run`, `rerun`, and `retry`; runtime control
-kinds are `reload`, `steer`, and `cancel`. Control timing is:
+kinds include `execute`, `steer`, and `cancel`. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -232,11 +230,6 @@ revoked   explicitly withdrawn before application
 A cancel control is therefore `applied` when it cancels a run. An unapplied steer
 left behind by a terminal run is `wontapply`.
 
-Reload always uses `immediate` timing. It is process-local: the accepting
-executor must own the active run tree and retain the concrete durable
-`AgentState`. A child run ID is normalized to its root. There is no HTTP, CLI,
-Chat, scheduler, or model-facing reload endpoint.
-
 Every Run entry control stores its concrete runnable and model bindings,
 limits, resources, and a flat `CallInput[Value | TypedRef]`. Optional
 `authored_input` records the corresponding `CallInput[str]` source snapshot.
@@ -244,9 +237,8 @@ Steer stores a primary `Part[]` value under `_`; cancel stores optional primary
 Text under `_`. Execute stores input references keyed by parameter name. Retry
 inherits input from the entry control and records its effective settings.
 
-Root Run entry controls store the State revision and accepted sandbox. Child
-entries refer to the inherited State and omit the redundant sandbox. Reload
-stores the new State revision. A durable run is a root exactly when
+Every Run entry stores its State revision. Root entries also store the accepted
+sandbox; child entries omit the redundant sandbox. A durable run is a root exactly when
 `parent is None`; callers derive its root by following parent-run ownership.
 
 Every run-control insert or status change receives a monotonically increasing
@@ -260,7 +252,7 @@ all pending controls for every active run.
 Local submissions update the same cache immediately after their durable write.
 Remote submissions and cancellations arrive through revision polling. An
 immediate cancel cancels the owning task after the owner observes the durable
-control. Before applying a reload, steer, or cancel, runtime atomically claims it in
+control. Before applying a steer or cancel, runtime atomically claims it in
 SQLite. Cancellation is allowed only while a control remains unclaimed, so a
 cross-process claim/cancel race has exactly one winner without adding another
 public control status.
@@ -320,8 +312,7 @@ Output coercion validates the final run value against the runnable's declared
 output type. Setup and State remain
 complete snapshots; the executor computes concrete `AgentResources` instead of
 receiving filtered copies. A root starts from the State supplied in `RunSpec`.
-An explicit reload changes the State/ref pair at a serialized execution
-boundary; each physical step captures that pair, and a child run inherits its
-calling step's pair. Independent roots remain isolated. Source changes have no
-effect until a caller starts a new root or explicitly reloads an owned active
-tree. Invalid later setup config does not replace the last valid snapshot.
+Each physical Step retains its executing Run's State reference. A newly accepted
+named child independently captures the latest published State and validates it
+against the caller's contract. Inline bodies retain their containing plan.
+Publication never rebinds accepted Runs. Invalid source is not published.

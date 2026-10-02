@@ -20,6 +20,7 @@ from tests.support.execution_assertions import (
     route_snapshots,
 )
 from tests.support.execution_harness import (
+    RecordingTool,
     AsyncGate,
     ExecutionHarness,
     RecordingRunTracer,
@@ -39,7 +40,6 @@ from toolang.execution.types import (
 )
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import StateCap
-from toolang.state.watcher import StateWatcher
 
 
 SOURCE = """
@@ -78,6 +78,7 @@ def _harness(
     content=GUIDANCE,
     psyche: str | None = None,
     description: str = "Test guidance",
+    tools=None,
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     skill = layout.home / "skills/testing/SKILL.md"
@@ -95,13 +96,12 @@ def _harness(
         psyche_path.parent.mkdir(parents=True)
         psyche_path.write_text(psyche, encoding="utf-8")
     layout.program.write_text(source, encoding="utf-8")
-    watcher = StateWatcher(layout)
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         state=prepare_agent_state(layout),
         responses=responses,
-        refresh_state=watcher.refresh_result,
+        tools=tools,
     )
     return harness, skill
 
@@ -669,18 +669,19 @@ flow research() -> Text:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
+def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
     harness, _ = _harness(
         tmp_path,
         [
             _calls(_pick("before", ref="skill/private")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}),
+                ToolCall("publication", "publication", "test__checkpoint", {}),
                 _pick("denied", ref="skill/private"),
                 _pick("allowed"),
             ),
             _answer(),
         ],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     class Tracer(RecordingRunTracer):
@@ -698,6 +699,7 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
                     ),
                     encoding="utf-8",
                 )
+                harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
 
@@ -712,19 +714,16 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
             )
             assert run.status == "succeeded", run.error
             results = _results(harness, run)
-            assert (
-                results["denied"].error and "not available" in results["denied"].error
-            )
+            assert results["denied"].error is None
             assert results["allowed"].error is None
             assert [c.payload.content for c in _recalls(harness, run)] == [
                 "Unselected guidance.",
                 GUIDANCE,
-                "",
             ]
             before = harness.adapter.invocations[0].call.instructions
             after = harness.adapter.invocations[-1].call.instructions
             assert 'ref="skill/private"' in before
-            assert 'ref="skill/private"' not in after
+            assert 'ref="skill/private"' in after
             assert 'ref="skill/testing"' in after
 
     asyncio.run(scenario())
@@ -732,14 +731,20 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
 
 
 @pytest.mark.parametrize("same_batch", [False, True])
-def test_revision_reversal_is_not_reused_across_newer_content(
+def test_bound_guidance_survives_published_revision_reversals(
     tmp_path: Path, same_batch
 ):
     a, b = "Revision A.", "Revision B."
     batches = [
         (_pick("a"),),
-        (ToolCall("reload-b", "reload-b", "_toolang__reload", {}), _pick("b")),
-        (ToolCall("reload-a", "reload-a", "_toolang__reload", {}), _pick("a-again")),
+        (
+            ToolCall("publication-b", "publication-b", "test__checkpoint", {}),
+            _pick("b"),
+        ),
+        (
+            ToolCall("publication-a", "publication-a", "test__checkpoint", {}),
+            _pick("a-again"),
+        ),
     ]
     harness, skill = _harness(
         tmp_path,
@@ -753,6 +758,7 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             _answer(),
         ],
         content=a,
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
 
     class Tracer(RecordingRunTracer):
@@ -765,8 +771,10 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             ):
                 if event.output.local.value.tool_call_id == "a":
                     _write_guidance(skill, b)
+                    harness.published = prepare_agent_state(harness.setup.layout)
                 elif event.output.local.value.tool_call_id == "b":
                     _write_guidance(skill, a)
+                    harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
 
@@ -781,9 +789,12 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             )
             assert run.status == "succeeded", run.error
             controls = _recalls(harness, run)
-            assert [c.payload.content for c in controls] == [a, b, a]
+            assert [c.payload.content for c in controls] == [a]
             results = _results(harness, run)
-            assert results["a"].output != results["a-again"].output
+            if same_batch:
+                assert results["a"].output == results["a-again"].output
+            else:
+                assert results["a-again"].output == {"controls": []}
             assert results["visible"].output == {"controls": []}
             assert all(result.error is None for result in results.values())
             assert_run_event_integrity(tracer.events)

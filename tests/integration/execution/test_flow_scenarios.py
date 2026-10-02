@@ -1183,7 +1183,7 @@ flow research(brief: Brief) -> Text:
             accepted = harness.store.get_run_control(run_id=root.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flow:research"
+            assert accepted.payload.runnable == "flows::research::flow:research"
             child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -1192,7 +1192,7 @@ flow research(brief: Brief) -> Text:
             child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert child_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "agic:echo"
+            assert child_run_control.payload.runnable == "flows::research::agic:echo"
             assert "Module-Local Input" in message_text(
                 without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
                     0

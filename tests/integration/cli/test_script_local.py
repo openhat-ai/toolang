@@ -6,6 +6,7 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from watchfiles import Change
 
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template
@@ -83,6 +84,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
             assert actual_layout == layout
             assert kwargs["sandbox"] == "host"
 
+        def current(self):
+            return setup
+
         async def refresh(self):
             return setup
 
@@ -94,6 +98,10 @@ def test_local_script_saves_only_to_an_explicit_destination(
             assert actual_layout == layout
             assert initial_state is harness.state
 
+        def load(self, revision):
+            assert revision == publication.revision
+            return publication
+
         def current(self):
             return publication
 
@@ -102,6 +110,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
         async def refresh_result(self):
             return StateRefresh(publication)
+
+        async def run(self, *, stop_signal):
+            await stop_signal.wait()
 
     monkeypatch.setattr("toolang.state.watcher.StateWatcher", _StateWatcher)
     quiet = save_mode in {"stdout", "file"}
@@ -221,6 +232,9 @@ def test_template_helpers_bind_arguments(
         def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout == layout
 
+        def current(self):
+            return setup
+
         async def refresh(self):
             return setup
 
@@ -286,6 +300,9 @@ def test_local_script_renders_composite_flow_progress(
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout == layout
+
+        def current(self):
+            return setup
 
         async def refresh(self):
             return setup
@@ -418,5 +435,81 @@ def test_local_script_context_uses_resolved_input_overrides(
         assert output.err.count("‣") == 1
         assert "• resolved result" in output.err
         assert "agic:unused" not in output.err
+    finally:
+        harness.store.close()
+
+
+def test_local_script_watches_updates_until_execution_finishes(tmp_path, monkeypatch):
+    source = """
+agic child() -> Text:
+  context = none
+  Old child.
+flow parent() -> Text:
+  run child
+  run child
+"""
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("first")), gate=gate
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+        ],
+    )
+    stopped = asyncio.Event()
+
+    async def setup(_watcher):
+        return harness.setup
+
+    async def changes(_root, *, stop_event, **_kwargs):
+        await gate.wait_until_entered()
+        program = harness.setup.layout.program
+        program.write_text(source.replace("Old child.", "New child."))
+        yield {(Change.modified, str(program))}
+        gate.release()
+        await stop_event.wait()
+        stopped.set()
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", setup)
+    monkeypatch.setattr("toolang.state.watcher.awatch", changes)
+
+    async def scenario():
+        return await asyncio.wait_for(
+            script._execute(
+                layout=harness.setup.layout,
+                state=harness.state,
+                store=harness.store,
+                ids=harness.ids,
+                run_id="run_watched",
+                sandbox="host",
+                runnable="flow:parent",
+                override=RunOverride(),
+                input=CallInput(),
+                raw_named=CallInput(),
+                session_override=RunOverride(),
+                quiet=True,
+            ),
+            5,
+        )
+
+    try:
+        root = asyncio.run(scenario())
+        assert root.status == "succeeded", root.error
+        assert stopped.is_set()
+        children = [
+            run
+            for run in harness.store.list_run_tree(root_run_id=root.id)
+            if run.parent
+        ]
+        assert len(children) == 2
+        assert (
+            len({harness.store.resolve_state_revision(r.state) for r in children}) == 2
+        )
+        assert "Old child." in str(harness.adapter.invocations[0].call.messages)
+        assert "New child." in str(harness.adapter.invocations[1].call.messages)
     finally:
         harness.store.close()

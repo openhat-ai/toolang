@@ -175,7 +175,7 @@ publication and adoption complete.
 ## Markers and Style
 
 `•` marks Model and Flow Steps; `›` marks ordinary tools; `✧` marks the `pick`,
-`reload`, `compact`, and `honor` runtime helpers. `---  ` opens and closes a
+`compact` and `honor` runtime helpers. `---  ` opens and closes a
 dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is only
 an inline facts separator.
 

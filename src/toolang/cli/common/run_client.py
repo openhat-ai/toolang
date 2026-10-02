@@ -86,15 +86,22 @@ async def acquire_run_client(
             setup=setup.current,
             state=state.current,
             load_state=state.load,
-            refresh_state=state.refresh_result,
         )
         client = LocalRunClient(executor)
         executor.start()
-        await client.connect()
+        stop_watching = asyncio.Event()
+        watching = asyncio.create_task(state.run(stop_signal=stop_watching))
         try:
-            yield client
+            await client.connect()
+            try:
+                yield client
+            finally:
+                await client.disconnect()
         finally:
-            await client.disconnect()
-            await executor.stop()
+            try:
+                await executor.stop()
+            finally:
+                stop_watching.set()
+                await watching
     finally:
         store.close()

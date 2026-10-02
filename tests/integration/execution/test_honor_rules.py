@@ -11,8 +11,10 @@ from tests.support.execution_assertions import (
     assert_run_event_integrity,
 )
 from tests.support.execution_harness import (
+    RecordingTool,
     ExecutionHarness,
     RecordingRunTracer,
+    PublicationTracer,
     AsyncGate,
     ScriptedModelTurn,
 )
@@ -36,7 +38,6 @@ from toolang.execution.types import (
 )
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.watcher import StateRefresh
 
 
 SOURCE = """
@@ -72,7 +73,7 @@ def _answer():
     return ModelCallResult(message=Message.assistant("done"))
 
 
-def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
+def _harness(tmp_path, responses, *, source=SOURCE, tools=None):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(source)
@@ -80,8 +81,7 @@ def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
         tmp_path,
         source=source,
         responses=responses,
-        tools=load_tools(queries=("fs/*", "shell/*")),
-        refresh_state=refresh_state,
+        tools={**load_tools(queries=("fs/*", "shell/*")), **(tools or {})},
         state=prepare_agent_state(layout),
     )
     repo = harness.setup.layout.home / "repo"
@@ -90,6 +90,7 @@ def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
     (repo / "src/AGENTS.md").write_text("Scoped rules.")
     (repo / "src/unused/AGENTS.md").write_text("Unused rules.")
     publication = _workspace_state(harness, {"repo": repo})
+    harness.published = publication
     return harness, repo, publication
 
 
@@ -735,46 +736,38 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
-    next_publication = None
-
-    async def refresh():
-        assert next_publication is not None
-        return StateRefresh(next_publication)
-
+def test_publication_preserves_the_workspace_at_the_tool_boundary(tmp_path):
     harness, repo, publication = _harness(
         tmp_path,
         [
             _calls(_call("first")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}), _call("changed")
+                ToolCall("publication", "publication", "test__checkpoint", {}),
+                _call("changed"),
             ),
             _calls(_call("retry")),
             _answer(),
         ],
-        refresh_state=refresh,
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     new_repo = repo.with_name("new-repo")
     (new_repo / "src").mkdir(parents=True)
     (new_repo / "AGENTS.md").write_text("New root rules.")
     next_publication = _workspace_state(harness, {"repo": new_repo})
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(harness, {"publication": next_publication})
 
     async def scenario():
         async with harness:
             run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
             assert run.status == "succeeded", run.error
-            assert not (repo / "src/result").exists()
-            assert (new_repo / "src/result").read_text() == "done"
+            assert harness.published is next_publication
+            assert (repo / "src/result").read_text() == "done"
+            assert not (new_repo / "src/result").exists()
             payloads = [c.payload for c in _recalls(harness, run)]
             assert [p.content for p in payloads] == [
                 "Root rules.",
                 "Scoped rules.",
-                "",
-                "",
-                "New root rules.",
             ]
-            assert all(p.revision == "0" for p in payloads[2:4])
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

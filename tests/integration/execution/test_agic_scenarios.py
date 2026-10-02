@@ -187,7 +187,6 @@ agic helper(_: Text) -> Boolean:
                 "_toolang__chdir",
                 "_toolang__execute",
                 "_toolang__pick",
-                "_toolang__reload",
                 "_toolang__run",
                 "lookup__value",
             }
@@ -1090,9 +1089,7 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
 
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
-@pytest.mark.parametrize(
-    "tool_name", ["math__double", "_toolang__reload", "_toolang__execute"]
-)
+@pytest.mark.parametrize("tool_name", ["math__double", "_toolang__execute"])
 def test_cancel_during_tool_result_delivery_preserves_output(
     tmp_path: Path, boundary: str, tool_name: str
 ) -> None:
@@ -1163,10 +1160,6 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                     if c.kind == "execute"
                 )
                 assert part.output == {"controls": [str(control.ref)]}
-            else:
-                assert (
-                    part.error == "Agent State refresh is unavailable in this executor"
-                )
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

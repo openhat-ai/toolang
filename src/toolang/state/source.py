@@ -12,7 +12,7 @@ from typing import Literal, cast
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
-from ..lang.ast import Program
+from ..lang.ast import FlowDecl, Program
 
 SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 3
@@ -429,8 +429,8 @@ class ProgramSource:
     source_text: str
     digest: str
 
-    def parse(self) -> Program:
-        return Program.from_source(self.source_text)
+    def parse(self, *, external_flows: Mapping[str, FlowDecl] | None = None) -> Program:
+        return Program.from_source(self.source_text, external_flows=external_flows)
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,7 +8,6 @@ from toolang.base.schemas import (
     CompactControlSummary,
     ControlSummary,
     RecallControlSummary,
-    ReloadControlSummary,
 )
 from toolang.base.types.message import ToolCallPart, ToolResultPart
 from toolang.base.types.run import ToolCall
@@ -16,7 +15,6 @@ from toolang.base.types.run import ToolCall
 from ..records import (
     CompactControlPayload,
     RecallControlPayload,
-    ReloadControlPayload,
     StepRecord,
 )
 from ..types import (
@@ -31,7 +29,7 @@ from ..types import (
 
 def control_summary(
     ref: ControlRef,
-    payload: RecallControlPayload | ReloadControlPayload | CompactControlPayload,
+    payload: RecallControlPayload | CompactControlPayload,
 ) -> ControlSummary:
     """Project durable facts without reading State or copying recalled content."""
 
@@ -42,8 +40,6 @@ def control_summary(
         return RecallControlSummary(
             ref=str(ref), target=target, revision=payload.revision
         )
-    if isinstance(payload, ReloadControlPayload):
-        return ReloadControlSummary(ref=str(ref), state=payload.state)
     return CompactControlSummary(ref=str(ref), horizon=str(payload.horizon))
 
 

@@ -31,7 +31,6 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
         "_toolang__run",
         "_toolang__chdir",
         "_toolang__execute",
-        "_toolang__reload",
         "_toolang__pick",
         "_toolang__honor",
         "_toolang__compact",
@@ -85,11 +84,6 @@ class _Runtime:
     async def workspaces(self, context):
         return ToolResult({"entries": []})
 
-    async def reload(self):
-        self.calls.append("reload")
-        await asyncio.sleep(0)
-        return ToolResult({"controls": [self.marker]})
-
     async def pick(self, kind, ref):
         self.calls.append((kind, ref))
         await asyncio.sleep(0)
@@ -105,9 +99,7 @@ class _Runtime:
         return ToolResult({"controls": [self.marker]})
 
 
-@pytest.mark.parametrize(
-    "name", ["run", "execute", "reload", "pick", "honor", "compact"]
-)
+@pytest.mark.parametrize("name", ["run", "execute", "pick", "honor", "compact"])
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -116,7 +108,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     context = RuntimeToolContext(tmp_path, tmp_path, runtime=first)
     arguments = (
         {}
-        if name in {"reload", "compact"}
+        if name in {"compact"}
         else {"paths": [{"workspace": "repo", "path": "/src"}]}
         if name == "honor"
         else {"kind": "skill", "ref": "skill/testing"}
@@ -149,7 +141,6 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("compact", {"thread": "term_ab12"}),
         ("compact", {"thread": "term_ab12", "end": 1}),
         ("compact", {"thread": "term_ab12", "end": "run_ab12", "summary": "bad"}),
-        ("reload", {"run_id": "another"}),
         ("run", {"runnable": "child", "step": "another"}),
         ("execute", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),

@@ -1372,9 +1372,7 @@ def test_model_call_keeps_content_separate_and_schema_detached(
         return definition
 
     monkeypatch.setattr(prepared.tools["shell__execute"], "definition", tool_definition)
-    _, buffer, _, request, recorded = _candidate(
-        state, prepared.run.state, prepared.run.state_ref
-    )
+    _, buffer, _, request, recorded = _candidate(state)
 
     assert request.instructions == prepared.instructions
     assert request.messages[:-2] == list(prepared.inputs.rendered_input[1])

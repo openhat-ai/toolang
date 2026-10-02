@@ -303,7 +303,7 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
                 active.execution = execution
                 executor._active[parent.run_id] = active
                 state.execution = execution
-                state.refresh_frame = None
+                state.prepare_model_frame = None
                 receipt = await original_invoke(state, step)
                 output = RunHistory(store).get_compaction(thread)
                 assert output is not None
@@ -812,7 +812,7 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                 active.execution = execution
                 executor._active[parent.run_id] = active
                 state.execution = execution
-                state.refresh_frame = None
+                state.prepare_model_frame = None
                 rendered = []
                 render_unit = compact_run.render_history_unit
 

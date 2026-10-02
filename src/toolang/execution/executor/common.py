@@ -47,7 +47,7 @@ from toolang.setup import AgentSetup
 from ..settings import RunnableSettings
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
-from ..runnables import resolve_runnable
+from ..runnables import resolve_call_target
 from ..types import (
     value_type,
     AgentResources,
@@ -457,10 +457,9 @@ def statement_input_refs(
         child_name = _statement_child_runnable(statement)
         if child_name is not None:
             try:
-                child = resolve_runnable(
-                    state_program(binding.state, binding.module),
-                    child_name,
-                )
+                child = resolve_call_target(
+                    binding.state, binding.module, child_name
+                ).executable
             except (ToolangError, ValueError):
                 child = None
             if child is not None:

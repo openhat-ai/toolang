@@ -321,20 +321,13 @@ class CwdControlPayload:
     """One durable Run-local working location transition."""
 
     cwd: str
-    cause: Literal["chdir", "invalidated"] = "chdir"
+    cause: Literal["chdir"] = "chdir"
     state: ControlRef | None = None
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
-        if self.cause not in {"chdir", "invalidated"}:
+        if self.cause != "chdir":
             raise ValueError("invalid working location cause")
-        if self.cause == "invalidated":
-            # Empty cwd is accepted when loading controls written before
-            # invalidations adopted an implicit workspace fallback.
-            if self.cwd and parse_cwd(self.cwd)[0] is None:
-                raise ValueError("workspace invalidation requires a fallback workdir")
-            if self.state is None:
-                raise ValueError("workspace invalidation requires a State control")
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,16 +342,6 @@ class RetryControlPayload:
     def __post_init__(self) -> None:
         if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
             raise TypeError("retry payload requires a StepRef or None")
-
-
-@dataclass(frozen=True, slots=True)
-class ReloadControlPayload:
-    """One durable Agent State revision adopted by an active root run."""
-
-    state: str
-
-    def __post_init__(self) -> None:
-        _validate_state_revision(self.state, label="reload payload State")
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,7 +459,6 @@ class RewindControlPayload:
 PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
-    | ReloadControlPayload
     | CwdControlPayload
     | CompactControlPayload
     | ExecuteControlPayload
@@ -490,7 +472,6 @@ _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "cwd": CwdControlPayload,
     "retry": RetryControlPayload,
-    "reload": ReloadControlPayload,
     "compact": CompactControlPayload,
     "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
@@ -607,12 +588,15 @@ class StoredModelStepGiven:
     model: str
     call: ModelCallRefs
     setup: str = field(kw_only=True)
+    catalog_state: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
             raise ValueError("stored model given requires a model identity")
         if not isinstance(self.setup, str) or not self.setup:
             raise TypeError("stored model setup requires a revision string")
+        if self.catalog_state is not None:
+            _validate_state_revision(self.catalog_state, label="model catalog State")
         if not isinstance(self.call, ModelCallRefs):
             raise TypeError("stored model given requires ModelCallRefs")
 
@@ -1014,18 +998,14 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
     if kind == "cwd":
         raw_cwd = payload.get("cwd")
         raw_cause = payload.get("cause")
-        if not isinstance(raw_cwd, str) or raw_cause not in {"chdir", "invalidated"}:
+        if not isinstance(raw_cwd, str) or raw_cause != "chdir":
             raise ValueError("cwd control requires a location and cause")
         return CwdControlPayload(
             cwd=raw_cwd,
-            cause=cast(Literal["chdir", "invalidated"], raw_cause),
+            cause=cast(Literal["chdir"], raw_cause),
             state=ControlRef.parse(cast(str, payload["state"]))
             if payload.get("state") is not None
             else None,
-        )
-    if kind == "reload":
-        return ReloadControlPayload(
-            state=_required_payload_text(payload, "state"),
         )
     if kind == "compact":
         return CompactControlPayload(
@@ -1093,8 +1073,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
             "cause": payload.cause,
             "state": str(payload.state) if payload.state else None,
         }
-    if isinstance(payload, ReloadControlPayload):
-        return {"state": payload.state}
     if isinstance(payload, CompactControlPayload):
         return {"horizon": str(payload.horizon)}
     if isinstance(payload, ExecuteControlPayload):
@@ -1230,7 +1208,14 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
 
     if kind == "model":
         payload = _canonical_object(
-            data, fields={"model", "setup", "call"}, label="model given"
+            data,
+            fields={"model", "setup", "call"}
+            | (
+                {"catalog_state"}
+                if isinstance(data, Mapping) and "catalog_state" in data
+                else set()
+            ),
+            label="model given",
         )
         model = payload["model"]
         if not isinstance(model, str):
@@ -1238,6 +1223,11 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
         return ModelStepGiven(
             model=model,
             setup=_required_text(payload["setup"], label="setup revision"),
+            catalog_state=_required_text(
+                payload["catalog_state"], label="catalog State revision"
+            )
+            if "catalog_state" in payload
+            else None,
             call=model_call_from_data(payload["call"]),
         )
     if kind == "tool":
@@ -1275,6 +1265,11 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
     validate_step_given(kind, given)
     if isinstance(given, ModelStepGiven):
         return {
+            **(
+                {"catalog_state": given.catalog_state}
+                if given.catalog_state is not None
+                else {}
+            ),
             "model": given.model,
             "setup": given.setup,
             "call": model_call_to_data(given.call),
@@ -1300,7 +1295,14 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     if kind != "model":
         return cast(StoredStepGiven, step_given_from_data(kind, data))
     payload = _canonical_object(
-        data, fields={"model", "setup", "call"}, label="model given"
+        data,
+        fields={"model", "setup", "call"}
+        | (
+            {"catalog_state"}
+            if isinstance(data, Mapping) and "catalog_state" in data
+            else set()
+        ),
+        label="model given",
     )
     model = payload["model"]
     if not isinstance(model, str) or not model:
@@ -1340,6 +1342,11 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     return StoredModelStepGiven(
         model=model,
         setup=_required_text(payload["setup"], label="setup revision"),
+        catalog_state=_required_text(
+            payload["catalog_state"], label="catalog State revision"
+        )
+        if "catalog_state" in payload
+        else None,
         call=ModelCallRefs(
             instructions=instructions,
             version=call["version"],
@@ -1376,6 +1383,11 @@ def stored_step_given_to_data(
         if kind != "model":
             raise TypeError(f"{kind} Step cannot store model given facts")
         return {
+            **(
+                {"catalog_state": given.catalog_state}
+                if given.catalog_state is not None
+                else {}
+            ),
             "model": given.model,
             "setup": given.setup,
             "call": {

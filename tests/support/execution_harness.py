@@ -6,7 +6,7 @@ from tests.support.setup import materialized_setup
 
 import asyncio
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Part, TextPart
+from toolang.base.types.message import Part, TextPart, ToolResultPart
 from toolang.base.types.model import (
     Model,
     ModelRequest,
@@ -38,7 +38,7 @@ from toolang.base.types.run import (
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.events import RunEvent, RunTracer
+from toolang.execution.events import RunEvent, RunTracer, StepEnd
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import (
     parse_runnable_ref,
@@ -50,7 +50,6 @@ from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.watcher import StateRefresh
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentEnvironment, AgentSetup
@@ -257,6 +256,28 @@ class RecordingRunTracer(RunTracer):
         self.events.append(event)
 
 
+class PublicationTracer(RecordingRunTracer):
+    """Publish prepared State after a selected tool result is persisted."""
+
+    def __init__(
+        self, harness: ExecutionHarness, publications: Mapping[str, AgentState]
+    ) -> None:
+        super().__init__()
+        self.harness = harness
+        self.publications = publications
+
+    async def on_event(self, event: RunEvent) -> None:
+        await super().on_event(event)
+        if (
+            isinstance(event, StepEnd)
+            and event.output is not None
+            and isinstance(event.output.local.value, ToolResultPart)
+        ):
+            state = self.publications.get(event.output.local.value.tool_call_id)
+            if state is not None:
+                self.harness.published = state
+
+
 class RecordingTool(Tool):
     """Return one fixed result and retain every tool invocation."""
 
@@ -313,6 +334,7 @@ class ExecutionHarness:
     executor: RunExecutor
     threads: ThreadManager
     adapter: ScriptedModelAdapter
+    published: AgentState | None = None
 
     @classmethod
     def create(
@@ -326,7 +348,6 @@ class ExecutionHarness:
         streaming: bool = False,
         state: AgentState | None = None,
         prepare_state: bool = False,
-        refresh_state: Callable[[], Awaitable[StateRefresh]] | None = None,
     ) -> ExecutionHarness:
         """Build one isolated execution runtime from authored source."""
 
@@ -381,7 +402,7 @@ class ExecutionHarness:
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")
-        return cls(
+        harness = cls(
             setup=setup,
             state=state,
             store=store,
@@ -396,12 +417,14 @@ class ExecutionHarness:
                     if revision == state.revision
                     else _missing_state_revision(revision)
                 ),
-                refresh_state=refresh_state,
                 include=lambda _setup: lambda reference: TextPart(reference),
             ),
             threads=ThreadManager(store, ids),
             adapter=adapter,
         )
+
+        harness.executor._state = lambda: harness.published or harness.state
+        return harness
 
     def run_spec(
         self,

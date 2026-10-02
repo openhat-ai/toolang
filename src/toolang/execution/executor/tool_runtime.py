@@ -18,8 +18,7 @@ from ..assembly.run_results import run_receipt
 from ..runnables import (
     AgicRoutes,
     ResolvedRunnable,
-    parse_runnable_ref,
-    resolve_public_runnable,
+    resolve_call_target,
 )
 from ..types import (
     ControlRef,
@@ -62,14 +61,6 @@ class _ToolRuntime(ToolRuntime):
             raise ToolangError(f"chdir target is not a directory: {path}")
         return ToolResult({"cwd": workspace_uri(name, relative)})
 
-    async def reload(self) -> ToolResult:
-        execution = self.state.execution
-        if execution is None:
-            raise RuntimeError("Agic runtime execution is unavailable")
-        return await execution.executor.model_reload(
-            run_id=self.step.run_id, triggered_by=self.step
-        )
-
     async def compact(self) -> ToolResult:
         from .runs.compact import invoke
 
@@ -79,7 +70,7 @@ class _ToolRuntime(ToolRuntime):
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        frame = self.state.frame_for_step(*execution.state_for_step(self.step))
+        frame = self.state.prepared
         resources = frame.run.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {self.step.run_id}")
@@ -132,8 +123,7 @@ class _ToolRuntime(ToolRuntime):
             for c in pending
             if isinstance(c.payload, RecallControlPayload)
         )
-        # A reload may precede honor in the same tool batch. Retire the old
-        # binding's rules before freshly loaded rules enter the next call.
+        # Reconcile inherited rule declarations with this Run's bound workspaces.
         for payload in required_declarations(
             workspace_declarations(
                 self.state.prepared.run.setup.workspace_grants(captured.workspaces)
@@ -182,7 +172,10 @@ class _ToolRuntime(ToolRuntime):
                 resolution="state",
                 raw_input=input,
                 authorize=lambda target: self._authorize("run", target),
-                state_snapshot=execution.state_for_step(self.step),
+                state_snapshot=(
+                    state.prepared.catalog or state.prepared.run.state,
+                    state.prepared.run.state_ref,
+                ),
             )
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
@@ -203,12 +196,11 @@ class _ToolRuntime(ToolRuntime):
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured, state_ref = execution.state_for_step(self.step)
-        name, kind = parse_runnable_ref(runnable)
-        target = resolve_public_runnable(
-            captured,
-            name,
-            kind=kind,
+        captured = state.prepared.catalog or state.prepared.run.state
+        state_ref = state.prepared.run.state_ref
+        target = resolve_call_target(captured, state.prepared.run.module, runnable)
+        execution.require_inactive_runnable(
+            state.prepared.run, target, action="_toolang/execute"
         )
         self._authorize("execute", target)
         try:

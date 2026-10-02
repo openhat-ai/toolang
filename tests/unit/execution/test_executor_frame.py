@@ -352,7 +352,6 @@ def test_build_agic_frame_builds_one_complete_model_input(
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
-            has_state_refresh=False,
             thread_model_ref=lambda: "test/thread",
         ),
     )
@@ -475,7 +474,6 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
             layout=setup.layout,
             date="2026-01-01",
             timezone="UTC",
-            has_state_refresh=False,
         ),
     )
 
@@ -558,7 +556,6 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
-            has_state_refresh=False,
         ),
     )
 
@@ -678,6 +675,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given == ModelStepGiven(
+            catalog_state=state.revision,
             setup="test-setup",
             model="test/model",
             call=adapter.requests[0],

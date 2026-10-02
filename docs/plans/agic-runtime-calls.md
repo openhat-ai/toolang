@@ -1,5 +1,10 @@
 # Define Agic Runtime Calls
 
+State switching and reload in this historical plan are superseded by
+[Latest-State Run Binding](revision-refresh-calls.md). The reload tool and
+control have been removed.
+
+
 ## Status
 
 Approved for implementation. Revised on 2026-08-28 to use one ordinary Run

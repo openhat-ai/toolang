@@ -20,7 +20,11 @@ from tests.integration.execution.test_pick_guidance import (
     _write_guidance,
 )
 from tests.support.execution_assertions import assert_replayed, route_snapshots
-from tests.support.execution_harness import RecordingRunTracer
+from tests.support.execution_harness import (
+    PublicationTracer,
+    RecordingRunTracer,
+    RecordingTool,
+)
 from toolang.base.types.message import ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
@@ -29,7 +33,6 @@ from toolang.execution.types import (
     TypedRef,
 )
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.watcher import StateRefresh
 
 
 def _workspace_messages(call):
@@ -145,13 +148,7 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
-    changed = None
-
-    async def refresh():
-        assert changed is not None
-        return StateRefresh(changed)
-
+def test_published_remap_keeps_active_rule_bindings(tmp_path):
     def write(identity):
         return ToolCall(
             identity,
@@ -165,19 +162,20 @@ def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
         [
             _calls(write("first")),
             _calls(
-                ToolCall("reload", "reload", "_toolang__reload", {}), write("changed")
+                ToolCall("publication", "publication", "test__checkpoint", {}),
+                write("changed"),
             ),
             _calls(write("retry")),
             _answer(),
         ],
-        refresh_state=refresh,
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     other = repo.with_name("other")
     (other / "src").mkdir(parents=True)
     (other / "AGENTS.md").write_text("Root rules.")
     (other / "src/AGENTS.md").write_text("Scoped rules.")
     changed = _workspace_state(harness, {"repo": other})
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(harness, {"publication": changed})
 
     async def scenario():
         async with harness:
@@ -189,16 +187,12 @@ def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
                 for part in message.parts
                 if isinstance(part, ToolResultPart)
             }
-            assert "not executed" in results["changed"].error
+            assert results["changed"].error is None
             assert results["retry"].error is None
-            assert not (repo / "src/result").exists()
-            assert (other / "src/result").read_text() == "done"
+            assert (repo / "src/result").read_text() == "done"
+            assert not (other / "src/result").exists()
             rules = _declarations(harness, run, "rules")
             assert [c.payload.content for c in rules] == [
-                "Root rules.",
-                "Scoped rules.",
-                "",
-                "",
                 "Root rules.",
                 "Scoped rules.",
             ]
@@ -207,20 +201,26 @@ def test_remap_with_identical_rules_still_requires_model_delivery(tmp_path):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_reload_withdraws_psyches_and_runnable_authority(tmp_path):
+def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
     source = "agic helper:\n  Help.\n" + SOURCE.replace(
         "context = none", "hands = helper\n  context = none"
     )
     harness, _ = capability_harness(
         tmp_path,
-        [_calls(ToolCall("reload", "reload", "_toolang__reload", {})), _answer()],
+        [
+            _calls(ToolCall("publication", "publication", "test__checkpoint", {})),
+            _answer(),
+        ],
         source=source,
         psyche="Resident advice.",
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     harness.setup.layout.program.write_text(
         source.replace("hands = helper", "psyches = none")
     )
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(
+        harness, {"publication": prepare_agent_state(harness.setup.layout)}
+    )
 
     async def scenario():
         async with harness:
@@ -237,27 +237,17 @@ def test_reload_withdraws_psyches_and_runnable_authority(tmp_path):
             assert [item["ref"] for item in route_snapshots(first)["hands"]] == [
                 "agic:helper"
             ]
-            assert "Resident advice." not in last.instructions
-            assert route_snapshots(last) == {"hands": [], "handoffs": []}
-            for kind in ("psyche",):
-                (control,) = _declarations(harness, run, kind)
-                assert control.payload.revision == "0"
-                assert any(
-                    f'<toolang:{kind} ref="' in message_text(m.parts)
-                    and 'removed="true"' in message_text(m.parts)
-                    for m in last.messages
-                )
+            assert "Resident advice." in last.instructions
+            assert route_snapshots(last) == route_snapshots(first)
+            assert not _declarations(harness, run, "psyche")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
 
 
 @pytest.mark.parametrize("context", ["none", "custom"])
-def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, context):
+def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, context):
     states = []
-
-    async def refresh():
-        return StateRefresh(states.pop(0))
 
     def source(hands, handoffs, type_name="Text"):
         directives = ("  hands = helper\n" if hands else "") + (
@@ -283,18 +273,20 @@ def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, co
         tmp_path,
         [
             *(
-                _calls(ToolCall(str(i), str(i), "_toolang__reload", {}))
+                _calls(ToolCall(str(i), str(i), "test__checkpoint", {}))
                 for i in range(len(versions) - 1)
             ),
             _answer(),
         ],
         source=source(*versions[0]),
-        refresh_state=refresh,
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     for version in versions[1:]:
         harness.setup.layout.program.write_text(source(*version))
         states.append(prepare_agent_state(harness.setup.layout))
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(
+        harness, {str(i): value for i, value in enumerate(states)}
+    )
 
     async def scenario():
         async with harness:
@@ -303,7 +295,8 @@ def test_reload_replaces_route_snapshots_without_recall_and_replays(tmp_path, co
             calls = [item.call for item in harness.adapter.invocations]
             assert len(calls) == len(versions)
             assert all(call.instructions == calls[0].instructions for call in calls)
-            for call, (hands, handoffs, type_name) in zip(calls, versions, strict=True):
+            for call in calls:
+                hands, handoffs, type_name = versions[0]
                 snapshots = route_snapshots(call)
                 for tag, enabled in (("hands", hands), ("handoffs", handoffs)):
                     assert [item["ref"] for item in snapshots[tag]] == (
@@ -359,11 +352,17 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
 
     harness, _ = capability_harness(
         tmp_path,
-        [_calls(ToolCall("reload", "reload", "_toolang__reload", {})), _answer()],
+        [
+            _calls(ToolCall("publication", "publication", "test__checkpoint", {})),
+            _answer(),
+        ],
         source=source("Short description."),
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     harness.setup.layout.program.write_text(source("界" * 512))
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(
+        harness, {"publication": prepare_agent_state(harness.setup.layout)}
+    )
 
     async def scenario():
         async with harness:
@@ -388,17 +387,16 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
+def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
     states = []
 
-    async def refresh():
-        return StateRefresh(states.pop(0))
-
-    def reload(index):
-        return _calls(ToolCall(str(index), str(index), "_toolang__reload", {}))
+    def publication(index):
+        return _calls(ToolCall(str(index), str(index), "test__checkpoint", {}))
 
     harness, repo, initial = _harness(
-        tmp_path, [*(reload(i) for i in range(5)), _answer()], refresh_state=refresh
+        tmp_path,
+        [*(publication(i) for i in range(5)), _answer()],
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     states.extend(
         [
@@ -412,7 +410,9 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
             _workspace_state(harness, {"repo": repo, "added": repo.with_name("extra")}),
         ]
     )
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(
+        harness, {str(i): value for i, value in enumerate(states)}
+    )
 
     async def scenario():
         async with harness:
@@ -423,13 +423,8 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
                 _workspace_messages(i.call) for i in harness.adapter.invocations
             ]
             assert [group[-1] for group in messages] == [
-                '<toolang:workspace list="lab,repo"/>',
-                '<toolang:workspace list="lab,repo"/>',
-                '<toolang:workspace list="lab"/>',
-                '<toolang:workspace list="lab"/>',
-                '<toolang:workspace list="lab,repo"/>',
-                '<toolang:workspace list="lab,repo"/>',
-            ]
+                '<toolang:workspace list="lab,repo"/>'
+            ] * len(messages)
             assert all("revision=" not in text for group in messages for text in group)
 
     asyncio.run(scenario())
@@ -437,27 +432,28 @@ def test_workspace_add_remove_remap_and_restore_are_presented_once(tmp_path):
 
 
 @pytest.mark.parametrize("kind,name", [("skill", "testing"), ("service", "github")])
-def test_definition_changes_withdraw_guidance_until_explicit_pick(tmp_path, kind, name):
+def test_definition_changes_preserve_bound_guidance(tmp_path, kind, name):
     ref = f"{kind}/{name}"
     source = SOURCE.replace(
         "context = none", f"{kind}s = {kind}/{name}\n  context = none"
     )
 
-    def reload(index):
-        return _calls(ToolCall(str(index), str(index), "_toolang__reload", {}))
+    def publication(index):
+        return _calls(ToolCall(str(index), str(index), "test__checkpoint", {}))
 
     harness, _ = capability_harness(
         tmp_path,
         [
             _calls(_pick(kind=kind)),
-            reload(1),
+            publication(1),
             _calls(_pick("again", kind=kind)),
-            reload(2),
-            reload(3),
+            publication(2),
+            publication(3),
             _answer(),
         ],
         source=source,
         content="Original guidance.",
+        tools={"test__checkpoint": RecordingTool("test__checkpoint", output={})},
     )
     path = harness.setup.layout.home / (
         "skills/testing/SKILL.md" if kind == "skill" else "services/github.md"
@@ -472,11 +468,9 @@ def test_definition_changes_withdraw_guidance_until_explicit_pick(tmp_path, kind
     restored = prepare_agent_state(harness.setup.layout)
     states = [changed, removed, restored]
 
-    async def refresh():
-        return StateRefresh(states.pop(0))
-
-    harness.executor._refresh_state = refresh
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(
+        harness, {str(i + 1): value for i, value in enumerate(states)}
+    )
 
     async def scenario():
         async with harness:
@@ -490,26 +484,16 @@ def test_definition_changes_withdraw_guidance_until_explicit_pick(tmp_path, kind
             assert run.status == "succeeded", run.error
             calls = [i.call for i in harness.adapter.invocations]
             guidance = _declarations(harness, run, kind)
-            assert [c.payload.content for c in guidance] == [
-                "Original guidance.",
-                "",
-                "Changed <guidance>.",
-                "",
-            ]
+            assert [c.payload.content for c in guidance] == ["Original guidance."]
             triggers = _declarations(harness, run, f"{kind}-trigger")
-            assert [c.payload.revision == "0" for c in triggers] == [False, True, False]
-            assert triggers[0].payload.revision == triggers[-1].payload.revision
-
-            def text(call):
-                return "\n".join(message_text(m.parts) for m in call.messages)
-
-            assert f'<toolang:{kind}-guidance ref="{ref}" removed="true"/>' in text(
-                calls[2]
-            )
-            assert escape("Changed <guidance>.", quote=False) not in text(calls[2])
-            assert escape("Changed <guidance>.", quote=False) in text(calls[3])
-            # Restoring availability must not silently restore the old guidance.
-            assert guidance[-1].payload.revision == "0"
+            assert not triggers
+            for call in calls[1:]:
+                text = "\n".join(message_text(m.parts) for m in call.messages)
+                assert "Original guidance." in text
+                assert escape("Changed <guidance>.", quote=False) not in text
+                assert (
+                    f'<toolang:{kind}-guidance ref="{ref}" removed="true"/>' not in text
+                )
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

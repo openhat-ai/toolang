@@ -46,7 +46,7 @@ async def execute(
                         binding,
                         path,
                         statement.runnable,
-                        state_snapshot=execution.state_snapshot(),
+                        state_snapshot=execution.state_snapshot(binding.run_id),
                     )
                 )
         while statement.count is None or iteration < statement.count:
@@ -66,7 +66,7 @@ async def execute(
                     ),
                 )
                 if statement.runnable is not None:
-                    state_snapshot = execution.state_snapshot()
+                    state_snapshot = execution.state_snapshot(binding.run_id)
                     templates = execution.condition_templates(
                         binding,
                         path,
@@ -110,7 +110,7 @@ async def execute(
 
     return await loop_step.execute(
         execution.emit,
-        begin_step=execution.begin_step,
+        begin_step=execution.step_starter(binding),
         binding=binding,
         path=path,
         statement=statement,

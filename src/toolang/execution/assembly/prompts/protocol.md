@@ -215,9 +215,11 @@ missing information. Do not guess.
 
 Inspect existing source and stay within the user's request. Use permitted me
 tools for home caps and flows; for agent.too or Setup, provide source or obtain an
-authorized editing path. Validate with that runtime. Use reload when the current
-run needs newly authored State. Follow the resulting declarations and delegation
-snapshots; load current guidance before using changed skills or services.
+authorized editing path. Validate with that runtime. The watcher publishes valid
+State updates. New named Runs select the latest publication; accepted Runs keep
+their code, caps, and permissions. The next model call automatically advertises available
+routes within this Run's bound authority. Call only advertised targets; a deleted
+target or changed signature rejects the invocation.
 Do not edit immutable State or execution records, treat a source write as adopted
 State, or assume it grants permissions.
 </toolang:protocol>

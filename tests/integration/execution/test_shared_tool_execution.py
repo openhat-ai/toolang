@@ -17,6 +17,7 @@ from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
     RecordingRunTracer,
+    PublicationTracer,
     RecordingTool,
 )
 from toolang.base.types.message import Message, ToolResultPart
@@ -186,7 +187,9 @@ agic task() -> Text:
         reopened.close()
 
 
-def test_reload_keeps_runtime_routes_for_the_whole_model_batch(tmp_path: Path) -> None:
+def test_publication_keeps_runtime_routes_for_the_whole_model_batch(
+    tmp_path: Path,
+) -> None:
     source = """
 agic parent() -> Text:
   hands = flow:permitted
@@ -210,12 +213,19 @@ flow blocked(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
-        tools={tool.name: tool},
+        tools={
+            tool.name: tool,
+            "test__checkpoint": RecordingTool("test__checkpoint", output={}),
+        },
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("reload", "reload", "_toolang__reload", {}),
+                    ToolCall(
+                        "publication",
+                        "publication",
+                        "test__checkpoint",
+                        {},
+                    ),
                     ToolCall("ordinary", "ordinary", tool.name, {}),
                     ToolCall(
                         "blocked",
@@ -244,6 +254,7 @@ flow blocked(_: Text) -> Text:
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
+
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -252,6 +263,8 @@ flow blocked(_: Text) -> Text:
             source.replace("hands = flow:permitted", "hands = flow:blocked"),
             encoding="utf-8",
         )
+        nonlocal tracer
+        tracer = PublicationTracer(harness, {"publication": await watcher.refresh()})
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
@@ -273,7 +286,7 @@ flow blocked(_: Text) -> Text:
                 == "runnable is not authorized by hands: flow:blocked"
             )
             assert results["permitted"].error is None
-            assert results["next"].error is None
+            assert results["next"].error == results["blocked"].error
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

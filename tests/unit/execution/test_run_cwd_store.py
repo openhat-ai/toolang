@@ -118,11 +118,8 @@ def test_cwd_control_rejects_noncanonical_or_uncaused_data(payload):
         control_payload_from_data("cwd", payload)
 
 
-def test_legacy_workspace_invalidation_without_fallback_remains_readable() -> None:
-    payload = control_payload_from_data(
-        "cwd",
-        {"cwd": "", "cause": "invalidated", "state": "run_abc@0"},
-    )
-
-    assert isinstance(payload, CwdControlPayload)
-    assert payload.cwd == ""
+def test_removed_workspace_invalidation_is_rejected() -> None:
+    with pytest.raises(ValueError, match="location and cause"):
+        control_payload_from_data(
+            "cwd", {"cwd": "", "cause": "invalidated", "state": "run_abc@0"}
+        )

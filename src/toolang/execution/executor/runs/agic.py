@@ -51,10 +51,6 @@ from ...tokens import InputEstimate
 from ..frame import _AgicFrame, build_agic_frame
 from ..steps import model as model_step
 from ..steps import tool as tool_step
-from ...runnables import (
-    resolve_bound_runnable,
-    resolve_module_runnable,
-)
 
 
 if TYPE_CHECKING:
@@ -74,8 +70,8 @@ class _OutputBinding:
 class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
 
+    # The last committed frame also supplies its following tool batch.
     prepared: _AgicFrame
-    model_frame: _AgicFrame = field(init=False)
     layout: AgentLayout
     emit: EventEmitter
     pending_inputs: Callable[[], tuple[ControlRecord, ...]]
@@ -121,11 +117,7 @@ class _AgicState:
         ]
         | None
     ) = None
-    refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
-
-    def __post_init__(self) -> None:
-        # Tools may refresh prepared without changing the last dispatched call.
-        self.model_frame = self.prepared
+    prepare_model_frame: Callable[[], _AgicFrame] | None = None
 
     def check_model_call_limit(self) -> None:
         """Check the next call without counting an uncommitted preparation."""
@@ -185,12 +177,12 @@ class _AgicState:
                     raise interruption
                 return
 
-    def frame_for_step(self, state: AgentState, ref: ControlRef) -> _AgicFrame:
-        """Prepare one step from the State captured at its boundary."""
+    def frame_for_model(self) -> _AgicFrame:
+        """Prepare model history and catalog while retaining this Run's binding."""
 
-        if self.refresh_frame is None:
+        if self.prepare_model_frame is None:
             return self.prepared
-        return self.refresh_frame(state, ref)
+        return self.prepare_model_frame()
 
 
 async def execute(
@@ -207,42 +199,23 @@ async def execute(
     estimate = InputEstimate()
     frames: dict[tuple[str, RunRef | StepRef | None, float], _AgicFrame] = {}
 
-    def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
+    def prepare_model_frame() -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
-        key = (state.revision, horizon, estimate.counter.scale)
+        catalog = (
+            execution.latest_state()
+            if binding.settings.hands or binding.settings.handoffs
+            else binding.state
+        )
+        key = (catalog.revision, horizon, estimate.counter.scale)
         cached = frames.get(key)
         if cached is not None:
-            return replace(
-                cached,
-                run=replace(cached.run, state=state, state_ref=ref),
-            )
-        if agic.name is not None:
-            ref_name, candidate = resolve_module_runnable(
-                state, binding.module, agic.name, kind="agic"
-            )
-        else:
-            ref_name = binding.bindings.runnable
-            if ref_name is None:  # pragma: no cover - accepted run invariant
-                raise ValueError("active run is missing its runnable binding")
-            candidate = resolve_bound_runnable(state, binding.module, ref_name)
-        if not isinstance(candidate, AgicDecl):  # pragma: no cover - kind invariant
-            raise TypeError(f"active agic changed kind: {ref_name}")
-        current_binding = (
-            binding
-            if state.revision == binding.state.revision and ref == binding.state_ref
-            else execution.refresh_run_binding(
-                binding,
-                state,
-                ref,
-                candidate,
-                module=binding.module,
-            )
-        )
+            return cached
         prepared = build_agic_frame(
             execution,
-            replace(current_binding, horizon=horizon),
-            candidate,
+            replace(binding, horizon=horizon),
+            agic,
+            catalog=catalog,
             variables={**variables, **iteration_values()},
             far=selected.far,
             near=selected.near,
@@ -250,10 +223,11 @@ async def execute(
             estimate=estimate,
         )
         execution.require_model_pricing(prepared.model)
+        frames.clear()
         frames[key] = prepared
         return prepared
 
-    prepared = refresh_frame(binding.state, binding.state_ref)
+    prepared = prepare_model_frame()
     output_structs = program_structs(prepared.run)
     output_binding = _OutputBinding(
         type_name=prepared.agic.output,
@@ -291,8 +265,8 @@ async def execute(
             for _name, local in sorted(locals.items())
             if local.shape != "none" and local.ref is not None
         ),
-        begin_step=execution.begin_step,
-        refresh_frame=refresh_frame,
+        begin_step=execution.step_starter(binding),
+        prepare_model_frame=prepare_model_frame,
     )
     message = await _execute(state)
     if state.output is None:
@@ -417,7 +391,7 @@ async def _execute(state: _AgicState) -> Message | None:
                     )
                 )
                 continue
-            # A reload inside this batch changes State, not its routing authority.
+            # Freeze the advertised routes for every tool in this model batch.
             routes = state.prepared.routes
             if state.steer_before_next_step():
                 await tool_step.skip(state, result.tool_calls)

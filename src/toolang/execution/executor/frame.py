@@ -31,6 +31,7 @@ from toolang.plugin.models.budget import (
     output_budget,
 )
 from toolang.state.state import (
+    AgentState,
     StateCap,
 )
 
@@ -88,6 +89,7 @@ class _AgicFrame:
     compact_recent: int | None = None
     compact_summary: int | None = None
     history: HistorySelection | None = None
+    catalog: AgentState | None = None
 
 
 def build_agic_frame(
@@ -100,6 +102,7 @@ def build_agic_frame(
     near: Sequence[Message] = (),
     history: HistorySelection | None = None,
     estimate: InputEstimate | None = None,
+    catalog: AgentState | None = None,
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
@@ -148,8 +151,13 @@ def build_agic_frame(
         if max_output is None:
             max_output = default_request.max_output
     tools = dict(resource_tools(run.setup, resources))
+    catalog = catalog if catalog is not None else run.state
     routes = resolve_agic_routes(
-        run.state, agic, hands=run.settings.hands, handoffs=run.settings.handoffs
+        catalog,
+        agic,
+        hands=run.settings.hands,
+        handoffs=run.settings.handoffs,
+        module=run.module,
     )
     runtime_tools = (
         {}
@@ -165,7 +173,7 @@ def build_agic_frame(
     services = tuple(item for item in caps if item.kind == "service")
     if runtime_tools and resolved_model.tool_call is True:
         active = context.active_runnable_identities(run)
-        callable_routes = replace(
+        routes = replace(
             routes,
             resolved=tuple(
                 route
@@ -173,7 +181,7 @@ def build_agic_frame(
                 if route.runnable.qualified not in active
             ),
         )
-        runnables = runnable_descriptions(run.state, callable_routes)
+        runnables = runnable_descriptions(catalog, routes)
     else:
         runnables = ()
     route = resolved_model._toolang.route
@@ -298,6 +306,7 @@ def build_agic_frame(
         declarations=declarations,
         tools=tools,
         routes=routes,
+        catalog=catalog,
         services=_tool_services(services, context.setup.envs),
         workspaces=workspace_declarations(
             run.setup.workspace_grants(run.state.workspaces)

@@ -184,8 +184,8 @@ Get and list return home-relative paths and SHA-256 digests. Update and delete
 accept an optional `if_digest` precondition. Expected failures remain failed
 tool calls and include a structured `output.error` with a stable code,
 operation, kind, optional key, and bounded field diagnostics. Source mutation
-does not publish State directly; normal watcher and `_toolang__reload` behavior
-remain authoritative.
+does not publish State directly; the watcher prepares and publishes valid
+updates. New Run acceptance and model catalogs read the published snapshot.
 
 
 ## Runtime Rule
@@ -193,11 +193,10 @@ remain authoritative.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__execute`, `_toolang__reload`, `_toolang__pick`,
+`_toolang__run`, `_toolang__execute`, `_toolang__pick`,
 `_toolang__honor`, `_toolang__compact`, and `_toolang__chdir` tools. `hands` and
-`handoffs` authorize runnable targets but do not select these definitions. An
-executor without State refresh still exposes reload and returns a correlated
-error if it is called. Statement-generated Flow evaluators, output-repair
+`handoffs` authorize runnable targets but do not select these definitions.
+Statement-generated Flow evaluators, output-repair
 calls, and tool-disabled models receive no runtime tools.
 
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
@@ -205,8 +204,7 @@ ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools recei
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
 Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
-transferring execution. Reload returns `{controls: [{ref, state}]}` after adopting
-State. Pick, honor, and compact also return summaries of durably created or reused
+transferring execution. Pick, honor, and compact return summaries of durably created or reused
 controls; recalled content remains in controls, not the result summaries.
 
 `ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
@@ -250,7 +248,6 @@ for example `repo://src/file.py`. Honor says `Loading rules...` /
 `Loaded rules: repo://AGENTS.md`.
 Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
 capability identity rather than its source location.
-Reload continues to say `Reloaded agent state`.
 
 ### Pick guidance
 
