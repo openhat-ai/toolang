@@ -51,9 +51,10 @@ def test_complete_tree_matches_parser_and_original_bytes(source):
 
 
 def test_invalid_grammar_nodes_are_diagnosed_without_native_error_flag():
-    tree = cst.parse(b"flow broken:\n  run\n")
+    source = b"flow broken:\n  run\n"
+    tree = cst.parse(source)
     assert not tree.root_node.has_error
-    errors = cst.diagnostics(tree.root_node)
+    errors = cst.diagnostics(tree.root_node, source)
     assert errors[0]["kind"] == "invalid"
     assert errors[0]["node_type"] == "invalid_flow_reserved_statement"
 
@@ -68,7 +69,7 @@ def test_raw_parse_does_not_append_final_newline():
 
 def test_cst_syntax_does_not_validate_parameter_documentation():
     source = "## @param unknown Details.\nagic echo(_):\n  {{_}}\n"
-    assert cst.diagnostics(cst.parse(source.encode()).root_node) == []
+    assert cst.diagnostics(cst.parse(source.encode()).root_node, source.encode()) == []
     with pytest.raises(ToolangValidationError, match="unknown"):
         Program.from_source(source)
 
@@ -76,7 +77,7 @@ def test_cst_syntax_does_not_validate_parameter_documentation():
 def test_missing_nodes_keep_native_markers_and_zero_width_ranges():
     source = "struct X:\n  field:\n"
     tree = cst.parse(source.encode())
-    errors = cst.diagnostics(tree.root_node)
+    errors = cst.diagnostics(tree.root_node, source.encode())
     missing = next(item for item in errors if item["kind"] == "missing")
     assert missing["start_byte"] == missing["end_byte"]
     assert '(MISSING "Text")' in cst_sexp(tree.root_node)

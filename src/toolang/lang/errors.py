@@ -34,6 +34,13 @@ class ToolangOutputError(ToolangError):
 class ToolangFormatError(ValueError):
     """Raised when source formatting cannot be completed safely."""
 
+    def __init__(
+        self, message: str, *, line: int | None = None, column: int | None = None
+    ):
+        super().__init__(message)
+        self.line = line
+        self.column = column
+
 
 @contextmanager
 def source_location(line: int, column: int | None = None) -> Iterator[None]:

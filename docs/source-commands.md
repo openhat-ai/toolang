@@ -45,7 +45,13 @@ An array-valued item is distinct from a flow list.
 Unknown inherited context, dynamic values, and value conversions remain runtime
 checks; insufficient history within a valid window remains normal until warm-up.
 These checks do not infer signatures through calls. Diagnostic positions are
-one-based declaration/statement anchors when a precise token is unavailable.
+one-based lines and UTF-8 byte columns (a tab counts as one byte), with
+declaration/statement anchors when a precise token is unavailable. Syntax errors
+explain missing punctuation, missing types/values, or malformed statements and
+include a bounded, escaped source excerpt. When parser recovery cannot establish
+the cause, diagnostics identify unexpected syntax and its surrounding construct
+without guessing a repair. An enclosing recovery error may be localized to a
+more specific erroneous child; source order takes precedence over error kind.
 
 The CST parses the original UTF-8 bytes, including incomplete source. Unlike
 the AST path, it neither masks query-data hashes nor adds a final newline, so
@@ -66,6 +72,9 @@ Ranges are half-open. Points are `{row, column}` with zero-based rows and UTF-8
 byte columns. AST `span.line` remains one-based. Diagnostics distinguish native
 errors, missing nodes, and grammar-specific invalid nodes. Node names track the
 grammar version; this inspection format is not a runtime storage schema.
+Diagnostic messages use the same syntax explanations as AST parsing and
+formatting. All native diagnostic entries and overlapping ranges are retained;
+human explanations do not change the raw node types or parser recovery markers.
 
 AST S-expressions use `(kind field: value ...)`, `(span line: N)`, `(list ...)`,
 and `(map ("key" value) ...)`. Strings/scalars use JSON escaping, and empty
@@ -86,6 +95,12 @@ In-place formatting and `--check` accept multiple files/directories, discover
 `.too` files recursively, and deduplicate resolved paths. `--check` returns 0
 when formatting is current and 1 when changes are needed. It checks formatting,
 not semantic validity. Syntax errors prevent formatting.
+Syntax failures use `path:line:column: message`, including stdin's diagnostic
+label, with the same location units as `parse`. Formatting retains only the
+first syntax error. If the formatter itself produces invalid syntax, the error
+explicitly identifies a generated line/column instead of attributing that
+position to the input file. The failing file is not written; files formatted
+successfully earlier in the same batch remain changed.
 
 `--stdout` and `--highlight` accept exactly one file or stdin and never modify
 source files. `--highlight` implies stdout mode; `--stdout --highlight` is also
@@ -114,6 +129,9 @@ Highlighting uses the grammar's packaged query. Incomplete and semantic-invalid
 source is rendered best-effort without validation errors. With colors removed,
 terminal output retains the input exactly, including tabs, CRLF, trailing spaces,
 and a missing final newline. HTML escapes source markup and uses no remote assets.
+Rendering failures include the source label and underlying cause, without a
+fabricated source position. Both standalone highlighting and `fmt --highlight`
+finish rendering before emitting code or HTML, so failures emit no partial result.
 
 Both `highlight` and `fmt --highlight` accept:
 
