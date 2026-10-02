@@ -259,8 +259,9 @@ _TOOLS = (
         "run",
         "Schedule an authorized hand as a child Run. The tool reply acknowledges "
         "scheduling; a separate runtime message supplies its outcome before you continue. "
-        "Call it only when its result is required now. Read the target input "
-        "signature and do not invent missing values. Acceptance selects the latest "
+        "Use run when the caller needs the result for further processing. "
+        "Follow the latest hands scope and requested_only policy. Read the target "
+        "input signature and do not invent missing values. Acceptance selects the latest "
         "published version and rejects missing targets or changed signatures.",
         _RUN_PARAMETERS,
     ),
@@ -268,7 +269,8 @@ _TOOLS = (
         "execute",
         "Transfer the remainder of this Run to an authorized handoff target. "
         "The caller never resumes, and this must be the only tool call in the "
-        "Model Call. Prefer run when either behavior would satisfy the intent.",
+        "Model Call. Use execute for a named invocation with no requested follow-up. "
+        "Follow the latest handoffs scope and requested_only policy.",
         _RUN_PARAMETERS,
     ),
 )

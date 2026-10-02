@@ -359,12 +359,16 @@ prompt review:
   {{focus}} {{_}}
 
 agic chat(_: Part[], tone: Text) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none
   user: {{tone}} {{_}}
 
 agic selected(_: Part[], tone: Text) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none

@@ -250,8 +250,8 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
     states = []
 
     def source(hands, handoffs, type_name="Text"):
-        directives = ("  hands = helper\n" if hands else "") + (
-            "  handoffs = helper\n" if handoffs else ""
+        directives = ("  hands = helper\n" if hands else "  hands = none\n") + (
+            "  handoffs = helper\n" if handoffs else "  handoffs = none\n"
         )
         return (
             "context custom: User context.\n"

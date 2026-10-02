@@ -2420,6 +2420,8 @@ def test_retry_and_rerun_execute_locally_with_limit_overrides(
         tmp_path / "toolang",
         source="""
 agic reply(_: Part[]) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none

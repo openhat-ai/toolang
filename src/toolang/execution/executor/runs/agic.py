@@ -117,7 +117,7 @@ class _AgicState:
         ]
         | None
     ) = None
-    prepare_model_frame: Callable[[], _AgicFrame] | None = None
+    prepare_model_frame: Callable[[bool], _AgicFrame] | None = None
 
     def check_model_call_limit(self) -> None:
         """Check the next call without counting an uncommitted preparation."""
@@ -182,7 +182,7 @@ class _AgicState:
 
         if self.prepare_model_frame is None:
             return self.prepared
-        return self.prepare_model_frame()
+        return self.prepare_model_frame(self.repairing_output)
 
 
 async def execute(
@@ -197,17 +197,24 @@ async def execute(
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
     estimate = InputEstimate()
-    frames: dict[tuple[str, RunRef | StepRef | None, float], _AgicFrame] = {}
+    frames: dict[tuple[str, RunRef | StepRef | None, float, bool], _AgicFrame] = {}
 
-    def prepare_model_frame() -> _AgicFrame:
+    def prepare_model_frame(repairing_output: bool = False) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
+        # Omitted routes also need fresh targets; snapshot-only executors
+        # retain their bound catalog when no publication source is available.
         catalog = (
             execution.latest_state()
-            if binding.settings.hands or binding.settings.handoffs
+            if not repairing_output
+            and execution.executor._state is not None
+            and (
+                binding.settings.hands != ("none",)
+                or binding.settings.handoffs != ("none",)
+            )
             else binding.state
         )
-        key = (catalog.revision, horizon, estimate.counter.scale)
+        key = (catalog.revision, horizon, estimate.counter.scale, repairing_output)
         cached = frames.get(key)
         if cached is not None:
             return cached
@@ -216,6 +223,7 @@ async def execute(
             replace(binding, horizon=horizon),
             agic,
             catalog=catalog,
+            runtime_tools_enabled=not repairing_output,
             variables={**variables, **iteration_values()},
             far=selected.far,
             near=selected.near,

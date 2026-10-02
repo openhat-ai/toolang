@@ -85,7 +85,9 @@ def without_runtime_snapshots(messages: Sequence[Message]) -> list[Message]:
     ]
 
 
-def route_snapshots(call: ModelCall) -> dict[str, list[dict[str, Any]]]:
+def route_snapshots(
+    call: ModelCall, *, requested_only: dict[str, bool] | None = None
+) -> dict[str, list[dict[str, Any]]]:
     """Read the latest sibling snapshots, checking their explicit wire contract."""
     for message in reversed(call.messages):
         match = _ROUTE_SNAPSHOTS.match(message_text(message.parts))
@@ -98,8 +100,15 @@ def route_snapshots(call: ModelCall) -> dict[str, list[dict[str, Any]]]:
         result = {}
         for node in root:
             entries = json.loads(node.text) if node.text else []
-            assert node.attrib == {"enabled": "true" if entries else "false"}
-            result[node.tag.removeprefix("{urn:test}")] = entries
+            assert node.attrib["requested_only"] in {"true", "false"}
+            assert node.attrib == {
+                "enabled": "true" if entries else "false",
+                "requested_only": node.attrib["requested_only"],
+            }
+            tag = node.tag.removeprefix("{urn:test}")
+            if requested_only is not None:
+                assert (node.attrib["requested_only"] == "true") == requested_only[tag]
+            result[tag] = entries
         return result
     raise AssertionError("model call has no hands/handoffs snapshots")
 

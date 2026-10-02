@@ -199,13 +199,32 @@ For every ordinary tool-capable Agic Model Call, the executor selects the regist
 Statement-generated Flow evaluators, output-repair
 calls, and tool-disabled models receive no runtime tools.
 
+In chat, a named invocation without further requested work uses execute; a
+request to call a target and then summarize or process its result uses run.
+Both tools accept `runnable` and optional `input`, whose `_` field is primary
+input and other fields are declared parameters. The model reads the latest
+hands/handoffs signatures and asks for missing required values before calling.
+Questions about parameters alone do not execute the target.
+
+Omitted hands/handoffs settings inherit their parent; without an inherited value,
+all module-visible targets are available for named user requests. Their snapshots
+have `requested_only="true"`, directing the model not to delegate autonomously.
+Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
+remain runtime-enforced limits, independently for run and execute. On a conflict,
+the model reports the restriction without switching operation or target. Snapshot
+limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
+
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
-Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
+Run creates a child owned by its Tool Step and returns a scheduling receipt with
+`run_id` and `controls`. A separate runtime message delivers its status and, on
+success, output type and content before the caller continues.
 Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Pick, honor, and compact return summaries of durably created or reused
 controls; recalled content remains in controls, not the result summaries.
+Execute never resumes the caller after commitment, even if the target fails,
+and does not change the default runnable for future chat turns.
 
 `ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
 progress events; only model-triggered calls contribute their own ToolResult messages.

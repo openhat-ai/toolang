@@ -451,6 +451,20 @@ agic coordinate(_: Text) -> Report:
   Coordinate the work.
 ```
 
+When a setting is omitted and has no inherited value, all visible targets are
+available for user-directed calls. The model may invoke them when the user names
+a target; this requested-only rule is enforced by protocol guidance. An explicit
+list or `*` also permits autonomous delegation within its scope. Explicit lists
+and `none` are enforced by the runtime and cannot be bypassed by a user request.
+Inherited lists and `none` remain effective until a child explicitly replaces
+them. Additional restrictions stated by the user further constrain model use.
+
+For a named invocation with no requested follow-up, the model uses
+`_toolang/execute`. When asked to summarize, compare, or otherwise process the
+result afterward, it uses `_toolang/run`. Asking about parameters alone does not
+execute the target; missing required input is requested before invocation.
+Scope conflicts are reported without silently changing the target or operation.
+
 A hand is a child Run: the runtime acknowledges scheduling, executes the child,
 then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
@@ -688,7 +702,7 @@ output schema; each model adapter maps those fields to its provider API.
 | Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
 | Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
 | Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
-| Hands/handoffs | Complete current call authorization and signatures, with explicit `enabled` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context = none` |
+| Hands/handoffs | Complete current call authorization and signatures, with `enabled` and `requested_only` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context = none` |
 | Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` prepended to the last authored user message; repeated as a user message on later calls |
 | Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
 | Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
