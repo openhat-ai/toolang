@@ -16,7 +16,7 @@ from toolang.cli.toolang.commands.inspect import (
 from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
 from toolang.execution.types import Local, Pointer
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 
 
 def test_human_type_labels_use_nullable_suffix() -> None:
@@ -184,12 +184,15 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
 
 
 @pytest.mark.parametrize("terminal", (True, False))
-def test_output_json_rich_highlighting_preserves_long_values(terminal: bool) -> None:
+def test_output_json_rich_highlighting_preserves_long_values(
+    terminal: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
     from rich.text import Text
     from toolang.cli.toolang.commands.inspect import _print_output_json
 
     stream = StringIO()
+    monkeypatch.setattr(stream, "isatty", lambda: terminal)
     console = Console(
         file=stream,
         width=12,
@@ -220,6 +223,8 @@ def test_output_json_rich_highlighting_preserves_long_values(terminal: bool) -> 
             False,
         ),
         (Local.typed("Json", {}), False),
+        (Local(Array("ReportPart[]", ())), False),
+        (Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))), False),
     ),
 )
 def test_output_markdown_accepts_only_textual_content(
@@ -227,4 +232,4 @@ def test_output_markdown_accepts_only_textual_content(
 ) -> None:
     from toolang.cli.toolang.commands.inspect import _run_output_text
 
-    assert (_run_output_text(local, markdown=True) is not None) is expected
+    assert (_run_output_text(local) is not None) is expected

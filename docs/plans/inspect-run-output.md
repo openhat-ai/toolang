@@ -2,161 +2,109 @@
 
 ## Status
 
-Approved by the human on 2026-10-02, including Rich rendering for JSON.
+Approved by the human on 2026-10-02: add only the `output` view, automatically
+select Rich presentation from the result type, and retain existing format flags.
 Implementation is authorized.
 
 ## Goal And Success Criteria
 
-Read a Run's result without knowing its `Output` and `Local` storage wrappers.
-Keep complete structured output available and make Markdown viewing optional.
-
-Approved syntax (`too` is an alias for `toolang`):
+Read a Run result without knowing its `Output` and `Local` storage wrappers or
+piping it to an external renderer. `too` is an alias for `toolang`.
 
 ```sh
 too SCRIPT inspect RUN output
 too SCRIPT inspect RUN output --json
-too SCRIPT inspect RUN output --markdown
 ```
 
-Success means these commands return only the result body, formatted JSON, or
-rendered Markdown respectively, without requiring `/output/local/value`, `jq`
-for indentation, or an external Markdown renderer.
+The default view renders the result with Rich. The existing `--json` flag
+returns complete resolved data suitable for further processing.
 
-## Verified Current Behavior
+## Baseline Behavior
 
-- `inspect` accepts explicit `RUN tree` and `STEP call` projectors through a
-  typed registry. There is no `output` projector.
-- Run records contain `output: Output | None`; `Output` contains `local` and
-  `binding`, while `Local` contains the typed value and dimension.
-- Pointer `--json` prints the selected canonical data without dereferencing it.
-  JSON already uses two-space indentation, so `| jq '.'` is unnecessary solely
-  for formatting.
-- Human value inspection resolves references; Text is literal text, while
-  Parts use the shared response presentation. Structured field selections can
-  produce tables or summaries instead of a complete result document.
-- `RunStore.resolve_local()` already resolves nested references and validates
-  the resulting type. No new execution resolver is needed.
+Before this feature, `inspect` supports `RUN tree`, `STEP call`, and canonical
+field Pointers such as `RUN/output/local/value`. Pointer JSON returns raw stored
+data without dereferencing it. `RunStore.resolve_local()` already resolves
+nested references and validates their types; this feature reuses that resolver.
 
-The reported `examples/redoc.too` is absent from the inspected checkout. These
-findings come from implementation and existing tests, not that specific Run.
+## Scope And Design
 
-## Decisions
+Register `output` as a terminal projector for whole Runs alongside `tree`.
+Step, Thread, Control, collection, and field subjects reject it using existing
+allowed-view errors. Keep Pointer grammar and all existing views unchanged.
+Do not introduce commands, formatting flags, aliases, latest-Run selection,
+Run-ID prefixes, or implicit script selection.
 
-### Syntax And Scope
+Within the existing inspection read transaction, resolve `run.output.local`
+and serialize its `value` with `local_to_protocol_data()`. Omit binding, type,
+dimension, and synthetic envelopes. Preserve every nested field, list element,
+Part, and scalar type in JSON. This resolved JSON can differ from raw
+`RUN/output/local/value --json` when the stored result contains references.
 
-Register `output` as an explicit terminal projector for whole Run subjects,
-beside `tree`. It is not a field alias or a change to Pointer grammar.
-`inspect RUN/output` and deeper pointers retain their existing meanings.
-`inspect RUN` continues to inspect the record.
+If the Run has no output, fail with exit code 1 and its ID and status, without
+writing a result to stdout. Present null and empty values succeed. Read any
+present output regardless of Run status; do not wait or infer a last-Step
+result. Missing Runs, broken references, cycles, and validation errors retain
+existing inspection error handling.
 
-The first version covers Runs only. Step, Thread, Control, collection, and field
-subjects reject the `output` projector using the existing allowed-view errors.
-Do not add a top-level `output` command, an abbreviated alias, a latest-Run
-selector, Run-ID prefixes, or implicit agent/script selection in this change.
+## Presentation
 
-### Value Resolution
+| Resolved value | Default / `--human` | `--json` |
+| --- | --- | --- |
+| Text | Rich Markdown | Exact JSON string |
+| Part / Part[] containing TextPart | Rich Markdown from concatenated response text, trimmed as in the existing Parts response policy | Complete serialized value |
+| Empty Part array | Empty body | Empty JSON array |
+| Other values, including nontext Parts | Rich JSON | Complete serialized value |
 
-Read the selected Run and resolve `run.output.local` with
-`RunStore.resolve_local()` within the existing inspection read transaction.
-Serialize the resolved Local with `local_to_protocol_data()` and take its
-`value`. Do not return the binding, type, dimension, or a synthetic envelope.
-Preserve all nested fields, list order, Part records, and scalar types in JSON.
+Choose the renderer from the runtime type, not by parsing strings to guess
+whether they contain JSON. Use exact Part type compatibility rather than a
+name suffix; authored structs such as `ReportPart` remain structured data.
+Empty or whitespace-only TextPart content produces an empty Markdown body.
+Textual Parts may omit reasoning and nontext content from their human view;
+JSON always preserves the full value. Nontext Parts fall back to JSON.
 
-This is a resolved result view: its JSON can differ from the raw canonical
-`RUN/output/local/value --json` when the stored value contains references.
-The raw Pointer view remains available for provenance and debugging.
+Rich handles Markdown layout and terminal JSON highlighting. JSON is complete
+and does not wrap at the terminal width. Redirected JSON remains valid and
+uncolored even when `FORCE_COLOR` is set. Markdown remains a presentation view
+when redirected; callers needing exact data use `--json` (and `jq -r` for raw
+text). Do not emit metadata headings or footers.
 
-If `run.output is None`, fail with exit code 1 and an error identifying the Run
-and its status; write no result to stdout. Do not wait, select another Run, or
-infer output from its last Step. A present output containing null, an empty
-string, or an empty collection is valid and succeeds. An output present on any
-Run status can be read. Missing Runs, broken references, cycles, and validation
-failures retain the existing inspection error handling.
+The existing `--human` and `--json` flags remain mutually exclusive. No
+`--markdown` option is added. Raw Pointer inspection remains available for
+provenance, wrappers, and debugging.
 
-### Presentation
+## Touchpoints
 
-`--human`, `--json`, and the new `--markdown` are mutually exclusive; Human is
-the default. `--markdown` is supported only with the new `output` projector;
-other queries reject it with a usage error. Existing queries retain their
-current presentation and options.
-
-| Result | Default / `--human` | `--json` | `--markdown` |
-| --- | --- | --- | --- |
-| Text | Literal complete text | JSON string | Render text as Markdown |
-| Part / Part[] | Plain response text via existing `parts_response_text()` policy | Complete serialized Part value | Render that response text as Markdown when textual content exists |
-| Other values | Complete indented JSON | Complete indented JSON | Usage error; suggest `--json` |
-
-For Parts without textual content, Human retains the existing helper's
-structured fallback; Markdown rejects nonempty nontext-only content rather
-than rendering its JSON as prose. Empty Parts render an empty body. The Parts
-Human view remains a response projection and can omit reasoning and nontext
-content; `--json` preserves the entire resolved value.
-
-Literal Text preserves whitespace; the CLI adds a final newline only when
-needed. Do not interpret Rich markup, wrap, summarize, or truncate plain text
-and JSON. No titles, metadata tables, or footers precede or follow the result.
-Use Rich for JSON syntax highlighting on terminals and explicit Markdown
-presentation. Redirected JSON remains valid, uncolored JSON. Apply this to the
-new output projector only; existing JSON projections remain unchanged. Do not
-change the selected format based on whether stdout is a terminal or a pipe.
-
-The default remains useful with external tools:
-
-```sh
-too SCRIPT inspect RUN output | rich -m
-too SCRIPT inspect RUN output --json | jq '.summary'
-```
-
-### Tradeoffs
-
-An explicit projector fits the current grammar and keeps record inspection
-predictable. Shortening `/output` by implicitly unwrapping it would change an
-existing canonical field view. A separate command duplicates inspect routing.
-Automatic Markdown for all Text would alter plain-text piping; an explicit
-flag lets callers choose the presentation.
-
-## Design Touchpoints And Likely Files
-
-- `src/toolang/cli/toolang/commands/inspect.py`: register and implement the Run
-  projector, resolve its value, validate formats, and render complete output.
-  Derive help and allowed-projector errors from the registry.
-- `src/toolang/cli/common/human_values.py`: reuse the existing Parts response
-  text and Markdown presentation helpers; change only if a small shared helper
-  is needed. Preserve existing callers' behavior.
-- `tests/unit/cli/test_inspect_subject_navigation.py`: registry and grammar.
-- `tests/unit/cli/test_inspect_rendering.py`: output types and formats.
-- `tests/unit/cli/test_cli_help.py`: preserve error assertions when the new
-  option appears in spelling suggestions.
-- `tests/integration/cli/test_local_core_commands.py`: offline CLI acceptance.
-- `docs/api.md`: document syntax, resolved JSON, format selection, and errors.
+- `src/toolang/cli/toolang/commands/inspect.py`: projector registration,
+  resolution, type-directed Rich rendering, and registry-derived help.
+- `tests/unit/cli/test_inspect_subject_navigation.py`: grammar and registry.
+- `tests/unit/cli/test_inspect_rendering.py`: exact Part classification and
+  terminal versus redirected JSON.
+- `tests/integration/cli/test_local_core_commands.py`: offline acceptance.
+- `docs/api.md`: syntax, presentation, resolved JSON, and errors.
 
 No persistence, schema, execution, API, plugin, or entry-point changes are
-needed. Script selection and execution-store opening retain current behavior.
+required. Historical script selection and execution-store opening are unchanged.
 
 ## Acceptance Tests
 
-1. A Run with Text output prints only its full text, including Unicode, blank
-   lines, indentation, and Rich-like markup, without width-based truncation or
-   wrapping. The JSON view parses as the same string and is indented.
-2. Structured, scalar, null, and empty outputs round-trip through JSON; Human
-   emits complete JSON for nontext values rather than table previews.
-3. Textual and mixed Parts obey the shared Human response policy; JSON retains
-   all Parts. Markdown renders textual content, handles empty text, and rejects
-   unsupported values with a clear usage error.
-4. Direct, chained, and nested references resolve in both Human and JSON
-   output; missing targets, cycles, and type errors fail without partial stdout.
-5. Absent output fails with Run/status context; present empty or null output
-   succeeds. Existing history is read without executing the script or creating
-   an absent store.
-6. Only whole Run subjects accept `output`; conflicting format flags and
-   `--markdown` on other queries fail. Help lists the new view and its formats.
-7. Existing Pointer views, raw JSON, `RUN tree`, and `STEP call` remain
-   unchanged. Pipes preserve the explicitly selected presentation.
-8. Run the repository's default verification before implementation commits.
+1. Text and textual Parts render as Markdown without an extra format flag.
+   Empty textual content renders an empty body, not a serialized Part wrapper.
+2. JSON round-trips Unicode, whitespace, null, empty containers, scalars, Parts,
+   and long nested values. Terminal JSON is highlighted; piped JSON contains no
+   ANSI codes, including under forced-color environments.
+3. Nontext Parts and custom struct arrays, including empty `ReportPart[]`,
+   render complete JSON instead of crashing or disappearing.
+4. Direct, chained, and nested references resolve. Missing targets, cycles,
+   and type errors fail without partial stdout; raw Pointer JSON is unchanged.
+5. Missing output reports Run/status context. Missing history does not create
+   a store. Script inspection reads history without running the script.
+6. Only whole Runs accept `output`; existing format conflicts still fail.
+   Help lists the new view without adding format options. Existing Pointer,
+   `tree`, and `call` views remain compatible.
+7. The repository's default lint, format, type, and full offline checks pass.
 
 ## Risks And Open Questions
 
-Resolving large outputs can be expensive; keep the current unbounded inspection
-model without adding pagination or truncation. Explicitly document the
-difference between raw Pointer JSON and resolved result JSON. No unresolved
-implementation decisions remain in this proposal; the scope and command design are approved.
+Resolving large outputs can be expensive; retain the current unbounded
+inspection model. Markdown presentation changes visual whitespace, so document
+JSON as the exact-data view. There are no remaining product questions.

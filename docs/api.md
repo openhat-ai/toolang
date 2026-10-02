@@ -355,7 +355,7 @@ The same roaming source path can select agent commands:
 toolang SCRIPT info
 toolang SCRIPT run
 toolang SCRIPT chat [--thread [THREAD]]
-toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
+toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
@@ -372,7 +372,7 @@ Visiting selectors support the same agent-self and execution-history commands:
 toolang brice/alice info
 toolang brice/alice run
 toolang brice/alice chat [--thread [THREAD]]
-toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
+toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang brice/alice retry RUN
 ```
 
@@ -386,7 +386,7 @@ existing `runs.db` without fetching the source.
 `inspect` evaluates a subject chain and an optional terminal projector:
 
 ```text
-toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
+toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json]
 ```
 
 The former top-level `threads` and `runs` commands have been removed. Replace
@@ -463,22 +463,21 @@ Read a Run's result with `output` (`too` is an alias for `toolang`):
 ```sh
 too SCRIPT inspect run_ab12 output
 too SCRIPT inspect run_ab12 output --json
-too SCRIPT inspect run_ab12 output --markdown
 ```
 
 `output` resolves stored references and removes the `Output` / `Local` wrappers.
-The default Human view prints complete literal Text, the shared response text
-for Parts, or complete indented JSON for other values. Parts without response
-text use the shared structured fallback. The Human Parts view can omit reasoning
-and nontext content; `--json` preserves every resolved Part and nested value.
-JSON uses Rich syntax highlighting on terminals and remains valid JSON in pipes.
-Plain text and JSON are not truncated or wrapped to the terminal width.
+The default Human view automatically chooses a Rich renderer using the resolved
+value's type: Text and textual Parts render as Markdown; other values render as
+complete indented JSON. Strings containing JSON are still Text and are not
+parsed to guess a format. Empty text and empty Parts render an empty body.
+Parts containing text display their response text; `--json` preserves every
+resolved Part, including reasoning and nontext content, and exact Text whitespace.
 
-`--markdown` explicitly renders textual output as Markdown. Empty text and empty
-Parts are supported; nontext-only Parts and other nontext values are rejected
-with a suggestion to use `--json`. The three flags `--human`, `--json`, and
-`--markdown` are mutually exclusive. Only the `output` projector accepts
-`--markdown`; the selected format does not change when stdout is redirected.
+`--human` and `--json` keep their existing meanings and remain mutually exclusive;
+this view adds no formatting flags. JSON uses Rich syntax highlighting on
+terminals and remains complete, unwrapped, and free of ANSI codes in pipes,
+even with `FORCE_COLOR` set. Markdown presentation uses the available terminal
+width. Use `--json` when exact result data is needed instead of presentation.
 
 A Run without an output fails with its ID and status instead of returning a
 blank success or waiting for completion. Present null and empty outputs succeed.

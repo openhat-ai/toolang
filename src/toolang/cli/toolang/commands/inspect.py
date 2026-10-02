@@ -22,14 +22,13 @@ from toolang.cli.common.parameters import TextType
 from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
-    parts_response_text,
 )
 from toolang.cli.common.execution_progress.facts import (
     elapsed_fact as _format_elapsed,
     token_fact as _token_fact,
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
-from toolang.base.types.message import Part, TextPart
+from toolang.base.types.message import Part, TextPart, message_text
 from toolang.lang.types import Array
 from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.inspection.history import RunHistory
@@ -70,6 +69,7 @@ from toolang.execution.types import (
     ToolStepGiven,
     TypedRef,
     local_to_protocol_data,
+    type_assignable,
     validate_runtime_value,
 )
 
@@ -222,23 +222,26 @@ def _project_run_output(store: RunStore, source: _InspectSubject) -> object:
     return _ProjectedValue(json=local_to_protocol_data(local)["value"], human=local)
 
 
-def _run_output_text(local: Local, *, markdown: bool = False) -> str | None:
+def _run_output_text(local: Local) -> str | None:
     value = local.value
     if isinstance(value, str):
         return value
     parts: tuple[Part, ...] | None = None
     if isinstance(value, Part):
         parts = (value,)
-    elif isinstance(value, Array) and local.type.endswith("Part[]"):
+    elif isinstance(value, Array) and type_assignable(value.item_type, "Part"):
         parts = cast(tuple[Part, ...], tuple(value))
     if parts is None:
         return None
-    if markdown and parts and not any(isinstance(part, TextPart) for part in parts):
+    if parts and not any(isinstance(part, TextPart) for part in parts):
         return None
-    return parts_response_text(parts)
+    return message_text(parts).strip()
 
 
 def _print_output_json(console: Console, value: object) -> None:
+    if not console.file.isatty():
+        typer.echo(json.dumps(value, ensure_ascii=False, indent=2), file=console.file)
+        return
     console.print(JSON.from_data(value, ensure_ascii=False), soft_wrap=True)
 
 
@@ -250,23 +253,8 @@ def _render_run_output(
     text = _run_output_text(value)
     if text is None:
         _print_output_json(console, local_to_protocol_data(value)["value"])
-    else:
-        typer.echo(text, file=console.file, nl=not text.endswith("\n"))
-
-
-def _render_output_markdown(projection: _InspectProjection) -> None:
-    projected = projection.value
-    if not isinstance(projected, _ProjectedValue) or not isinstance(
-        projected.human, Local
-    ):
-        raise RuntimeError("output projection has no Local value")
-    text = _run_output_text(projected.human, markdown=True)
-    if text is None:
-        raise UsageError(
-            "--markdown requires textual output; use --json for this value"
-        )
-    if text:
-        Console(highlight=False).print(Markdown(text))
+    elif text:
+        console.print(Markdown(text))
 
 
 def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
@@ -733,17 +721,12 @@ def inspect_command(
     json_view: Annotated[
         bool, typer.Option("--json", help="Render JSON (resolved value for Run output)")
     ] = False,
-    markdown: Annotated[
-        bool, typer.Option("--markdown", help="Render Run output as Markdown")
-    ] = False,
 ) -> None:
     """Inspect execution subjects."""
 
-    if sum((human, json_view, markdown)) > 1:
-        raise UsageError("--human, --json, and --markdown are mutually exclusive")
+    if human and json_view:
+        raise UsageError("--human and --json are mutually exclusive")
     query = _parse_inspect_query(subjects)
-    if markdown and query.projector != "output":
-        raise UsageError("--markdown requires the Run output projector")
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover - required=True guarantees this
             raise RuntimeError("execution resources were not opened")
@@ -755,9 +738,7 @@ def inspect_command(
                     subject,
                     query.projector,
                 )
-                if markdown:
-                    _render_output_markdown(projection)
-                elif json_view:
+                if json_view:
                     _render_projection_json(projection)
                 else:
                     _render_projection_human(resources.store, projection)

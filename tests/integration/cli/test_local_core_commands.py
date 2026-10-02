@@ -32,7 +32,13 @@ from tests.support.execution_fixtures import (
     project_step,
 )
 from tests.support.execution_harness import ExecutionHarness
-from toolang.base.types.message import Message, ReasoningPart, TextPart, ToolResultPart
+from toolang.base.types.message import (
+    ImagePart,
+    Message,
+    ReasoningPart,
+    TextPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
@@ -65,7 +71,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 from toolang.setup import AgentSetup, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
@@ -224,6 +230,10 @@ def test_removed_history_commands_are_unavailable(
         Local.typed("Number", 42),
         Local.typed("Boolean", False),
         Local.typed("Part[]", ()),
+        Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))),
+        Local(Array("ReportPart[]", ())),
+        Local.typed("ImagePart", ImagePart(image_url="https://example.com/image.png")),
+        Local.typed("ReasoningPart", ReasoningPart("reasoning")),
     ),
 )
 def test_inspect_run_output_complete_values(tmp_path: Path, local: Local) -> None:
@@ -246,18 +256,68 @@ def test_inspect_run_output_complete_values(tmp_path: Path, local: Local) -> Non
     assert json.loads(document.stdout) == json.loads(raw.stdout)
     assert "\x1b" not in document.stdout
     if isinstance(local.value, str):
-        assert human.stdout == local.value + (
-            "" if local.value.endswith("\n") else "\n"
-        )
+        assert bool(human.stdout) == bool(local.value)
     elif local.type == "Part[]":
-        assert human.stdout == "\n"
+        assert human.stdout == ""
     else:
         assert json.loads(human.stdout) == json.loads(raw.stdout)
     if isinstance(local.value, Mapping) and local.value:
         assert '\n  "summary":' in document.stdout
 
 
-def test_inspect_run_output_parts_and_markdown(tmp_path: Path) -> None:
+@pytest.mark.parametrize("args", ((), ("--json",)))
+def test_inspect_run_output_piped_json_ignores_forced_color(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_color",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(Local({"answer": 42})))
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    result = _invoke(root, "alice", "inspect", run.id, "output", *args)
+    assert result.exit_code == 0, result.stderr
+    assert "\x1b" not in result.stdout
+    assert json.loads(result.stdout) == {"answer": 42}
+
+
+@pytest.mark.parametrize(
+    "local",
+    (
+        Local.typed("TextPart", TextPart("")),
+        Local.typed("TextPart[]", (TextPart(""),)),
+        Local.typed("Part[]", (ReasoningPart("hidden"), TextPart("  \n"))),
+    ),
+)
+def test_inspect_run_output_empty_text_parts_render_empty_markdown(
+    tmp_path: Path, local: Local
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_blank",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(local))
+    result = _invoke(root, "alice", "inspect", run.id, "output")
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("as_parts", (False, True))
+def test_inspect_run_output_parts_and_markdown(tmp_path: Path, as_parts: bool) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     parts = (ReasoningPart("private reasoning"), TextPart("# Heading\n\n**Answer**"))
@@ -269,16 +329,24 @@ def test_inspect_run_output_parts_and_markdown(tmp_path: Path) -> None:
             origin="test",
             input=Message.user("Test output"),
         )
-        store.finish_run(run_id=run.id, output=Output(Local.typed("Part[]", parts)))
+        local = (
+            Local.typed("Part[]", parts)
+            if as_parts
+            else Local("# Heading\n\n**Answer**")
+        )
+        store.finish_run(run_id=run.id, output=Output(local))
     human = _invoke(root, "alice", "inspect", run.id, "output")
-    markdown = _invoke(root, "alice", "inspect", run.id, "output", "--markdown")
+    explicit = _invoke(root, "alice", "inspect", run.id, "output", "--human")
     document = _invoke(root, "alice", "inspect", run.id, "output", "--json")
-    assert human.exit_code == markdown.exit_code == document.exit_code == 0
-    assert human.stdout == "# Heading\n\n**Answer**\n"
-    assert "Heading" in markdown.stdout and "Answer" in markdown.stdout
-    assert "**Answer**" not in markdown.stdout
-    assert "private reasoning" not in markdown.stdout
-    assert json.loads(document.stdout) == [part.to_data() for part in parts]
+    assert human.exit_code == explicit.exit_code == document.exit_code == 0
+    assert human.stdout == explicit.stdout
+    assert "Heading" in human.stdout and "Answer" in human.stdout
+    assert "**Answer**" not in human.stdout
+    assert "private reasoning" not in human.stdout
+    expected = (
+        [part.to_data() for part in parts] if as_parts else "# Heading\n\n**Answer**"
+    )
+    assert json.loads(document.stdout) == expected
 
 
 @pytest.mark.parametrize("status", ("running", "failed", "succeeded"))
@@ -357,10 +425,6 @@ def test_inspect_run_output_resolves_references(
     "args",
     (
         ("run_output", "output", "--human", "--json"),
-        ("run_output", "output", "--human", "--markdown"),
-        ("run_output", "output", "--json", "--markdown"),
-        ("run_output", "tree", "--markdown"),
-        ("run_output/output", "--markdown"),
         ("run_output/output", "output"),
         ("term_output", "output"),
         ("run_output@0", "output"),
@@ -1946,7 +2010,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "LOOP_STEP steps" in compact_help
     assert "STEP call" in compact_help
     assert "RUN output" in compact_help
-    assert "--markdown" in help_text
+    assert "--markdown" not in help_text
     assert "RUN tree" in compact_help
     assert "Run tree is a durable structural snapshot" in compact_help
     assert "Step-owned historical call" in compact_help
