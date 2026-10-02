@@ -18,7 +18,7 @@ from ..assembly.run_results import run_receipt
 from ..runnables import (
     AgicRoutes,
     ResolvedRunnable,
-    resolve_public_runnable,
+    resolve_call_target,
 )
 from ..types import (
     ControlRef,
@@ -198,7 +198,7 @@ class _ToolRuntime(ToolRuntime):
             raise RuntimeError("Agic runtime execution is unavailable")
         captured = state.model_frame.catalog or state.model_frame.run.state
         state_ref = state.model_frame.run.state_ref
-        target = resolve_public_runnable(captured, runnable)
+        target = resolve_call_target(captured, state.prepared.run.module, runnable)
         execution.require_inactive_runnable(
             state.prepared.run, target, action="_toolang/execute"
         )

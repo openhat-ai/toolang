@@ -41,7 +41,7 @@ _BUILTIN_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class ResolvedRunnable:
-    """One public runnable resolved to its owning State module."""
+    """One runnable resolved to its owning State module."""
 
     name: str
     module: str
@@ -49,7 +49,7 @@ class ResolvedRunnable:
 
     @property
     def ref(self) -> str:
-        """Return the kind-qualified public runnable reference."""
+        """Return the kind-qualified runnable reference."""
 
         return f"{self.executable.kind}:{self.name}"
 
@@ -65,7 +65,7 @@ RouteAction: TypeAlias = Literal["run", "execute"]
 
 @dataclass(frozen=True, slots=True)
 class RunnableRoute:
-    """One currently resolved public target and its allowed model actions."""
+    """One currently resolved target and its allowed model actions."""
 
     runnable: ResolvedRunnable
     actions: tuple[RouteAction, ...]
@@ -113,8 +113,9 @@ def resolve_agic_routes(
     *,
     hands: tuple[str, ...] | None = None,
     handoffs: tuple[str, ...] | None = None,
+    module: str = "agent",
 ) -> AgicRoutes:
-    """Resolve one Agic's authored routes against a captured State."""
+    """Resolve one Agic's routes within its module's visible namespace."""
 
     hands = _directive_values(agic, "hands") if hands is None else hands
     handoffs = _directive_values(agic, "handoffs") if handoffs is None else handoffs
@@ -123,10 +124,18 @@ def resolve_agic_routes(
         ("run", hands),
         ("execute", handoffs),
     )
-    index = getattr(state, "runnables", None)
-    if index is None:
-        index = program_runnable_index(state_program(state))
-    targets = tuple(resolve_public_runnable(state, name) for name in index)
+    if module == "agent":
+        index = getattr(state, "runnables", None)
+        if index is None:
+            index = program_runnable_index(state_program(state))
+        targets = tuple(resolve_public_runnable(state, name) for name in index)
+    elif module not in state.modules:
+        targets = ()
+    else:
+        targets = tuple(
+            resolve_call_target(state, module, name)
+            for name in program_runnable_index(state_program(state, module))
+        )
     for route_action, references in groups:
         if not references or references == ("none",):
             continue
@@ -357,16 +366,12 @@ def resolve_call_target(
         except ToolangError as exc:
             if not str(exc).startswith("Runnable not found:"):
                 raise
-        if parsed.module is not None:
-            raise ToolangError(f"Runnable not found: {reference}")
-    if module != "agent":
-        raise ToolangError(f"Runnable not found in module {module}: {reference}")
-    target = resolve_public_runnable(state, parsed.name, kind=parsed.kind)
-    if not isinstance(target.executable, FlowDecl) or (
-        parsed.module is not None and parsed.module != target.module
+    target = resolve_public_runnable(state, reference)
+    if target.module == module or (
+        module == "agent" and isinstance(target.executable, FlowDecl)
     ):
-        raise ToolangError(f"Runnable not found: {reference}")
-    return target
+        return target
+    raise ToolangError(f"Runnable not found in module {module}: {reference}")
 
 
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:

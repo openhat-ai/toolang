@@ -643,3 +643,134 @@ def test_execute_uses_advertised_snapshot_and_records_explicit_binding(tmp_path)
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "execute"])
+@pytest.mark.parametrize("selector", ["helper", "*"])
+def test_flow_model_routes_are_local_and_keep_advertised_identity(
+    tmp_path, operation, selector
+):
+    from toolang.common.layout import AgentLayout
+
+    home = tmp_path / "agents/alice"
+    (home / "flows").mkdir(parents=True)
+    source = "agic helper() -> Text:\n  Main helper.\nflow parent() -> Text:\n  run research\n"
+    module_source = (
+        "agic driver() -> Text:\n"
+        f"  {'hands' if operation == 'run' else 'handoffs'} = {selector}\n"
+        "  context = none\n  Delegate.\n"
+        "agic helper() -> Text:\n  context = none\n  Old local helper.\n"
+        "flow() -> Text:\n  run driver\n"
+    )
+    module = home / "flows/research.too"
+    module.write_text(module_source)
+    (home / "flows/other.too").write_text("flow:\n  pass\n")
+    (home / "agent.too").write_text(source)
+    initial = prepare_agent_state(AgentLayout.resident(tmp_path, "alice"))
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        program=initial.modules["agent"],
+        state=initial,
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            "delegate",
+                            "delegate",
+                            f"_toolang__{operation}",
+                            {"runnable": "agic:helper"},
+                        ),
+                    )
+                ),
+                gate=gate,
+            ),
+            answer("helper result"),
+            *([answer("done")] if operation == "run" else []),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            module.write_text(module_source.replace("Old local", "New local"))
+            publish(harness, source)
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", root.error
+            advertised = route_snapshots(harness.adapter.invocations[0].call)
+            enabled = "hands" if operation == "run" else "handoffs"
+            assert [item["ref"] for item in advertised[enabled]] == ["agic:helper"]
+            helper_call = harness.adapter.invocations[1].call
+            if operation == "run":
+                assert not last_tool_result(harness.adapter.invocations[2].call).error
+            messages = str(helper_call.messages)
+            assert (
+                "New local helper." if operation == "run" else "Old local helper."
+            ) in messages
+            assert "Main helper." not in messages
+
+    asyncio.run(scenario())
+
+
+def test_deleted_flow_module_keeps_accepted_agic_and_withdraws_routes(tmp_path):
+    from toolang.common.layout import AgentLayout
+
+    home = tmp_path / "agents/alice"
+    (home / "flows").mkdir(parents=True)
+    source = "agic default:\n  Ready.\n"
+    (home / "agent.too").write_text(source)
+    module = home / "flows/research.too"
+    module.write_text(
+        "agic driver() -> Text:\n  hands = *\n  context = none\n  Bound driver.\n"
+        "agic helper() -> Text:\n  Work.\nflow() -> Text:\n  run driver\n"
+    )
+    initial = prepare_agent_state(AgentLayout.resident(tmp_path, "alice"))
+    gate = AsyncGate()
+    tool = RecordingTool("test__checkpoint", output={})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=initial,
+        tools={tool.name: tool},
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(
+                    tool_calls=(ToolCall("checkpoint", "checkpoint", tool.name, {}),)
+                ),
+                gate=gate,
+            ),
+            answer("done"),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="research",
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            module.unlink()
+            publish(harness, source)
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", root.error
+            first, second = [i.call for i in harness.adapter.invocations]
+            assert [r["ref"] for r in route_snapshots(first)["hands"]] == [
+                "agic:helper"
+            ]
+            assert route_snapshots(second)["hands"] == []
+            assert "Bound driver." in str(second.messages)
+
+    asyncio.run(scenario())

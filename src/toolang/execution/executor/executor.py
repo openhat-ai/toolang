@@ -110,7 +110,6 @@ from ..runnables import (
     resolve_bound_runnable,
     resolve_call_target,
     resolve_module_runnable,
-    resolve_public_runnable,
     resolve_state_runnable,
 )
 from .common import (
@@ -2107,7 +2106,7 @@ class _Execution:
         ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
             baseline_state = state if resolution == "state" else parent.state
             if resolution == "state":
-                baseline = resolve_public_runnable(baseline_state, name)
+                baseline = resolve_call_target(baseline_state, parent.module, name)
                 self.require_inactive_runnable(parent, baseline, action="_toolang/run")
                 if authorize is not None:
                     authorize(baseline)

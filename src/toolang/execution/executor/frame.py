@@ -153,16 +153,11 @@ def build_agic_frame(
     tools = dict(resource_tools(run.setup, resources))
     catalog = catalog if catalog is not None else run.state
     routes = resolve_agic_routes(
-        catalog, agic, hands=run.settings.hands, handoffs=run.settings.handoffs
-    )
-    routes = replace(
-        routes,
-        resolved=tuple(
-            route
-            for route in routes.resolved
-            if route.runnable.module == run.module
-            or (run.module == "agent" and route.runnable.executable.kind == "flow")
-        ),
+        catalog,
+        agic,
+        hands=run.settings.hands,
+        handoffs=run.settings.handoffs,
+        module=run.module,
     )
     runtime_tools = (
         {}

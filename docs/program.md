@@ -47,7 +47,8 @@ exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
 `<name>` exactly matches its filename stem. State uses the filename as the
 public name and binds the unnamed Flow locally as its lined entry identity
 `<entry:LINE>`, so renaming the file also renames the public Flow. Other
-declarations in that module are private static helpers.
+declarations in that module are private helpers, available to its flow statements
+and model routing.
 
 Public runnable names must be unique across the complete home. Direct files
 under `flows/` are discovered; nested files, non-`.too` files, and a root-level
@@ -436,8 +437,10 @@ Only root agics prepend historical messages automatically; child agics reference
 these variables explicitly. Compaction updates subsequent frames throughout
 the run tree.
 
-`hands` and `handoffs` select exact public runnable references with `=`.
-`none` disables routes; `*` selects all public runnables. They do not accept queries. An explicit
+`hands` and `handoffs` select exact runnable references with `=`. The main module
+can select its own runnables and exported flows; a flow module can select only
+its own declarations, including private helpers. `none` disables routes; `*`
+selects all visible runnables. They do not accept queries. An explicit
 selection replaces inherited routes independently of resource restrictions:
 
 ```too
@@ -451,12 +454,12 @@ agic coordinate(_: Text) -> Report:
 A hand is a child Run: the runtime acknowledges scheduling, executes the child,
 then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
-at the next Step and owns the Run's result. Missing but well-formed public refs
+at the next Step and owns the Run's result. Missing but well-formed refs
 remain authored routes and become available in the next model-call catalog after
 the watcher publishes them. No explicit refresh action is needed.
 Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
-through `tools`; use `hands` or `handoffs` to authorize targets. The three
-inner runtime tool definitions remain available independently of these lists.
+through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
+definitions remain available independently of these lists.
 
 Each newly accepted named child Run selects the latest published State and checks
 its signature against the caller's bound definition or advertised model catalog.

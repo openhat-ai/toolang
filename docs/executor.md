@@ -328,7 +328,9 @@ The limits are 64 unique targets and 32,768 UTF-8 bytes across both snapshots,
 including escaped framing. Overflow rejects preparation with an error asking
 the author to narrow hands/handoffs; lists are never silently truncated.
 Runtime calls in one model batch
-use that Model Call's captured routes and prepared frame. Child acceptance
+use that Model Call's captured routes and prepared frame. Both advertisement
+and invocation resolve within the caller's module: main sees public exports,
+and a flow module sees its own declarations, including private helpers. Child acceptance
 selects latest State and checks the advertised contract. The next Model Call
 captures the latest published routes within the Run's bound authority.
 
