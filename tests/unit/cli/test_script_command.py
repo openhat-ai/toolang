@@ -565,7 +565,9 @@ agic demo(_: Part[]):
     assert "Run:" not in output.err
 
 
-def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> None:
+def test_script_validates_before_creating_a_thread(
+    tmp_path, monkeypatch, capsys
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=_SOURCE,
@@ -592,10 +594,11 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     input=input,
                     raw_named=CallInput({"count": "1"}),
                     session_override=RunOverride(),
-                    quiet=True,
+                    quiet=False,
                 )
             )
 
+        assert "‣" not in capsys.readouterr().err
         assert not harness.store.list_threads()
         assert not harness.store.list_runs(limit=None)
     finally:
@@ -2077,3 +2080,50 @@ def test_script_bare_dev_help_never_discovers_wheels_or_runs(
     )
     assert main([str(source), *(["demo"] if child else []), "--dev", "--help"]) == 0
     _assert_common_options(strip_ansi(capsys.readouterr().out))
+
+
+def test_remote_script_rejects_invalid_progress_width_before_side_effects(
+    tmp_path, monkeypatch
+) -> None:
+    effects: list[str] = []
+
+    async def inspect(*_args, **_kwargs):
+        effects.append("inspect")
+
+    async def defaults(*_args, **_kwargs):
+        return SessionSetting(model=ModelRequest("test/scripted"), runnable="agic:demo")
+
+    async def create_thread(*_args, **_kwargs):
+        effects.append("thread")
+        return "script_remote"
+
+    async def capture(_http, _endpoint, request, **_kwargs):
+        effects.append("attachments")
+        return request
+
+    monkeypatch.setattr(
+        script,
+        "load_runtime_environ",
+        lambda *_args, **_kwargs: {"TOOLANG_PROGRESS_MAX_WIDTH": "0"},
+    )
+    monkeypatch.setattr(
+        "toolang.cli.common.remote_runtime.inspect_remote_runtime", inspect
+    )
+    monkeypatch.setattr(script, "_remote_script_defaults", defaults)
+    monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
+    monkeypatch.setattr("toolang.cli.common.attachments.capture_attachments", capture)
+    with pytest.raises(ValueError, match="TOOLANG_PROGRESS_MAX_WIDTH"):
+        asyncio.run(
+            script._execute_remote(
+                layout=AgentLayout.resident(tmp_path, "alice"),
+                endpoint="http://runtime.test:7001",
+                sandbox="host",
+                runnable="agic:demo",
+                override=RunOverride(),
+                input=CallInput({"_": "hello"}),
+                raw_named=CallInput(),
+                session_override=RunOverride(),
+                quiet=False,
+            )
+        )
+    assert effects == []

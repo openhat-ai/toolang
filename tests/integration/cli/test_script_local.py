@@ -11,6 +11,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template
 from toolang.cli.toolang import main as cli
 from toolang.base.types.run import ModelCallResult
+from toolang.base.types.model import ModelOverride
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
 from toolang.execution.records import RunControlPayload
@@ -20,7 +21,8 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
 )
-from toolang.execution.types import ErrorMessage, ThreadPrefix
+from toolang.execution.types import ErrorMessage, ThreadPrefix, RunOverride
+from toolang.lang.input import CallInput
 from toolang.lang.input import resolve_input_parts
 from toolang.state.watcher import StateRefresh
 
@@ -142,6 +144,13 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert "• done" in output.err
         assert "▪︎ run_" in output.err
         assert "\x1b[" not in output.err
+    if not quiet:
+        header = output.err.splitlines()[0]
+        expected_runnable = "agic:echo" if entry == "echo" else "agic:_"
+        assert header.startswith(f"‣ {expected_runnable} ")
+        assert header.endswith("test/scripted · auto")
+        assert output.err.count("‣") == 1
+        assert "test/scripted · auto\n\n• done" in output.err
     if save_mode == "file":
         assert destination.read_bytes() == b"done"
     else:
@@ -354,3 +363,60 @@ def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
             ]
 
     asyncio.run(scenario())
+
+
+def test_local_script_context_uses_resolved_input_overrides(
+    tmp_path, monkeypatch, capsys
+):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_SOURCE,
+        responses=[ModelCallResult(message=Message.assistant("resolved result"))],
+    )
+
+    async def setup(_watcher):
+        return harness.setup
+
+    async def state(_watcher):
+        return harness.state
+
+    async def state_result(_watcher):
+        return StateRefresh(harness.state)
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", setup)
+    monkeypatch.setattr("toolang.state.watcher.StateWatcher.refresh", state)
+    monkeypatch.setattr(
+        "toolang.state.watcher.StateWatcher.refresh_result", state_result
+    )
+    try:
+        record = asyncio.run(
+            script._execute(
+                layout=harness.setup.layout,
+                state=harness.state,
+                store=harness.store,
+                ids=harness.ids,
+                run_id="run_context",
+                sandbox="host",
+                runnable="agic:unused",
+                override=RunOverride(
+                    runnable="agic:echo",
+                    model=ModelOverride(identity="test/scripted", effort=4096),
+                ),
+                input=CallInput({"_": "hello"}),
+                raw_named=CallInput(),
+                session_override=RunOverride(
+                    model=ModelOverride(identity="test/scripted", effort="low"),
+                ),
+                quiet=False,
+            )
+        )
+        assert record.status == "succeeded"
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err.startswith("‣ agic:echo ")
+        assert output.err.splitlines()[0].endswith("test/scripted · 4096")
+        assert output.err.count("‣") == 1
+        assert "• resolved result" in output.err
+        assert "agic:unused" not in output.err
+    finally:
+        harness.store.close()

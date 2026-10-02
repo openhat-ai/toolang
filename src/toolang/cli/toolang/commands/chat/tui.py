@@ -49,6 +49,7 @@ from toolang.common.version import displayed_toolang_version
 from toolang.execution.types import SessionSetting
 
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
     TerminalSurfaces,
@@ -639,7 +640,7 @@ class ChatTuiApp:
         model = self.setting.model
         applicable = (
             self._selected_model_effort_applicable(model.ref)
-            if model is not None and slashes.model_reasoning_value(model) is None
+            if model is not None and model_reasoning_value(model) is None
             else None
         )
         return slashes.model_status_label(model, effort_applicable=applicable)

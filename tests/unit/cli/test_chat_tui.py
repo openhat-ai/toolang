@@ -251,6 +251,39 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" not in _render_text(app.finalized[0].render())
 
 
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_chat_run_lifecycle_keeps_control_bar_without_script_header(status) -> None:
+    app = FakeApp()
+    request = RunRequest(
+        thread_id="term_1",
+        request_id="review",
+        runnable=RunnableRequest("agic:review", CallInput({"_": "Review this."})),
+        model=ModelRequest("test/model", reasoning=Reasoning(effort="high")),
+        policy=RunPolicy(),
+    )
+    control = blocks.RunControlBlock.create("Review this.", request=request)
+    app.live_blocks.append(control)
+    for event in (
+        _run_begin(runnable_name="review"),
+        _model_step_begin(),
+        _model_step_end(output="Review output."),
+        _run_end(status=status),
+    ):
+        events.handle_run_event(event, app)
+        transcript = "".join(
+            _render_text(block.render()) for block in (*app.finalized, *app.live_blocks)
+        )
+        assert "‣" not in transcript
+        assert transcript.count("agic:review · test/model · high") == 1
+        assert transcript.count("Review this.") == 1
+    assert app.finished
+    assert not app.live_blocks
+    assert app.finalized[0] is control
+    assert isinstance(app.finalized[-1], blocks.RunSummaryBlock)
+    assert "Review output." in transcript
+    assert f"run_1 {status}" in transcript
+
+
 def test_chat_step_begin_finalizes_matching_steer_block() -> None:
     app = FakeApp()
     steer = blocks.RunSteerBlock.create(

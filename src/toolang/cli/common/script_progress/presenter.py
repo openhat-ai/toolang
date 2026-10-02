@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import replace
 from typing import TextIO
 
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
@@ -11,7 +12,7 @@ from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, Step
 from ..execution_progress import ProgressProjector, ProgressBlock, ProgressUpdate
 from ..execution_progress.step_projection import runtime_tool_name, trace_live_rows
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from .blocks import RunBlock
+from .blocks import RunBlock, RunContext
 from .console import ProgressConsole
 
 
@@ -23,12 +24,15 @@ class ScriptRunPresenter(RunTracer):
         *,
         run_id: str | None,
         operation: str | None = None,
+        context: RunContext | None = None,
         stream: TextIO | None = None,
         width: int | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         self.run_id = run_id
         self.operation = operation
+        self._context = context
+        self._context_gap_pending = False
         self.console = ProgressConsole(
             stream or sys.stderr,
             width=width,
@@ -44,20 +48,20 @@ class ScriptRunPresenter(RunTracer):
                 self.run_id = event.run
             self._begin_root(event)
 
-        self.console.apply(self._projector.handle(event))
-
+        update = self._projector.handle(event)
         if (
             not self.console.tty
             and isinstance(event, StepBegin)
             and runtime_tool_name(event) == "compact"
         ):
-            self.console.apply(
-                ProgressUpdate(
-                    committed=(
-                        ProgressBlock(f"step:{event.step}", trace_live_rows(event, "")),
-                    )
-                )
+            update = replace(
+                update,
+                committed=(
+                    *update.committed,
+                    ProgressBlock(f"step:{event.step}", trace_live_rows(event, "")),
+                ),
             )
+        self._apply_progress(update)
         if self.console.tty and self._projector.has_timed_activity:
             if self._refresh_task is None:
                 self._refresh_task = asyncio.create_task(self._refresh())
@@ -66,6 +70,25 @@ class ScriptRunPresenter(RunTracer):
 
         if isinstance(event, RunEnd) and event.run == self.run_id:
             self._end_root(event)
+
+    def _apply_progress(self, update: ProgressUpdate) -> None:
+        """Apply progress with one header gap before the first committed output."""
+
+        if self._context_gap_pending:
+            for index, block in enumerate(update.committed):
+                if not block.rows:
+                    continue
+                update = replace(
+                    update,
+                    committed=(
+                        *update.committed[:index],
+                        replace(block, gap_before=True),
+                        *update.committed[index + 1 :],
+                    ),
+                )
+                self._context_gap_pending = False
+                break
+        self.console.apply(update)
 
     def close(self) -> None:
         """Remove the bounded live area without changing committed scrollback."""
@@ -81,11 +104,21 @@ class ScriptRunPresenter(RunTracer):
     async def _refresh(self) -> None:
         while True:
             await asyncio.sleep(1)
-            self.console.apply(self._projector.refresh())
+            self._apply_progress(self._projector.refresh())
 
     def _begin_root(self, event: RunBegin) -> None:
+        if self._root is not None:
+            return
         root = RunBlock.from_event(event, operation=self.operation)
         self._root = root
+        if self._context is not None:
+            self.console.write_renderable(
+                replace(
+                    self._context,
+                    runnable=event.runnable or self._context.runnable,
+                )
+            )
+            self._context_gap_pending = True
 
     def _end_root(self, event: RunEnd) -> None:
         root = self._root

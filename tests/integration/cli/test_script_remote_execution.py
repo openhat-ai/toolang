@@ -12,6 +12,7 @@ import pytest
 from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
+from toolang.base.types.model import ModelOverride
 from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands import script
 from toolang.execution.records import RunControlPayload
@@ -39,10 +40,12 @@ class _Snapshot:
 
 
 @pytest.mark.parametrize("runnable", ["agic:echo", "agic:_", "flow:_"])
+@pytest.mark.parametrize("override_model", [False, True])
 def test_remote_script_uses_a_script_thread_and_native_progress(
     tmp_path: Path,
     capsys,
     runnable: str,
+    override_model: bool,
 ) -> None:
     source = _SOURCE
     if runnable == "agic:_":
@@ -78,11 +81,24 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 layout=core.layout,
                 endpoint="http://runtime.test:7001",
                 sandbox="host",
-                runnable=runnable,
-                override=RunOverride(),
+                runnable="agic:unused" if override_model else runnable,
+                override=(
+                    RunOverride(
+                        runnable=runnable,
+                        model=ModelOverride(identity="scripted", effort=4096),
+                    )
+                    if override_model
+                    else RunOverride()
+                ),
                 input=CallInput({"_": "hello"}),
                 raw_named=CallInput({}),
-                session_override=RunOverride(),
+                session_override=(
+                    RunOverride(
+                        model=ModelOverride(identity="test/scripted", effort="low")
+                    )
+                    if override_model
+                    else RunOverride()
+                ),
                 quiet=False,
                 transport=httpx.ASGITransport(app=app),
             )
@@ -105,6 +121,11 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
             assert control.payload.runnable.startswith("agent::flow:<entry:")
         output = capsys.readouterr()
         assert output.out == ""
+        assert output.err.startswith(f"‣ {runnable} ")
+        effort = "4096" if override_model else "auto"
+        assert output.err.splitlines()[0].endswith(f"test/scripted · {effort}")
+        assert output.err.count("‣") == 1
+        assert "\x1b" not in output.err
         assert "• remote result" in output.err
         assert f"▪︎ {record.id}" in output.err
     finally:
