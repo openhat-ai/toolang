@@ -75,7 +75,10 @@ def primary_error(root: Node) -> Node | None:
 
 def source_position(node: Node, source: bytes) -> tuple[int, int]:
     """One-based byte position, clamped to authored EOF after normalization."""
-    offset = min(node.start_byte, len(source))
+    if node.start_byte <= len(source):
+        row, column = node.start_point
+        return row + 1, column + 1
+    offset = len(source)
     return source.count(b"\n", 0, offset) + 1, offset - source.rfind(b"\n", 0, offset)
 
 

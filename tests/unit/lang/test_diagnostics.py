@@ -9,7 +9,7 @@ from tree_sitter import Node, Point
 from toolang.lang import Program, format_source
 from toolang.lang import cst
 from toolang.lang.errors import ToolangFormatError, ToolangSyntaxError
-from toolang.lang.diagnostics import syntax_message
+from toolang.lang.diagnostics import source_position, syntax_message
 
 
 @pytest.mark.parametrize(
@@ -182,3 +182,40 @@ def test_unknown_grammar_node_has_safe_single_line_fallback(missing):
     assert "unknown" in message
     assert "future_" not in message
     assert "\n" not in message and "\x1b" not in message
+
+
+def test_cst_diagnostic_positions_do_not_repeatedly_scan_source_prefixes():
+    class MeasuredSource(bytes):
+        scanned_bytes = 0
+
+        def count(self, sub, start=0, end=None):
+            self.scanned_bytes += len(self[start:end])
+            return super().count(sub, start, end)
+
+    source = MeasuredSource(b"\xef\xbb\xbf" + b"flow broken:\r\n\trun\r\n" * 256)
+    errors = cst.diagnostics(cst.parse(source).root_node, source)
+    assert len(errors) == 256
+    assert errors[-1]["start_point"] == {"row": 511, "column": 1}
+    assert "line 512:" in errors[-1]["message"]
+    # Allow a single indexing pass, but not one scan per diagnostic.
+    assert source.scanned_bytes <= len(source)
+
+
+@pytest.mark.parametrize(
+    "source", [b"", "\ufeff中文".encode(), b"first\r\n\tlast", b"first\n"]
+)
+def test_source_position_clamps_synthetic_newline_to_original_eof(source):
+    tree = cst.parse(source + b"\n@")
+    generated = next(
+        item
+        for item in cst.diagnostics(tree.root_node, source + b"\n@")
+        if item["start_byte"] > len(source)
+    )
+    node = tree.root_node.descendant_for_byte_range(
+        generated["start_byte"], generated["end_byte"]
+    )
+    assert node is not None
+    assert source_position(node, source) == (
+        source.count(b"\n") + 1,
+        len(source) - source.rfind(b"\n"),
+    )
