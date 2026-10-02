@@ -85,9 +85,11 @@ def fmt(
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
-            raise ClickException(f"{label}: {exc}") from exc
+            _source_diagnostic(label, exc)
+            raise typer.Exit(1) from exc
         _emit_source(
             formatted,
+            label=label,
             color=color if highlight else None,
             html=html,
             highlight=highlight,
@@ -118,7 +120,8 @@ def fmt(
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
-            raise ClickException(f"{source_path}: {exc}") from exc
+            _source_diagnostic(source_path, exc)
+            raise typer.Exit(1) from exc
         if formatted == source:
             continue
         changed.append(source_path)
@@ -149,7 +152,10 @@ def _format_stdin(
             Path("-"), stdin_filepath=stdin_filepath, preserve_newlines=False
         )
         formatted = format_source(source)
-    except (error_type, UnicodeError) as exc:
+    except error_type as exc:
+        _source_diagnostic(stdin_filepath, exc)
+        raise typer.Exit(1) from exc
+    except UnicodeError as exc:
         raise ClickException(f"{stdin_filepath}: {exc}") from exc
     write_source(formatted, sys.stdout)
 
@@ -223,10 +229,15 @@ def _collect_source_paths(
 
 
 def _source_diagnostic(label: Path, error: Exception) -> None:
-    from toolang.lang.errors import ToolangSourceError
+    from toolang.lang.errors import ToolangFormatError, ToolangSourceError
 
-    line = (error.line or 1) if isinstance(error, ToolangSourceError) else 1
-    column = (error.column or 1) if isinstance(error, ToolangSourceError) else 1
+    if isinstance(error, ToolangFormatError) and error.line is None:
+        write_source(f"{label}: {error}\n", sys.stderr)
+        return
+    if isinstance(error, (ToolangSourceError, ToolangFormatError)):
+        line, column = error.line or 1, error.column or 1
+    else:
+        line, column = 1, 1
     message = (
         str(error.__cause__)
         if isinstance(error, ClickException) and error.__cause__
@@ -324,7 +335,7 @@ def parse_program(
     errors = []
     if cst:
         tree = concrete.parse(source_text.encode("utf-8"))
-        errors = concrete.diagnostics(tree.root_node)
+        errors = concrete.diagnostics(tree.root_node, source_text.encode("utf-8"))
         output = (
             _json(concrete.to_data(tree, source_text), compact=compact)
             if json_output or compact
@@ -368,14 +379,14 @@ def highlight_source(
         typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
     ] = None,
 ) -> None:
-    _label, text = _read_source(
+    label, text = _read_source(
         source, stdin_filepath=stdin_filepath, preserve_newlines=True
     )
-    _emit_source(text, color=color, html=html, highlight=True)
+    _emit_source(text, label=label, color=color, html=html, highlight=True)
 
 
 def _emit_source(
-    source: str, *, color: ColorOption, html: bool, highlight: bool
+    source: str, *, label: Path, color: ColorOption, html: bool, highlight: bool
 ) -> None:
     enabled = highlight and color_enabled(
         color, environ=os.environ, terminal=sys.stdout.isatty()
@@ -383,7 +394,8 @@ def _emit_source(
     try:
         output = render_source(source, color=enabled, html=html)
     except (ValueError, RuntimeError) as exc:
-        raise ClickException(f"Could not highlight source: {exc}") from exc
+        write_source(f"{label}: Could not highlight source: {exc}\n", sys.stderr)
+        raise typer.Exit(1) from exc
     write_source(output, sys.stdout)
 
 

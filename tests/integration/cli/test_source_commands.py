@@ -369,6 +369,106 @@ def test_query_failure_does_not_emit_partial_code_or_html(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        ["parse"],
+        ["parse", "--ast"],
+        ["parse", "--check"],
+        ["parse", "--cst"],
+        ["parse", "--cst", "--json"],
+        ["fmt"],
+        ["fmt", "--stdout"],
+        ["fmt", "--highlight"],
+        ["fmt", "--highlight", "--html"],
+    ],
+)
+def test_source_syntax_diagnostics_share_stdin_locations(command):
+    result = runner.invoke(
+        app,
+        [*command, "-", "--stdin-filepath", "broken.too"],
+        input="flow work(value: Text:\n  pass\n",
+    )
+    assert result.exit_code == 1
+    assert "broken.too:1:22:" in result.stderr
+    assert "Expected ')'" in result.stderr
+    assert "Toolang 0.3 syntax" not in result.stderr
+    if "--cst" not in command:
+        assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "command", [["highlight", "--color", "always"], ["fmt", "--highlight", "--html"]]
+)
+def test_render_failures_keep_source_label_and_cause(monkeypatch, command):
+    from tree_sitter import QueryError
+
+    def fail(source):
+        raise QueryError("Invalid node type")
+
+    monkeypatch.setattr("toolang.lang.highlight.captures", fail)
+    result = runner.invoke(
+        app,
+        [*command, "-", "--stdin-filepath", "source.too"],
+        input=SOURCE,
+    )
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "source.too: Could not highlight source: Invalid node type" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--check"],
+        ["--stdout"],
+        ["--highlight"],
+        ["--highlight", "--color", "always"],
+        ["--highlight", "--html"],
+    ],
+)
+@pytest.mark.parametrize("generated", [False, True])
+def test_format_file_failures_never_write_and_distinguish_generated_locations(
+    tmp_path, monkeypatch, options, generated
+):
+    path = tmp_path / "source.too"
+    original = "agic:\n  pass\n" if generated else "flow work(value: Text:\n  pass\n"
+    path.write_text(original)
+    if generated:
+        monkeypatch.setattr(
+            "toolang.lang.format._format_source_lines",
+            lambda *args, **kwargs: ["# Generated", "flow broken"],
+        )
+    result = runner.invoke(app, ["fmt", str(path), *options])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert path.read_text() == original
+    if generated:
+        assert (
+            f"{path}: Formatter produced invalid syntax at generated line 2"
+            in result.stderr
+        )
+        assert f"{path}:2:" not in result.stderr
+    else:
+        assert f"{path}:1:22:" in result.stderr
+        assert "Expected ')'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "options", [["--color", "never"], ["--color", "always"], ["--html"]]
+)
+def test_highlighting_invalid_source_still_succeeds_without_diagnostics(options):
+    source = "flow work(value: Text:\n  pass\n"
+    result = runner.invoke(app, ["highlight", "-", *options], input=source)
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    if "--html" not in options:
+        assert strip_ansi(result.stdout) == source
+    else:
+        assert "<html>" in result.stdout
+
+
+@pytest.mark.parametrize(
     "arguments",
     [
         ["-"],

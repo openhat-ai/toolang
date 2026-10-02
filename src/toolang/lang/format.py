@@ -9,7 +9,8 @@ import re
 from tree_sitter import Node, Tree
 
 from . import ast
-from .ast import _first_syntax_error, _parse_tree
+from .ast import _parse_tree
+from .diagnostics import primary_error, source_position, syntax_message
 from .errors import ToolangFormatError
 from .types import is_generated_ref
 from .text import dedent_text_lines, source_lines, text_indent_width
@@ -110,7 +111,13 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
     if formatted.startswith("#!") and not source.startswith("#!"):
         # Keep plain comments from becoming byte-zero shebangs.
         formatted = f"\n{formatted}"
-    _syntax_tree(formatted)
+    try:
+        _syntax_tree(formatted)
+    except ToolangFormatError as exc:
+        raise ToolangFormatError(
+            "Formatter produced invalid syntax at "
+            f"generated line {exc.line}, column {exc.column}: {exc}"
+        ) from exc
     return formatted
 
 
@@ -338,9 +345,13 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
 def _syntax_tree(source: str) -> Tree:
     syntax = source if source.endswith("\n") else f"{source}\n"
     tree = _parse_tree(syntax.encode("utf-8"))
-    error_node = _first_syntax_error(tree.root_node)
+    error_node = primary_error(tree.root_node)
     if error_node is not None:
-        _raise_syntax_error(source_lines(source), error_node)
+        original = source.encode("utf-8")
+        line, column = source_position(error_node, original)
+        raise ToolangFormatError(
+            syntax_message(error_node, original), line=line, column=column
+        )
     return tree
 
 
@@ -813,13 +824,6 @@ def _parse_runnable_rest(rest: str) -> tuple[str | None, str | None]:
         return rest.strip() or None, None
     name = rest[:params_start].strip() or None
     return name, rest[params_start + 1 : params_end]
-
-
-def _raise_syntax_error(lines: list[str], node: Node) -> None:
-    row = node.start_point.row
-    line_number = row + 1
-    raw_line = lines[row] if 0 <= row < len(lines) else ""
-    raise ToolangFormatError(ast._syntax_error_message(line_number, raw_line))
 
 
 def _split_inline_comment(line: str) -> tuple[str, str]:

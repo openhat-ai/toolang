@@ -9,6 +9,8 @@ from typing import Any
 from tree_sitter import Language, Node, Parser, Tree
 import tree_sitter_toolang
 
+from .diagnostics import error_kind, error_nodes, syntax_message
+
 
 @lru_cache(maxsize=1)
 def language() -> Language:
@@ -29,33 +31,18 @@ def _range(node: Node) -> dict[str, Any]:
     }
 
 
-def diagnostics(root: Node) -> list[dict[str, Any]]:
+def diagnostics(root: Node, source: bytes) -> list[dict[str, Any]]:
     """Return syntax diagnostics without performing semantic validation."""
     result = []
-    pending = [root]
-    while pending:
-        node = pending.pop()
-        kind = (
-            "missing"
-            if node.is_missing
-            else "error"
-            if node.is_error
-            else "invalid"
-            if node.type.startswith("invalid_")
-            else None
+    for node in error_nodes(root):
+        result.append(
+            {
+                "kind": error_kind(node),
+                "node_type": node.type,
+                "message": syntax_message(node, source),
+                **_range(node),
+            }
         )
-        if kind is not None:
-            result.append(
-                {
-                    "kind": kind,
-                    "node_type": node.type,
-                    "message": f"Missing {node.type}"
-                    if node.is_missing
-                    else f"Syntax error: {node.type}",
-                    **_range(node),
-                }
-            )
-        pending.extend(reversed(node.children))
     return sorted(result, key=lambda item: (item["start_byte"], item["end_byte"]))
 
 
@@ -87,5 +74,5 @@ def to_data(tree: Tree, source: str) -> dict[str, Any]:
         "grammar": {"name": "toolang", "version": version("tree-sitter-toolang")},
         "source": source,
         "root": root,
-        "diagnostics": diagnostics(tree.root_node),
+        "diagnostics": diagnostics(tree.root_node, source.encode("utf-8")),
     }

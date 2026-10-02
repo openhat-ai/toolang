@@ -12,6 +12,7 @@ from pydantic import Discriminator, Tag, TypeAdapter
 from tree_sitter import Node as TreeSitterNode, Tree
 
 from .cst import parse as parse_cst
+from .diagnostics import primary_error, source_position, syntax_message
 from .types import parse_runnable_ref_parts
 
 from toolang.common.immutable import freeze_mapping
@@ -411,8 +412,9 @@ def _parse_source(source: str) -> _ParsedSource:
     encoded = syntax.encode("utf-8")
     tree = _parse_tree(encoded)
     lines = source_lines(source)
-    if error := _first_syntax_error(tree.root_node):
-        line = error.start_point.row + 1
+    if error := primary_error(tree.root_node):
+        original = source.encode("utf-8")
+        line, column = source_position(error, original)
         raw = lines[line - 1] if line <= len(lines) else ""
         if details := _empty_cap_property_details(error, encoded, raw):
             from .validate import _raise_empty_cap_property
@@ -420,23 +422,14 @@ def _parse_source(source: str) -> _ParsedSource:
             kind, name, property_name = details
             from .errors import source_location
 
-            with source_location(line, error.start_point.column + 1):
+            with source_location(line, column):
                 _raise_empty_cap_property(kind, name, property_name, line=line)
         raise ToolangSyntaxError(
-            _syntax_error_message(line, raw),
+            syntax_message(error, original),
             line=line,
-            column=error.start_point.column + 1,
+            column=column,
         )
     return _ParsedSource(tree=tree, source=encoded)
-
-
-def _syntax_error_message(line: int, raw: str) -> str:
-    if raw.strip():
-        return (
-            f"Syntax error at line {line}: {raw.strip()!r}. "
-            "Expected Toolang 0.3 syntax."
-        )
-    return f"Syntax error at line {line}."
 
 
 def _empty_cap_property_details(
@@ -505,15 +498,6 @@ def _mask_query_hashes(source: bytes) -> bytes:
             masked[index] = ord("x")
         lines.append(bytes(masked))
     return b"".join(lines)
-
-
-def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:
-    if node.is_error or node.is_missing or node.type.startswith("invalid_"):
-        return node
-    for child in node.children:
-        if error := _first_syntax_error(child):
-            return error
-    return None
 
 
 def to_data(value: object) -> object:
