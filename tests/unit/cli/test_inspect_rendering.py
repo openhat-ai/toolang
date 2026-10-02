@@ -5,7 +5,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from toolang.base.types.message import TextPart
+from toolang.base.types.message import ImagePart, ReasoningPart, TextPart
 from toolang.cli.toolang.commands.inspect import (
     _HumanValue,
     _human_type_label,
@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.inspect import (
 )
 from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
-from toolang.execution.types import Pointer
+from toolang.execution.types import Local, Pointer
 from toolang.lang.types import Array
 
 
@@ -181,3 +181,50 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     second = next(line for line in rendered.splitlines() if "second" in line)
     assert first.index("first") == second.index("second")
     assert "•" not in rendered
+
+
+@pytest.mark.parametrize("terminal", (True, False))
+def test_output_json_rich_highlighting_preserves_long_values(terminal: bool) -> None:
+    import json
+    from rich.text import Text
+    from toolang.cli.toolang.commands.inspect import _print_output_json
+
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=12,
+        force_terminal=terminal,
+        no_color=False,
+        color_system="standard" if terminal else None,
+    )
+    value = {"long field": "中文 " * 100, "nested": [False, None, 12]}
+    _print_output_json(console, value)
+    rendered = stream.getvalue()
+    assert ("\x1b[" in rendered) is terminal
+    assert json.loads(Text.from_ansi(rendered).plain) == value
+    assert "中文 " * 100 in Text.from_ansi(rendered).plain
+
+
+@pytest.mark.parametrize(
+    ("local", "expected"),
+    (
+        (Local("# Heading\n\n**bold**"), True),
+        (Local(""), True),
+        (Local.typed("Part[]", ()), True),
+        (Local.typed("TextPart", TextPart("")), True),
+        (Local.typed("ReasoningPart", ReasoningPart("reasoning")), False),
+        (
+            Local.typed(
+                "Part[]", (ImagePart(image_url="https://example.com/image.png"),)
+            ),
+            False,
+        ),
+        (Local.typed("Json", {}), False),
+    ),
+)
+def test_output_markdown_accepts_only_textual_content(
+    local: Local, expected: bool
+) -> None:
+    from toolang.cli.toolang.commands.inspect import _run_output_text
+
+    assert (_run_output_text(local, markdown=True) is not None) is expected

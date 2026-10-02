@@ -355,7 +355,7 @@ The same roaming source path can select agent commands:
 toolang SCRIPT info
 toolang SCRIPT run
 toolang SCRIPT chat [--thread [THREAD]]
-toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
+toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
@@ -372,7 +372,7 @@ Visiting selectors support the same agent-self and execution-history commands:
 toolang brice/alice info
 toolang brice/alice run
 toolang brice/alice chat [--thread [THREAD]]
-toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
+toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
 toolang brice/alice retry RUN
 ```
 
@@ -386,7 +386,7 @@ existing `runs.db` without fetching the source.
 `inspect` evaluates a subject chain and an optional terminal projector:
 
 ```text
-toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json]
+toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json | --markdown]
 ```
 
 The former top-level `threads` and `runs` commands have been removed. Replace
@@ -448,14 +448,44 @@ Every successful query selects one projector after its subject resolves:
 | `records` | collection subject | summarized record rows | canonical record array |
 | `fields` | browsable Pointer value | direct child fields | exact selected value |
 | `value` | scalar, empty, resolved, or specialized value | rendered value | exact selected value |
+| `output` | Run with the explicit terminal name | complete result body | resolved result value |
 | `tree` | Run with the explicit terminal name | hierarchical durable execution | flat depth-first node array |
 | `call` | supported Step with the explicit terminal name | Step-owned historical call | normalized call or flat node array |
 
 `records`, `fields`, and `value` are implicit view kinds, not accepted command
-tokens. `tree` is explicit only on a whole Run. `call` is explicit only on a
-whole model, tool, run, par, or loop Step. Run and Step subjects never expose
+tokens. `tree` and `output` are explicit only on a whole Run. `call` is explicit
+only on a whole model, tool, run, par, or loop Step. Run and Step subjects never expose
 equivalent projector names, and the removed `model-call` spelling is not an
 alias.
+
+Read a Run's result with `output` (`too` is an alias for `toolang`):
+
+```sh
+too SCRIPT inspect run_ab12 output
+too SCRIPT inspect run_ab12 output --json
+too SCRIPT inspect run_ab12 output --markdown
+```
+
+`output` resolves stored references and removes the `Output` / `Local` wrappers.
+The default Human view prints complete literal Text, the shared response text
+for Parts, or complete indented JSON for other values. Parts without response
+text use the shared structured fallback. The Human Parts view can omit reasoning
+and nontext content; `--json` preserves every resolved Part and nested value.
+JSON uses Rich syntax highlighting on terminals and remains valid JSON in pipes.
+Plain text and JSON are not truncated or wrapped to the terminal width.
+
+`--markdown` explicitly renders textual output as Markdown. Empty text and empty
+Parts are supported; nontext-only Parts and other nontext values are rejected
+with a suggestion to use `--json`. The three flags `--human`, `--json`, and
+`--markdown` are mutually exclusive. Only the `output` projector accepts
+`--markdown`; the selected format does not change when stdout is redirected.
+
+A Run without an output fails with its ID and status instead of returning a
+blank success or waiting for completion. Present null and empty outputs succeed.
+Use `inspect RUN/output` to inspect the output wrapper, or
+`inspect RUN/output/local/value --json` for the raw stored value, including
+unresolved references. Existing Pointer queries retain their original behavior.
+The `output` projector is available only for whole Runs, not Steps or collections.
 
 `call` on a model Step reconstructs the complete normalized call persisted for
 that Step, including instructions, messages, tool definitions, the
@@ -541,10 +571,11 @@ selected value retains normal Pointer resolution and validation.
 Human projections have no trailing context footer. Direct scalar and
 specialized values print only their value. Strings have no JSON quotes, and
 nullable Human type labels use `T?`. Multiline Part content stays aligned
-inside the VALUE cell without a leading bullet. `--json` does not resolve
-Pointers and prints only the selected canonical JSON value. The two display
-modes are mutually exclusive, and `--type` is not an option. Inspection is
-read-only and historical and does not load a runnable.
+inside the VALUE cell without a leading bullet. Pointer queries with `--json`
+do not resolve Pointers and print only the selected canonical JSON value. The
+explicit Run `output` view instead returns the resolved result as described
+above. Display modes are mutually exclusive, and `--type` is not an option.
+Inspection is read-only and historical and does not load a runnable.
 
 ## Runtime Commands
 

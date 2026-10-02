@@ -10,6 +10,8 @@ from typing import Annotated, Literal, cast
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
+from rich.json import JSON
+from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 import typer
@@ -20,12 +22,15 @@ from toolang.cli.common.parameters import TextType
 from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
+    parts_response_text,
 )
 from toolang.cli.common.execution_progress.facts import (
     elapsed_fact as _format_elapsed,
     token_fact as _token_fact,
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
+from toolang.base.types.message import Part, TextPart
+from toolang.lang.types import Array
 from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
@@ -83,7 +88,7 @@ _SubjectKind = Literal[
     "runs",
     "steps",
 ]
-_ProjectionKind = Literal["records", "fields", "value", "tree", "call"]
+_ProjectionKind = Literal["records", "fields", "value", "tree", "call", "output"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +210,63 @@ def _selected_step(source: _InspectSubject) -> StepRecord:
     if source.selection is None or not isinstance(source.selection.record, StepRecord):
         raise RuntimeError("step subject has no Step record")
     return source.selection.record
+
+
+def _project_run_output(store: RunStore, source: _InspectSubject) -> object:
+    if source.selection is None or not isinstance(source.selection.record, RunRecord):
+        raise RuntimeError("output subject has no Run record")
+    run = source.selection.record
+    if run.output is None:
+        raise ValueError(f"Run {run.id} has no output (status: {run.status})")
+    local = store.resolve_local(run.output.local)
+    return _ProjectedValue(json=local_to_protocol_data(local)["value"], human=local)
+
+
+def _run_output_text(local: Local, *, markdown: bool = False) -> str | None:
+    value = local.value
+    if isinstance(value, str):
+        return value
+    parts: tuple[Part, ...] | None = None
+    if isinstance(value, Part):
+        parts = (value,)
+    elif isinstance(value, Array) and local.type.endswith("Part[]"):
+        parts = cast(tuple[Part, ...], tuple(value))
+    if parts is None:
+        return None
+    if markdown and parts and not any(isinstance(part, TextPart) for part in parts):
+        return None
+    return parts_response_text(parts)
+
+
+def _print_output_json(console: Console, value: object) -> None:
+    console.print(JSON.from_data(value, ensure_ascii=False), soft_wrap=True)
+
+
+def _render_run_output(
+    console: Console, _subject: _InspectSubject, value: object
+) -> None:
+    if not isinstance(value, Local):
+        raise RuntimeError("output projection has no Local value")
+    text = _run_output_text(value)
+    if text is None:
+        _print_output_json(console, local_to_protocol_data(value)["value"])
+    else:
+        typer.echo(text, file=console.file, nl=not text.endswith("\n"))
+
+
+def _render_output_markdown(projection: _InspectProjection) -> None:
+    projected = projection.value
+    if not isinstance(projected, _ProjectedValue) or not isinstance(
+        projected.human, Local
+    ):
+        raise RuntimeError("output projection has no Local value")
+    text = _run_output_text(projected.human, markdown=True)
+    if text is None:
+        raise UsageError(
+            "--markdown requires textual output; use --json for this value"
+        )
+    if text:
+        Console(highlight=False).print(Markdown(text))
 
 
 def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
@@ -612,6 +674,7 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
+    _ProjectorTransition("run", "output", _project_run_output, _render_run_output),
     _ProjectorTransition(
         "run",
         "tree",
@@ -651,7 +714,7 @@ def _inspect_subject_help() -> str:
         f"Subject chain. Root subjects: {roots}, or POINTER. "
         f"Relations: {relations}. Projectors: {projectors}. "
         "Run tree is a durable structural snapshot; Step call is the "
-        "Step-owned historical call"
+        "Step-owned historical call; Run output is its resolved result"
     )
 
 
@@ -668,14 +731,19 @@ def inspect_command(
         typer.Option("--human", help="Render human-readable output (default)"),
     ] = False,
     json_view: Annotated[
-        bool, typer.Option("--json", help="Render exact canonical JSON")
+        bool, typer.Option("--json", help="Render JSON (resolved value for Run output)")
+    ] = False,
+    markdown: Annotated[
+        bool, typer.Option("--markdown", help="Render Run output as Markdown")
     ] = False,
 ) -> None:
     """Inspect execution subjects."""
 
-    if human and json_view:
-        raise UsageError("--human and --json are mutually exclusive")
+    if sum((human, json_view, markdown)) > 1:
+        raise UsageError("--human, --json, and --markdown are mutually exclusive")
     query = _parse_inspect_query(subjects)
+    if markdown and query.projector != "output":
+        raise UsageError("--markdown requires the Run output projector")
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover - required=True guarantees this
             raise RuntimeError("execution resources were not opened")
@@ -687,7 +755,9 @@ def inspect_command(
                     subject,
                     query.projector,
                 )
-                if json_view:
+                if markdown:
+                    _render_output_markdown(projection)
+                elif json_view:
                     _render_projection_json(projection)
                 else:
                     _render_projection_human(resources.store, projection)
@@ -897,7 +967,10 @@ def _render_projection_json(projection: _InspectProjection) -> None:
     projected = projection.value
     if not isinstance(projected, _ProjectedValue):
         raise RuntimeError("explicit projection has no typed value")
-    _echo_json(projected.json)
+    if projection.kind == "output":
+        _print_output_json(Console(highlight=False), projected.json)
+    else:
+        _echo_json(projected.json)
 
 
 def _render_projection_human(

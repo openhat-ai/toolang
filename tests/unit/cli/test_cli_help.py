@@ -172,9 +172,9 @@ def test_unknown_option_is_not_hidden_by_a_missing_agent(
     assert too_main(["--root", str(tmp_path), command, "--unknown"]) == 2
     output = capsys.readouterr()
     assert not output.out
-    assert strip_ansi(output.err).startswith(
-        f"Error: No such option: --unknown\n\nUsage: too <AGENT> {command} [OPTIONS]"
-    )
+    error, _, usage = strip_ansi(output.err).partition("\n\n")
+    assert error.startswith("Error: No such option: --unknown")
+    assert usage.startswith(f"Usage: too <AGENT> {command} [OPTIONS]")
 
 
 @pytest.mark.parametrize(
