@@ -329,7 +329,9 @@ def _validate_service_env(name: str, raw: object, *, line_number: int) -> None:
 
 def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
     values: dict[str, ast.AgicDecl | ast.FlowDecl] = {}
-    for item in (*program.agics, *program.flows):
+    for item in sorted(
+        (*program.agics, *program.flows), key=lambda item: item.span.line
+    ):
         if item.name is None:
             continue
         if item.name in values:

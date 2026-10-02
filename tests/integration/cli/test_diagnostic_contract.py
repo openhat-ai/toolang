@@ -136,7 +136,7 @@ def test_cst_output_keeps_raw_entries_but_uses_the_same_rendering_contract(
 def test_unlocated_validation_failure_has_no_fake_position_or_excerpt(monkeypatch):
     from toolang.base.errors import ToolangError
 
-    def fail(program):
+    def fail(program, *, external_flows=None):
         raise ToolangError("Opaque failure at line 12.")
 
     monkeypatch.setattr("toolang.lang.validate._validate", fail)

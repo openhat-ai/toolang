@@ -100,8 +100,8 @@ def source_position(node: Node, source: bytes) -> tuple[int, int]:
     return source.count(b"\n", 0, offset) + 1, offset - source.rfind(b"\n", 0, offset)
 
 
-def _excerpt(text: str) -> str:
-    return repr(text[:100] + ("…" if len(text) > 100 else ""))
+def _excerpt(text: str, *, truncated: bool = False) -> str:
+    return repr(text[:100] + ("…" if truncated or len(text) > 100 else ""))
 
 
 def _context(node: Node) -> str:
@@ -209,7 +209,7 @@ class DiagnosticSource:
                 .decode("utf-8", errors="ignore")
                 .strip()
             )
-            return _excerpt(raw)
+            return _excerpt(raw, truncated=end > start + 404)
         raw = self.lines[location.line - 1]
         head = raw[:404].decode("utf-8", errors="ignore")
         if len(raw) <= 404 and len(head) <= 100:
@@ -221,8 +221,11 @@ class DiagnosticSource:
             -50:
         ]
         after = raw[offset : offset + 404].decode("utf-8", errors="ignore")
-        truncated = offset > len(before.encode("utf-8"))
-        return _excerpt(("…" if truncated else "") + (before + after).strip())
+        truncated_start = offset > len(before.encode("utf-8"))
+        return _excerpt(
+            ("…" if truncated_start else "") + (before + after).strip(),
+            truncated=offset + 404 < len(raw),
+        )
 
 
 def _location_label(location: SourceLocation | None, label: str | None) -> str:

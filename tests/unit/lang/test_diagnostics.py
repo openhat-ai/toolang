@@ -346,6 +346,33 @@ def test_semantic_conflicts_keep_primary_and_related_locations(
     assert "at line" not in output
 
 
+@pytest.mark.parametrize(
+    "kinds", [("flow", "agic"), ("agic", "flow"), ("flow", "flow", "agic")]
+)
+def test_duplicate_runnables_follow_source_order_across_declaration_kinds(kinds):
+    from toolang.lang.errors import ToolangValidationError
+
+    source = "".join(f"{kind} work:\n  pass\n" for kind in kinds)
+    with pytest.raises(ToolangValidationError) as caught:
+        Program.from_source(source)
+    diagnostic = caught.value.diagnostic
+    assert diagnostic.location is not None
+    assert diagnostic.location.line == 3
+    assert diagnostic.related[0].reason == "Previous declaration"
+    assert diagnostic.related[0].location.line == 1
+
+
+@pytest.mark.parametrize("space", [" ", "\u3000"], ids=["ascii", "unicode"])
+@pytest.mark.parametrize("precision", ["recovery", "construct"])
+def test_clipped_excerpt_marks_omitted_text_after_whitespace(space, precision):
+    from toolang.lang.types import SourceLocation
+
+    text = f"flow{space * 1000}?"
+    source = DiagnosticSource(text)
+    location = SourceLocation(1, 1, 1, len(source.source) + 1, precision=precision)
+    assert source.excerpt(location) == "'flow…'"
+
+
 def test_recovery_excerpt_is_bounded_escaped_and_keeps_multiline_context():
     from toolang.lang.types import SourceDiagnostic, SourceLocation
 
@@ -386,7 +413,7 @@ def test_program_wraps_unlocated_failures_without_inventing_a_location(monkeypat
 
     cause = ToolangError("Opaque failure at line 12.")
 
-    def fail(program):
+    def fail(program, *, external_flows=None):
         raise cause
 
     monkeypatch.setattr("toolang.lang.validate._validate", fail)

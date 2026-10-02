@@ -1465,5 +1465,5 @@ def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
     with pytest.raises(StatePreparationError, match="unknown runnable"):
         prepare_agent_state(layout)
     layout.program.write_text("flow parent(_: Secret):\n  run research\n")
-    with pytest.raises(StatePreparationError, match="unknown Toolang type"):
+    with pytest.raises(StatePreparationError, match="Unknown Toolang type"):
         prepare_agent_state(layout)
