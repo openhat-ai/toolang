@@ -185,14 +185,14 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
 
 @pytest.mark.parametrize("terminal", (True, False))
 @pytest.mark.parametrize(
-    "local",
+    "value",
     (
-        Local("# Heading\n\n```text\n\t中文\n```\n" + "long " * 100),
-        Local({"long field": "中文 " * 100, "nested": [False, None, 12]}),
+        "# Heading\n\n```text\n\t中文\n```\n" + "long " * 100,
+        {"long field": "中文 " * 100, "nested": [False, None, 12]},
     ),
 )
 def test_output_is_plain_on_terminals_and_pipes(
-    terminal: bool, local: Local, monkeypatch: pytest.MonkeyPatch
+    terminal: bool, value: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
     from toolang.cli.toolang.commands.inspect import _InspectSubject, _render_run_output
@@ -206,11 +206,11 @@ def test_output_is_plain_on_terminals_and_pipes(
         no_color=False,
         color_system="standard",
     )
-    _render_run_output(console, _InspectSubject(kind="run"), local)
+    _render_run_output(console, _InspectSubject(kind="run"), value)
     rendered = stream.getvalue()
     assert "\x1b[" not in rendered
-    if isinstance(local.value, str):
-        assert rendered == local.value + "\n"
+    if isinstance(value, str):
+        assert rendered == value + "\n"
     else:
         assert json.loads(rendered) == {
             "long field": "中文 " * 100,

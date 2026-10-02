@@ -268,6 +268,40 @@ def test_inspect_run_output_complete_values(tmp_path: Path, local: Local) -> Non
 
 
 @pytest.mark.parametrize("args", ((), ("--json",)))
+def test_inspect_run_output_serializes_resolved_value_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    import toolang.cli.toolang.commands.inspect as inspect_commands
+
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    expected = {"result": [{"count": 1}, {"count": 2}]}
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_serialization",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(Local(expected)))
+
+    original = inspect_commands.local_to_protocol_data
+    calls = 0
+
+    def serialize(local: Local) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return original(local)
+
+    monkeypatch.setattr(inspect_commands, "local_to_protocol_data", serialize)
+    result = _invoke(root, "alice", "inspect", run.id, "output", *args)
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == expected
+    assert calls == 1
+
+
+@pytest.mark.parametrize("args", ((), ("--json",)))
 def test_inspect_run_output_piped_json_ignores_forced_color(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
 ) -> None:

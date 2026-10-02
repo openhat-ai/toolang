@@ -217,7 +217,9 @@ def _project_run_output(store: RunStore, source: _InspectSubject) -> object:
     if run.output is None:
         raise ValueError(f"Run {run.id} has no output (status: {run.status})")
     local = store.resolve_local(run.output.local)
-    return _ProjectedValue(json=local_to_protocol_data(local)["value"], human=local)
+    data = local_to_protocol_data(local)["value"]
+    text = _run_output_text(local)
+    return _ProjectedValue(json=data, human=text if text is not None else data)
 
 
 def _run_output_text(local: Local) -> str | None:
@@ -239,17 +241,12 @@ def _run_output_text(local: Local) -> str | None:
 def _render_run_output(
     console: Console, _subject: _InspectSubject, value: object
 ) -> None:
-    if not isinstance(value, Local):
-        raise RuntimeError("output projection has no Local value")
-    text = _run_output_text(value)
-    if text is None:
-        typer.echo(
-            json.dumps(
-                local_to_protocol_data(value)["value"], ensure_ascii=False, indent=2
-            ),
-            file=console.file,
-        )
-    elif text:
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, indent=2)
+    )
+    if text:
         typer.echo(text, file=console.file, nl=not text.endswith("\n"), color=True)
 
 
