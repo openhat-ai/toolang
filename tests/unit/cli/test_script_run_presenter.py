@@ -1075,3 +1075,45 @@ def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
     assert "Child output." in output
     assert "deepseek/deepseek-chat" not in output
     assert "invalid" not in output.lower()
+
+
+@pytest.mark.parametrize("prior_output", [False, True])
+def test_script_context_separates_first_non_tty_compact_activity(prior_output) -> None:
+    events: list[RunEvent] = [_root_begin()]
+    if prior_output:
+        events.extend(
+            [
+                StepBegin(
+                    step=StepRef.parse("run_one.0"), kind="model", given=_model()
+                ),
+                StepEnd(
+                    step=StepRef.parse("run_one.0"),
+                    kind="model",
+                    status="succeeded",
+                    output=_parts("Earlier output."),
+                ),
+            ]
+        )
+    output = _render(
+        [
+            *events,
+            StepBegin(
+                step=StepRef.parse("run_one.1"),
+                kind="tool",
+                given=ToolStepGiven(
+                    plugin="_toolang",
+                    trigger="runtime",
+                    call=ToolCall("compact", "compact", "_toolang__compact", {}),
+                    summary="Compacting thread history",
+                ),
+            ),
+        ],
+        context=RunContext("agic:demo", ModelRequest("test/model")),
+    )
+    lines = output.splitlines()
+    assert lines[0].startswith("‣ agic:demo ")
+    expected = [""]
+    if prior_output:
+        expected.append("• Earlier output.")
+    expected.append("✧ Compacting thread history")
+    assert lines[1:] == expected

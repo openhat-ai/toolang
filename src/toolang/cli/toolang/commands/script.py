@@ -872,6 +872,7 @@ async def _execute_remote(
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     request_input = _remote_script_input(input, raw_named=raw_named)
+    progress_width = None if quiet else resolve_progress_max_width(environ)
     tracer: ScriptRunPresenter | None = None
     async with httpx.AsyncClient(
         transport=transport,
@@ -922,11 +923,11 @@ async def _execute_remote(
             request = await capture_attachments(
                 http, client.endpoint, request, procdir=Path.cwd()
             )
-            if not quiet:
+            if progress_width is not None:
                 tracer = ScriptRunPresenter(
                     run_id=None,
                     context=RunContext(request.runnable.ref, request.model),
-                    max_width=resolve_progress_max_width(environ),
+                    max_width=progress_width,
                 )
             handle = await client.run(
                 request,

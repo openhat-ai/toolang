@@ -32,6 +32,7 @@ class ScriptRunPresenter(RunTracer):
         self.run_id = run_id
         self.operation = operation
         self._context = context
+        self._context_gap_pending = False
         self.console = ProgressConsole(
             stream or sys.stderr,
             width=width,
@@ -47,7 +48,10 @@ class ScriptRunPresenter(RunTracer):
                 self.run_id = event.run
             self._begin_root(event)
 
-        self.console.apply(self._projector.handle(event))
+        update = self._projector.handle(event)
+        self.console.apply(update)
+        if any(block.rows for block in update.committed):
+            self._context_gap_pending = False
 
         if (
             not self.console.tty
@@ -57,10 +61,15 @@ class ScriptRunPresenter(RunTracer):
             self.console.apply(
                 ProgressUpdate(
                     committed=(
-                        ProgressBlock(f"step:{event.step}", trace_live_rows(event, "")),
+                        ProgressBlock(
+                            f"step:{event.step}",
+                            trace_live_rows(event, ""),
+                            gap_before=self._context_gap_pending,
+                        ),
                     )
                 )
             )
+            self._context_gap_pending = False
         if self.console.tty and self._projector.has_timed_activity:
             if self._refresh_task is None:
                 self._refresh_task = asyncio.create_task(self._refresh())
@@ -98,6 +107,7 @@ class ScriptRunPresenter(RunTracer):
                     runnable=event.runnable or self._context.runnable,
                 )
             )
+            self._context_gap_pending = True
 
     def _end_root(self, event: RunEnd) -> None:
         root = self._root
