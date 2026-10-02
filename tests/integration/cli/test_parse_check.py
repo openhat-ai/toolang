@@ -71,7 +71,8 @@ def test_parse_check_continues_after_missing_path_and_ignores_non_sources(tmp_pa
     (source.parent / "ignore.txt").write_text("not Toolang")
     result = runner.invoke(app, ["parse", str(missing), str(tmp_path), "--check"])
     assert result.exit_code == 1
-    assert f"{missing}:1:1:" in result.stderr
+    assert f"{missing}:" in result.stderr
+    assert f"{missing}:1:1:" not in result.stderr
     assert f"{source}:2:3:" in result.stderr
     assert "ignore.txt" not in result.stderr
 
@@ -134,7 +135,8 @@ def test_parse_check_reports_unreadable_directories_and_continues(
     paths = [str(tmp_path)] if nested else [str(locked), str(other)]
     result = runner.invoke(app, ["parse", *paths, "--check"])
     assert result.exit_code == 1
-    assert f"{locked}:1:1:" in result.stderr
+    assert f"{locked}:" in result.stderr
+    assert f"{locked}:1:1:" not in result.stderr
     assert "Permission denied" in result.stderr
     assert f"{other}:2:" in result.stderr
 
@@ -155,7 +157,8 @@ def test_parse_check_reports_home_expansion_failure_and_continues(
     monkeypatch.setattr(Path, "expanduser", expand)
     result = runner.invoke(app, ["parse", str(missing), str(other), "--check"])
     assert result.exit_code == 1
-    assert f"{missing}:1:1:" in result.stderr
+    assert f"{missing}:" in result.stderr
+    assert f"{missing}:1:1:" not in result.stderr
     assert "Could not determine home directory" in result.stderr
     assert f"{other}:2:" in result.stderr
 
@@ -220,7 +223,8 @@ def test_parse_check_reports_broken_symlinks_and_continues(tmp_path, target):
     other.write_text("agic bad():\n  {{missing}}\n")
     result = runner.invoke(app, ["parse", str(tmp_path), "--check"])
     assert result.exit_code == 1
-    assert f"{broken}:1:1:" in result.stderr
+    assert f"{broken}:" in result.stderr
+    assert f"{broken}:1:1:" not in result.stderr
     assert f"{other}:2:" in result.stderr
 
 
@@ -229,7 +233,8 @@ def test_parse_check_does_not_ignore_a_broken_symlink_only_directory(tmp_path):
     broken.symlink_to("missing.too")
     result = runner.invoke(app, ["parse", str(tmp_path), "--check"])
     assert result.exit_code == 1
-    assert f"{broken}:1:1:" in result.stderr
+    assert f"{broken}:" in result.stderr
+    assert f"{broken}:1:1:" not in result.stderr
 
 
 def test_parse_check_continues_after_path_resolution_failure(tmp_path, monkeypatch):
@@ -247,7 +252,7 @@ def test_parse_check_continues_after_path_resolution_failure(tmp_path, monkeypat
     monkeypatch.setattr(Path, "resolve", resolve_path)
     result = runner.invoke(app, ["parse", str(tmp_path), "--check"])
     assert result.exit_code == 1
-    assert f"{first}:1:1: Cannot resolve source path" in result.stderr
+    assert f"{first}: Cannot resolve source path" in result.stderr
     assert f"{other}:2:" in result.stderr
 
 

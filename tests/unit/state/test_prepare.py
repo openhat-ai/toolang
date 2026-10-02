@@ -199,7 +199,7 @@ def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
         legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
         legacy.setattr(ProgramSource, "parse", lambda _: Program.from_source(body))
         old = prepare_agent_state(layout)
-    with pytest.raises(StatePreparationError, match="Syntax error at line 1"):
+    with pytest.raises(StatePreparationError, match="line 1:1: Parse error"):
         prepare_agent_state(layout)
     assert load_agent_state(layout, old.revision).modules == old.modules
 
@@ -1465,5 +1465,5 @@ def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
     with pytest.raises(StatePreparationError, match="unknown runnable"):
         prepare_agent_state(layout)
     layout.program.write_text("flow parent(_: Secret):\n  run research\n")
-    with pytest.raises(StatePreparationError, match="unknown Toolang type"):
+    with pytest.raises(StatePreparationError, match="Unknown Toolang type"):
         prepare_agent_state(layout)

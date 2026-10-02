@@ -10,7 +10,7 @@ from tree_sitter import Node, Tree
 
 from . import ast
 from .ast import _parse_tree
-from .diagnostics import primary_error, source_position, syntax_message
+from .diagnostics import primary_error, syntax_diagnostic
 from .errors import ToolangFormatError
 from .types import is_generated_ref
 from .text import dedent_text_lines, source_lines, text_indent_width
@@ -114,9 +114,20 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
     try:
         _syntax_tree(formatted)
     except ToolangFormatError as exc:
+        from dataclasses import replace
+        from .types import RelatedLocation, SourceDiagnostic
+
+        location = exc.diagnostic.location
+        assert location is not None
         raise ToolangFormatError(
-            "Formatter produced invalid syntax at "
-            f"generated line {exc.line}, column {exc.column}: {exc}"
+            SourceDiagnostic(
+                "Formatter produced invalid syntax",
+                related=(
+                    RelatedLocation(
+                        exc.diagnostic.reason, replace(location, origin="generated")
+                    ),
+                ),
+            )
         ) from exc
     return formatted
 
@@ -348,10 +359,7 @@ def _syntax_tree(source: str) -> Tree:
     error_node = primary_error(tree.root_node)
     if error_node is not None:
         original = source.encode("utf-8")
-        line, column = source_position(error_node, original)
-        raise ToolangFormatError(
-            syntax_message(error_node, original), line=line, column=column
-        )
+        raise ToolangFormatError(syntax_diagnostic(error_node, original))
     return tree
 
 

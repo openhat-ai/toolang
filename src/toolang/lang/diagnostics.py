@@ -4,6 +4,8 @@ from collections.abc import Iterator
 
 from tree_sitter import Node
 
+from .types import SourceDiagnostic, SourceLocation
+
 
 _PUNCTUATION = {
     "lparen": "(",
@@ -30,6 +32,10 @@ _CONTEXTS = {
     "service": "service declaration",
     "psyche": "psyche declaration",
     "prompt": "prompt declaration",
+}
+_INVALID_CONSTRUCTS = {
+    "invalid_flow_reserved_statement": "flow statement",
+    "invalid_agic_reserved_message": "message header",
 }
 
 
@@ -66,11 +72,23 @@ def primary_error(root: Node) -> Node | None:
     first = next(errors, None)
     if first is None:
         return None
-    for candidate in errors:
-        if not first.is_error or first not in _ancestors(candidate):
+    candidate = first
+    for child in errors:
+        if not candidate.is_error or candidate not in _ancestors(child):
             break
-        first = candidate
-    return first
+        candidate = child
+    # Neither generic recovery nor an unknown grammar node proves a cause.
+    supported = candidate.type in _INVALID_CONSTRUCTS or (
+        candidate.is_missing
+        and (
+            candidate.type in _PUNCTUATION
+            or any(
+                parent.type in {"type", "property_value"}
+                for parent in _ancestors(candidate)
+            )
+        )
+    )
+    return candidate if supported else first
 
 
 def source_position(node: Node, source: bytes) -> tuple[int, int]:
@@ -82,12 +100,12 @@ def source_position(node: Node, source: bytes) -> tuple[int, int]:
     return source.count(b"\n", 0, offset) + 1, offset - source.rfind(b"\n", 0, offset)
 
 
-def _excerpt(text: str) -> str:
-    return repr(text[:100] + ("…" if len(text) > 100 else ""))
+def _excerpt(text: str, *, truncated: bool = False) -> str:
+    return repr(text[:100] + ("…" if truncated or len(text) > 100 else ""))
 
 
 def _context(node: Node) -> str:
-    for ancestor in _ancestors(node):
+    for ancestor in (node, *_ancestors(node)):
         if context := _CONTEXTS.get(ancestor.type):
             return context
         if ancestor.is_error:
@@ -100,13 +118,15 @@ def _context(node: Node) -> str:
     return "source"
 
 
-def syntax_message(node: Node, source: bytes) -> str:
+def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
     """Describe evidence, not the parser's arbitrary recovery-token choice."""
     context = _context(node)
     ancestors = {parent.type for parent in _ancestors(node)}
     if node.is_missing:
         if token := _PUNCTUATION.get(node.type):
-            reason = f"Expected {token!r} in {context}"
+            reason = f"Expected {token!r}"
+            if context != "source":
+                reason += f" in {context}"
         elif "type" in ancestors:
             category = (
                 "field"
@@ -115,37 +135,123 @@ def syntax_message(node: Node, source: bytes) -> str:
                 if "param" in ancestors
                 else "value"
             )
-            reason = f"Expected a {category} type in {context}"
+            reason = f"Expected a {category} type"
         elif "property_value" in ancestors:
             reason = "Expected a property value after '='"
         else:
-            reason = f"Expected syntax in {context}"
-    elif node.type in {
-        "invalid_flow_reserved_statement",
-        "invalid_agic_reserved_message",
-    }:
+            reason = "Parse error"
+            if context != "source":
+                reason += f" in {context}"
+    elif node.type in _INVALID_CONSTRUCTS:
         keyword_node = node.children[0] if node.children else node
         keyword = source[keyword_node.start_byte : keyword_node.end_byte].decode(
             "utf-8"
         )
-        category = (
-            "flow statement"
-            if node.type == "invalid_flow_reserved_statement"
-            else "message header"
-        )
+        category = _INVALID_CONSTRUCTS[node.type]
         reason = f"Malformed {category} {_excerpt(keyword)}"
     else:
-        reason = f"Unexpected syntax in {context}"
-        if node.start_point.row != node.end_point.row or any(
-            parent.is_error and parent.start_point.row < node.start_point.row
-            for parent in _ancestors(node)
+        reason = "Parse error"
+        if context != "source":
+            reason += f" in {context}"
+    line, column = source_position(node, source)
+    end_line, end_column = node.end_point
+    if node.end_byte > len(source):
+        end_line = source.count(b"\n")
+        end_column = len(source) - source.rfind(b"\n") - 1
+    return SourceDiagnostic(
+        reason,
+        SourceLocation(
+            line,
+            column,
+            end_line + 1,
+            end_column + 1,
+            precision="token"
+            if node.is_missing
+            else "recovery"
+            if node.is_error
+            else "construct",
+        ),
+    )
+
+
+def syntax_message(node: Node, source: bytes) -> str:
+    """Return only the factual reason for raw CST consumers."""
+    return syntax_diagnostic(node, source).reason
+
+
+class DiagnosticSource:
+    """Index one original source once for rendering any number of diagnostics."""
+
+    def __init__(self, source: str):
+        self.source = source.encode("utf-8")
+        self.lines = self.source.split(b"\n")
+        self.starts = [0]
+        for line in self.lines[:-1]:
+            self.starts.append(self.starts[-1] + len(line) + 1)
+
+    def _offset(self, line: int, column: int | None) -> int:
+        row = min(max(0, line - 1), len(self.lines) - 1)
+        return self.starts[row] + min(max(0, (column or 1) - 1), len(self.lines[row]))
+
+    def excerpt(self, location: SourceLocation) -> str | None:
+        if location.origin != "authored" or not 1 <= location.line <= len(self.lines):
+            return None
+        if (
+            location.precision == "recovery"
+            and location.end_line is not None
+            and location.end_column is not None
         ):
-            reason += "; check the surrounding block structure"
-    line, _ = source_position(node, source)
-    start = source.rfind(b"\n", 0, min(node.start_byte, len(source))) + 1
-    end = source.find(b"\n", start)
-    raw = source[start : end if end >= 0 else len(source)].decode("utf-8")
-    character = len(source[start : min(node.start_byte, len(source))].decode("utf-8"))
-    window = max(0, character - 50) if len(raw) > 100 else 0
-    raw = ("…" if window else "") + raw[window:].strip()
-    return f"Syntax error at line {line}: {reason} near {_excerpt(raw)}."
+            start = self._offset(location.line, location.column)
+            end = self._offset(location.end_line, location.end_column)
+            # Limit decoding too, including recovery regions spanning the whole file.
+            raw = (
+                self.source[start : min(end, start + 404)]
+                .decode("utf-8", errors="ignore")
+                .strip()
+            )
+            return _excerpt(raw, truncated=end > start + 404)
+        raw = self.lines[location.line - 1]
+        head = raw[:404].decode("utf-8", errors="ignore")
+        if len(raw) <= 404 and len(head) <= 100:
+            return _excerpt(head.strip())
+        offset = min(max(0, (location.column or 1) - 1), len(raw))
+        # Four bytes per character suffice for a bounded UTF-8 window. Ignore
+        # only a partial code point at a window boundary, never re-scan the line.
+        before = raw[max(0, offset - 200) : offset].decode("utf-8", errors="ignore")[
+            -50:
+        ]
+        after = raw[offset : offset + 404].decode("utf-8", errors="ignore")
+        truncated_start = offset > len(before.encode("utf-8"))
+        return _excerpt(
+            ("…" if truncated_start else "") + (before + after).strip(),
+            truncated=offset + 404 < len(raw),
+        )
+
+
+def _location_label(location: SourceLocation | None, label: str | None) -> str:
+    if location is None:
+        return label or ""
+    point = str(location.line)
+    if location.column is not None:
+        point += f":{location.column}"
+    if location.origin == "generated":
+        return f"{label + ': ' if label else ''}generated {point}"
+    return f"{label}:{point}" if label is not None else f"line {point}"
+
+
+def render_diagnostic(
+    diagnostic: SourceDiagnostic,
+    *,
+    label: str | None = None,
+    source: DiagnosticSource | None = None,
+) -> str:
+    """Render facts without extracting locations or rewriting upstream messages."""
+    prefix = _location_label(diagnostic.location, label)
+    message = f"{prefix}: {diagnostic.reason}" if prefix else diagnostic.reason
+    if source is not None and diagnostic.location is not None:
+        if excerpt := source.excerpt(diagnostic.location):
+            message += f": {excerpt}"
+    for note in diagnostic.related:
+        prefix = _location_label(note.location, label)
+        message += f"\n{prefix}: note: {note.reason}"
+    return message

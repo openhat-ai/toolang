@@ -209,20 +209,22 @@ def test_unknown_parameter_documentation_is_rejected(
     kind: str, signature: str, name: str
 ) -> None:
     with pytest.raises(
-        ToolangValidationError, match=f"Unknown parameter {name!r}.*line 1"
-    ):
+        ToolangValidationError, match=f"Unknown parameter {name!r}"
+    ) as caught:
         Program.from_source(
             f"## @param {name} Description.\n{kind}{signature}:\n  pass\n"
         )
+    assert (caught.value.line, caught.value.column) == (1, 4)
 
 
 def test_duplicate_parameter_documentation_is_rejected() -> None:
     with pytest.raises(
-        ToolangValidationError, match="Duplicate documentation.*'_' .*line 3"
-    ):
+        ToolangValidationError, match="line 3:4: Duplicate documentation.*'_'"
+    ) as caught:
         Program.from_source(
             "## @param _ First.\n## Description.\n## @param _ Second.\nagic:\n  pass\n"
         )
+    assert caught.value.diagnostic.related[0].location.line == 1
 
 
 @pytest.mark.parametrize(

@@ -20,12 +20,12 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
         ("agic work(_):\n  {{_0._}}\n", "outside the active window"),
         ("agic work(_):\n  {{_01._}}\n", "outside the active window"),
         ("agic work(_):\n  {{missing}}\n", "missing"),
-        ("agic work(_: Missing):\n  {{_}}\n", "unknown.*type"),
-        ("agic work() -> Missing:\n  Hello\n", "unknown.*type"),
-        ("struct Record:\n  child: Missing[]\n", "unknown.*type"),
+        ("agic work(_: Missing):\n  {{_}}\n", "Unknown.*type"),
+        ("agic work() -> Missing:\n  Hello\n", "Unknown.*type"),
+        ("struct Record:\n  child: Missing[]\n", "Unknown.*type"),
         (
             "agic worker(_, topic):\n  {{topic}}\nflow work:\n  run worker\n",
-            "missing.*topic",
+            "Missing.*topic",
         ),
         ("flow work:\n  map using: {{_}}\n", "shape list"),
         (
@@ -34,7 +34,7 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
         ),
         (
             "flow work:\n  scatter: Values\n  settle -> Number: {{_}}\n",
-            "settle without from requires Text output",
+            "Settle without from requires Text output",
         ),
         (
             "flow work:\n  repeat 5 times windowing 1:\n"
@@ -210,7 +210,7 @@ flow main:
     ],
 )
 def test_empty_parallel_operations_still_validate_required_inputs(statement):
-    with pytest.raises(ToolangError, match="missing input"):
+    with pytest.raises(ToolangError, match="Missing input"):
         Program.from_source(f"flow main():\n  {statement}\n")
 
 

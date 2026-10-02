@@ -224,7 +224,7 @@ flow main() -> {output}:
         )
     if initial is None and output != "Text":
         with pytest.raises(
-            ToolangError, match="settle without from requires Text output"
+            ToolangError, match="Settle without from requires Text output"
         ):
             Program.from_source(source)
         return

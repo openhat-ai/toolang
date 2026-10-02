@@ -9,7 +9,8 @@ from typing import Any
 from tree_sitter import Language, Node, Parser, Tree
 import tree_sitter_toolang
 
-from .diagnostics import error_kind, error_nodes, syntax_message
+from .diagnostics import error_kind, error_nodes, syntax_diagnostic, syntax_message
+from .types import SourceDiagnostic
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +45,16 @@ def diagnostics(root: Node, source: bytes) -> list[dict[str, Any]]:
             }
         )
     return sorted(result, key=lambda item: (item["start_byte"], item["end_byte"]))
+
+
+def source_diagnostics(root: Node, source: bytes) -> list[SourceDiagnostic]:
+    """Structured human diagnostics in the same order as raw CST entries."""
+    return [
+        syntax_diagnostic(node, source)
+        for node in sorted(
+            error_nodes(root), key=lambda node: (node.start_byte, node.end_byte)
+        )
+    ]
 
 
 def to_data(tree: Tree, source: str) -> dict[str, Any]:

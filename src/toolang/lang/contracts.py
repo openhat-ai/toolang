@@ -111,11 +111,11 @@ def validate_operation_contract(
 ) -> None:
     """Check an already resolved signature without inferring through callees."""
 
-    label = f"{operation.capitalize()} at line {line}"
+    label = operation.capitalize()
     if operation in {"map", "keep", "drop", "sort", "gather", "settle"}:
         if runnable.input is None:
             raise ToolangValidationError(
-                f"{label} requires primary input '_' in {name!r}."
+                f"{label} requires primary input '_' in {name!r}", line=line
             )
     output = runnable.output
     expected = {
@@ -126,9 +126,9 @@ def validate_operation_contract(
     }.get(operation)
     if expected is not None and output != expected:
         raise ToolangValidationError(
-            f"{label} requires {expected} output from {name!r}, got {output}."
+            f"{label} requires {expected} output from {name!r}, got {output}", line=line
         )
     if operation == "scatter" and (output is None or not output.endswith("[]")):
         raise ToolangValidationError(
-            f"{label} requires array output from {name!r}, got {output}."
+            f"{label} requires array output from {name!r}, got {output}", line=line
         )

@@ -134,19 +134,19 @@ prompt summarize:
 @pytest.mark.parametrize(
     ("source", "message"),
     [
-        ("psyche empty:\n", "Psyche cap 'empty' requires a nonempty body at line 1"),
+        ("psyche empty:\n", "Psyche cap 'empty' requires a nonempty body"),
         (
             "skill empty:\n  description = Missing body.\n",
-            "Skill cap 'empty' requires a nonempty body at line 1",
+            "Skill cap 'empty' requires a nonempty body",
         ),
         (
             "skill empty:\n  Body without description.\n",
-            "Skill cap 'empty' is missing required property 'description' at line 1",
+            "Skill cap 'empty' is missing required property 'description'",
         ),
-        ("prompt empty:\n", "Prompt cap 'empty' requires a nonempty body at line 1"),
+        ("prompt empty:\n", "Prompt cap 'empty' requires a nonempty body"),
         (
             "service empty:\n  description = Missing target.\n  transport = http\n",
-            "Service cap 'empty' is missing required property 'target' at line 1",
+            "Service cap 'empty' is missing required property 'target'",
         ),
     ],
 )
@@ -160,13 +160,13 @@ def test_cap_kinds_reject_missing_properties_and_bodies(
 def test_cap_properties_report_unknown_duplicate_and_empty_source_lines() -> None:
     with pytest.raises(
         ToolangValidationError,
-        match="Prompt cap 'review' property 'params' at line 2 is unsupported",
+        match="line 2:3: Prompt cap 'review' property 'params' is unsupported",
     ):
         Program.from_source("prompt review:\n  params = focus\n\n  Review {{focus}}.\n")
 
     with pytest.raises(
         ToolangValidationError,
-        match="Skill cap 'review' property 'description' at line 3 duplicates line 2",
+        match="line 3:3: Duplicate property 'description' in skill 'review'",
     ):
         Program.from_source(
             "skill review:\n"
@@ -177,7 +177,7 @@ def test_cap_properties_report_unknown_duplicate_and_empty_source_lines() -> Non
 
     with pytest.raises(
         ToolangValidationError,
-        match="Skill cap 'review' property 'description' at line 2 must be nonempty",
+        match="line 2:16: Property 'description' in skill 'review' must be nonempty",
     ):
         Program.from_source("skill review:\n  description =\n\n  Review.\n")
 
@@ -187,23 +187,23 @@ def test_cap_properties_report_unknown_duplicate_and_empty_source_lines() -> Non
     [
         (
             "  transport = http\n  protocol = stdio\n  target = server\n",
-            "properties 'transport' at line 3 and 'protocol' at line 4 are mutually exclusive",
+            "Properties 'transport' and 'protocol' in service 'invalid' are mutually exclusive",
         ),
         (
             "  transport = websocket\n  target = server\n",
-            "property 'transport' at line 3 must be 'http' or 'stdio'",
+            "property 'transport' must be 'http' or 'stdio'",
         ),
         (
             "  transport = stdio\n  target = server\n  headers = X-Test: yes\n",
-            "property 'headers' at line 5 is valid only for HTTP",
+            "property 'headers' is valid only for HTTP",
         ),
         (
             "  transport = stdio\n  target = server\n  env = GOOD, bad-name\n",
-            "property 'env' at line 5 must contain comma-separated environment names",
+            "property 'env' must contain comma-separated environment names",
         ),
         (
             "  transport = stdio\n  target = server\n  env = GOOD, GOOD\n",
-            "property 'env' at line 5 must not contain duplicate environment names",
+            "property 'env' must not contain duplicate environment names",
         ),
     ],
 )
@@ -829,7 +829,7 @@ def test_program_source_rejects_legacy_agent_header(
     )
 
     prepared = read_authored_source(root, "alice").load_program()
-    with pytest.raises(ToolangError, match="Syntax error at line 3"):
+    with pytest.raises(ToolangError, match="line 3:1: Parse error"):
         prepared.parse()
 
     assert prepared.source_text == "#!/usr/bin/env toolang\n\nagent alice\n"
@@ -1009,7 +1009,7 @@ def test_parse_runnable_ref_parts_accepts_module_kind_and_unnamed() -> None:
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_underscore_cannot_be_an_authored_runnable_name(kind):
-    with pytest.raises(ToolangError, match="Syntax error"):
+    with pytest.raises(ToolangError, match="Parse error"):
         Program.from_source(f"{kind} _():\n  pass\n")
 
 

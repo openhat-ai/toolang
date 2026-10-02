@@ -60,9 +60,13 @@ def test_unicode_text_does_not_shift_documentation_or_diagnostics() -> None:
     valid = prefix + "## Work documentation.\nflow work:\n  Work.\n"
     assert Program.from_source(valid).flows[0].doc == "Work documentation."
     invalid = prefix + "flow work:\n  sort these items\n"
-    with pytest.raises(ToolangSyntaxError, match="line 5.*sort these items"):
+    with pytest.raises(
+        ToolangSyntaxError, match="line 5:3.*Malformed flow statement 'sort'"
+    ):
         Program.from_source(invalid)
-    with pytest.raises(ToolangFormatError, match="line 5.*sort these items"):
+    with pytest.raises(
+        ToolangFormatError, match="line 5:3.*Malformed flow statement 'sort'"
+    ):
         format_source(invalid)
 
 

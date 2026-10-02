@@ -349,6 +349,7 @@ def test_syntax_errors_include_source_context_for_keyword_led_lines(
     with pytest.raises(ToolangFormatError, match="line 2") as formatted:
         format_source(source)
     for error in (parsed.value, formatted.value):
-        assert header in str(error)
+        assert header not in str(error)
+        assert "line 2:3:" in str(error)
         assert "Toolang 0.3 syntax" not in str(error)
         assert "Malformed flow statement" in str(error)

@@ -179,7 +179,7 @@ flow parent() -> Json:
         source += "  run produce\n"
     source += "  run child\n"
     if not supplied:
-        with pytest.raises(ToolangError, match="missing input.*_.*child"):
+        with pytest.raises(ToolangError, match="Missing input.*_.*child"):
             Program.from_source(source)
         return
     harness = ExecutionHarness.create(

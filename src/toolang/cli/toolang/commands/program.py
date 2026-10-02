@@ -85,7 +85,7 @@ def fmt(
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
-            _source_diagnostic(label, exc)
+            _source_diagnostic(label, exc, source=source)
             raise typer.Exit(1) from exc
         _emit_source(
             formatted,
@@ -120,7 +120,7 @@ def fmt(
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
-            _source_diagnostic(source_path, exc)
+            _source_diagnostic(source_path, exc, source=source)
             raise typer.Exit(1) from exc
         if formatted == source:
             continue
@@ -153,7 +153,7 @@ def _format_stdin(
         )
         formatted = format_source(source)
     except error_type as exc:
-        _source_diagnostic(stdin_filepath, exc)
+        _source_diagnostic(stdin_filepath, exc, source=source)
         raise typer.Exit(1) from exc
     except UnicodeError as exc:
         raise ClickException(f"{stdin_filepath}: {exc}") from exc
@@ -228,22 +228,27 @@ def _collect_source_paths(
     return collected
 
 
-def _source_diagnostic(label: Path, error: Exception) -> None:
+def _source_diagnostic(
+    label: Path, error: Exception, *, source: str | None = None
+) -> None:
+    from toolang.lang.diagnostics import DiagnosticSource, render_diagnostic
     from toolang.lang.errors import ToolangFormatError, ToolangSourceError
+    from toolang.lang.types import SourceDiagnostic
 
-    if isinstance(error, ToolangFormatError) and error.line is None:
-        write_source(f"{label}: {error}\n", sys.stderr)
-        return
     if isinstance(error, (ToolangSourceError, ToolangFormatError)):
-        line, column = error.line or 1, error.column or 1
+        diagnostic = error.diagnostic
     else:
-        line, column = 1, 1
-    message = (
-        str(error.__cause__)
-        if isinstance(error, ClickException) and error.__cause__
-        else str(error)
+        cause = error.__cause__ if isinstance(error, ClickException) else None
+        diagnostic = SourceDiagnostic(str(cause) if cause else str(error))
+    write_source(
+        render_diagnostic(
+            diagnostic,
+            label=str(label),
+            source=DiagnosticSource(source) if source is not None else None,
+        )
+        + "\n",
+        sys.stderr,
     )
-    write_source(f"{label}:{line}:{column}: {message}\n", sys.stderr)
 
 
 def _check_sources(paths: list[Path], *, stdin_filepath: Path | None) -> None:
@@ -261,6 +266,7 @@ def _check_sources(paths: list[Path], *, stdin_filepath: Path | None) -> None:
         paths if paths == [Path("-")] else _collect_source_paths(paths, on_error=report)
     )
     for source in sources:
+        text = None
         label = stdin_filepath or Path("<stdin>") if str(source) == "-" else source
         try:
             # Discovered filenames are filesystem paths, not fresh CLI input:
@@ -272,7 +278,8 @@ def _check_sources(paths: list[Path], *, stdin_filepath: Path | None) -> None:
             )
             Program.from_source(text)
         except (ToolangError, ClickException) as exc:
-            report(label, exc)
+            failed = True
+            _source_diagnostic(label, exc, source=text)
     if failed:
         raise typer.Exit(1)
 
@@ -335,7 +342,9 @@ def parse_program(
     errors = []
     if cst:
         tree = concrete.parse(source_text.encode("utf-8"))
-        errors = concrete.diagnostics(tree.root_node, source_text.encode("utf-8"))
+        errors = concrete.source_diagnostics(
+            tree.root_node, source_text.encode("utf-8")
+        )
         output = (
             _json(concrete.to_data(tree, source_text), compact=compact)
             if json_output or compact
@@ -345,7 +354,7 @@ def parse_program(
         try:
             program = Program.from_source(source_text)
         except ToolangError as exc:
-            _source_diagnostic(label, exc)
+            _source_diagnostic(label, exc, source=source_text)
             raise typer.Exit(1) from exc
         output = (
             _json(to_data(program), compact=compact)
@@ -353,12 +362,20 @@ def parse_program(
             else ast_sexp(program)
         )
     write_source(output, sys.stdout)
-    for error in errors:
-        point = error["start_point"]
-        typer.echo(
-            f"{label}:{point['row'] + 1}:{point['column'] + 1}: {error['message']}",
-            err=True,
-        )
+    if errors:
+        from toolang.lang.diagnostics import DiagnosticSource, render_diagnostic
+
+        diagnostic_source = DiagnosticSource(source_text)
+        for error in errors:
+            write_source(
+                render_diagnostic(
+                    error,
+                    label=str(label),
+                    source=diagnostic_source,
+                )
+                + "\n",
+                sys.stderr,
+            )
     if errors:
         raise typer.Exit(1)
 
@@ -394,7 +411,17 @@ def _emit_source(
     try:
         output = render_source(source, color=enabled, html=html)
     except (ValueError, RuntimeError) as exc:
-        write_source(f"{label}: Could not highlight source: {exc}\n", sys.stderr)
+        from toolang.lang.diagnostics import render_diagnostic
+        from toolang.lang.types import SourceDiagnostic
+
+        write_source(
+            render_diagnostic(
+                SourceDiagnostic(f"Could not highlight source: {exc}"),
+                label=str(label),
+            )
+            + "\n",
+            sys.stderr,
+        )
         raise typer.Exit(1) from exc
     write_source(output, sys.stdout)
 

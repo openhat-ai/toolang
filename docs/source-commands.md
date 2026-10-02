@@ -44,14 +44,26 @@ settle validate inputs without checking unused child history templates.
 An array-valued item is distinct from a flow list.
 Unknown inherited context, dynamic values, and value conversions remain runtime
 checks; insufficient history within a valid window remains normal until warm-up.
-These checks do not infer signatures through calls. Diagnostic positions are
-one-based lines and UTF-8 byte columns (a tab counts as one byte), with
-declaration/statement anchors when a precise token is unavailable. Syntax errors
-explain missing punctuation, missing types/values, or malformed statements and
-include a bounded, escaped source excerpt. When parser recovery cannot establish
-the cause, diagnostics identify unexpected syntax and its surrounding construct
-without guessing a repair. An enclosing recovery error may be localized to a
-more specific erroneous child; source order takes precedence over error kind.
+These checks do not infer signatures through calls. Source errors use
+`path:line:column: reason: 'excerpt'`. Locations are one-based lines and UTF-8
+byte columns (a tab counts as one byte). Unknown coordinates are omitted.
+I/O and highlighting failures do not receive a fictitious `1:1` source position.
+
+Syntax errors explain missing punctuation, missing types/values, or malformed
+statements when supported by the parser. Other failures use `Parse error` and
+retain the enclosing recovery range. A nested recovery node alone does not prove
+which token caused the error. Semantic errors use known declaration/statement
+anchors; previous declarations or conflicting properties appear on separate
+`path:line:column: note: reason` lines.
+
+Excerpts come from the original source, are escaped and bounded to 100 characters
+plus a truncation marker, and include block context for recovery errors. Error
+messages do not contain repair advice. Source order takes precedence over
+specificity. See the [diagnostic examples](source-diagnostics-examples.md) for
+verified outputs and differences between AST and raw CST inspection.
+
+Library source exceptions expose their structured diagnostic separately from
+`str(error)`, which includes known locations but no source excerpt.
 
 The CST parses the original UTF-8 bytes, including incomplete source. Unlike
 the AST path, it neither masks query-data hashes nor adds a final newline, so
@@ -72,8 +84,8 @@ Ranges are half-open. Points are `{row, column}` with zero-based rows and UTF-8
 byte columns. AST `span.line` remains one-based. Diagnostics distinguish native
 errors, missing nodes, and grammar-specific invalid nodes. Node names track the
 grammar version; this inspection format is not a runtime storage schema.
-Diagnostic messages use the same syntax explanations as AST parsing and
-formatting. All native diagnostic entries and overlapping ranges are retained;
+Diagnostic `message` values contain only the reason, without a location or
+excerpt. They use the same syntax explanations as AST parsing and formatting. All native diagnostic entries and overlapping ranges are retained;
 human explanations do not change the raw node types or parser recovery markers.
 
 AST S-expressions use `(kind field: value ...)`, `(span line: N)`, `(list ...)`,
