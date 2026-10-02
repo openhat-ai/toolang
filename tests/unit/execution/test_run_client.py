@@ -38,20 +38,27 @@ from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup
 
 
+# Keep publication-read assertions focused on Run acceptance, not model catalogs.
 _CHAT_SOURCE = """
 agic chat(_: Part[]) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none
   user: {{_}}
 
 agic session(_: Part[]) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none
   user: {{_}}
 
 agic selected(_: Part[]) -> Part[]:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none

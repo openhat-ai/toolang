@@ -202,9 +202,15 @@ async def execute(
     def prepare_model_frame() -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
+        # Omitted routes also need fresh targets; snapshot-only executors
+        # retain their bound catalog when no publication source is available.
         catalog = (
             execution.latest_state()
-            if binding.settings.hands or binding.settings.handoffs
+            if execution.executor._state is not None
+            and (
+                binding.settings.hands != ("none",)
+                or binding.settings.handoffs != ("none",)
+            )
             else binding.state
         )
         key = (catalog.revision, horizon, estimate.counter.scale)
