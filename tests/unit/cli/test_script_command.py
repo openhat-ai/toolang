@@ -565,7 +565,9 @@ agic demo(_: Part[]):
     assert "Run:" not in output.err
 
 
-def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> None:
+def test_script_validates_before_creating_a_thread(
+    tmp_path, monkeypatch, capsys
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source=_SOURCE,
@@ -592,10 +594,11 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     input=input,
                     raw_named=CallInput({"count": "1"}),
                     session_override=RunOverride(),
-                    quiet=True,
+                    quiet=False,
                 )
             )
 
+        assert "‣" not in capsys.readouterr().err
         assert not harness.store.list_threads()
         assert not harness.store.list_runs(limit=None)
     finally:

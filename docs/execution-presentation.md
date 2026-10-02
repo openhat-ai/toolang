@@ -53,11 +53,40 @@ Script and Chat use the same projected ownership, content, aggregates, facts,
 and errors. Their presenters own terminal mechanics such as wrapping, lane
 truncation, scrollback, and live-area replacement.
 
-A Run has no standalone progress header. A root Run contains projected Steps
-followed by one footer. Child Runs are represented through the Steps they
+The shared projector emits no standalone Run header. Script adds the root
+context header described below; Chat retains its existing run control bar.
+A root Run contains projected Steps followed by one footer. Child Runs are represented through the Steps they
 execute rather than separate Run headers or closure rows. A model-produced
 dynamic Run Step owns its own opening and closing divider around that child
 content.
+
+## Script Run Context
+
+Script prints one persistent context header to stderr when the root Run begins:
+
+```text
+‣ agic:review                  deepseek/deepseek-chat · auto
+```
+
+The entire header is dim on the terminal's default background. `‣` marks the
+start, with the runnable at the left edge and model/reasoning at the right edge
+of the configured progress width, separated by at least two spaces. Narrow
+layouts put model/reasoning below the runnable, with two-cell indentation;
+long fields wrap without truncation. A one- or two-cell viewport drops the
+marker and indentation. Terminal controls are escaped as literal text.
+
+The runnable uses the resolved root identity, displaying an unnamed entry as
+`agic:_` or `flow:_`. The model is the resolved initial run-level setting;
+Flow steps and child Runs may select other models. Reasoning shows an explicit
+effort or token budget, or `auto` when unspecified. A missing model request
+shows `model unspecified` with no reasoning field.
+
+The header appears once, before Step output, separated by one blank line. It
+remains in scrollback after success, failure, or cancellation. Preparation and
+submission failures before `RunBegin` produce no header. Nested Runs do not
+repeat it. Non-TTY output retains the layout without ANSI; `-q` suppresses it.
+Result saving, stdout, and the existing root footer are unchanged. Chat TUI
+does not display this Script header.
 
 ## Width and Alignment
 

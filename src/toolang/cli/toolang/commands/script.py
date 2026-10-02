@@ -868,17 +868,11 @@ async def _execute_remote(
     from ...common.remote_runtime import inspect_remote_runtime
     from ...common.execution_progress.config import resolve_progress_max_width
     from ...common.script_progress import ScriptRunPresenter
+    from ...common.script_progress.blocks import RunContext
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     request_input = _remote_script_input(input, raw_named=raw_named)
-    tracer = (
-        ScriptRunPresenter(
-            run_id=None,
-            max_width=resolve_progress_max_width(environ),
-        )
-        if not quiet
-        else None
-    )
+    tracer: ScriptRunPresenter | None = None
     async with httpx.AsyncClient(
         transport=transport,
         timeout=httpx.Timeout(3.0),
@@ -928,6 +922,12 @@ async def _execute_remote(
             request = await capture_attachments(
                 http, client.endpoint, request, procdir=Path.cwd()
             )
+            if not quiet:
+                tracer = ScriptRunPresenter(
+                    run_id=None,
+                    context=RunContext(request.runnable.ref, request.model),
+                    max_width=resolve_progress_max_width(environ),
+                )
             handle = await client.run(
                 request,
                 tracer=tracer,
@@ -1183,6 +1183,7 @@ async def _execute(
     )
     from ...common.execution_progress.config import resolve_progress_max_width
     from ...common.script_progress import ScriptRunPresenter
+    from ...common.script_progress.blocks import RunContext
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     allow_overrides = resolve_ceiling_overrides(environ)
@@ -1245,6 +1246,7 @@ async def _execute(
     tracer = (
         ScriptRunPresenter(
             run_id=run_id,
+            context=RunContext(spec.bindings.runnable, spec.model_request),
             max_width=resolve_progress_max_width(environ),
         )
         if not quiet

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import replace
 from typing import TextIO
 
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
@@ -11,7 +12,7 @@ from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, Step
 from ..execution_progress import ProgressProjector, ProgressBlock, ProgressUpdate
 from ..execution_progress.step_projection import runtime_tool_name, trace_live_rows
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from .blocks import RunBlock
+from .blocks import RunBlock, RunContext
 from .console import ProgressConsole
 
 
@@ -23,12 +24,14 @@ class ScriptRunPresenter(RunTracer):
         *,
         run_id: str | None,
         operation: str | None = None,
+        context: RunContext | None = None,
         stream: TextIO | None = None,
         width: int | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         self.run_id = run_id
         self.operation = operation
+        self._context = context
         self.console = ProgressConsole(
             stream or sys.stderr,
             width=width,
@@ -84,8 +87,17 @@ class ScriptRunPresenter(RunTracer):
             self.console.apply(self._projector.refresh())
 
     def _begin_root(self, event: RunBegin) -> None:
+        if self._root is not None:
+            return
         root = RunBlock.from_event(event, operation=self.operation)
         self._root = root
+        if self._context is not None:
+            self.console.write_renderable(
+                replace(
+                    self._context,
+                    runnable=event.runnable or self._context.runnable,
+                )
+            )
 
     def _end_root(self, event: RunEnd) -> None:
         root = self._root

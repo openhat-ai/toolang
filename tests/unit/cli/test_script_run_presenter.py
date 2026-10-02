@@ -20,6 +20,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.run import ModelCall, ToolCall
+from toolang.base.types.model import ModelRequest, Reasoning
 from toolang.cli.common.execution_progress import (
     Metrics,
     ProgressBlock,
@@ -29,7 +30,7 @@ from toolang.cli.common.execution_progress import (
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.common.execution_progress.rich_rendering import run_footer_renderable
 from toolang.cli.common.script_progress import ScriptRunPresenter
-from toolang.cli.common.script_progress.blocks import RunBlock
+from toolang.cli.common.script_progress.blocks import RunBlock, RunContext
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.execution.events import (
     PartBegin,
@@ -85,9 +86,11 @@ def _tool() -> ToolStepGiven:
     )
 
 
-def _render(events: list[RunEvent], *, tty: bool = False) -> str:
+def _render(
+    events: list[RunEvent], *, tty: bool = False, context: RunContext | None = None
+) -> str:
     stream = _TtyStream() if tty else StringIO()
-    tracer = ScriptRunPresenter(run_id="run_one", stream=stream)
+    tracer = ScriptRunPresenter(run_id="run_one", stream=stream, context=context)
 
     async def scenario() -> None:
         for event in events:
@@ -934,3 +937,141 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
     assert lines[0] == ""
     assert all(display_width(line) <= 40 for line in lines)
     assert lines[2].startswith("  ")
+
+
+@pytest.mark.parametrize(
+    ("model", "label"),
+    [
+        (None, "model unspecified"),
+        (ModelRequest("test/model"), "test/model · auto"),
+        (ModelRequest("test/model", Reasoning(effort="high")), "test/model · high"),
+        (ModelRequest("test/model", Reasoning(budget_tokens=0)), "test/model · 0"),
+        (
+            ModelRequest("test/model", Reasoning(budget_tokens=4096)),
+            "test/model · 4096",
+        ),
+    ],
+)
+def test_script_context_alignment_and_dim_style(model, label) -> None:
+    context = RunContext("agent::agic:<entry:1>", model)
+    console = Console(width=80, color_system=None)
+    segments = list(console.render(context, console.options))
+    text = "".join(segment.text for segment in segments).rstrip("\n")
+    assert text.startswith("‣ agic:_  ")
+    assert text.endswith(label)
+    assert display_width(text) == 80
+    assert display_width("‣") == 1
+    for segment in segments:
+        if segment.text.strip():
+            assert segment.style is not None
+            assert segment.style.dim is True
+            assert segment.style.color is None
+            assert segment.style.bgcolor is None
+            assert not segment.style.bold
+
+
+def test_script_context_stacks_at_two_space_boundary() -> None:
+    context = RunContext("agic:demo", ModelRequest("test/model"))
+    left, right = "‣ agic:demo", "test/model · auto"
+    threshold = display_width(left + "  " + right)
+    stream = StringIO()
+    Console(file=stream, width=threshold, color_system=None).print(context)
+    assert stream.getvalue() == left + "  " + right + "\n"
+    stream = StringIO()
+    Console(file=stream, width=threshold - 1, color_system=None).print(context)
+    assert stream.getvalue() == left + "\n  " + right + "\n"
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 4, 12, 24])
+def test_script_context_preserves_long_literal_fields_at_narrow_widths(width) -> None:
+    context = RunContext("agic:界界[red]\x1b\n", ModelRequest("provider/long-model"))
+    stream = StringIO()
+    Console(file=stream, width=width, color_system=None).print(context)
+    output = stream.getvalue()
+    assert all(display_width(line) <= width for line in output.splitlines())
+    assert "\x1b" not in output
+    joined = "".join(line.strip() for line in output.splitlines()).removeprefix("‣")
+    assert "provider/long-model" in joined
+    assert "[red]" in joined
+    assert r"\x1b\n" in joined
+    assert "界界" in joined or r"\u754c\u754c" in joined
+    assert joined.endswith("auto")
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_script_context_is_retained_with_empty_run_footer(status) -> None:
+    output = _render(
+        [_root_begin(), RunEnd(run="run_one", status=status)],
+        context=RunContext("agic:submitted", ModelRequest("test/model")),
+    )
+    lines = output.splitlines()
+    assert lines[0].startswith("‣ agic:demo ")
+    assert lines[0].endswith("test/model · auto")
+    assert lines[1] == ""
+    assert lines[2].startswith(f"▪︎ run_one {status}")
+    assert output.count("‣") == 1
+    assert "agic:submitted" not in output
+    assert "\x1b" not in output
+
+
+def test_script_context_uses_submission_when_event_has_no_runnable() -> None:
+    output = _render(
+        [RunBegin(run="run_one", control=ControlRef.for_run("run_one", 0))],
+        context=RunContext("flow:fallback", None),
+    )
+    assert output.startswith("‣ flow:fallback ")
+    assert output.rstrip().endswith("model unspecified")
+    assert "auto" not in output
+
+
+def test_script_context_does_not_leak_into_shared_chat_progress() -> None:
+    from toolang.cli.common.execution_progress import ProgressProjector
+    from toolang.cli.toolang.commands.chat.blocks import RunControlBlock
+
+    begin = _root_begin()
+    assert ProgressProjector().handle(begin) == ProgressUpdate()
+    block = RunControlBlock.create("Review this.")
+    block.update(begin)
+    stream = StringIO()
+    Console(file=stream, width=80, color_system=None).print(block)
+    assert "Review this." in stream.getvalue()
+    assert "‣" not in stream.getvalue()
+
+
+def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
+    context = RunContext("flow:summary", ModelRequest("root/model"))
+    owner = StepRef.parse("run_one.0")
+    child = "run_child"
+    output = _render(
+        [
+            _root_begin(),
+            StepBegin(
+                step=owner,
+                kind="run",
+                given=GatherStmt(span=Span(line=1), runnable="child"),
+            ),
+            RunBegin(
+                run=child,
+                parent=owner,
+                control=ControlRef.for_run(child, 0),
+                runnable="agic:child",
+            ),
+            StepBegin(step=StepRef.parse("run_child.0"), kind="model", given=_model()),
+            StepEnd(
+                step=StepRef.parse("run_child.0"),
+                kind="model",
+                status="succeeded",
+                output=_parts("Child output."),
+            ),
+            RunEnd(run=child, status="succeeded"),
+            StepEnd(step=owner, kind="run", status="succeeded"),
+            RunEnd(run="run_one", status="succeeded"),
+        ],
+        context=context,
+    )
+    assert output.startswith("‣ agic:demo ")
+    assert output.count("‣") == 1
+    assert "root/model · auto\n\n" in output
+    assert "Child output." in output
+    assert "deepseek/deepseek-chat" not in output
+    assert "invalid" not in output.lower()
