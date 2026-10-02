@@ -1,4 +1,4 @@
-"""Language-owned runtime value vocabulary."""
+"""Language-owned value and source-diagnostic vocabulary."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import math
 import re
 from types import MappingProxyType
-from typing import Generic, TypeAlias, TypeVar, cast, overload
+from typing import Generic, Literal, TypeAlias, TypeVar, cast, overload
 
 from typing_extensions import TypeAliasType
 
@@ -26,6 +26,32 @@ from toolang.base.types.message import (
 Text: TypeAlias = str
 Number: TypeAlias = int | float
 Boolean: TypeAlias = bool
+
+
+@dataclass(frozen=True, slots=True)
+class SourceLocation:
+    """One-based UTF-8 byte coordinates; the optional end is exclusive."""
+
+    line: int
+    column: int | None = None
+    end_line: int | None = None
+    end_column: int | None = None
+    precision: Literal["token", "construct", "recovery"] = "construct"
+    origin: Literal["authored", "generated"] = "authored"
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedLocation:
+    reason: str
+    location: SourceLocation
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDiagnostic:
+    reason: str
+    location: SourceLocation | None = None
+    related: tuple[RelatedLocation, ...] = ()
+
 
 _VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
 _RUNNABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")

@@ -11,6 +11,7 @@ from toolang.common.template import template_root_names, template_dependencies
 
 from . import ast
 from .errors import ToolangValidationError, source_location
+from .types import RelatedLocation, SourceLocation
 from .text import dedent_text_lines, source_lines
 from .validate import _validate_cap_source
 
@@ -101,8 +102,9 @@ class _DocComments:
         for tag in tags:
             if tag is not None and target.type not in {"agic", "flow"}:
                 raise ToolangValidationError(
-                    f"Parameter documentation at line {tag.start_point.row + 1} "
-                    "must attach to an agic or flow declaration."
+                    "Parameter documentation must attach to an agic or flow declaration",
+                    line=tag.start_point.row + 1,
+                    column=tag.start_point.column + 1,
                 )
         self._attached[row] = tuple(block)
 
@@ -116,6 +118,7 @@ class _DocComments:
 
     def parameters(self, owner: CstNode, names: set[str]) -> dict[str, str]:
         docs: dict[str, str] = {}
+        locations: dict[str, SourceLocation] = {}
         for comment in self._attached.get(owner.start_point.row, ()):
             tag = comment.child_by_field_name("parameter")
             if tag is None:
@@ -123,15 +126,23 @@ class _DocComments:
             name = self._field_text(tag, "name")
             if name not in names:
                 raise ToolangValidationError(
-                    f"Unknown parameter {name!r} in documentation "
-                    f"at line {tag.start_point.row + 1}."
+                    f"Unknown parameter {name!r} in documentation",
+                    line=tag.start_point.row + 1,
+                    column=tag.start_point.column + 1,
                 )
             if name in docs:
                 raise ToolangValidationError(
-                    f"Duplicate documentation for parameter {name!r} "
-                    f"at line {tag.start_point.row + 1}."
+                    f"Duplicate documentation for parameter {name!r}",
+                    line=tag.start_point.row + 1,
+                    column=tag.start_point.column + 1,
+                    related=(
+                        RelatedLocation("Previous documentation", locations[name]),
+                    ),
                 )
             docs[name] = self._field_text(tag, "description")
+            locations[name] = SourceLocation(
+                tag.start_point.row + 1, tag.start_point.column + 1
+            )
         return docs
 
     def _field_text(self, node: CstNode, field: str) -> str:
@@ -337,6 +348,7 @@ class _Lowerer:
         messages: list[ast.Message] = []
         context: str | None = None
         instruct: str | None = None
+        directive_lines: dict[str, int] = {}
         body = self._required(node, "body")
 
         for child in body.named_children:
@@ -346,12 +358,32 @@ class _Lowerer:
                 directive = self._lower_directive(child)
                 if directive.name == "context":
                     if context is not None:
-                        raise ToolangValidationError("Duplicate context directive.")
+                        raise ToolangValidationError(
+                            "Duplicate context directive",
+                            line=directive.span.line,
+                            related=(
+                                RelatedLocation(
+                                    "Previous directive",
+                                    SourceLocation(directive_lines["context"]),
+                                ),
+                            ),
+                        )
                     context = directive.values[0]
+                    directive_lines["context"] = directive.span.line
                 elif directive.name == "instruct":
                     if instruct is not None:
-                        raise ToolangValidationError("Duplicate instruct directive.")
+                        raise ToolangValidationError(
+                            "Duplicate instruct directive",
+                            line=directive.span.line,
+                            related=(
+                                RelatedLocation(
+                                    "Previous directive",
+                                    SourceLocation(directive_lines["instruct"]),
+                                ),
+                            ),
+                        )
                     instruct = directive.values[0]
+                    directive_lines["instruct"] = directive.span.line
                 else:
                     directives.append(directive)
                 continue
@@ -421,6 +453,7 @@ class _Lowerer:
         body = self._required(node, "body")
         context: str | None = None
         instruct: str | None = None
+        directive_lines: dict[str, int] = {}
         for child in body.named_children:
             if child.type in _TRIVIA:
                 continue
@@ -428,12 +461,32 @@ class _Lowerer:
                 directive = self._lower_directive(child)
                 if directive.name == "context":
                     if context is not None:
-                        raise ToolangValidationError("Duplicate context directive.")
+                        raise ToolangValidationError(
+                            "Duplicate context directive",
+                            line=directive.span.line,
+                            related=(
+                                RelatedLocation(
+                                    "Previous directive",
+                                    SourceLocation(directive_lines["context"]),
+                                ),
+                            ),
+                        )
                     context = directive.values[0]
+                    directive_lines["context"] = directive.span.line
                 elif directive.name == "instruct":
                     if instruct is not None:
-                        raise ToolangValidationError("Duplicate instruct directive.")
+                        raise ToolangValidationError(
+                            "Duplicate instruct directive",
+                            line=directive.span.line,
+                            related=(
+                                RelatedLocation(
+                                    "Previous directive",
+                                    SourceLocation(directive_lines["instruct"]),
+                                ),
+                            ),
+                        )
                     instruct = directive.values[0]
+                    directive_lines["instruct"] = directive.span.line
                 else:
                     directives.append(directive)
                 continue
@@ -481,7 +534,7 @@ class _Lowerer:
             nested = self._required(node, "statement")
             if nested.type == "repeat_statement":
                 raise ToolangValidationError(
-                    f"Repeat at line {self._line(node)} cannot have a let binding."
+                    "Repeat cannot have a let binding", line=self._line(node)
                 )
             stmt = self._lower_stmt(nested, doc=doc)
             binding = self._optional_text(node.child_by_field_name("name"))
@@ -611,8 +664,8 @@ class _Lowerer:
         declared_output = self._optional_text(agic.child_by_field_name("return"))
         if output is not None and declared_output not in {None, output}:
             raise ToolangValidationError(
-                f"{node.type.removesuffix('_statement').capitalize()} at line "
-                f"{self._line(node)} requires {output} output, got {declared_output}."
+                f"{node.type.removesuffix('_statement').capitalize()} requires {output} output, got {declared_output}",
+                line=self._line(node),
             )
         declared_output = declared_output or output or default_output
         return self._generated_agic(
@@ -817,7 +870,7 @@ class _Lowerer:
             return int(self._text(node).strip())
         except ValueError as exc:
             raise ToolangValidationError(
-                "invalid or oversized integer literal",
+                "Invalid or oversized integer literal",
                 line=self._line(node),
                 column=node.start_point.column + 1,
             ) from exc

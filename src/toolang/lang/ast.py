@@ -12,7 +12,7 @@ from pydantic import Discriminator, Tag, TypeAdapter
 from tree_sitter import Node as TreeSitterNode, Tree
 
 from .cst import parse as parse_cst
-from .diagnostics import primary_error, source_position, syntax_message
+from .diagnostics import primary_error, source_position, syntax_diagnostic
 from .types import parse_runnable_ref_parts
 
 from toolang.common.immutable import freeze_mapping
@@ -394,15 +394,16 @@ class Program(Node):
         from .errors import ToolangSourceError, source_location
 
         try:
-            with source_location(1):
+            with source_location(None):
                 program = _lower(_parse_source(source))
                 _validate(program, external_flows=external_flows)
         except ToolangSourceError as exc:
             if exc.column is None:
                 lines = source_lines(source)
-                line = exc.line or 1
-                raw = lines[line - 1] if line <= len(lines) else ""
-                exc.column = len(raw) - len(raw.lstrip(" \t")) + 1
+                line = exc.line
+                if line is not None and line <= len(lines):
+                    raw = lines[line - 1]
+                    exc.column = len(raw) - len(raw.lstrip(" \t")) + 1
             raise
         return program
 
@@ -427,9 +428,7 @@ def _parse_source(source: str) -> _ParsedSource:
             with source_location(line, column):
                 _raise_empty_cap_property(kind, name, property_name, line=line)
         raise ToolangSyntaxError(
-            syntax_message(error, original),
-            line=line,
-            column=column,
+            syntax_diagnostic(error, original),
         )
     return _ParsedSource(tree=tree, source=encoded)
 

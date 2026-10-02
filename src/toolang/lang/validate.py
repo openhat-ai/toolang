@@ -16,6 +16,8 @@ from . import ast
 from .contracts import validate_operation_contract
 from .errors import ToolangValidationError, source_location
 from .types import (
+    RelatedLocation,
+    SourceLocation,
     is_builtin_type,
     parse_runnable_ref_parts,
     validate_struct_type,
@@ -107,7 +109,7 @@ def _validate_type_references(program: ast.Program) -> None:
                 raise ToolangValidationError(str(exc)) from exc
             scalar = type_name.partition("[")[0]
             if not is_builtin_type(scalar) and scalar not in names:
-                raise ToolangValidationError(f"unknown Toolang type: {scalar}")
+                raise ToolangValidationError(f"Unknown Toolang type {scalar!r}")
 
     for struct in program.structs:
         for field in struct.fields:
@@ -134,8 +136,11 @@ def _validate_cap_source(
         _validate_cap_property_name(kind, name, property_name, line=property_line)
         if first_line := property_lines.get(property_name):
             raise ToolangValidationError(
-                f"{kind.capitalize()} cap {name!r} property {property_name!r} "
-                f"at line {property_line} duplicates line {first_line}."
+                f"Duplicate property {property_name!r} in {kind} {name!r}",
+                line=property_line,
+                related=(
+                    RelatedLocation("Previous property", SourceLocation(first_line)),
+                ),
             )
         value = raw_value.strip()
         if not value:
@@ -145,9 +150,16 @@ def _validate_cap_source(
 
     if "transport" in meta and "protocol" in meta:
         raise ToolangValidationError(
-            f"Service cap {name!r} properties 'transport' at line "
-            f"{property_lines['transport']} and 'protocol' at line "
-            f"{property_lines['protocol']} are mutually exclusive."
+            f"Properties 'transport' and 'protocol' in service {name!r} are mutually exclusive",
+            line=max(property_lines["transport"], property_lines["protocol"]),
+            related=(
+                RelatedLocation(
+                    "Conflicting property",
+                    SourceLocation(
+                        min(property_lines["transport"], property_lines["protocol"])
+                    ),
+                ),
+            ),
         )
     if protocol := meta.pop("protocol", None):
         meta["transport"] = protocol
@@ -175,8 +187,8 @@ def _validate_cap_property_name(
     else:
         suffix = f"{kind} caps allow no properties"
     raise ToolangValidationError(
-        f"{kind.capitalize()} cap {name!r} property {property_name!r} "
-        f"at line {line} is unsupported; {suffix}."
+        f"{kind.capitalize()} cap {name!r} property {property_name!r} is unsupported; {suffix}",
+        line=line,
     )
 
 
@@ -185,20 +197,24 @@ def _raise_empty_cap_property(
 ) -> None:
     _validate_cap_property_name(kind, name, property_name, line=line)
     raise ToolangValidationError(
-        f"{kind.capitalize()} cap {name!r} property {property_name!r} "
-        f"at line {line} must be nonempty."
+        f"Property {property_name!r} in {kind} {name!r} must be nonempty",
+        line=line,
     )
 
 
 def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
-    seen: set[tuple[ast.CapKind, str]] = set()
+    seen: dict[tuple[ast.CapKind, str], int] = {}
     for cap in caps:
         key = (cap.kind, cap.name)
         if key in seen:
             raise ToolangValidationError(
-                f"Duplicate {cap.kind} name {cap.name!r}.", line=cap.span.line
+                f"Duplicate {cap.kind} name {cap.name!r}",
+                line=cap.span.line,
+                related=(
+                    RelatedLocation("Previous declaration", SourceLocation(seen[key])),
+                ),
             )
-        seen.add(key)
+        seen[key] = cap.span.line
         _validate_cap_contract(
             cap.kind,
             cap.name,
@@ -209,22 +225,23 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
         )
         if cap.kind == "prompt":
             _unique(
-                (item.name for item in cap.params),
+                cap.params,
                 label=f"parameter in prompt {cap.name!r}",
             )
             for param in cap.params:
                 if param.name == "_":
                     raise ToolangValidationError(
-                        f"Prompt parameter '_' is reserved for primary input at line {param.span.line}."
+                        "Prompt parameter '_' is reserved for primary input",
+                        line=param.span.line,
                     )
                 if _PARAM_NAME_RE.fullmatch(param.name) is None:
                     raise ToolangValidationError(
-                        f"Invalid prompt parameter {param.name!r} at line {param.span.line}."
+                        f"Invalid prompt parameter {param.name!r}", line=param.span.line
                     )
                 if param.optional or param.type_name != "Text":
                     raise ToolangValidationError(
-                        f"Prompt parameter {param.name!r} at line {param.span.line} "
-                        "must be required Text."
+                        f"Prompt parameter {param.name!r} must be required Text",
+                        line=param.span.line,
                     )
 
 
@@ -246,28 +263,28 @@ def _validate_cap_contract(
         else:
             suffix = f"{kind} caps allow no properties"
         raise ToolangValidationError(
-            f"{kind.capitalize()} cap {name!r} property {property_name!r} "
-            f"at line {property_line} is unsupported; {suffix}."
+            f"{kind.capitalize()} cap {name!r} property {property_name!r} is unsupported; {suffix}",
+            line=property_line,
         )
 
     for property_name, value in meta.items():
         property_line = property_lines.get(property_name, line_number)
         if not isinstance(value, str) or not value.strip():
             raise ToolangValidationError(
-                f"{kind.capitalize()} cap {name!r} property {property_name!r} "
-                f"at line {property_line} must be nonempty inline text."
+                f"{kind.capitalize()} cap {name!r} property {property_name!r} must be nonempty inline text",
+                line=property_line,
             )
 
     for property_name in sorted(_CAP_REQUIRED_FIELDS[kind] - set(meta)):
         raise ToolangValidationError(
-            f"{kind.capitalize()} cap {name!r} is missing required property "
-            f"{property_name!r} at line {line_number}."
+            f"{kind.capitalize()} cap {name!r} is missing required property {property_name!r}",
+            line=line_number,
         )
 
     if kind in _CAP_BODY_REQUIRED and not body.strip():
         raise ToolangValidationError(
-            f"{kind.capitalize()} cap {name!r} requires a nonempty body "
-            f"at line {line_number}."
+            f"{kind.capitalize()} cap {name!r} requires a nonempty body",
+            line=line_number,
         )
 
     if kind != "service":
@@ -275,13 +292,13 @@ def _validate_cap_contract(
     transport = meta.get("transport")
     if transport not in {"http", "stdio"}:
         raise ToolangValidationError(
-            f"Service cap {name!r} property 'transport' at line "
-            f"{property_lines.get('transport', line_number)} must be 'http' or 'stdio'."
+            f"Service cap {name!r} property 'transport' must be 'http' or 'stdio'",
+            line=property_lines.get("transport", line_number),
         )
     if "headers" in meta and transport != "http":
         raise ToolangValidationError(
-            f"Service cap {name!r} property 'headers' at line "
-            f"{property_lines.get('headers', line_number)} is valid only for HTTP."
+            f"Service cap {name!r} property 'headers' is valid only for HTTP",
+            line=property_lines.get("headers", line_number),
         )
     if env := meta.get("env"):
         _validate_service_env(
@@ -294,19 +311,19 @@ def _validate_cap_contract(
 def _validate_service_env(name: str, raw: object, *, line_number: int) -> None:
     if not isinstance(raw, str):
         raise ToolangValidationError(
-            f"Service cap {name!r} property 'env' at line {line_number} "
-            "must list environment variable names."
+            f"Service cap {name!r} property 'env' must list environment variable names",
+            line=line_number,
         )
     values = [item.strip() for item in raw.split(",")]
     if any(_ENV_NAME_RE.fullmatch(item) is None for item in values):
         raise ToolangValidationError(
-            f"Service cap {name!r} property 'env' at line {line_number} "
-            "must contain comma-separated environment names."
+            f"Service cap {name!r} property 'env' must contain comma-separated environment names",
+            line=line_number,
         )
     if len(values) != len(set(values)):
         raise ToolangValidationError(
-            f"Service cap {name!r} property 'env' at line {line_number} "
-            "must not contain duplicate environment names."
+            f"Service cap {name!r} property 'env' must not contain duplicate environment names",
+            line=line_number,
         )
 
 
@@ -317,7 +334,14 @@ def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.Fl
             continue
         if item.name in values:
             raise ToolangValidationError(
-                f"Duplicate runnable name {item.name!r}.", line=item.span.line
+                f"Duplicate runnable name {item.name!r}",
+                line=item.span.line,
+                related=(
+                    RelatedLocation(
+                        "Previous declaration",
+                        SourceLocation(values[item.name].span.line),
+                    ),
+                ),
             )
         values[item.name] = item
     return values
@@ -327,36 +351,58 @@ def _namespace(
     items: Iterable[ast.ContextDecl | ast.InstructDecl], *, label: str
 ) -> dict[str, object]:
     values: dict[str, object] = {}
+    lines: dict[str, int] = {}
     for item in items:
         if item.name in values:
             raise ToolangValidationError(
-                f"Duplicate {label} name {item.name!r}.", line=item.span.line
+                f"Duplicate {label} name {item.name!r}",
+                line=item.span.line,
+                related=(
+                    RelatedLocation(
+                        "Previous declaration", SourceLocation(lines[item.name])
+                    ),
+                ),
             )
         values[item.name] = item
+        lines[item.name] = item.span.line
     return values
 
 
-def _unique(values: Iterable[str], *, label: str) -> None:
-    seen: set[str] = set()
+def _unique(values: Iterable[ast.Parameter], *, label: str) -> None:
+    seen: dict[str, int] = {}
     for value in values:
-        if value in seen:
-            raise ToolangValidationError(f"Duplicate {label} name {value!r}.")
-        seen.add(value)
+        if value.name in seen:
+            raise ToolangValidationError(
+                f"Duplicate {label} name {value.name!r}",
+                line=value.span.line,
+                related=(
+                    RelatedLocation(
+                        "Previous parameter", SourceLocation(seen[value.name])
+                    ),
+                ),
+            )
+        seen[value.name] = value.span.line
 
 
 def _validate_structs(structs: tuple[ast.StructDecl, ...]) -> None:
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     for item in structs:
         if item.name in seen:
             raise ToolangValidationError(
-                f"Duplicate struct name {item.name!r}.", line=item.span.line
+                f"Duplicate struct name {item.name!r}",
+                line=item.span.line,
+                related=(
+                    RelatedLocation(
+                        "Previous declaration", SourceLocation(seen[item.name])
+                    ),
+                ),
             )
-        seen.add(item.name)
+        seen[item.name] = item.span.line
         try:
             validate_struct_type(item.name)
         except ValueError as exc:
             raise ToolangValidationError(
-                f"Struct name {item.name!r} conflicts with a built-in type.",
+                f"Struct name {item.name!r} conflicts with a built-in type",
                 line=item.span.line,
             ) from exc
 
@@ -368,25 +414,25 @@ def _validate_parameters(
     owner: str,
 ) -> None:
     if input_param is not None and input_param.optional:
-        raise ToolangValidationError(f"{owner} primary input '_' must not be optional.")
-    seen = {input_param.name} if input_param is not None else set()
+        raise ToolangValidationError(f"{owner} primary input '_' must not be optional")
+    seen = {input_param.name: input_param.span.line} if input_param is not None else {}
     if "runtime" in seen:
         raise ToolangValidationError(
-            f"{owner} must not use reserved parameter name 'runtime'."
+            f"{owner} must not use reserved parameter name 'runtime'"
         )
-    if reserved := seen & _RESERVED_RUNTIME_NAMES:
+    if reserved := seen.keys() & _RESERVED_RUNTIME_NAMES:
         name = next(iter(reserved))
         raise ToolangValidationError(
-            f"{owner} must not use reserved runtime parameter name {name!r}."
+            f"{owner} must not use reserved runtime parameter name {name!r}"
         )
     for param in params:
         if param.name == "_":
             raise ToolangValidationError(
-                f"{owner} primary input '_' must be the first parameter."
+                f"{owner} primary input '_' must be the first parameter"
             )
         if param.name == "runtime":
             raise ToolangValidationError(
-                f"{owner} must not use reserved parameter name 'runtime'."
+                f"{owner} must not use reserved parameter name 'runtime'"
             )
         if (
             param.name in _RESERVED_RUNTIME_NAMES
@@ -394,13 +440,19 @@ def _validate_parameters(
             or param.name.endswith("_")
         ):
             raise ToolangValidationError(
-                f"{owner} must not use reserved runtime parameter name {param.name!r}."
+                f"{owner} must not use reserved runtime parameter name {param.name!r}"
             )
         if param.name in seen:
             raise ToolangValidationError(
-                f"Duplicate parameter {param.name!r} in {owner}."
+                f"Duplicate parameter {param.name!r} in {owner}",
+                line=param.span.line,
+                related=(
+                    RelatedLocation(
+                        "Previous parameter", SourceLocation(seen[param.name])
+                    ),
+                ),
             )
-        seen.add(param.name)
+        seen[param.name] = param.span.line
 
 
 def _validate_directives(
@@ -410,9 +462,7 @@ def _validate_directives(
 ) -> None:
     lanes = [item for item in directives if item.name == "lanes"]
     if len(lanes) > 1:
-        raise ToolangValidationError(
-            f"{owner} may declare at most one lanes directive."
-        )
+        raise ToolangValidationError(f"{owner} may declare at most one lanes directive")
     for directive in lanes:
         try:
             valid = (
@@ -430,40 +480,40 @@ def _validate_directives(
             valid = False
         if not valid:
             raise ToolangValidationError(
-                f"{owner} lanes requires a positive integer or 'default' with '='.",
+                f"{owner} lanes requires a positive integer or 'default' with '='",
                 line=directive.span.line,
             )
     models = [item for item in directives if item.name == "models"]
     for directive in models:
         if not directive.values:
             raise ToolangValidationError(
-                f"{owner} must declare at least one model query."
+                f"{owner} must declare at least one model query"
             )
     for name in ("hands", "handoffs"):
         routes = [item for item in directives if item.name == name]
         if len(routes) > 1:
             raise ToolangValidationError(
-                f"{owner} may declare at most one {name} directive."
+                f"{owner} may declare at most one {name} directive"
             )
         if not routes:
             continue
         directive = routes[0]
         if directive.operator != "=":
             raise ToolangValidationError(
-                f"{owner} must use '=' for its {name} directive."
+                f"{owner} must use '=' for its {name} directive"
             )
         if directive.values in (("none",), ("*",)):
             continue
         if not directive.values or any(
             value in {"none", "*", "default"} for value in directive.values
         ):
-            raise ToolangValidationError(f"{owner} has invalid {name} values.")
+            raise ToolangValidationError(f"{owner} has invalid {name} values")
         for value in directive.values:
             try:
                 parse_runnable_ref_parts(value)
             except ValueError as exc:
                 raise ToolangValidationError(
-                    f"{owner} declares invalid runnable reference {value!r} in its {name} directive."
+                    f"{owner} declares invalid runnable reference {value!r} in its {name} directive"
                 ) from exc
 
     for directive in (item for item in directives if item.name == "tools"):
@@ -483,13 +533,13 @@ def _validate_directives(
     recalls = [item for item in directives if item.name == "recall"]
     if len(recalls) > 1:
         raise ToolangValidationError(
-            f"{owner} may declare at most one recall directive."
+            f"{owner} may declare at most one recall directive"
         )
     if not recalls:
         return
     recall = recalls[0]
     if recall.operator != "=":
-        raise ToolangValidationError(f"{owner} must use '=' for its recall directive.")
+        raise ToolangValidationError(f"{owner} must use '=' for its recall directive")
     values = set(recall.values)
     if values in (
         {"none"},
@@ -501,11 +551,9 @@ def _validate_directives(
     ):
         return
     if not values:
-        raise ToolangValidationError(
-            f"{owner} must declare at least one recall source."
-        )
+        raise ToolangValidationError(f"{owner} must declare at least one recall source")
     raise ToolangValidationError(
-        f"{owner} has unsupported recall directive values: {', '.join(recall.values)}."
+        f"{owner} has unsupported recall directive values: {', '.join(recall.values)}"
     )
 
 
@@ -515,7 +563,7 @@ def _validate_prompt_ref(
     if ref is None or ref in {"default", "none"}:
         return
     if ref not in namespace:
-        raise ToolangValidationError(f"{owner} references unknown {target} {ref!r}.")
+        raise ToolangValidationError(f"{owner} references unknown {target} {ref!r}")
 
 
 def _validate_stmts(
@@ -549,7 +597,7 @@ def _validate_stmt(
     if isinstance(stmt, ast.AskStmt | ast.LetStmt):
         if isinstance(stmt, ast.LetStmt) and stmt.binding in {None, "_"}:
             raise ToolangValidationError(
-                f"Let statement at line {stmt.span.line} requires a named binding."
+                "Let statement requires a named binding", line=stmt.span.line
             )
         return
     if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
@@ -557,12 +605,13 @@ def _validate_stmt(
         filtered = stmt.runnable is not None
         if positional == filtered:
             raise ToolangValidationError(
-                f"{stmt.kind.capitalize()} at line {stmt.span.line} requires position or predicate."
+                f"{stmt.kind.capitalize()} requires position or predicate",
+                line=stmt.span.line,
             )
         if positional:
             if stmt.position is None or stmt.count is None or stmt.lanes is not None:
                 raise ToolangValidationError(
-                    f"Invalid positional {stmt.kind} at line {stmt.span.line}."
+                    f"Invalid positional {stmt.kind}", line=stmt.span.line
                 )
             _non_negative(stmt.count, field="count", line=stmt.span.line)
         else:
@@ -573,14 +622,14 @@ def _validate_stmt(
         _require_evaluator(stmt.runnable, runnables, stmt, "Number")
         if stmt.order not in {"ascending", "descending"}:
             raise ToolangValidationError(
-                f"Sort at line {stmt.span.line} requires ascending or descending order."
+                "Sort requires ascending or descending order", line=stmt.span.line
             )
         _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
         return
     if isinstance(stmt, ast.RepeatStmt):
         if stmt.count is None and stmt.runnable is None:
             raise ToolangValidationError(
-                f"Repeat at line {stmt.span.line} requires count or until."
+                "Repeat requires count or until", line=stmt.span.line
             )
         _positive_optional(stmt.window, field="window", line=stmt.span.line)
         if stmt.count is not None:
@@ -605,8 +654,8 @@ def _validate_binding(stmt: ast.FlowStmt) -> None:
         and (binding.startswith("_") or binding.endswith("_"))
     ):
         raise ToolangValidationError(
-            f"Flow binding {binding!r} at line {stmt.span.line} is reserved "
-            "for a runtime local."
+            f"Flow binding {binding!r} is reserved for a runtime local",
+            line=stmt.span.line,
         )
     if (
         binding is not None
@@ -614,7 +663,7 @@ def _validate_binding(stmt: ast.FlowStmt) -> None:
         and not re.fullmatch(r"[a-z][a-z0-9_]*", binding)
     ):
         raise ToolangValidationError(
-            f"Invalid binding {binding!r} at line {stmt.span.line}."
+            f"Invalid binding {binding!r}", line=stmt.span.line
         )
 
 
@@ -657,7 +706,8 @@ def _require_runnable(
 ) -> None:
     if name not in runnables:
         raise ToolangValidationError(
-            f"{stmt.kind.capitalize()} at line {stmt.span.line} references unknown runnable {name!r}."
+            f"{stmt.kind.capitalize()} references unknown runnable {name!r}",
+            line=stmt.span.line,
         )
     validate_operation_contract(
         stmt.kind, runnables[name], name=name, line=stmt.span.line
@@ -674,16 +724,20 @@ def _require_evaluator(
     actual = runnables[name].output
     if actual != output:
         raise ToolangValidationError(
-            f"{stmt.kind.capitalize()} at line {stmt.span.line} requires "
-            f"{output} output from {name!r}, got {actual}."
+            f"{stmt.kind.capitalize()} requires {output} output from {name!r}, got {actual}",
+            line=stmt.span.line,
         )
 
 
 def _non_negative(value: int, *, field: str, line: int) -> None:
     if value < 0:
-        raise ToolangValidationError(f"{field} at line {line} must not be negative.")
+        raise ToolangValidationError(
+            f"{field.capitalize()} must not be negative", line=line
+        )
 
 
 def _positive_optional(value: int | None, *, field: str, line: int) -> None:
     if value is not None and value <= 0:
-        raise ToolangValidationError(f"{field} at line {line} must be positive.")
+        raise ToolangValidationError(
+            f"{field.capitalize()} must be positive", line=line
+        )

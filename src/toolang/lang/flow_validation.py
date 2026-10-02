@@ -74,7 +74,7 @@ class _FlowChecker:
         ):
             if not parameter.optional and parameter.name not in locals:
                 raise ToolangValidationError(
-                    f"missing input {parameter.name!r} for {runnable.name or 'inline agic'}"
+                    f"Missing input {parameter.name!r} for {runnable.name or 'inline agic'!r}"
                 )
 
     def history(
@@ -181,10 +181,12 @@ class _FlowChecker:
             if source is None or source.shape not in {None, "list"}:
                 actual = "none" if source is None else source.shape
                 raise ToolangValidationError(
-                    f"{stmt.kind} requires current shape list, got {actual}"
+                    f"{stmt.kind.capitalize()} requires current shape list, got {actual}"
                 )
             if isinstance(stmt, ast.GatherStmt | ast.SettleStmt) and source.length == 0:
-                raise ToolangValidationError(f"{stmt.kind} requires a nonempty list")
+                raise ToolangValidationError(
+                    f"{stmt.kind.capitalize()} requires a nonempty list"
+                )
 
         child_name = getattr(stmt, "runnable", None)
         child = self.runnables.get(child_name) if child_name else None
@@ -212,7 +214,7 @@ class _FlowChecker:
             if stmt.initial is None:
                 if element_type is not None and element_type != output:
                     raise ToolangValidationError(
-                        f"settle without from requires {element_type} output, got {output}"
+                        f"Settle without from requires {element_type} output, got {output}"
                     )
             else:
                 self.content(stmt.initial, locals, window)

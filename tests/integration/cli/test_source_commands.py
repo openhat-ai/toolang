@@ -445,7 +445,7 @@ def test_format_file_failures_never_write_and_distinguish_generated_locations(
     assert path.read_text() == original
     if generated:
         assert (
-            f"{path}: Formatter produced invalid syntax at generated line 2"
+            f"{path}: Formatter produced invalid syntax\n{path}: generated 2:1:"
             in result.stderr
         )
         assert f"{path}:2:" not in result.stderr
