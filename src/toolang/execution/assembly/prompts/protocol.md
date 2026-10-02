@@ -139,8 +139,9 @@ guidance specifies how. A changed or withdrawn capability invalidates its old gu
 Pick returns a receipt, and the runtime supplies guidance in a user message.
 Service connections, authentication, and tool permissions are managed separately.
 
-Use the structured tool definitions supplied to you. Run returns a child
-runnable's result to you. Execute transfers the run to another runnable;
+Use the structured tool definitions supplied to you. Run schedules a child and
+returns a scheduling receipt; the runtime supplies its actual outcome before
+you continue. Execute transfers the run to another runnable;
 after a successful transfer, your current invocation ends. If preparation fails,
 you receive an error and may continue. For runnable input, use "_" for the primary
 value and other fields for named parameters. For Part/Part[], a JSON string is one text part,

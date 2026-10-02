@@ -103,6 +103,7 @@ def build_agic_frame(
     history: HistorySelection | None = None,
     estimate: InputEstimate | None = None,
     catalog: AgentState | None = None,
+    runtime_tools_enabled: bool = True,
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
@@ -161,7 +162,7 @@ def build_agic_frame(
     )
     runtime_tools = (
         {}
-        if is_generated_ref(name)
+        if not runtime_tools_enabled or is_generated_ref(name)
         else {
             name: tool
             for name, tool in run.setup.tools().runtime.items()

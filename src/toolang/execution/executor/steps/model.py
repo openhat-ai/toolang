@@ -205,7 +205,7 @@ def _candidate(
     step = StepRef.from_local(prepared.run.run_id, (state.next_step,))
     inputs = prepared.inputs
     if state.repairing_output and inputs.runnables:
-        inputs = replace(inputs, runnables=())
+        inputs = replace(inputs, runnables=(), requested_only=())
     assembled, recorded = prompting.messages(
         inputs,
         messages,
@@ -302,6 +302,7 @@ def _boundary(
             **history_variables("", roots[-1][1], prepared.recall),
         },
         runnables=() if state.repairing_output else prepared.inputs.runnables,
+        requested_only=() if state.repairing_output else prepared.inputs.requested_only,
     )
     instructions, _declarations = prompting.instructions(inputs)
     messages, _recorded = prompting.messages(

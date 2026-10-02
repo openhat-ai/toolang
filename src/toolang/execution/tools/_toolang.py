@@ -259,7 +259,7 @@ _TOOLS = (
         "run",
         "Schedule an authorized hand as a child Run. The tool reply acknowledges "
         "scheduling; a separate runtime message supplies its outcome before you continue. "
-        "Use run when the user requests further processing of the target's result. "
+        "Use run when the caller needs the result for further processing. "
         "Follow the latest hands scope and requested_only policy. Read the target "
         "input signature and do not invent missing values. Acceptance selects the latest "
         "published version and rejects missing targets or changed signatures.",

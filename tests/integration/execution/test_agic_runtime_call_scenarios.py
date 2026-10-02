@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -2062,7 +2062,11 @@ agic target(_: Text) -> Text:
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("selection", [None, "*", "target", "other", "none"])
 def test_named_requests_follow_effective_scope(
-    tmp_path: Path, operation: str, directive: str, kind: str, selection: str | None
+    tmp_path: Path,
+    operation: Literal["run", "execute"],
+    directive: str,
+    kind: str,
+    selection: str | None,
 ) -> None:
     other = "handoffs" if directive == "hands" else "hands"
     setting = f"  {directive} = {selection}\n" if selection else ""
@@ -2071,12 +2075,13 @@ def test_named_requests_follow_effective_scope(
         if kind == "agic"
         else "  let result =\n    {{_}} {{count}}\n"
     )
+    follow_up = ", then summarize its result" if operation == "run" else ""
     source = f"""
 agic caller() -> Text:
   recall = none
   context = none
   {other} = none
-{setting}  user: Call {kind}:target with payload and count 3.
+{setting}  user: Call {kind}:target with payload and count 3{follow_up}.
 
 {kind} target(_: Text, count: Number) -> Text:
   hands = none
@@ -2124,6 +2129,7 @@ agic other() -> Text:
                 harness.run_spec(thread=thread, runnable="agic:caller"), tracer=tracer
             )
             assert root.status == "succeeded", root.error
+            runs = harness.store.list_run_tree(root_run_id=root.id)
             first = harness.adapter.invocations[0].call
             assert {"_toolang__run", "_toolang__execute"} <= {
                 t.name for t in first.tools
@@ -2139,6 +2145,21 @@ agic other() -> Text:
             refs = [item["ref"] for item in snapshots[directive]]
             assert (f"{kind}:target" in refs) == allowed
             if allowed:
+                target_run = (
+                    next(run for run in runs if run.parent)
+                    if operation == "run"
+                    else root
+                )
+                (invocation,) = harness.store.list_run_controls(
+                    run_id=target_run.id, kind=operation
+                )
+                assert isinstance(
+                    invocation.payload, RunControlPayload | ExecuteControlPayload
+                )
+                assert harness.store.resolve_value(invocation.payload.input) == {
+                    "_": "payload",
+                    "count": 3,
+                }
                 target = next(
                     item
                     for item in snapshots[directive]
@@ -2161,6 +2182,9 @@ agic other() -> Text:
                     operation == "run"
                 )
                 if kind == "agic":
+                    assert without_runtime_snapshots(
+                        harness.adapter.invocations[1].call.messages
+                    ) == [Message.user("payload 3")]
                     assert route_snapshots(
                         harness.adapter.invocations[1].call,
                         requested_only={"hands": False, "handoffs": False},
@@ -2193,9 +2217,7 @@ agic other() -> Text:
                     harness.store.list_run_controls(run_id=root.id, kind="execute")
                     == ()
                 )
-            assert len(harness.store.list_run_tree(root_run_id=root.id)) == (
-                2 if allowed and operation == "run" else 1
-            )
+            assert len(runs) == (2 if allowed and operation == "run" else 1)
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

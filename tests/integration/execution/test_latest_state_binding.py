@@ -4,7 +4,11 @@ import asyncio
 
 import pytest
 
-from tests.support.execution_assertions import last_tool_result, route_snapshots
+from tests.support.execution_assertions import (
+    assert_replayed,
+    last_tool_result,
+    route_snapshots,
+)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -813,3 +817,58 @@ def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
             assert first.given.catalog_state == harness.state.revision
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("added_targets", [0, 65])
+@pytest.mark.parametrize("routes", ["", "  hands = *\n  handoffs = *\n"])
+def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targets):
+    source = f"agic parent() -> Number:\n{routes}  Return a number.\nflow worker():\n  pass\n"
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            ScriptedModelTurn(answer("not a number"), gate=gate),
+            answer("42"),
+        ],
+    )
+
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            publish(
+                harness,
+                source
+                + "\n".join(
+                    f"flow added_{index}():\n  pass\n" for index in range(added_targets)
+                ),
+            )
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.local.value) == 42
+            first, repaired = [item.call for item in harness.adapter.invocations]
+            assert [item["ref"] for item in route_snapshots(first)["hands"]] == [
+                "flow:worker"
+            ]
+            assert repaired.tools == ()
+            assert route_snapshots(
+                repaired, requested_only={"hands": False, "handoffs": False}
+            ) == {"hands": [], "handoffs": []}
+
+    asyncio.run(scenario())
+
+    assert_replayed(harness.store.db_path, tracer.events)
