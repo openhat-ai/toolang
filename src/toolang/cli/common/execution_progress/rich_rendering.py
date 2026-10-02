@@ -769,7 +769,7 @@ class _MarkdownRow:
         prefix = self.row.prefix
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
-        inline_code_style = console.get_style("markdown.code") + Style(
+        inline_code_style = console.get_style("markdown.code", default="none") + Style(
             bgcolor=self.code_background
         )
         with console.use_theme(
