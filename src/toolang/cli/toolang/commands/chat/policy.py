@@ -38,7 +38,7 @@ def run_override_error(source: str, message: str) -> str:
     if name and name not in SETTING_OVERRIDE_FORMS:
         return f"Unknown run override :{name} · See :? for help"
     if "colon override requires runnable input" in message.casefold():
-        return "Include primary or named input with the override · See :? for help"
+        return "Include primary or named input, or select a runnable · See :? for help"
     if "duplicate model override" in message.casefold():
         return "Duplicate model override; combine model and parameters on one line · See :? for help"
     detail = message.rstrip(" .")

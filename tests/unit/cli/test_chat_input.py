@@ -69,6 +69,29 @@ def test_colon_override_without_runnable_input_is_invalid() -> None:
         parse_chat_input(":model openai/gpt-5\n\n:limit time=30")
 
 
+@pytest.mark.parametrize(
+    ("source", "runnable"),
+    [
+        (":agic review", "agic:review"),
+        (":flow research", "flow:research"),
+        (":runnable flow:research", "flow:research"),
+        (":runnable research", "research"),
+        (":runnable default", "default"),
+    ],
+)
+@pytest.mark.parametrize("prefix", ["", ":model effort=high\n"])
+def test_explicit_runnable_allows_empty_input(
+    source: str, runnable: str, prefix: str
+) -> None:
+    assert parse_chat_input(prefix + source) == (
+        RunOverride(
+            runnable=runnable,
+            model=ModelOverride(effort="high") if prefix else None,
+        ),
+        CallInput(),
+    )
+
+
 def test_policy_and_primary_input_return_one_runnable_branch() -> None:
     assert parse_chat_input(
         ":model openai/gpt-5\n:agic review focus=security -\nReview this"

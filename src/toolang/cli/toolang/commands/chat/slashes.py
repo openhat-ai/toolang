@@ -275,6 +275,7 @@ def run_override_help() -> SlashOutcome:
                     "  :agic NAME = :runnable agic:NAME",
                     "  :flow NAME = :runnable flow:NAME",
                     "  :runnable default follows the agent default.",
+                    "  No input: :flow research (the runnable must accept empty input).",
                     "  Named input: :agic review focus=security",
                     "  Input: following lines, -- TEXT, - stream, or --- fenced block.",
                     "  Close a fenced block with a standalone --- line.",
@@ -294,7 +295,7 @@ def run_override_help() -> SlashOutcome:
             ),
             intro=(
                 "Overrides apply to this run only; session defaults stay unchanged.",
-                "Put overrides first and include primary or named input in the same submission.",
+                "Put overrides first; include primary or named input, or explicitly select a runnable.",
             ),
         ),
     )
