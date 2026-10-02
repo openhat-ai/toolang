@@ -63,6 +63,7 @@ def test_explicit_surfaces_use_input_queue_code_order_without_derivation() -> No
         input_background="#abcdef",
         queue_background="#123456",
         code_background="#fedcba",
+        inline_code_background="#fedcba",
     )
 
 
@@ -101,6 +102,7 @@ def test_empty_configuration_uses_complete_osc_defaults() -> None:
         input_background="#313131",
         queue_background="#272727",
         code_background="#222222",
+        inline_code_background="#292929",
     )
 
 
@@ -182,27 +184,27 @@ def test_terminal_stream_error_defaults_dark() -> None:
         (
             "#000000",
             "#ffffff",
-            surfaces.TerminalSurfaces("#1f1f1f", "#121212", "#0b0b0b"),
+            surfaces.TerminalSurfaces("#1f1f1f", "#121212", "#0b0b0b", "#151515"),
         ),
         (
             "#ffffff",
             "#000000",
-            surfaces.TerminalSurfaces("#e3e3e3", "#f2f2f2", "#f9f9f9"),
+            surfaces.TerminalSurfaces("#e3e3e3", "#f2f2f2", "#f9f9f9", "#efefef"),
         ),
         (
             "#1e1e1e",
             "#d4d4d4",
-            surfaces.TerminalSurfaces("#313131", "#272727", "#222222"),
+            surfaces.TerminalSurfaces("#313131", "#272727", "#222222", "#292929"),
         ),
         (
             "#fafafa",
             "#202020",
-            surfaces.TerminalSurfaces("#dfdfdf", "#ededed", "#f4f4f4"),
+            surfaces.TerminalSurfaces("#dfdfdf", "#ededed", "#f4f4f4", "#eaeaea"),
         ),
         (
             "#002b36",
             "#93a1a1",
-            surfaces.TerminalSurfaces("#213942", "#14323b", "#0a2e39"),
+            surfaces.TerminalSurfaces("#213942", "#14323b", "#0c2e39", "#1b343d"),
         ),
     ),
 )
@@ -220,7 +222,7 @@ def test_derivation_matches_reference_palettes(
     )
 
 
-def test_derived_surfaces_preserve_readable_terminal_text() -> None:
+def test_input_and_queue_preserve_readable_terminal_text() -> None:
     foreground = "#777777"
     resolved = surfaces.derive_terminal_surfaces(
         foreground=foreground,
@@ -229,7 +231,6 @@ def test_derived_surfaces_preserve_readable_terminal_text() -> None:
     fg = surfaces._parse_hex_rgb(foreground)
 
     for color in (
-        resolved.code_background,
         resolved.queue_background,
         resolved.input_background,
     ):
@@ -244,7 +245,7 @@ def test_derived_surfaces_preserve_readable_terminal_text() -> None:
         ("#9e94be", "#2cacc6"),
     ),
 )
-def test_contrast_cap_preserves_surface_order_on_a_tinted_theme(
+def test_contrast_cap_preserves_input_queue_order_on_a_tinted_theme(
     foreground: str,
     background: str,
 ) -> None:
@@ -257,7 +258,6 @@ def test_contrast_cap_preserves_surface_order_on_a_tinted_theme(
     colors = tuple(
         surfaces._parse_hex_rgb(color)
         for color in (
-            resolved.code_background,
             resolved.queue_background,
             resolved.input_background,
         )
@@ -265,8 +265,8 @@ def test_contrast_cap_preserves_surface_order_on_a_tinted_theme(
 
     minimum_text = min(surfaces.MINIMUM_TEXT_CONTRAST, surfaces._contrast(fg, bg))
     assert all(surfaces._contrast(fg, color) >= minimum_text for color in colors)
-    code, queue, input_ = (surfaces._contrast(bg, color) for color in colors)
-    assert code < queue < input_
+    queue, input_ = (surfaces._contrast(bg, color) for color in colors)
+    assert queue < input_
 
 
 def test_osc_parser_accepts_scaled_channels_and_both_terminators() -> None:
@@ -369,6 +369,7 @@ class TestTerminalProbe:
             "input_background": "#282828",
             "queue_background": "#1d1d1d",
             "code_background": "#171717",
+            "inline_code_background": "#1f1f1f",
         }
         assert output.count(b"\x1b]") == 2
 
@@ -384,6 +385,7 @@ class TestTerminalProbe:
             "input_background": "#1f1f1f",
             "queue_background": "#121212",
             "code_background": "#0b0b0b",
+            "inline_code_background": "#151515",
         }
 
     def test_interrupt_restores_input_mode(self) -> None:
@@ -428,3 +430,40 @@ class TestTerminalProbe:
             os.close(first_slave)
             os.close(second_master)
             os.close(second_slave)
+
+
+@pytest.mark.parametrize("background", ["#000000", "#ffffff", "#002b36", "#808080"])
+def test_code_surfaces_depend_only_on_background(background: str) -> None:
+    bg = surfaces._parse_hex_rgb(background)
+    palettes = [
+        surfaces.derive_terminal_surfaces(foreground=fg, background=background)
+        for fg in ("#ffffff", "#000000", "#777777", background)
+    ]
+    assert len({p.code_background for p in palettes}) == 1
+    assert len({p.inline_code_background for p in palettes}) == 1
+    block = surfaces._parse_hex_rgb(palettes[0].code_background)
+    inline = surfaces._parse_hex_rgb(palettes[0].inline_code_background)
+    block_target = 1.07 if background == "#000000" else 1.05
+    assert surfaces._contrast(bg, block) == pytest.approx(block_target, abs=0.015)
+    assert surfaces._contrast(bg, inline) == pytest.approx(1.15, abs=0.015)
+    assert surfaces._contrast(bg, block) < surfaces._contrast(bg, inline)
+
+
+@pytest.mark.parametrize(
+    ("foreground", "background", "input_color", "queue_color"),
+    [
+        ("#777777", "#000000", "#060606", "#030303"),
+        ("#777777", "#ffffff", "#ffffff", "#ffffff"),
+        ("#e8dd50", "#045baa", "#225fa9", "#1e5fa9"),
+        ("#4a4c9d", "#62e566", "#61e368", "#62e367"),
+        ("#9e94be", "#2cacc6", "#32acc6", "#31acc6"),
+    ],
+)
+def test_input_queue_reference_colors_are_unchanged(
+    foreground: str, background: str, input_color: str, queue_color: str
+) -> None:
+    palette = surfaces.derive_terminal_surfaces(
+        foreground=foreground, background=background
+    )
+    assert palette.input_background == input_color
+    assert palette.queue_background == queue_color

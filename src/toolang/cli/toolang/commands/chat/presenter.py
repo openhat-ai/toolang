@@ -33,12 +33,14 @@ class ChatRunPresenter:
         *,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         code_background: str = DARK_TERMINAL_SURFACES.code_background,
+        inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background,
     ) -> None:
         self._root_run_id: str | None = None
         self._projector = ProgressProjector()
         self._progress: dict[str, blocks.ExecutionProgressBlock] = {}
         self._max_width = max_width
         self._code_background = code_background
+        self._inline_code_background = inline_code_background
         self._steers: dict[str, _SteerSubmission] = {}
         self._consumed: set[tuple[str, int]] = set()
         self._active_steps: set[StepRef] = set()
@@ -300,6 +302,7 @@ class ChatRunPresenter:
                     progress,
                     max_width=self._max_width,
                     code_background=self._code_background,
+                    inline_code_background=self._inline_code_background,
                 )
             else:
                 block.update(progress)
@@ -316,6 +319,7 @@ class ChatRunPresenter:
                     live=True,
                     max_width=self._max_width,
                     code_background=self._code_background,
+                    inline_code_background=self._inline_code_background,
                 )
             else:
                 block.update(progress)

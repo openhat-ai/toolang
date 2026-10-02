@@ -723,7 +723,7 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
         "TOOLANG_COLOR_SCHEME": "#102030,#203040,#304050",
         "TOOLANG_PROGRESS_MAX_WIDTH": "72",
     }
-    surfaces = TerminalSurfaces("#102030", "#203040", "#304050")
+    surfaces = TerminalSurfaces("#102030", "#203040", "#304050", "#405060")
     calls: list[str] = []
     captured: dict[str, object] = {}
 

@@ -17,6 +17,7 @@ RGB = tuple[int, int, int]
 COLOR_SCHEME_ENV = "TOOLANG_COLOR_SCHEME"
 DEFAULT_QUERY_TIMEOUT = 0.35
 DEFAULT_CODE_CONTRAST = 1.05
+DEFAULT_INLINE_CODE_CONTRAST = 1.15
 DEFAULT_QUEUE_CONTRAST = 1.12
 DEFAULT_INPUT_CONTRAST = 1.28
 NEAR_BLACK_CODE_CONTRAST = 1.07
@@ -39,17 +40,20 @@ class TerminalSurfaces:
     input_background: str
     queue_background: str
     code_background: str
+    inline_code_background: str
 
 
 DARK_TERMINAL_SURFACES = TerminalSurfaces(
     input_background="#1f1f1f",
     queue_background="#121212",
     code_background="#0b0b0b",
+    inline_code_background="#151515",
 )
 LIGHT_TERMINAL_SURFACES = TerminalSurfaces(
     input_background="#e3e3e3",
     queue_background="#f2f2f2",
     code_background="#f9f9f9",
+    inline_code_background="#efefef",
 )
 
 
@@ -96,6 +100,8 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
     fg = _parse_hex_rgb(foreground)
     bg = _parse_hex_rgb(background)
     minimum_text = min(MINIMUM_TEXT_CONTRAST, _contrast(fg, bg))
+    # Preserve the historical reference for input/queue compression. Code
+    # surfaces are derived independently below.
     code_target = (
         NEAR_BLACK_CODE_CONTRAST
         if _luminance(fg) > _luminance(bg) and _luminance(bg) <= NEAR_BLACK_LUMINANCE
@@ -124,7 +130,7 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
             input_amount *= scale
             queue_amount *= scale
             code_amount *= scale
-    code_color, queue_color, input_color = _ordered_surface_colors(
+    _, queue_color, input_color = _ordered_surface_colors(
         bg,
         fg,
         amounts=(code_amount, queue_amount, input_amount),
@@ -133,8 +139,27 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
     return TerminalSurfaces(
         input_background=_hex_rgb(input_color),
         queue_background=_hex_rgb(queue_color),
-        code_background=_hex_rgb(code_color),
+        code_background=_code_surface_background(
+            bg,
+            NEAR_BLACK_CODE_CONTRAST
+            if _luminance(bg) <= NEAR_BLACK_LUMINANCE
+            else DEFAULT_CODE_CONTRAST,
+        ),
+        inline_code_background=_code_surface_background(
+            bg, DEFAULT_INLINE_CODE_CONTRAST
+        ),
     )
+
+
+def _code_surface_background(background: RGB, target: float) -> str:
+    """Separate code from its background without depending on text colors."""
+
+    anchor = max(
+        ((0, 0, 0), (255, 255, 255)),
+        key=lambda color: _contrast(background, color),
+    )
+    amount = _surface_mix_amount(background, anchor, target)
+    return _hex_rgb(_mix_surface(background, anchor, amount))
 
 
 def _configured_surfaces(value: str) -> TerminalSurfaces:
@@ -152,6 +177,7 @@ def _configured_surfaces(value: str) -> TerminalSurfaces:
             input_background=input_background,
             queue_background=queue_background,
             code_background=code_background,
+            inline_code_background=code_background,
         )
     raise ValueError(
         f"{COLOR_SCHEME_ENV} must be 'light', 'dark', or three #RRGGBB colors "

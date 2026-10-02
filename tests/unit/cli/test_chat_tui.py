@@ -28,7 +28,7 @@ from prompt_toolkit.renderer import CPR_Support
 from prompt_toolkit.styles import Attrs
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
-from rich.console import Console, RenderableType
+from rich.console import Console, Group, RenderableType
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -1549,6 +1549,7 @@ def test_chat_custom_surfaces_reach_input_queue_and_code_renderers() -> None:
         input_background="#102030",
         queue_background="#203040",
         code_background="#304050",
+        inline_code_background="#405060",
     )
 
     palette = widgets._chat_ui_palette(surfaces)
@@ -2214,9 +2215,7 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
 
 @pytest.mark.parametrize("background", ("#0b0b0b", "#f4f4f4", "#304050"))
 @pytest.mark.parametrize("live", (False, True))
-def test_chat_inline_code_uses_markdown_style_on_the_code_background(
-    background: str, live: bool
-) -> None:
+def test_chat_inline_code_uses_its_own_background(background: str, live: bool) -> None:
     markup = "before `value` after\n\n```text\nblock\n```"
     block = (
         blocks.ExecutionProgressBlock(
@@ -2226,10 +2225,13 @@ def test_chat_inline_code_uses_markdown_style_on_the_code_background(
             ),
             live=True,
             code_background=background,
+            inline_code_background="#405060",
         )
         if live
         else blocks.AssistantResponseBlock.from_parts(
-            (TextPart(markup),), code_background=background
+            (TextPart(markup),),
+            code_background=background,
+            inline_code_background="#405060",
         )
     )
     segments = rendering.render_segments(block.render())
@@ -2237,11 +2239,9 @@ def test_chat_inline_code_uses_markdown_style_on_the_code_background(
     fenced = next(segment for segment in segments if "block" in segment.text)
 
     assert code.style is not None
-    assert code.style == Console().get_style("markdown.code") + Style(
-        bgcolor=background
-    )
+    assert code.style == Console().get_style("markdown.code") + Style(bgcolor="#405060")
     assert fenced.style is not None
-    assert fenced.style.bgcolor == code.style.bgcolor
+    assert fenced.style.bgcolor == Color.parse(background)
     assert all(
         segment.style is None or segment.style.bgcolor is None
         for segment in segments
@@ -7410,3 +7410,76 @@ def test_keys_help_wraps_descriptions_under_the_description_column(
         == shortcuts.INTERRUPT.summary
     )
     assert all(get_cwidth(line) <= width for line in lines)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_chat_palette_reaches_live_committed_and_durable_output(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool
+) -> None:
+    palette = TerminalSurfaces("#102030", "#203040", "#304050", "#405060")
+    client = FakeClient()
+    app = tui.ChatTuiApp(
+        thread_id="thread_1",
+        setting=client.initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=client,
+        surfaces=palette,
+    )
+    context = FakeApp(presenter=app.presenter)
+    markup = "before `value` after\n\n```text\nblock\n```"
+
+    def assert_colors(renderable: RenderableType | None) -> None:
+        segments = rendering.render_segments(renderable)
+        inline = next(segment for segment in segments if segment.text == "value")
+        fenced = next(segment for segment in segments if "block" in segment.text)
+        assert inline.style is not None
+        assert inline.style.bgcolor == Color.parse(palette.inline_code_background)
+        assert fenced.style is not None
+        assert fenced.style.bgcolor == Color.parse(palette.code_background)
+
+    events.handle_run_event(_run_begin(), context)
+    events.handle_run_event(_model_step_begin(), context)
+    step = StepRef.parse("run_1.1")
+    events.handle_run_event(PartBegin(step=step, part=0, part_type="text"), context)
+    if streaming:
+        events.handle_run_event(
+            PartDelta(step=step, part=0, delta=TextDelta(markup)), context
+        )
+        assert_colors(
+            Group(
+                *(
+                    rendered
+                    for block in [*context.finalized, *context.live_blocks]
+                    if (rendered := block.render()) is not None
+                )
+            )
+        )
+    events.handle_run_event(PartEnd(step=step, part=0, data=TextPart(markup)), context)
+    events.handle_run_event(_model_step_end(output=markup), context)
+    events.handle_run_event(_run_end(status="succeeded"), context)
+    assert_colors(
+        Group(
+            *(
+                rendered
+                for block in context.finalized
+                if (rendered := block.render()) is not None
+            )
+        )
+    )
+
+    original = client.get_result("run_saved", thread_id="thread_1")
+    monkeypatch.setattr(
+        client,
+        "get_result",
+        lambda run_id, *, thread_id: replace(original, output=(TextPart(markup),)),
+    )
+    written: list[RenderableType | None] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda renderables: written.extend(renderables),
+    )
+    app.handle_submit("/output run_saved")
+    assert len(written) == 1
+    assert_colors(written[0])
