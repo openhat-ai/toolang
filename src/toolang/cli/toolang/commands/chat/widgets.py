@@ -14,6 +14,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
+from rich.style import Style
 
 from toolang.common.time import format_duration
 from toolang.cli.common.execution_progress.formatting import truncate
@@ -28,8 +29,9 @@ from .input import normalize_chat_input
 from . import shortcuts
 from .rendering import (
     ACCENT_CELL,
-    RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
-    STEER_CONTROL_ACCENT_PROMPT_TOOLKIT,
+    RUN_CONTROL_ACCENT,
+    STEER_CONTROL_ACCENT,
+    rich_style_to_prompt_toolkit,
 )
 
 MAX_INPUT_ROWS = 6
@@ -59,7 +61,9 @@ def _chat_ui_palette(
     return {
         "": "",
         "queue": f"bg:{surfaces.queue_background}",
-        "queue.accent": f"bg:{STEER_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "queue.accent": rich_style_to_prompt_toolkit(
+            Style(bgcolor=STEER_CONTROL_ACCENT)
+        ),
         "queue.icon": "dim",
         "queue.selected": f"bg:{surfaces.input_background}",
         "queue.selected.icon": "dim",
@@ -67,7 +71,7 @@ def _chat_ui_palette(
         "queue.hint": "dim",
         "queue.count": "dim",
         "queue.focused-count": "",
-        "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "control.run": rich_style_to_prompt_toolkit(Style(bgcolor=RUN_CONTROL_ACCENT)),
         "input": f"bg:{surfaces.input_background}",
         "input.placeholder": f"bg:{surfaces.input_background} dim",
         "cursor": "reverse",
