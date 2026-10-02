@@ -389,11 +389,34 @@ def test_source_syntax_diagnostics_share_stdin_locations(command):
         input="flow work(value: Text:\n  pass\n",
     )
     assert result.exit_code == 1
-    assert "broken.too:1:22:" in result.stderr
-    assert "Expected ')'" in result.stderr
+    assert result.stderr == (
+        "broken.too:1:22: Expected ')' in parameter list: 'flow work(value: Text:'\n"
+    )
     assert "Toolang 0.3 syntax" not in result.stderr
     if "--cst" not in command:
         assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["parse"],
+        ["parse", "--check"],
+        ["parse", "--cst"],
+        ["parse", "--cst", "--json"],
+        ["fmt"],
+        ["fmt", "--highlight"],
+        ["fmt", "--highlight", "--html"],
+    ],
+)
+def test_broad_syntax_diagnostic_is_concise_and_has_one_location(command):
+    result = runner.invoke(
+        app,
+        [*command, "-", "--stdin-filepath", "aide.too"],
+        input="\n\n\nagic issue(_: Text) sdf:\n  pass\n",
+    )
+    assert result.exit_code == 1
+    assert result.stderr == ("aide.too:4:1: Parse error: 'agic issue(_: Text) sdf:'\n")
 
 
 @pytest.mark.parametrize(

@@ -106,7 +106,9 @@ def syntax_message(node: Node, source: bytes) -> str:
     ancestors = {parent.type for parent in _ancestors(node)}
     if node.is_missing:
         if token := _PUNCTUATION.get(node.type):
-            reason = f"Expected {token!r} in {context}"
+            reason = f"Expected {token!r}"
+            if context != "source":
+                reason += f" in {context}"
         elif "type" in ancestors:
             category = (
                 "field"
@@ -119,7 +121,9 @@ def syntax_message(node: Node, source: bytes) -> str:
         elif "property_value" in ancestors:
             reason = "Expected a property value after '='"
         else:
-            reason = f"Expected syntax in {context}"
+            reason = "Parse error"
+            if context != "source":
+                reason += f" in {context}"
     elif node.type in {
         "invalid_flow_reserved_statement",
         "invalid_agic_reserved_message",
@@ -135,12 +139,9 @@ def syntax_message(node: Node, source: bytes) -> str:
         )
         reason = f"Malformed {category} {_excerpt(keyword)}"
     else:
-        reason = f"Unexpected syntax in {context}"
-        if node.start_point.row != node.end_point.row or any(
-            parent.is_error and parent.start_point.row < node.start_point.row
-            for parent in _ancestors(node)
-        ):
-            reason += "; check the surrounding block structure"
+        reason = "Parse error"
+        if context != "source":
+            reason += f" in {context}"
     line, _ = source_position(node, source)
     start = source.rfind(b"\n", 0, min(node.start_byte, len(source))) + 1
     end = source.find(b"\n", start)
@@ -148,4 +149,4 @@ def syntax_message(node: Node, source: bytes) -> str:
     character = len(source[start : min(node.start_byte, len(source))].decode("utf-8"))
     window = max(0, character - 50) if len(raw) > 100 else 0
     raw = ("…" if window else "") + raw[window:].strip()
-    return f"Syntax error at line {line}: {reason} near {_excerpt(raw)}."
+    return f"Syntax error at line {line}: {reason}: {_excerpt(raw)}"

@@ -64,7 +64,7 @@ def test_recovery_error_does_not_blame_valid_run_syntax_for_missing_block():
     source = "flow work:\n  repeat 2 times:\n  run: Review.\n"
     with pytest.raises(ToolangFormatError) as caught:
         format_source(source)
-    assert "block structure" in str(caught.value)
+    assert "Parse error in flow block" in str(caught.value)
     assert "Malformed flow statement" not in str(caught.value)
     assert "run: Review." in str(caught.value)
     assert format_source(source.replace("  run:", "    run:"))
@@ -75,7 +75,7 @@ def test_broad_error_reports_original_fragment_without_guessing_repair(header):
     with pytest.raises(ToolangFormatError) as caught:
         format_source(header)
     assert header in str(caught.value)
-    assert "Unexpected syntax" in str(caught.value)
+    assert "Parse error" in str(caught.value)
     assert "Expected ':'" not in str(caught.value)
 
 
@@ -178,7 +178,8 @@ def test_unknown_grammar_node_has_safe_single_line_fallback(missing):
         ),
     )
     message = syntax_message(node, source)
-    assert "in source" in message
+    assert "Parse error" in message
+    assert "in source" not in message
     assert "unknown" in message
     assert "future_" not in message
     assert "\n" not in message and "\x1b" not in message

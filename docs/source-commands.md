@@ -49,9 +49,16 @@ one-based lines and UTF-8 byte columns (a tab counts as one byte), with
 declaration/statement anchors when a precise token is unavailable. Syntax errors
 explain missing punctuation, missing types/values, or malformed statements and
 include a bounded, escaped source excerpt. When parser recovery cannot establish
-the cause, diagnostics identify unexpected syntax and its surrounding construct
+the cause, diagnostics use `Parse error` with the known enclosing construct,
 without guessing a repair. An enclosing recovery error may be localized to a
 more specific erroneous child; source order takes precedence over error kind.
+CLI diagnostics show the location once, followed by the error and source excerpt,
+without generic troubleshooting advice:
+
+```text
+broken.too:1:22: Expected ')' in parameter list: 'flow work(value: Text:'
+aide.too:4:1: Parse error: 'agic issue(_: Text) sdf:'
+```
 
 The CST parses the original UTF-8 bytes, including incomplete source. Unlike
 the AST path, it neither masks query-data hashes nor adds a final newline, so

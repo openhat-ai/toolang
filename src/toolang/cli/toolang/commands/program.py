@@ -243,6 +243,12 @@ def _source_diagnostic(label: Path, error: Exception) -> None:
         if isinstance(error, ClickException) and error.__cause__
         else str(error)
     )
+    _write_diagnostic(label, line, column, message)
+
+
+def _write_diagnostic(label: Path, line: int, column: int, message: str) -> None:
+    # Library errors retain their line for callers that display only str(error).
+    message = message.removeprefix(f"Syntax error at line {line}: ")
     write_source(f"{label}:{line}:{column}: {message}\n", sys.stderr)
 
 
@@ -355,9 +361,8 @@ def parse_program(
     write_source(output, sys.stdout)
     for error in errors:
         point = error["start_point"]
-        typer.echo(
-            f"{label}:{point['row'] + 1}:{point['column'] + 1}: {error['message']}",
-            err=True,
+        _write_diagnostic(
+            label, point["row"] + 1, point["column"] + 1, error["message"]
         )
     if errors:
         raise typer.Exit(1)
