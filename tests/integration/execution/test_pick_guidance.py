@@ -39,7 +39,6 @@ from toolang.execution.types import (
 )
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import StateCap
-from toolang.state.watcher import StateWatcher
 
 
 SOURCE = """
@@ -95,13 +94,11 @@ def _harness(
         psyche_path.parent.mkdir(parents=True)
         psyche_path.write_text(psyche, encoding="utf-8")
     layout.program.write_text(source, encoding="utf-8")
-    watcher = StateWatcher(layout)
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         state=prepare_agent_state(layout),
         responses=responses,
-        refresh_state=watcher.refresh_result,
     )
     return harness, skill
 

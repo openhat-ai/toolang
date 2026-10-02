@@ -30,7 +30,6 @@ from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.base.utils.workspace_paths import parse_cwd
-from toolang.common.layout import IMPLICIT_WORKSPACE_NAME
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.run_results import run_completion, run_receipt, scheduled_run
@@ -1182,47 +1181,6 @@ class RunStore:
                     *control_indexes,
                 ),
             )
-
-    def apply_reload_with_cwd_invalidations(
-        self,
-        *,
-        run_id: str,
-        index: int,
-        invalidated_runs: Sequence[str],
-        finished_at: str,
-        fallback_workdir: str = f"{IMPLICIT_WORKSPACE_NAME}://",
-    ) -> None:
-        """Apply State adoption and all affected Run locations in one transaction."""
-        with self.write_transaction():
-            self.finish_run_controls(
-                run_id=run_id, indexes=(index,), finished_at=finished_at
-            )
-            cause = ControlRef.for_run(run_id, index)
-            for target in dict.fromkeys(invalidated_runs):
-                run = self.get_run(run_id=target)
-                if run is None or run.status not in {"pending", "running"}:
-                    continue
-                if not self.current_cwd(target):
-                    continue
-                next_index = self._conn.execute(
-                    'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
-                    (target,),
-                ).fetchone()[0]
-                self._insert_control(
-                    ref=ControlRef.for_run(target, int(next_index)),
-                    kind="cwd",
-                    timing="immediate",
-                    payload=CwdControlPayload(
-                        cwd=fallback_workdir, cause="invalidated", state=cause
-                    ),
-                    request=None,
-                    status="applied",
-                    error=None,
-                    created_at=finished_at,
-                    finished_at=finished_at,
-                    claimed=True,
-                    triggered_by=None,
-                )
 
     def fail_pending_run_controls(
         self, *, run_id: str, finished_at: str, error: str

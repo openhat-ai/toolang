@@ -20,35 +20,15 @@ from tests.integration.execution.test_pick_guidance import (
     _write_guidance,
 )
 from tests.support.execution_assertions import assert_replayed, route_snapshots
-from tests.support.execution_harness import RecordingRunTracer
+from tests.support.execution_harness import PublicationTracer, RecordingRunTracer
 from toolang.base.types.message import ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
-from toolang.execution.events import StepEnd
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
 )
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.watcher import StateRefresh
-
-
-class PublicationTracer(RecordingRunTracer):
-    def __init__(self, harness, publications):
-        super().__init__()
-        self.harness = harness
-        self.publications = publications
-
-    async def on_event(self, event):
-        await super().on_event(event)
-        if (
-            isinstance(event, StepEnd)
-            and event.output is not None
-            and isinstance(event.output.local.value, ToolResultPart)
-        ):
-            state = self.publications.get(event.output.local.value.tool_call_id)
-            if state is not None:
-                self.harness.published = state
 
 
 def _workspace_messages(call):
@@ -165,12 +145,6 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
 
 
 def test_published_remap_keeps_active_rule_bindings(tmp_path):
-    changed = None
-
-    async def refresh():
-        assert changed is not None
-        return StateRefresh(changed)
-
     def write(identity):
         return ToolCall(
             identity,
@@ -189,7 +163,6 @@ def test_published_remap_keeps_active_rule_bindings(tmp_path):
             _calls(write("retry")),
             _answer(),
         ],
-        refresh_state=refresh,
     )
     other = repo.with_name("other")
     (other / "src").mkdir(parents=True)
@@ -266,9 +239,6 @@ def test_reload_preserves_bound_psyches_and_runnable_authority(tmp_path):
 def test_reload_cannot_expand_bound_route_authority_and_replays(tmp_path, context):
     states = []
 
-    async def refresh():
-        return StateRefresh(states.pop(0))
-
     def source(hands, handoffs, type_name="Text"):
         directives = ("  hands = helper\n" if hands else "") + (
             "  handoffs = helper\n" if handoffs else ""
@@ -299,7 +269,6 @@ def test_reload_cannot_expand_bound_route_authority_and_replays(tmp_path, contex
             _answer(),
         ],
         source=source(*versions[0]),
-        refresh_state=refresh,
     )
     for version in versions[1:]:
         harness.setup.layout.program.write_text(source(*version))
@@ -406,14 +375,11 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
 def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
     states = []
 
-    async def refresh():
-        return StateRefresh(states.pop(0))
-
     def reload(index):
         return _calls(ToolCall(str(index), str(index), "_toolang__reload", {}))
 
     harness, repo, initial = _harness(
-        tmp_path, [*(reload(i) for i in range(5)), _answer()], refresh_state=refresh
+        tmp_path, [*(reload(i) for i in range(5)), _answer()]
     )
     states.extend(
         [
@@ -484,10 +450,6 @@ def test_definition_changes_preserve_bound_guidance(tmp_path, kind, name):
     restored = prepare_agent_state(harness.setup.layout)
     states = [changed, removed, restored]
 
-    async def refresh():
-        return StateRefresh(states.pop(0))
-
-    harness.executor._refresh_state = refresh
     tracer = PublicationTracer(
         harness, {str(i + 1): value for i, value in enumerate(states)}
     )

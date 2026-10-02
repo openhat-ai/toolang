@@ -56,7 +56,6 @@ from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
 from toolang.state.state import AgentState, state_program
-from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
 from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
@@ -161,7 +160,7 @@ _CONTROL_POLL_INTERVAL = 0.05
 SetupSource = Callable[[], AgentSetup]
 StateSource = Callable[[], AgentState]
 StateLoad = Callable[[str], AgentState]
-StateRefreshSource = Callable[[], Awaitable[StateRefresh]]
+StateRefreshSource = Callable[[], Awaitable[object]]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
 
@@ -276,7 +275,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
         *,
         request_id: str | None = None,
     ) -> ControlRecord:
-        """Persist an immediate Agent State reload for this run tree."""
+        """Record an explicit catalog reload without rebinding accepted Runs."""
 
         return self.executor.reload(
             run_id=self.run_id,
@@ -318,6 +317,9 @@ class RunExecutor:
         include: IncludeSource | None = None,
         default_workdir: str | None = None,
     ) -> None:
+        """Use published State; refresh_state is a deprecated, ignored argument."""
+
+        del refresh_state
         if (setup is None) != (state is None) or (setup is None) != (
             load_state is None
         ):
@@ -329,7 +331,6 @@ class RunExecutor:
         self._setup = setup
         self._state = state
         self._load_state = load_state
-        self._refresh_state = refresh_state
         self._include = include
         self._default_workdir_override = default_workdir
         self._persist = _PersistSink(self.store)
@@ -853,12 +854,6 @@ class RunExecutor:
                         "at its recorded path; use rerun"
                     )
 
-    @property
-    def has_state_refresh(self) -> bool:
-        """Return whether model-requested State refresh is available."""
-
-        return self._state is not None
-
     def _launch(
         self,
         bound: BoundRun,
@@ -1005,7 +1000,7 @@ class RunExecutor:
         state: AgentState,
         request_id: str | None = None,
     ) -> ControlRecord:
-        """Persist an immediate State reload for a locally owned run tree."""
+        """Record a catalog reload without changing accepted Run bindings."""
 
         return self._accept_reload(
             run_id=run_id,
@@ -1926,12 +1921,6 @@ class _Execution:
     @property
     def models(self) -> Sequence[Model]:
         return self.setup.models_effective()
-
-    @property
-    def has_state_refresh(self) -> bool:
-        """Return whether this execution can refresh Agent State."""
-
-        return self.executor.has_state_refresh
 
     def validate_child_inputs(
         self,

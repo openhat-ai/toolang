@@ -80,14 +80,12 @@ class _NeedsCompact(Exception):
 
 def _candidate(
     state: _AgicState,
-    agent_state: AgentState,
-    state_ref: ControlRef,
     *,
     compacted: tuple[RunRef | StepRef, str] | None = None,
 ) -> tuple[
     _AgicFrame, MessageBuffer, tuple[ControlRecord, ...], ModelCall, ModelMessages
 ]:
-    prepared = state.frame_for_step(agent_state, state_ref)
+    prepared = state.frame_for_model()
     state.estimate.bind_model(prepared.model)
     if (
         state.context_budget is not None
@@ -371,9 +369,7 @@ def compaction_boundary(state: _AgicState) -> RunRef | StepRef | None:
     """Reprepare after admission without committing a Step or consuming deltas."""
     if state.execution is None:
         raise RuntimeError("Agic runtime execution is unavailable")
-    prepared, _messages, controls, request, _recorded = _candidate(
-        state, *state.execution.state_snapshot(state.prepared.run.run_id)
-    )
+    prepared, _messages, controls, request, _recorded = _candidate(state)
     return _boundary(state, prepared, request, controls)
 
 
@@ -383,7 +379,6 @@ def compaction_summary_fits(
     assert state.execution is not None
     prepared, _, _, request, _ = _candidate(
         state,
-        *state.execution.state_snapshot(state.prepared.run.run_id),
         compacted=(end, summary),
     )
     return (
@@ -400,9 +395,7 @@ def recover_context_overflow(state: _AgicState, error: ModelResponseError) -> bo
 
     if state.execution is None or not is_context_overflow(error):
         return False
-    prepared, _, _, request, _ = _candidate(
-        state, *state.execution.state_snapshot(state.prepared.run.run_id)
-    )
+    prepared, _, _, request, _ = _candidate(state)
     if (
         prepared.history is None
         or len(prepared.history.units) < 2
@@ -446,9 +439,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, request, next_messages
-        prepared, next_messages, preceding, request, recorded = _candidate(
-            state, agent_state, state_ref
-        )
+        prepared, next_messages, preceding, request, recorded = _candidate(state)
         canceling = state.execution is not None and bool(
             state.execution.pending_controls(run.run_id, "cancel")
         )

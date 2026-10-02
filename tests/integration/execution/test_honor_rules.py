@@ -13,6 +13,7 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingRunTracer,
+    PublicationTracer,
     AsyncGate,
     ScriptedModelTurn,
 )
@@ -36,7 +37,6 @@ from toolang.execution.types import (
 )
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.watcher import StateRefresh
 
 
 SOURCE = """
@@ -72,7 +72,7 @@ def _answer():
     return ModelCallResult(message=Message.assistant("done"))
 
 
-def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
+def _harness(tmp_path, responses, *, source=SOURCE):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(source)
@@ -81,7 +81,6 @@ def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
         source=source,
         responses=responses,
         tools=load_tools(queries=("fs/*", "shell/*")),
-        refresh_state=refresh_state,
         state=prepare_agent_state(layout),
     )
     repo = harness.setup.layout.home / "repo"
@@ -737,12 +736,6 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
 
 
 def test_reload_preserves_the_workspace_at_the_tool_boundary(tmp_path):
-    next_publication = None
-
-    async def refresh():
-        assert next_publication is not None
-        return StateRefresh(next_publication)
-
     harness, repo, publication = _harness(
         tmp_path,
         [
@@ -753,18 +746,18 @@ def test_reload_preserves_the_workspace_at_the_tool_boundary(tmp_path):
             _calls(_call("retry")),
             _answer(),
         ],
-        refresh_state=refresh,
     )
     new_repo = repo.with_name("new-repo")
     (new_repo / "src").mkdir(parents=True)
     (new_repo / "AGENTS.md").write_text("New root rules.")
     next_publication = _workspace_state(harness, {"repo": new_repo})
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(harness, {"reload": next_publication})
 
     async def scenario():
         async with harness:
             run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
             assert run.status == "succeeded", run.error
+            assert harness.published is next_publication
             assert (repo / "src/result").read_text() == "done"
             assert not (new_repo / "src/result").exists()
             payloads = [c.payload for c in _recalls(harness, run)]

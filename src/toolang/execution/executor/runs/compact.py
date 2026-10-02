@@ -80,9 +80,7 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
         if output is None or history_position(
             output.result.end, history.roots
         ) < history_position(end, history.roots):
-            frame = state.frame_for_step(
-                *execution.state_snapshot(state.prepared.run.run_id)
-            )
+            frame = state.frame_for_model()
             parent = frame.run
             resources = parent.agent_resources
             if resources is None:

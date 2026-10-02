@@ -78,7 +78,7 @@ class _ToolRuntime(ToolRuntime):
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        frame = self.state.frame_for_step(*execution.state_for_step(self.step))
+        frame = self.state.prepared
         resources = frame.run.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {self.step.run_id}")

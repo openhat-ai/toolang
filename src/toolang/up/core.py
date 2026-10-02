@@ -74,7 +74,6 @@ class AgentCore:
             setup=lambda: self.setup.current(),
             state=lambda: self.state.current(),
             load_state=lambda revision: self.state.load(revision),
-            refresh_state=self.state.refresh_result,
             default_workdir=workdir,
         )
         self.executor.start()

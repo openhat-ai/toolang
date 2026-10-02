@@ -725,7 +725,6 @@ flow -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -961,7 +960,6 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1107,7 +1105,6 @@ flow target(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1189,7 +1186,6 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1326,7 +1322,6 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1390,7 +1385,6 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1467,7 +1461,6 @@ agic parent(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -2393,7 +2386,6 @@ agic target(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         tools=tools,
         responses=(
             ModelCallResult(

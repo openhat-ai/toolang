@@ -10,6 +10,7 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
     RecordingRunTracer,
+    RecordingTool,
 )
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
@@ -504,6 +505,84 @@ def test_unadvertised_target_waits_for_next_model_catalog(tmp_path):
                 route_snapshots(harness.adapter.invocations[1].call)["hands"][0]["ref"]
                 == "flow:worker"
             )
+
+    asyncio.run(scenario())
+
+
+def test_tool_batch_reuses_frame_and_next_model_discovers_publication(tmp_path):
+    source = "agic parent() -> Text:\n  hands = *\n  context = none\n  Work.\n"
+    skill = tmp_path / "agents/alice/skills/testing/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\ndescription: Test guidance\n---\nBound guidance.\n")
+    gate = AsyncGate()
+    tool = RecordingTool("test__probe", output={"ok": True})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        tools={tool.name: tool},
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(
+                    tool_calls=(
+                        ToolCall("probe", "probe", tool.name, {}),
+                        ToolCall(
+                            "pick",
+                            "pick",
+                            "_toolang__pick",
+                            {"kind": "skill", "ref": "skill/testing"},
+                        ),
+                    )
+                ),
+                gate=gate,
+            ),
+            answer("done"),
+        ],
+    )
+    phase = "model"
+    reads = []
+    finished_tools = 0
+
+    def latest():
+        reads.append(phase)
+        return harness.published or harness.state
+
+    harness.executor._state = latest
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            nonlocal phase, finished_tools
+            await super().on_event(event)
+            if isinstance(event, StepEnd):
+                if event.kind == "model":
+                    phase = "tools"
+                elif event.kind == "tool":
+                    finished_tools += 1
+                    if finished_tools == 2:
+                        phase = "model"
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                ),
+                tracer=Tracer(),
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            publish(harness, source + "flow worker():\n  pass\n")
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", root.error
+            assert finished_tools == 2 and len(tool.calls) == 1
+            assert "tools" not in reads
+            assert route_snapshots(harness.adapter.invocations[0].call)["hands"] == []
+            assert (
+                route_snapshots(harness.adapter.invocations[1].call)["hands"][0]["ref"]
+                == "flow:worker"
+            )
+            assert not last_tool_result(harness.adapter.invocations[1].call).error
 
     asyncio.run(scenario())
 

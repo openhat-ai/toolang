@@ -24,6 +24,7 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import (
     AsyncGate,
     RecordingRunTracer,
+    PublicationTracer,
     ScriptedModelTurn,
 )
 from toolang.base.types.message import TextPart, ToolResultPart, message_text
@@ -34,7 +35,7 @@ from toolang.execution.recall import recall_revisions
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix
 from toolang.plugin.toolsets.fs import _FilesystemTool
 from toolang.state.config import ConfiguredWorkspaces
-from toolang.state.watcher import StateRefresh, StateWatcher
+from toolang.state.watcher import StateWatcher
 
 
 def _results(harness, run):
@@ -354,12 +355,6 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
 
 
 def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_path):
-    changed = None
-
-    async def refresh():
-        assert changed is not None
-        return StateRefresh(changed)
-
     harness, _repo, _pub = _harness(
         tmp_path,
         [
@@ -372,7 +367,6 @@ def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_pat
             ),
             _answer(),
         ],
-        refresh_state=refresh,
     )
     roots = {name: tmp_path / name for name in ("old", "new", "removed", "added")}
     for root in roots.values():
@@ -384,12 +378,13 @@ def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_pat
         harness, {"moving": roots["new"], "added": roots["added"]}
     )
     assert initial.revision != changed.revision
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(harness, {"reload": changed})
 
     async def scenario():
         async with harness:
             run = await harness.executor.run(_spec(harness, initial), tracer=tracer)
             assert run.status == "succeeded", run.error
+            assert harness.published is changed
             results = _results(harness, run)
             assert results["reload"].error is None
             assert _workspace_lists(harness.adapter.invocations[0].call)[-1:] == [
@@ -412,12 +407,6 @@ def test_reload_preserves_revision_listing_grants_and_mapping_in_one_run(tmp_pat
 
 @pytest.mark.parametrize("change", ["remove", "remap", "remap-without-rules"])
 def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
-    changed = None
-
-    async def refresh():
-        assert changed is not None
-        return StateRefresh(changed)
-
     uri = "repo://file"
     harness, _repo, _pub = _harness(
         tmp_path,
@@ -430,7 +419,6 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
             _calls(_call("retry", path=uri, text="done")),
             _answer(),
         ],
-        refresh_state=refresh,
     )
     old, new = tmp_path / "old", tmp_path / "new"
     old.mkdir()
@@ -440,12 +428,13 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
         (new / "AGENTS.md").write_text("New rules.")
     initial = _workspace_state(harness, {"repo": old})
     changed = _workspace_state(harness, {} if change == "remove" else {"repo": new})
-    tracer = RecordingRunTracer()
+    tracer = PublicationTracer(harness, {"reload": changed})
 
     async def scenario():
         async with harness:
             run = await harness.executor.run(_spec(harness, initial), tracer=tracer)
             assert run.status == "succeeded", run.error
+            assert harness.published is changed
             results = _results(harness, run)
             assert results["reload"].error is None
             controls = _recalls(harness, run)

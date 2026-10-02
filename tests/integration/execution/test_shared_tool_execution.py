@@ -210,7 +210,6 @@ flow blocked(_: Text) -> Text:
         tmp_path,
         source=source,
         state=initial,
-        refresh_state=watcher.refresh_result,
         tools={tool.name: tool},
         responses=[
             ModelCallResult(

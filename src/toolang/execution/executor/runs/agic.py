@@ -117,10 +117,10 @@ class _AgicState:
         ]
         | None
     ) = None
-    refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
+    prepare_model_frame: Callable[[], _AgicFrame] | None = None
 
     def __post_init__(self) -> None:
-        # Tools may refresh prepared without changing the last dispatched call.
+        # Model preflight may prepare a new frame before dispatch commits it.
         self.model_frame = self.prepared
 
     def check_model_call_limit(self) -> None:
@@ -181,12 +181,12 @@ class _AgicState:
                     raise interruption
                 return
 
-    def frame_for_step(self, state: AgentState, ref: ControlRef) -> _AgicFrame:
-        """Prepare one step from the State captured at its boundary."""
+    def frame_for_model(self) -> _AgicFrame:
+        """Prepare model history and catalog while retaining this Run's binding."""
 
-        if self.refresh_frame is None:
+        if self.prepare_model_frame is None:
             return self.prepared
-        return self.refresh_frame(state, ref)
+        return self.prepare_model_frame()
 
 
 async def execute(
@@ -203,7 +203,7 @@ async def execute(
     estimate = InputEstimate()
     frames: dict[tuple[str, RunRef | StepRef | None, float], _AgicFrame] = {}
 
-    def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
+    def prepare_model_frame() -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
         catalog = (
@@ -231,7 +231,7 @@ async def execute(
         frames[key] = prepared
         return prepared
 
-    prepared = refresh_frame(binding.state, binding.state_ref)
+    prepared = prepare_model_frame()
     output_structs = program_structs(prepared.run)
     output_binding = _OutputBinding(
         type_name=prepared.agic.output,
@@ -270,7 +270,7 @@ async def execute(
             if local.shape != "none" and local.ref is not None
         ),
         begin_step=execution.step_starter(binding),
-        refresh_frame=refresh_frame,
+        prepare_model_frame=prepare_model_frame,
     )
     message = await _execute(state)
     if state.output is None:
