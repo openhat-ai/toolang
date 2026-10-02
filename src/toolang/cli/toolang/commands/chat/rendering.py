@@ -15,10 +15,6 @@ from rich.style import Style
 from rich.text import Text
 from wcwidth import wcswidth
 
-from toolang.cli.common.execution_progress.rich_rendering import (
-    TERMINAL_MARKDOWN_THEME,
-)
-
 ACCENT_CELL = " "
 CONTROL_BAR_MARK = "▮"
 QUICK_COMMAND_CONTROL_ACCENT = "yellow"
@@ -60,7 +56,6 @@ def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Con
         color_system="truecolor",
         force_terminal=True,
         legacy_windows=False,
-        theme=TERMINAL_MARKDOWN_THEME,
         _environ={"COLUMNS": str(fixed_width), "LINES": "24"},
     )
 
