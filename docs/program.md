@@ -38,9 +38,9 @@ agent.too
 flows/<name>.too
 ```
 
-Every file is parsed and semantically validated as an independent Toolang
-program. A flow module cannot use structs, contexts, instructs, caps, agics, or
-flows declared in another file.
+Every file has its own declarations and private type namespace. State composition
+also validates main-module calls to exported flows. A flow module cannot use
+structs, contexts, instructs, caps, agics, or flows declared in another file.
 
 The agent module publicly exports all of its agics and flows. A flow module
 exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where

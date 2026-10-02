@@ -169,6 +169,56 @@ agic child() -> Text:
     asyncio.run(scenario())
 
 
+def test_named_calls_capture_one_publication_each_and_allow_rollback(tmp_path):
+    source = SOURCE.replace("  run: Old inline.", "  run child")
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[answer("first"), answer("second"), answer("third")],
+    )
+    updated = publish(harness, source.replace("Old child", "New child"))
+    revisions = iter((harness.state, updated, harness.state))
+    reads = 0
+
+    def latest():
+        nonlocal reads
+        reads += 1
+        return next(revisions)
+
+    harness.executor._state = latest
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                )
+            )
+            assert root.status == "succeeded", root.error
+            assert reads == 3
+            children = sorted(
+                (
+                    r
+                    for r in harness.store.list_run_tree(root_run_id=root.id)
+                    if r.parent
+                ),
+                key=lambda r: str(r.parent),
+            )
+            assert [
+                harness.store.resolve_state_revision(r.state) for r in children
+            ] == [
+                harness.state.revision,
+                updated.revision,
+                harness.state.revision,
+            ]
+            assert "New child." in str(harness.adapter.invocations[1].call.messages)
+            assert "Old child." in str(harness.adapter.invocations[2].call.messages)
+
+    asyncio.run(scenario())
+
+
 def test_retry_retains_succeeded_prefix_and_rebinds_failed_suffix(tmp_path):
     source = SOURCE.replace("  run: Old inline.\n", "")
     gate = AsyncGate()

@@ -62,7 +62,7 @@ agic chat(_: Part[]) -> Part[]:
             persist(**kwargs)
         raise RuntimeError("injected begin failure")
 
-    async def reprepare(execution, build, *, run_id=None):
+    async def reprepare(execution, build, *, run_id):
         nonlocal prepared
         if not prepared:
             prepared = True
@@ -119,7 +119,7 @@ def test_cancel_during_model_begin_records_one_canceled_step(
     )
     begin = _Execution.begin_step
 
-    async def wait_before_begin(execution, build, *, run_id=None):
+    async def wait_before_begin(execution, build, *, run_id):
         if not committed and not gate.entered:
             await gate.wait()
         return await begin(execution, build, run_id=run_id)
@@ -180,7 +180,7 @@ def test_controls_received_before_model_begin_enter_that_call(
     begin = _Execution.begin_step
     expected_controls: list[ControlRecord] = []
 
-    async def wait_before_begin(execution, build, *, run_id=None):
+    async def wait_before_begin(execution, build, *, run_id):
         if not gate.entered:
             if prepared:
                 root_id = execution._active.root_run_id
@@ -294,7 +294,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
     tracer = Tracer()
     begin = _Execution.begin_step
 
-    async def reprepare(execution, build, *, run_id=None):
+    async def reprepare(execution, build, *, run_id):
         build(*execution.state_snapshot(run_id))
         return await begin(execution, build, run_id=run_id)
 
@@ -380,7 +380,7 @@ flow parent() -> Text:
     begin = _Execution.begin_step
     model_run_id = ""
 
-    async def wait_before_begin(execution, build, *, run_id=None):
+    async def wait_before_begin(execution, build, *, run_id):
         nonlocal model_run_id
         candidate = build(*execution.state_snapshot(run_id))
         if candidate.kind == "model":

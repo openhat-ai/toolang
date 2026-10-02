@@ -35,7 +35,10 @@ from toolang.execution.types import (
 )
 
 
-def test_call_settings_and_setup_survive_store_reopening(tmp_path: Path) -> None:
+@pytest.mark.parametrize("catalog_state", [None, "2" * 64])
+def test_call_settings_and_setup_survive_store_reopening(
+    tmp_path: Path, catalog_state: str | None
+) -> None:
     path = tmp_path / "runs.db"
     ref = StepRef.parse("run_contract.0")
     call = ModelCall(
@@ -54,12 +57,15 @@ def test_call_settings_and_setup_survive_store_reopening(tmp_path: Path) -> None
             input=(),
             state=ControlRef.for_run(ref.run_id, 0),
             started_at="now",
-            given=ModelStepGiven("test/one", call, setup="setup-v1"),
+            given=ModelStepGiven(
+                "test/one", call, setup="setup-v1", catalog_state=catalog_state
+            ),
         )
     with closing(RunStore(path)) as store:
         step = store.get_step(ref=ref)
         assert step is not None and isinstance(step.given, StoredModelStepGiven)
         assert step.given.setup == "setup-v1"
+        assert step.given.catalog_state == catalog_state
         assert step.given.call.reasoning == call.reasoning
         assert store.rebuild_model_call(step) == call
         assert {"tokens", "price", "cost"}.isdisjoint(

@@ -1719,11 +1719,9 @@ class _Execution:
             self._cwd_cache[run_id] = self.store.current_cwd(run_id)
         return self._cwd_cache[run_id]
 
-    def state_snapshot(
-        self, run_id: str | None = None
-    ) -> tuple[AgentState, ControlRef]:
+    def state_snapshot(self, run_id: str) -> tuple[AgentState, ControlRef]:
         """Read an accepted Run's immutable binding."""
-        binding = self._active_bindings[run_id or self._history_root]
+        binding = self._active_bindings[run_id]
         return binding.state, binding.state_ref
 
     def latest_state(self) -> AgentState:
@@ -2539,7 +2537,9 @@ class _Execution:
             return _prepare_child_run(binding, runnable), runnable
 
         binding, runnable = await self._begin_child(
-            prepare, state_snapshot=state_snapshot, begin=begin
+            prepare,
+            state_snapshot=state_snapshot or (parent.state, parent.state_ref),
+            begin=begin,
         )
         assert not isinstance(runnable, CompactSpec)
         return binding, runnable
@@ -2636,11 +2636,11 @@ class _Execution:
             tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec],
         ],
         *,
-        state_snapshot: tuple[AgentState, ControlRef] | None = None,
+        state_snapshot: tuple[AgentState, ControlRef],
         begin: bool = True,
         resume: RunRecord | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec]:
-        """Resolve, accept, and begin one child at the latest State boundary."""
+        """Prepare and atomically accept a child before starting any of its work."""
 
         if resume is not None:
             self._limits = _RunLimitState(self._limits.limits)
@@ -2737,11 +2737,9 @@ class _Execution:
             return binding, runnable
 
         if self._active is None:
-            state, state_ref = state_snapshot or self.state_snapshot()
-            return await accept(state, state_ref)
+            return await accept(*state_snapshot)
         async with self._active.event_lock:
-            state, state_ref = state_snapshot or self.state_snapshot()
-            return await accept(state, state_ref)
+            return await accept(*state_snapshot)
 
     async def _execute_child_binding(
         self,
@@ -3049,7 +3047,7 @@ class _Execution:
         self,
         build: Callable[[AgentState, ControlRef], StepBegin],
         *,
-        run_id: str | None = None,
+        run_id: str,
     ) -> tuple[AgentState, ControlRef]:
         """Prepare and persist one step against one serialized State snapshot."""
 

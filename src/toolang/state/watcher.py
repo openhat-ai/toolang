@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from watchfiles import Change, awatch
 
@@ -71,7 +72,8 @@ class StateWatcher:
         self.layout = layout
         self._workspace_additions = dict(workspace_additions or {})
         self._allow_overrides = normalize_cap_overrides(allow_overrides)
-        self._states: dict[str, AgentState] = {}
+        # Active Runs own their snapshots; history can reload released revisions.
+        self._states: WeakValueDictionary[str, AgentState] = WeakValueDictionary()
         self._state: AgentState | None = None
         self._checked_root_observation: SourceObservation | None = None
         self._checked_home_observation: SourceObservation | None = None

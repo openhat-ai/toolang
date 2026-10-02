@@ -513,7 +513,7 @@ def state_module_caps(
     return cast(tuple[StateCap, ...], tuple(getattr(state, "caps", ())))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class AgentState:
     """One immutable prepared State, including effective caps and workspaces."""
 

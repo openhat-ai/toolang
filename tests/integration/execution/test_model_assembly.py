@@ -428,7 +428,7 @@ def test_compact_preparation_survives_failed_begin(
     persist = harness.store.begin_step
     target = ""
 
-    async def reprepare(execution, build, *, run_id=None):
+    async def reprepare(execution, build, *, run_id):
         if execution._active.root_run_id == target and not gate.entered:
             build(*execution.state_snapshot(run_id))
             await gate.wait()
