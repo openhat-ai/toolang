@@ -15,16 +15,10 @@ from rich.style import Style
 from rich.text import Text
 from wcwidth import wcswidth
 
-from toolang.cli.common.execution_progress.rich_rendering import (
-    TERMINAL_MARKDOWN_THEME,
-)
-
 ACCENT_CELL = " "
 CONTROL_BAR_MARK = "▮"
 QUICK_COMMAND_CONTROL_ACCENT = "yellow"
 RUN_CONTROL_ACCENT = "bright_cyan"
-RUN_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"
-STEER_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightmagenta"
 STEER_CONTROL_ACCENT = "bright_magenta"
 _ANSI_NOT_DIM = "\x1b[22m"
 
@@ -60,7 +54,6 @@ def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Con
         color_system="truecolor",
         force_terminal=True,
         legacy_windows=False,
-        theme=TERMINAL_MARKDOWN_THEME,
         _environ={"COLUMNS": str(fixed_width), "LINES": "24"},
     )
 

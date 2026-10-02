@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from markdown_it.token import Token
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import (
     BlockQuote,
@@ -34,25 +35,22 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
-TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
 _SCRIPT_CODE_BACKGROUND = "bright_black"
 _SCRIPT_CODE_FOREGROUND = "bright_white"
 
-_ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
-
 
 class _ProgressCodeTheme(SyntaxTheme):
-    """Use terminal-owned ANSI token colors on one configured surface."""
+    """Add a default foreground while preserving the syntax theme's tokens."""
 
-    def __init__(self, *, background: str, foreground: str | None) -> None:
-        self._background = background
+    def __init__(self, theme: SyntaxTheme, *, foreground: str) -> None:
+        self._theme = theme
         self._foreground = foreground
 
     def get_style_for_token(self, token_type: TokenType) -> Style:
-        return _ANSI_CODE_THEME.get_style_for_token(token_type)
+        return self._theme.get_style_for_token(token_type)
 
     def get_background_style(self) -> Style:
-        return Style(color=self._foreground, bgcolor=self._background)
+        return self._theme.get_background_style() + Style(color=self._foreground)
 
 
 class _ProgressHeading(Heading):
@@ -84,22 +82,45 @@ class _ProgressHorizontalRule(HorizontalRule):
 class _ProgressCodeBlock(CodeBlock):
     """Render fenced code with the shared terminal-native palette."""
 
+    @classmethod
+    def create(cls, markdown: Markdown, token: Token) -> _ProgressCodeBlock:
+        assert isinstance(markdown, _ProgressMarkdown)
+        lexer_name = (token.info or "").partition(" ")[0] or "text"
+        return cls(
+            lexer_name,
+            markdown.code_theme,
+            background=markdown.code_background,
+            foreground=markdown.code_foreground,
+        )
+
+    def __init__(
+        self,
+        lexer_name: str,
+        theme: str,
+        *,
+        background: str,
+        foreground: str | None,
+    ) -> None:
+        super().__init__(lexer_name, theme)
+        self.background = background
+        self.foreground = foreground
+
     def __rich_console__(
         self,
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
         code = str(self.text).rstrip()
-        foreground, separator, background = self.theme.partition("|")
-        if not separator:
-            background = self.theme
+        theme: str | SyntaxTheme = self.theme
+        if self.foreground is not None:
+            theme = _ProgressCodeTheme(
+                Syntax.get_theme(self.theme), foreground=self.foreground
+            )
         yield Syntax(
             code,
             self.lexer_name,
-            theme=_ProgressCodeTheme(
-                background=background,
-                foreground=foreground or None,
-            ),
+            theme=theme,
+            background_color=self.background,
             word_wrap=True,
             padding=(1, 2),
         )
@@ -207,6 +228,17 @@ class _ProgressMarkdown(Markdown):
         "list_item_open": _ProgressListItem,
         "table_open": _ProgressTableElement,
     }
+
+    def __init__(
+        self,
+        markup: str,
+        *,
+        code_background: str,
+        code_foreground: str | None,
+    ) -> None:
+        super().__init__(markup, code_theme="ansi_dark")
+        self.code_background = code_background
+        self.code_foreground = code_foreground
 
 
 def progress_block_renderable(
@@ -737,14 +769,21 @@ class _MarkdownRow:
         prefix = self.row.prefix
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
-        segments = console.render(
-            _ProgressMarkdown(
-                self.row.text,
-                code_theme=f"{self.code_foreground or ''}|{self.code_background}",
-            ),
-            options.update_width(content_width),
+        inline_code_style = console.get_style("markdown.code", default="none") + Style(
+            bgcolor=self.code_background
         )
-        lines = list(Segment.split_lines(segments))
+        with console.use_theme(
+            Theme({"markdown.code": inline_code_style}, inherit=False)
+        ):
+            segments = console.render(
+                _ProgressMarkdown(
+                    self.row.text,
+                    code_background=self.code_background,
+                    code_foreground=self.code_foreground,
+                ),
+                options.update_width(content_width),
+            )
+            lines = list(Segment.split_lines(segments))
         preserve_background = True
         while lines and not _line_has_content(
             lines[0], preserve_background=preserve_background

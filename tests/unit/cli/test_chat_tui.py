@@ -28,8 +28,9 @@ from prompt_toolkit.renderer import CPR_Support
 from prompt_toolkit.styles import Attrs
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
-from rich.console import RenderableType
+from rich.console import Console, RenderableType
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 
 from tests.support import chat_tui_pty
@@ -2211,22 +2212,41 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
     assert number.style.color.number == 12
 
 
-def test_chat_inline_code_uses_cyan_on_the_terminal_default_background() -> None:
-    block = blocks.AssistantResponseBlock.from_parts(
-        (TextPart("before `value` after"),),
+@pytest.mark.parametrize("background", ("#0b0b0b", "#f4f4f4", "#304050"))
+@pytest.mark.parametrize("live", (False, True))
+def test_chat_inline_code_uses_markdown_style_on_the_code_background(
+    background: str, live: bool
+) -> None:
+    markup = "before `value` after\n\n```text\nblock\n```"
+    block = (
+        blocks.ExecutionProgressBlock(
+            ProgressBlock(
+                "step:run_1.1",
+                (ProgressRow(markup, "normal", format="markdown", prefix="• "),),
+            ),
+            live=True,
+            code_background=background,
+        )
+        if live
+        else blocks.AssistantResponseBlock.from_parts(
+            (TextPart(markup),), code_background=background
+        )
     )
-
-    code = next(
-        segment
-        for segment in rendering.render_segments(block.render())
-        if segment.text == "value"
-    )
+    segments = rendering.render_segments(block.render())
+    code = next(segment for segment in segments if segment.text == "value")
+    fenced = next(segment for segment in segments if "block" in segment.text)
 
     assert code.style is not None
-    assert code.style.bold
-    assert code.style.color is not None
-    assert code.style.color.number == 6
-    assert code.style.bgcolor is None
+    assert code.style == Console().get_style("markdown.code") + Style(
+        bgcolor=background
+    )
+    assert fenced.style is not None
+    assert fenced.style.bgcolor == code.style.bgcolor
+    assert all(
+        segment.style is None or segment.style.bgcolor is None
+        for segment in segments
+        if "before" in segment.text or "after" in segment.text
+    )
 
 
 @pytest.mark.parametrize(
