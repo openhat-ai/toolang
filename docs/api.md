@@ -448,14 +448,47 @@ Every successful query selects one projector after its subject resolves:
 | `records` | collection subject | summarized record rows | canonical record array |
 | `fields` | browsable Pointer value | direct child fields | exact selected value |
 | `value` | scalar, empty, resolved, or specialized value | rendered value | exact selected value |
+| `output` | Run with the explicit terminal name | complete result body | resolved result value |
 | `tree` | Run with the explicit terminal name | hierarchical durable execution | flat depth-first node array |
 | `call` | supported Step with the explicit terminal name | Step-owned historical call | normalized call or flat node array |
 
 `records`, `fields`, and `value` are implicit view kinds, not accepted command
-tokens. `tree` is explicit only on a whole Run. `call` is explicit only on a
-whole model, tool, run, par, or loop Step. Run and Step subjects never expose
+tokens. `tree` and `output` are explicit only on a whole Run. `call` is explicit
+only on a whole model, tool, run, par, or loop Step. Run and Step subjects never expose
 equivalent projector names, and the removed `model-call` spelling is not an
 alias.
+
+Read a Run's result with `output` (`too` is an alias for `toolang`):
+
+```sh
+too SCRIPT inspect run_ab12 output
+too SCRIPT inspect run_ab12 output | rich -m
+too SCRIPT inspect run_ab12 output | jq '.'
+too SCRIPT inspect run_ab12 output --json
+```
+
+`output` resolves stored references and removes the `Output` / `Local` wrappers.
+The default view writes Text unchanged and concatenates TextPart bodies in
+order for textual Parts. It preserves whitespace and Markdown source, adding
+only a final newline when nonempty text lacks one. Empty text and empty Parts
+emit no body. Structured values and nontext Parts emit complete indented JSON.
+The view does not render Markdown, add colors, wrap, or truncate content; use
+external tools such as `rich` or `jq` to present it. The `jq` example requires
+structured output or text that itself contains valid JSON.
+
+Textual Parts omit reasoning and nontext content from the default text view.
+The existing `--json` flag preserves every resolved Part and nested value;
+Text becomes a JSON string with its original whitespace. A JSON-looking Text
+value remains text and is never parsed to infer a type. `--human` and `--json`
+remain mutually exclusive; no new formatting flags are added. Output behavior
+is the same in a terminal and a pipe, including when `FORCE_COLOR` is set.
+
+A Run without an output fails with its ID and status instead of returning a
+blank success or waiting for completion. Present null and empty outputs succeed.
+Use `inspect RUN/output` to inspect the output wrapper, or
+`inspect RUN/output/local/value --json` for the raw stored value, including
+unresolved references. Existing Pointer queries retain their original behavior.
+The `output` projector is available only for whole Runs, not Steps or collections.
 
 `call` on a model Step reconstructs the complete normalized call persisted for
 that Step, including instructions, messages, tool definitions, the
@@ -541,10 +574,11 @@ selected value retains normal Pointer resolution and validation.
 Human projections have no trailing context footer. Direct scalar and
 specialized values print only their value. Strings have no JSON quotes, and
 nullable Human type labels use `T?`. Multiline Part content stays aligned
-inside the VALUE cell without a leading bullet. `--json` does not resolve
-Pointers and prints only the selected canonical JSON value. The two display
-modes are mutually exclusive, and `--type` is not an option. Inspection is
-read-only and historical and does not load a runnable.
+inside the VALUE cell without a leading bullet. Pointer queries with `--json`
+do not resolve Pointers and print only the selected canonical JSON value. The
+explicit Run `output` view instead returns the resolved result as described
+above. Display modes are mutually exclusive, and `--type` is not an option.
+Inspection is read-only and historical and does not load a runnable.
 
 ## Runtime Commands
 

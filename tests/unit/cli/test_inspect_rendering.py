@@ -5,7 +5,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from toolang.base.types.message import TextPart
+from toolang.base.types.message import ImagePart, ReasoningPart, TextPart
 from toolang.cli.toolang.commands.inspect import (
     _HumanValue,
     _human_type_label,
@@ -15,8 +15,8 @@ from toolang.cli.toolang.commands.inspect import (
 )
 from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
-from toolang.execution.types import Pointer
-from toolang.lang.types import Array
+from toolang.execution.types import Local, Pointer
+from toolang.lang.types import Array, Struct
 
 
 def test_human_type_labels_use_nullable_suffix() -> None:
@@ -181,3 +181,64 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     second = next(line for line in rendered.splitlines() if "second" in line)
     assert first.index("first") == second.index("second")
     assert "•" not in rendered
+
+
+@pytest.mark.parametrize("terminal", (True, False))
+@pytest.mark.parametrize(
+    "value",
+    (
+        "# Heading\n\n```text\n\t中文\n```\n" + "long " * 100,
+        {"long field": "中文 " * 100, "nested": [False, None, 12]},
+    ),
+)
+def test_output_is_plain_on_terminals_and_pipes(
+    terminal: bool, value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from toolang.cli.toolang.commands.inspect import _InspectSubject, _render_run_output
+
+    stream = StringIO()
+    monkeypatch.setattr(stream, "isatty", lambda: terminal)
+    console = Console(
+        file=stream,
+        width=12,
+        force_terminal=terminal,
+        no_color=False,
+        color_system="standard",
+    )
+    _render_run_output(console, _InspectSubject(kind="run"), value)
+    rendered = stream.getvalue()
+    assert "\x1b[" not in rendered
+    if isinstance(value, str):
+        assert rendered == value + "\n"
+    else:
+        assert json.loads(rendered) == {
+            "long field": "中文 " * 100,
+            "nested": [False, None, 12],
+        }
+        assert "中文 " * 100 in rendered
+
+
+@pytest.mark.parametrize(
+    ("local", "expected"),
+    (
+        (Local("# Heading\n\n**bold**"), True),
+        (Local(""), True),
+        (Local.typed("Part[]", ()), True),
+        (Local.typed("TextPart", TextPart("")), True),
+        (Local.typed("ReasoningPart", ReasoningPart("reasoning")), False),
+        (
+            Local.typed(
+                "Part[]", (ImagePart(image_url="https://example.com/image.png"),)
+            ),
+            False,
+        ),
+        (Local.typed("Json", {}), False),
+        (Local(Array("ReportPart[]", ())), False),
+        (Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))), False),
+    ),
+)
+def test_output_extracts_only_textual_content(local: Local, expected: bool) -> None:
+    from toolang.cli.toolang.commands.inspect import _run_output_text
+
+    assert (_run_output_text(local) is not None) is expected

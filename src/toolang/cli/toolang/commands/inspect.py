@@ -26,6 +26,8 @@ from toolang.cli.common.execution_progress.facts import (
     token_fact as _token_fact,
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
+from toolang.base.types.message import Part, TextPart, message_text
+from toolang.lang.types import Array
 from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
@@ -65,6 +67,7 @@ from toolang.execution.types import (
     ToolStepGiven,
     TypedRef,
     local_to_protocol_data,
+    type_assignable,
     validate_runtime_value,
 )
 
@@ -83,7 +86,7 @@ _SubjectKind = Literal[
     "runs",
     "steps",
 ]
-_ProjectionKind = Literal["records", "fields", "value", "tree", "call"]
+_ProjectionKind = Literal["records", "fields", "value", "tree", "call", "output"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +208,46 @@ def _selected_step(source: _InspectSubject) -> StepRecord:
     if source.selection is None or not isinstance(source.selection.record, StepRecord):
         raise RuntimeError("step subject has no Step record")
     return source.selection.record
+
+
+def _project_run_output(store: RunStore, source: _InspectSubject) -> object:
+    if source.selection is None or not isinstance(source.selection.record, RunRecord):
+        raise RuntimeError("output subject has no Run record")
+    run = source.selection.record
+    if run.output is None:
+        raise ValueError(f"Run {run.id} has no output (status: {run.status})")
+    local = store.resolve_local(run.output.local)
+    data = local_to_protocol_data(local)["value"]
+    text = _run_output_text(local)
+    return _ProjectedValue(json=data, human=text if text is not None else data)
+
+
+def _run_output_text(local: Local) -> str | None:
+    value = local.value
+    if isinstance(value, str):
+        return value
+    parts: tuple[Part, ...] | None = None
+    if isinstance(value, Part):
+        parts = (value,)
+    elif isinstance(value, Array) and type_assignable(value.item_type, "Part"):
+        parts = cast(tuple[Part, ...], tuple(value))
+    if parts is None:
+        return None
+    if parts and not any(isinstance(part, TextPart) for part in parts):
+        return None
+    return message_text(parts)
+
+
+def _render_run_output(
+    console: Console, _subject: _InspectSubject, value: object
+) -> None:
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, indent=2)
+    )
+    if text:
+        typer.echo(text, file=console.file, nl=not text.endswith("\n"), color=True)
 
 
 def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
@@ -612,6 +655,7 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
+    _ProjectorTransition("run", "output", _project_run_output, _render_run_output),
     _ProjectorTransition(
         "run",
         "tree",
@@ -651,7 +695,7 @@ def _inspect_subject_help() -> str:
         f"Subject chain. Root subjects: {roots}, or POINTER. "
         f"Relations: {relations}. Projectors: {projectors}. "
         "Run tree is a durable structural snapshot; Step call is the "
-        "Step-owned historical call"
+        "Step-owned historical call; Run output is its resolved result"
     )
 
 
@@ -668,7 +712,7 @@ def inspect_command(
         typer.Option("--human", help="Render human-readable output (default)"),
     ] = False,
     json_view: Annotated[
-        bool, typer.Option("--json", help="Render exact canonical JSON")
+        bool, typer.Option("--json", help="Render JSON (resolved value for Run output)")
     ] = False,
 ) -> None:
     """Inspect execution subjects."""

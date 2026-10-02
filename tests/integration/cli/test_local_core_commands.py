@@ -7,7 +7,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,7 +32,13 @@ from tests.support.execution_fixtures import (
     project_step,
 )
 from tests.support.execution_harness import ExecutionHarness
-from toolang.base.types.message import Message, TextPart, ToolResultPart
+from toolang.base.types.message import (
+    ImagePart,
+    Message,
+    ReasoningPart,
+    TextPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
@@ -61,10 +67,11 @@ from toolang.execution.types import (
     OccurrencePosition,
     StepRef,
     ThreadPrefix,
+    TypedRef,
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 from toolang.setup import AgentSetup, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
@@ -175,14 +182,16 @@ def test_inspect_rejects_invalid_pointers(tmp_path: Path, value: str) -> None:
     assert "invalid pointer" in result.stderr
 
 
+@pytest.mark.parametrize("subjects", (("threads",), ("run_missing", "output")))
 def test_inspect_missing_history_does_not_create_execution_store(
     tmp_path: Path,
+    subjects: tuple[str, ...],
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
 
-    result = _invoke(root, "alice", "inspect", "threads")
+    result = _invoke(root, "alice", "inspect", *subjects)
 
     assert result.exit_code == 1
     assert "execution history not found: alice" in result.stderr
@@ -203,6 +212,295 @@ def test_removed_history_commands_are_unavailable(
     assert result.exit_code == 2
     assert "No such command" in result.stderr
     assert not layout.run_store.exists()
+
+
+@pytest.mark.parametrize(
+    "local",
+    (
+        Local.typed(
+            "Text", "# Heading\n\n  中文 [bold]literal[/bold]\n" + "long " * 100
+        ),
+        Local.typed("Text", "already terminated\n\n"),
+        Local.typed("Text", "\tindent\tvalue\n"),
+        Local.typed("Text", ""),
+        Local.typed("Json", {"summary": "complete " * 100, "nested": [1, False, None]}),
+        Local.typed("Json", {}),
+        Local.typed("Json", []),
+        Local.typed("Json", None),
+        Local.typed("Number", 42),
+        Local.typed("Boolean", False),
+        Local.typed("Part[]", ()),
+        Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))),
+        Local(Array("ReportPart[]", ())),
+        Local.typed("ImagePart", ImagePart(image_url="https://example.com/image.png")),
+        Local.typed("ReasoningPart", ReasoningPart("reasoning")),
+    ),
+)
+def test_inspect_run_output_complete_values(tmp_path: Path, local: Local) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_output",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(local, binding="result"))
+
+    human = _invoke(root, "alice", "inspect", run.id, "output")
+    document = _invoke(root, "alice", "inspect", run.id, "output", "--json")
+    raw = _invoke(root, "alice", "inspect", f"{run.id}/output/local/value", "--json")
+    assert human.exit_code == document.exit_code == raw.exit_code == 0
+    assert json.loads(document.stdout) == json.loads(raw.stdout)
+    assert "\x1b" not in document.stdout
+    if isinstance(local.value, str):
+        assert human.stdout == local.value + (
+            "\n" if local.value and not local.value.endswith("\n") else ""
+        )
+    elif local.type == "Part[]":
+        assert human.stdout == ""
+    else:
+        assert json.loads(human.stdout) == json.loads(raw.stdout)
+    if isinstance(local.value, Mapping) and local.value:
+        assert '\n  "summary":' in document.stdout
+
+
+@pytest.mark.parametrize("args", ((), ("--json",)))
+def test_inspect_run_output_serializes_resolved_value_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    import toolang.cli.toolang.commands.inspect as inspect_commands
+
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    expected = {"result": [{"count": 1}, {"count": 2}]}
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_serialization",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(Local(expected)))
+
+    original = inspect_commands.local_to_protocol_data
+    calls = 0
+
+    def serialize(local: Local) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return original(local)
+
+    monkeypatch.setattr(inspect_commands, "local_to_protocol_data", serialize)
+    result = _invoke(root, "alice", "inspect", run.id, "output", *args)
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == expected
+    assert calls == 1
+
+
+@pytest.mark.parametrize("args", ((), ("--json",)))
+def test_inspect_run_output_piped_json_ignores_forced_color(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_color",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(Local({"answer": 42})))
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    result = _invoke(root, "alice", "inspect", run.id, "output", *args)
+    assert result.exit_code == 0, result.stderr
+    assert "\x1b" not in result.stdout
+    assert json.loads(result.stdout) == {"answer": 42}
+
+
+@pytest.mark.parametrize(
+    "local",
+    (
+        Local.typed("TextPart", TextPart("")),
+        Local.typed("TextPart[]", (TextPart(""),)),
+        Local.typed("Part[]", (ReasoningPart("hidden"), TextPart("  \n"))),
+    ),
+)
+def test_inspect_run_output_text_parts_preserve_whitespace(
+    tmp_path: Path, local: Local
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_blank",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        store.finish_run(run_id=run.id, output=Output(local))
+    result = _invoke(root, "alice", "inspect", run.id, "output")
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == ("  \n" if local.type == "Part[]" else "")
+
+
+@pytest.mark.parametrize("as_parts", (False, True))
+def test_inspect_run_output_emits_unrendered_text(
+    tmp_path: Path, as_parts: bool
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    text = (
+        "  # Heading\n\n**Answer**\n\n```python\n\tprint('中文')\n```\n"
+        + "long " * 100
+        + "\nEND\n\n"
+    )
+    parts = (
+        ReasoningPart("private reasoning"),
+        TextPart(text[:25]),
+        TextPart(text[25:]),
+    )
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_parts",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        local = Local.typed("Part[]", parts) if as_parts else Local(text)
+        store.finish_run(run_id=run.id, output=Output(local))
+    human = _invoke(root, "alice", "inspect", run.id, "output")
+    explicit = _invoke(root, "alice", "inspect", run.id, "output", "--human")
+    document = _invoke(root, "alice", "inspect", run.id, "output", "--json")
+    assert human.exit_code == explicit.exit_code == document.exit_code == 0
+    assert human.stdout == explicit.stdout
+    assert human.stdout == text
+    assert "private reasoning" not in human.stdout
+    expected = [part.to_data() for part in parts] if as_parts else text
+    assert json.loads(document.stdout) == expected
+
+
+@pytest.mark.parametrize("status", ("running", "failed", "succeeded"))
+def test_inspect_run_without_output_is_explicit(tmp_path: Path, status: str) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_empty",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        if status == "failed":
+            store.finish_run(run_id=run.id, status="failed")
+        elif status == "succeeded":
+            store.finish_run(run_id=run.id)
+    result = _invoke(root, "alice", "inspect", run.id, "output", "--json")
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert run.id in result.stderr and status in result.stderr
+    assert "has no output" in result.stderr
+
+
+@pytest.mark.parametrize("failure", (None, "missing", "cycle", "type"))
+def test_inspect_run_output_resolves_references(
+    tmp_path: Path, failure: str | None
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        for run_id in ("run_source", "run_chain", "run_result"):
+            project_run_start(
+                store,
+                run_id=run_id,
+                thread_id="term_output",
+                origin="test",
+                input=Message.user("Test output"),
+            )
+        source = (
+            Local.typed("Number", 42)
+            if failure == "type"
+            else Local.typed("Text", "resolved")
+        )
+        store.finish_run(run_id="run_source", output=Output(source))
+        target = (
+            "run_missing"
+            if failure == "missing"
+            else "run_chain"
+            if failure == "cycle"
+            else "run_source"
+        )
+        ref = TypedRef(FieldRef.parse(f"{target}/output/local/value"), "Text")
+        store.finish_run(run_id="run_chain", output=Output(Local(ref)))
+        chain = TypedRef(FieldRef.parse("run_chain/output/local/value"), "Text")
+        store.finish_run(
+            run_id="run_result",
+            output=Output(Local(Array("Text[]", (chain, chain)))),
+        )
+    for args in ((), ("--json",)):
+        result = _invoke(root, "alice", "inspect", "run_result", "output", *args)
+        if failure is None:
+            assert result.exit_code == 0, result.stderr
+            assert json.loads(result.stdout) == ["resolved", "resolved"]
+        else:
+            assert result.exit_code == 1
+            assert result.stdout == ""
+            assert result.stderr
+    raw = _invoke(root, "alice", "inspect", "run_result/output/local/value", "--json")
+    assert raw.exit_code == 0
+    assert json.loads(raw.stdout) == [{"?": str(chain)}, {"?": str(chain)}]
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        ("run_output", "output", "--human", "--json"),
+        ("run_output/output", "output"),
+        ("term_output", "output"),
+        ("run_output@0", "output"),
+        ("run_output.0", "output"),
+        ("runs", "output"),
+        ("run_output", "output", "--markdown"),
+    ),
+)
+def test_inspect_output_rejects_unsupported_queries(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_output",
+            thread_id="term_output",
+            origin="test",
+            input=Message.user("Test output"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=Output(Local(1)),
+            started_at="2026-10-02T00:00:00Z",
+            finished_at="2026-10-02T00:00:01Z",
+        )
+        store.finish_run(run_id=run.id, output=Output(Local(1)))
+    result = _invoke(root, "alice", "inspect", *args)
+    assert result.exit_code == 2, result.stderr
+    assert result.stdout == ""
 
 
 def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -> None:
@@ -1120,7 +1418,7 @@ def test_inspect_projects_complete_persisted_model_call(
         )
     )
     assert rejected.exit_code == 2
-    assert "allowed: steps, tree" in rejected.stderr
+    assert "allowed: steps, output, tree" in " ".join(rejected.stderr.split())
 
     recorded = json.loads(references.stdout)
     assert recorded["version"] == 1
@@ -1691,7 +1989,7 @@ def test_inspect_validates_tree_and_call_before_specialized_reads(
     value_call = _invoke(root, "alice", "inspect", str(value.ref), "call")
 
     assert run_call.exit_code == 2
-    assert "allowed: steps, tree" in " ".join(
+    assert "allowed: steps, output, tree" in " ".join(
         strip_ansi(run_call.stderr).replace("│", "").split()
     )
     assert step_tree.exit_code == 2
@@ -1751,6 +2049,8 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "STEP runs" in compact_help
     assert "LOOP_STEP steps" in compact_help
     assert "STEP call" in compact_help
+    assert "RUN output" in compact_help
+    assert "--markdown" not in help_text
     assert "RUN tree" in compact_help
     assert "Run tree is a durable structural snapshot" in compact_help
     assert "Step-owned historical call" in compact_help
@@ -1980,7 +2280,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
             started_at="2026-07-25T01:00:00Z",
             finished_at="2026-07-25T01:00:01Z",
         )
-        project_run_end(store, run_id=run.id)
+        store.finish_run(run_id=run.id, output=Output(Local("# Ready\n")))
     finally:
         store.close()
 
@@ -1991,6 +2291,11 @@ def test_roaming_source_reads_inspect_collections_and_records(
     inspect = cli.main([str(source), "inspect", "run_roaming.0", "--json"])
     inspect_output = capsys.readouterr()
 
+    output = cli.main([str(source), "inspect", run.id, "output", "--json"])
+    output_text = capsys.readouterr()
+
+    assert output == 0
+    assert json.loads(output_text.out) == "# Ready\n"
     assert threads == 0
     assert "script_roaming" in threads_output.out
     assert "Inspect roaming history" in threads_output.out

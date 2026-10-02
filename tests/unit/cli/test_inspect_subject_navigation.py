@@ -80,6 +80,7 @@ def test_projector_registry_uses_distinct_run_and_step_vocabulary() -> None:
         (item.source, item.name) for item in inspect_commands.INSPECT_PROJECTORS
     } == {
         ("run", "tree"),
+        ("run", "output"),
         ("step", "call"),
     }
     assert "model-call" not in inspect_commands._PROJECTOR_NAMES
