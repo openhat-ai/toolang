@@ -103,8 +103,8 @@ def test_protocol_groups_complete_tag_examples_without_granting_recall() -> None
     assert root[0].attrib == {"list": "lab,example-project"}
     assert root[2].attrib == root[3].attrib
     assert root[4].attrib == {"ref": "skill/example-testing", "removed": "true"}
-    assert root[5].attrib == {"enabled": "true"}
-    assert root[6].attrib == {"enabled": "false"}
+    assert root[5].attrib == {"enabled": "true", "requested_only": "true"}
+    assert root[6].attrib == {"enabled": "false", "requested_only": "false"}
     assert recall_revisions((MessageTemplate("user", (examples[0],)),)) == {}
 
 
@@ -151,7 +151,7 @@ def test_protocol_separates_contract_required_actions_and_prohibitions() -> None
     assert 'removed="true"' in contract
     assert "Use reload" not in contract
     assert re.findall(r"^(\d+)\. \*\*", actions, re.M) == [str(i) for i in range(1, 8)]
-    assert len(re.findall(r"^- ", prohibitions, re.M)) == 5
+    assert len(re.findall(r"^- ", prohibitions, re.M)) == 6
 
 
 def test_protocol_authoring_requires_verification_and_state_adoption() -> None:

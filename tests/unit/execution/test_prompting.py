@@ -273,7 +273,7 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
     context, initial, invocations = inputs.rendered_input
     assert (
         context
-        == '<toolang:hands enabled="false"/>\n<toolang:handoffs enabled="false"/>'
+        == '<toolang:hands enabled="false" requested_only="false"/>\n<toolang:handoffs enabled="false" requested_only="false"/>'
     )
     assert not invocations
     assert initial == (

@@ -241,6 +241,7 @@ class PromptInputs:
     facts: Mapping[str, object]
     values: Mapping[str, object]
     runnables: Sequence[Mapping[str, object]] = ()
+    requested_only: tuple[str, ...] = ()
     instruct: PromptSetting | None = None
     context: PromptSetting | None = None
 
@@ -397,7 +398,7 @@ class PromptInputs:
         prompt_context = "\n".join(
             part
             for part in (
-                _render_routes(self.runnables),
+                _render_routes(self.runnables, requested_only=self.requested_only),
                 _render_context(
                     state_program(self.state, self.context.module)
                     if self.context
@@ -453,7 +454,11 @@ def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
     return items
 
 
-def _render_routes(runnables: Sequence[Mapping[str, object]]) -> str:
+def _render_routes(
+    runnables: Sequence[Mapping[str, object]],
+    *,
+    requested_only: tuple[str, ...] = (),
+) -> str:
     """Render complete per-call authorization snapshots, never partial lists."""
     if len(runnables) > ROUTE_MAX_TARGETS:
         raise ToolangError(
@@ -462,6 +467,7 @@ def _render_routes(runnables: Sequence[Mapping[str, object]]) -> str:
         )
     parts = []
     for action, tag in (("run", "hands"), ("execute", "handoffs")):
+        requested = "true" if action in requested_only else "false"
         entries = [
             {key: value for key, value in item.items() if key != "actions"}
             for item in runnables
@@ -472,11 +478,13 @@ def _render_routes(runnables: Sequence[Mapping[str, object]]) -> str:
                 entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             )
             parts.append(
-                f'<toolang:{tag} enabled="true">\n'
+                f'<toolang:{tag} enabled="true" requested_only="{requested}">\n'
                 f"{escape(content, quote=False)}\n</toolang:{tag}>"
             )
         else:
-            parts.append(f'<toolang:{tag} enabled="false"/>')
+            parts.append(
+                f'<toolang:{tag} enabled="false" requested_only="{requested}"/>'
+            )
     result = "\n".join(parts)
     if len(result.encode("utf-8")) > ROUTE_MAX_BYTES:
         raise ToolangError(

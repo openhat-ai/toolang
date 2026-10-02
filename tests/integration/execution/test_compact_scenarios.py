@@ -1512,9 +1512,16 @@ def test_summary_publication_uses_the_caller_model_count(
                 "_MODEL_TOKEN_SCALES",
                 {"test/scripted": caller_scale, "test/reducer": 1},
             )
+            # Leave room for retained metadata at both scales, but for this
+            # summary only at scale 1. Derive the budget from the assembled
+            # protocol/tools so prompt edits do not prevent reducer admission.
+            trigger = 2 * tokens.input_tokens(h.adapter.invocations[0].call) + 1000
+            constrain(h, context=2 * trigger)
             h.setup = replace(
                 h.setup,
-                compact=replace(h.setup.compact, trigger=11200, recent=1, summary=256),
+                compact=replace(
+                    h.setup.compact, trigger=trigger, recent=1, summary=256
+                ),
             )
             summary = "fact " * 1500
             h.adapter._responses.extend(

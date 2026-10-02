@@ -79,6 +79,16 @@ class AgicRoutes:
     handoffs: tuple[str, ...] = ()
     resolved: tuple[RunnableRoute, ...] = ()
 
+    @property
+    def requested_only(self) -> tuple[RouteAction, ...]:
+        """Identify default public routes that require a named user request."""
+
+        return tuple(
+            action
+            for action, references in (("run", self.hands), ("execute", self.handoffs))
+            if not references
+        )
+
     def allows(self, action: RouteAction, target: ResolvedRunnable) -> bool:
         """Return whether authored routing authority permits one target."""
 
@@ -137,9 +147,9 @@ def resolve_agic_routes(
             for name in program_runnable_index(state_program(state, module))
         )
     for route_action, references in groups:
-        if not references or references == ("none",):
+        if references == ("none",):
             continue
-        if references == ("*",):
+        if not references or references == ("*",):
             selected = targets
         else:
             refs = tuple(parse_runnable_ref_parts(value) for value in references)
@@ -482,8 +492,6 @@ def runnable_descriptions(
     state: AgentState, routes: AgicRoutes
 ) -> tuple[dict[str, object], ...]:
     """Return data-only descriptions selected by authored routing authority."""
-    if not routes.hands and not routes.handoffs:
-        return ()
     return tuple(_runnable_description(state, route) for route in routes.resolved)
 
 

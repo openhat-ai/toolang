@@ -189,3 +189,148 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     finally:
         session.close()
         asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])
+@pytest.mark.parametrize("operation", ["run", "execute"])
+def test_chat_named_invocation_keeps_the_next_turn_on_the_session_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool, operation: str
+) -> None:
+    from toolang.base.types.run import ToolCall
+    from toolang.cli.toolang.commands.chat import local
+    from tests.support.execution_assertions import (
+        last_tool_result,
+        route_snapshots,
+        without_runtime_snapshots,
+    )
+
+    target = "flow:abc" if operation == "execute" else "agic:xyz"
+    source = """
+agic chat(_: Text) -> Text:
+  recall = none
+  context = none
+  user: {{_}}
+
+flow abc(_: Text) -> Text:
+  pass
+
+agic xyz(_: Text) -> Text:
+  recall = none
+  context = none
+  user: {{_}}
+"""
+    responses = [
+        ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "named",
+                    "named",
+                    f"_toolang__{operation}",
+                    {"runnable": target, "input": {"_": "payload"}},
+                ),
+            )
+        )
+    ]
+    if operation == "run":
+        responses.extend(
+            [
+                ModelCallResult(message=Message.assistant("target result")),
+                ModelCallResult(message=Message.assistant("Summary: target result")),
+            ]
+        )
+    responses.append(ModelCallResult(message=Message.assistant("chat again")))
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
+    harness.store.close()
+    core = None
+    if remote:
+        core = AgentCore(harness.setup.layout)
+        core.setup = _Snapshot(harness.setup)
+        core.state = _Snapshot(harness.state)
+        agents.write_runtime_state(
+            core.layout,
+            endpoint="http://runtime.test:7001",
+            started_at="2026-10-02T00:00:00Z",
+            pid=123,
+            sandbox_description=_HOST_DESCRIPTION,
+        )
+        app = create_app(
+            core,
+            CapsManager(core.layout),
+            JobsManager(core.layout),
+            cors_allowed_origins=(),
+        )
+        session = RemoteChatSession(
+            "http://runtime.test:7001",
+            expected_sandbox="host",
+            transport=httpx.ASGITransport(app=app),
+        )
+    else:
+
+        class Watcher(_Snapshot):
+            async def refresh(self) -> object:
+                return self.value
+
+            async def run(self, *, stop_signal: asyncio.Event) -> None:
+                await stop_signal.wait()
+
+        monkeypatch.setattr(
+            local, "SetupWatcher", lambda *_args, **_kwargs: Watcher(harness.setup)
+        )
+        monkeypatch.setattr(
+            local, "StateWatcher", lambda *_args, **_kwargs: Watcher(harness.state)
+        )
+        session = local.LocalChatSession(harness.setup.layout)
+
+    errors: list[str] = []
+    try:
+        setting = session.initial_setting()
+        assert setting.runnable == "agic:chat"
+        thread = session.create_thread()
+        first_input = f"Call {target} with payload" + (
+            ", then summarize the result." if operation == "run" else "."
+        )
+        for prompt, expected in [
+            (
+                first_input,
+                "Summary: target result" if operation == "run" else "payload",
+            ),
+            ("Next question", "chat again"),
+        ]:
+            request = session.build_request(
+                thread, RunOverride(), CallInput({"_": prompt}), setting
+            )
+            assert request.runnable.ref == "agic:chat"
+            session.run(request, lambda _event: None, errors.append)
+            assert session.get_result(None, thread_id=thread).output == (
+                TextPart(expected),
+            )
+            assert session.initial_setting().runnable == "agic:chat"
+        assert errors == []
+        calls = [invocation.call for invocation in harness.adapter.invocations]
+        assert len(calls) == (4 if operation == "run" else 2)
+        first = route_snapshots(
+            calls[0], requested_only={"hands": True, "handoffs": True}
+        )
+        assert all(
+            {entry["ref"] for entry in targets} == {"flow:abc", "agic:xyz"}
+            for targets in first.values()
+        )
+        assert {"_toolang__run", "_toolang__execute"} <= {
+            tool.name for tool in calls[0].tools
+        }
+        assert without_runtime_snapshots(calls[-1].messages) == [
+            Message.user("Next question")
+        ]
+        if operation == "run":
+            assert last_tool_result(calls[2]).error is None
+            from toolang.base.types.message import message_text
+
+            assert any(
+                'status="succeeded"' in message_text(m.parts)
+                and "target result" in message_text(m.parts)
+                for m in calls[2].messages
+            )
+    finally:
+        session.close()
+        if core is not None:
+            asyncio.run(core.close())

@@ -257,6 +257,9 @@ def build_agic_frame(
         },
         values=variables,
         runnables=runnables,
+        requested_only=routes.requested_only
+        if runtime_tools and resolved_model.tool_call is True
+        else (),
         instruct=run.settings.instruct,
         context=run.settings.context,
     )

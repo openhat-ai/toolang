@@ -50,6 +50,17 @@ def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
     assert "catalog" not in definition.description + str(definition.parameters)
 
 
+def test_runnable_tool_descriptions_follow_user_intent_and_scope() -> None:
+    tools = load_tools()
+    run = tools["_toolang__run"].definition().description
+    execute = tools["_toolang__execute"].definition().description
+    assert "further processing" in run and "hands scope and requested_only" in run
+    assert "no requested follow-up" in execute
+    assert "handoffs scope and requested_only" in execute
+    assert "caller never resumes" in execute
+    assert "Prefer run when either" not in execute
+
+
 def test_compact_is_a_zero_argument_runtime_only_tool() -> None:
     tool = load_tools()["_toolang__compact"]
     assert getattr(tool, "model_callable") is False
