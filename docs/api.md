@@ -462,22 +462,26 @@ Read a Run's result with `output` (`too` is an alias for `toolang`):
 
 ```sh
 too SCRIPT inspect run_ab12 output
+too SCRIPT inspect run_ab12 output | rich -m
+too SCRIPT inspect run_ab12 output | jq '.'
 too SCRIPT inspect run_ab12 output --json
 ```
 
 `output` resolves stored references and removes the `Output` / `Local` wrappers.
-The default Human view automatically chooses a Rich renderer using the resolved
-value's type: Text and textual Parts render as Markdown; other values render as
-complete indented JSON. Strings containing JSON are still Text and are not
-parsed to guess a format. Empty text and empty Parts render an empty body.
-Parts containing text display their response text; `--json` preserves every
-resolved Part, including reasoning and nontext content, and exact Text whitespace.
+The default view writes Text unchanged and concatenates TextPart bodies in
+order for textual Parts. It preserves whitespace and Markdown source, adding
+only a final newline when nonempty text lacks one. Empty text and empty Parts
+emit no body. Structured values and nontext Parts emit complete indented JSON.
+The view does not render Markdown, add colors, wrap, or truncate content; use
+external tools such as `rich` or `jq` to present it. The `jq` example requires
+structured output or text that itself contains valid JSON.
 
-`--human` and `--json` keep their existing meanings and remain mutually exclusive;
-this view adds no formatting flags. JSON uses Rich syntax highlighting on
-terminals and remains complete, unwrapped, and free of ANSI codes in pipes,
-even with `FORCE_COLOR` set. Markdown presentation uses the available terminal
-width. Use `--json` when exact result data is needed instead of presentation.
+Textual Parts omit reasoning and nontext content from the default text view.
+The existing `--json` flag preserves every resolved Part and nested value;
+Text becomes a JSON string with its original whitespace. A JSON-looking Text
+value remains text and is never parsed to infer a type. `--human` and `--json`
+remain mutually exclusive; no new formatting flags are added. Output behavior
+is the same in a terminal and a pipe, including when `FORCE_COLOR` is set.
 
 A Run without an output fails with its ID and status instead of returning a
 blank success or waiting for completion. Present null and empty outputs succeed.

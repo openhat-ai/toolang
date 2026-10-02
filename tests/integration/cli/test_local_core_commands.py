@@ -256,7 +256,9 @@ def test_inspect_run_output_complete_values(tmp_path: Path, local: Local) -> Non
     assert json.loads(document.stdout) == json.loads(raw.stdout)
     assert "\x1b" not in document.stdout
     if isinstance(local.value, str):
-        assert bool(human.stdout) == bool(local.value)
+        assert human.stdout == local.value + (
+            "\n" if local.value and not local.value.endswith("\n") else ""
+        )
     elif local.type == "Part[]":
         assert human.stdout == ""
     else:
@@ -297,7 +299,7 @@ def test_inspect_run_output_piped_json_ignores_forced_color(
         Local.typed("Part[]", (ReasoningPart("hidden"), TextPart("  \n"))),
     ),
 )
-def test_inspect_run_output_empty_text_parts_render_empty_markdown(
+def test_inspect_run_output_text_parts_preserve_whitespace(
     tmp_path: Path, local: Local
 ) -> None:
     root = tmp_path / "toolang"
@@ -313,14 +315,25 @@ def test_inspect_run_output_empty_text_parts_render_empty_markdown(
         store.finish_run(run_id=run.id, output=Output(local))
     result = _invoke(root, "alice", "inspect", run.id, "output")
     assert result.exit_code == 0, result.stderr
-    assert result.stdout == ""
+    assert result.stdout == ("  \n" if local.type == "Part[]" else "")
 
 
 @pytest.mark.parametrize("as_parts", (False, True))
-def test_inspect_run_output_parts_and_markdown(tmp_path: Path, as_parts: bool) -> None:
+def test_inspect_run_output_emits_unrendered_text(
+    tmp_path: Path, as_parts: bool
+) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
-    parts = (ReasoningPart("private reasoning"), TextPart("# Heading\n\n**Answer**"))
+    text = (
+        "  # Heading\n\n**Answer**\n\n```python\n\tprint('中文')\n```\n"
+        + "long " * 100
+        + "\nEND\n\n"
+    )
+    parts = (
+        ReasoningPart("private reasoning"),
+        TextPart(text[:25]),
+        TextPart(text[25:]),
+    )
     with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
         run = project_run_start(
             store,
@@ -329,23 +342,16 @@ def test_inspect_run_output_parts_and_markdown(tmp_path: Path, as_parts: bool) -
             origin="test",
             input=Message.user("Test output"),
         )
-        local = (
-            Local.typed("Part[]", parts)
-            if as_parts
-            else Local("# Heading\n\n**Answer**")
-        )
+        local = Local.typed("Part[]", parts) if as_parts else Local(text)
         store.finish_run(run_id=run.id, output=Output(local))
     human = _invoke(root, "alice", "inspect", run.id, "output")
     explicit = _invoke(root, "alice", "inspect", run.id, "output", "--human")
     document = _invoke(root, "alice", "inspect", run.id, "output", "--json")
     assert human.exit_code == explicit.exit_code == document.exit_code == 0
     assert human.stdout == explicit.stdout
-    assert "Heading" in human.stdout and "Answer" in human.stdout
-    assert "**Answer**" not in human.stdout
+    assert human.stdout == text
     assert "private reasoning" not in human.stdout
-    expected = (
-        [part.to_data() for part in parts] if as_parts else "# Heading\n\n**Answer**"
-    )
+    expected = [part.to_data() for part in parts] if as_parts else text
     assert json.loads(document.stdout) == expected
 
 

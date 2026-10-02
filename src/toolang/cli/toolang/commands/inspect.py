@@ -10,8 +10,6 @@ from typing import Annotated, Literal, cast
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
-from rich.json import JSON
-from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 import typer
@@ -235,14 +233,7 @@ def _run_output_text(local: Local) -> str | None:
         return None
     if parts and not any(isinstance(part, TextPart) for part in parts):
         return None
-    return message_text(parts).strip()
-
-
-def _print_output_json(console: Console, value: object) -> None:
-    if not console.file.isatty():
-        typer.echo(json.dumps(value, ensure_ascii=False, indent=2), file=console.file)
-        return
-    console.print(JSON.from_data(value, ensure_ascii=False), soft_wrap=True)
+    return message_text(parts)
 
 
 def _render_run_output(
@@ -252,9 +243,14 @@ def _render_run_output(
         raise RuntimeError("output projection has no Local value")
     text = _run_output_text(value)
     if text is None:
-        _print_output_json(console, local_to_protocol_data(value)["value"])
+        typer.echo(
+            json.dumps(
+                local_to_protocol_data(value)["value"], ensure_ascii=False, indent=2
+            ),
+            file=console.file,
+        )
     elif text:
-        console.print(Markdown(text))
+        typer.echo(text, file=console.file, nl=not text.endswith("\n"), color=True)
 
 
 def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
@@ -948,10 +944,7 @@ def _render_projection_json(projection: _InspectProjection) -> None:
     projected = projection.value
     if not isinstance(projected, _ProjectedValue):
         raise RuntimeError("explicit projection has no typed value")
-    if projection.kind == "output":
-        _print_output_json(Console(highlight=False), projected.json)
-    else:
-        _echo_json(projected.json)
+    _echo_json(projected.json)
 
 
 def _render_projection_human(

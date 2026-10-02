@@ -184,12 +184,18 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
 
 
 @pytest.mark.parametrize("terminal", (True, False))
-def test_output_json_rich_highlighting_preserves_long_values(
-    terminal: bool, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "local",
+    (
+        Local("# Heading\n\n```text\n\t中文\n```\n" + "long " * 100),
+        Local({"long field": "中文 " * 100, "nested": [False, None, 12]}),
+    ),
+)
+def test_output_is_plain_on_terminals_and_pipes(
+    terminal: bool, local: Local, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
-    from rich.text import Text
-    from toolang.cli.toolang.commands.inspect import _print_output_json
+    from toolang.cli.toolang.commands.inspect import _InspectSubject, _render_run_output
 
     stream = StringIO()
     monkeypatch.setattr(stream, "isatty", lambda: terminal)
@@ -198,14 +204,19 @@ def test_output_json_rich_highlighting_preserves_long_values(
         width=12,
         force_terminal=terminal,
         no_color=False,
-        color_system="standard" if terminal else None,
+        color_system="standard",
     )
-    value = {"long field": "中文 " * 100, "nested": [False, None, 12]}
-    _print_output_json(console, value)
+    _render_run_output(console, _InspectSubject(kind="run"), local)
     rendered = stream.getvalue()
-    assert ("\x1b[" in rendered) is terminal
-    assert json.loads(Text.from_ansi(rendered).plain) == value
-    assert "中文 " * 100 in Text.from_ansi(rendered).plain
+    assert "\x1b[" not in rendered
+    if isinstance(local.value, str):
+        assert rendered == local.value + "\n"
+    else:
+        assert json.loads(rendered) == {
+            "long field": "中文 " * 100,
+            "nested": [False, None, 12],
+        }
+        assert "中文 " * 100 in rendered
 
 
 @pytest.mark.parametrize(
@@ -227,9 +238,7 @@ def test_output_json_rich_highlighting_preserves_long_values(
         (Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))), False),
     ),
 )
-def test_output_markdown_accepts_only_textual_content(
-    local: Local, expected: bool
-) -> None:
+def test_output_extracts_only_textual_content(local: Local, expected: bool) -> None:
     from toolang.cli.toolang.commands.inspect import _run_output_text
 
     assert (_run_output_text(local) is not None) is expected
