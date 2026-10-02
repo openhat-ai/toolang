@@ -173,8 +173,8 @@ class _ToolRuntime(ToolRuntime):
                 raw_input=input,
                 authorize=lambda target: self._authorize("run", target),
                 state_snapshot=(
-                    state.model_frame.catalog or state.model_frame.run.state,
-                    state.model_frame.run.state_ref,
+                    state.prepared.catalog or state.prepared.run.state,
+                    state.prepared.run.state_ref,
                 ),
             )
         except _RunRejected as exc:
@@ -196,8 +196,8 @@ class _ToolRuntime(ToolRuntime):
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured = state.model_frame.catalog or state.model_frame.run.state
-        state_ref = state.model_frame.run.state_ref
+        captured = state.prepared.catalog or state.prepared.run.state
+        state_ref = state.prepared.run.state_ref
         target = resolve_call_target(captured, state.prepared.run.module, runnable)
         execution.require_inactive_runnable(
             state.prepared.run, target, action="_toolang/execute"

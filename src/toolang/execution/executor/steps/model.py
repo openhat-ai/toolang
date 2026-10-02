@@ -148,7 +148,7 @@ def _candidate(
     )
     if state.execution is not None:
         resident = (
-            state.model_frame.declarations
+            state.prepared.declarations
             if state.messages.started
             else prepared.declarations
         )
@@ -214,8 +214,8 @@ def _candidate(
         history=history,
         recall=prepared.recall,
         reset=(
-            prepared.run.horizon != state.model_frame.run.horizon
-            or prepared.recall != state.model_frame.recall
+            prepared.run.horizon != state.prepared.run.horizon
+            or prepared.recall != state.prepared.recall
         ),
         workspace=prompting.workspace_message(
             prepared.workspace_names, prepared.workspaces
@@ -238,8 +238,8 @@ def _candidate(
         continuation=(
             state.continuation
             # Stateful adapters validate the actual prefix before reusing a cursor.
-            if prepared.model == state.model_frame.model
-            and prepared.reasoning == state.model_frame.reasoning
+            if prepared.model == state.prepared.model
+            and prepared.reasoning == state.prepared.reasoning
             else None
         ),
         max_output_tokens=prepared.output_budget,
@@ -468,7 +468,6 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
     def adopt_begin() -> None:
         state.prepared = prepared
-        state.model_frame = prepared
         state.continuation = request.continuation if request is not None else None
         state.messages = next_messages
         state.visible_recalls = {

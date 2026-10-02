@@ -70,8 +70,8 @@ class _OutputBinding:
 class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
 
+    # The last committed frame also supplies its following tool batch.
     prepared: _AgicFrame
-    model_frame: _AgicFrame = field(init=False)
     layout: AgentLayout
     emit: EventEmitter
     pending_inputs: Callable[[], tuple[ControlRecord, ...]]
@@ -118,10 +118,6 @@ class _AgicState:
         | None
     ) = None
     prepare_model_frame: Callable[[], _AgicFrame] | None = None
-
-    def __post_init__(self) -> None:
-        # Model preflight may prepare a new frame before dispatch commits it.
-        self.model_frame = self.prepared
 
     def check_model_call_limit(self) -> None:
         """Check the next call without counting an uncommitted preparation."""
@@ -396,7 +392,7 @@ async def _execute(state: _AgicState) -> Message | None:
                 )
                 continue
             # Freeze the advertised routes for every tool in this model batch.
-            routes = state.model_frame.routes
+            routes = state.prepared.routes
             if state.steer_before_next_step():
                 await tool_step.skip(state, result.tool_calls)
                 continue
