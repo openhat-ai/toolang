@@ -35,8 +35,8 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
-_SCRIPT_CODE_BACKGROUND = "bright_black"
-_SCRIPT_CODE_FOREGROUND = "bright_white"
+_DEFAULT_CODE_BACKGROUND = "bright_black"
+_DEFAULT_CODE_FOREGROUND = "bright_white"
 
 
 class _ProgressCodeTheme(SyntaxTheme):
@@ -246,9 +246,9 @@ def progress_block_renderable(
     *,
     live: bool,
     max_width: int,
-    code_background: str = _SCRIPT_CODE_BACKGROUND,
+    code_background: str = _DEFAULT_CODE_BACKGROUND,
     inline_code_background: str | None = None,
-    code_foreground: str | None = _SCRIPT_CODE_FOREGROUND,
+    code_foreground: str | None = _DEFAULT_CODE_FOREGROUND,
 ) -> RenderableType:
     """Render one semantic progress block with shared wrapping and Markdown."""
 

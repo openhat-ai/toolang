@@ -9,6 +9,7 @@ from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.text import Text
 
+from ..terminal_surfaces import DARK_TERMINAL_SURFACES, TerminalSurfaces
 from ..execution_progress import ProgressBlock, ProgressRow, ProgressUpdate
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from ..execution_progress.formatting import one_line
@@ -36,8 +37,10 @@ class ProgressConsole:
         *,
         width: int | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
         self.stream = stream
+        self.surfaces = surfaces
         self.tty = bool(getattr(stream, "isatty", lambda: False)())
         detected = (
             shutil.get_terminal_size(fallback=(max_width, 24)).columns
@@ -51,7 +54,7 @@ class ProgressConsole:
         self.console = Console(
             file=stream,
             width=self.width,
-            color_system="standard" if self.tty else None,
+            color_system="truecolor" if self.tty else None,
             force_terminal=self.tty,
             highlight=False,
             legacy_windows=False,
@@ -59,6 +62,16 @@ class ProgressConsole:
         )
         self._live: Live | None = None
         self._live_rows: list[ProgressRow] = []
+
+    def _render_block(self, block: ProgressBlock, *, live: bool) -> RenderableType:
+        return progress_block_renderable(
+            block,
+            live=live,
+            max_width=self.width,
+            code_background=self.surfaces.code_background,
+            inline_code_background=self.surfaces.inline_code_background,
+            code_foreground=None,
+        )
 
     def close(self) -> None:
         self.clear_live()
@@ -84,9 +97,7 @@ class ProgressConsole:
             "script:write",
             (ProgressRow(f"{prefix}{one_line(value)}", tone),),
         )
-        self.console.print(
-            progress_block_renderable(block, live=False, max_width=self.width)
-        )
+        self.console.print(self._render_block(block, live=False))
 
     def write_renderable(self, value: RenderableType) -> None:
         """Append one complete shared Rich renderable."""
@@ -98,13 +109,9 @@ class ProgressConsole:
         """Append committed fragments and atomically replace the live snapshot."""
 
         committed = [
-            progress_block_renderable(block, live=False, max_width=self.width)
-            for block in update.committed
+            self._render_block(block, live=False) for block in update.committed
         ]
-        live_blocks = [
-            progress_block_renderable(block, live=True, max_width=self.width)
-            for block in update.live
-        ]
+        live_blocks = [self._render_block(block, live=True) for block in update.live]
         self._live_rows = [row for block in update.live for row in block.rows]
         self._set_live(live_blocks)
         for renderable in committed:
@@ -112,11 +119,7 @@ class ProgressConsole:
 
     def show_live_rows(self, rows: list[ProgressRow]) -> None:
         block = ProgressBlock("script:live", tuple(rows))
-        self._set_live(
-            [progress_block_renderable(block, live=True, max_width=self.width)]
-            if rows
-            else []
-        )
+        self._set_live([self._render_block(block, live=True)] if rows else [])
         self._live_rows = list(rows)
 
     def clear_live(self) -> None:

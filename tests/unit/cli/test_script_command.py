@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from rich.cells import cell_len
@@ -2082,8 +2082,11 @@ def test_script_bare_dev_help_never_discovers_wheels_or_runs(
     _assert_common_options(strip_ansi(capsys.readouterr().out))
 
 
-def test_remote_script_rejects_invalid_progress_width_before_side_effects(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "setting", ["TOOLANG_PROGRESS_MAX_WIDTH", "TOOLANG_COLOR_SCHEME"]
+)
+def test_remote_script_rejects_invalid_presentation_settings_before_side_effects(
+    tmp_path, monkeypatch, setting
 ) -> None:
     effects: list[str] = []
 
@@ -2104,7 +2107,7 @@ def test_remote_script_rejects_invalid_progress_width_before_side_effects(
     monkeypatch.setattr(
         script,
         "load_runtime_environ",
-        lambda *_args, **_kwargs: {"TOOLANG_PROGRESS_MAX_WIDTH": "0"},
+        lambda *_args, **_kwargs: {setting: "0"},
     )
     monkeypatch.setattr(
         "toolang.cli.common.remote_runtime.inspect_remote_runtime", inspect
@@ -2112,7 +2115,7 @@ def test_remote_script_rejects_invalid_progress_width_before_side_effects(
     monkeypatch.setattr(script, "_remote_script_defaults", defaults)
     monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
     monkeypatch.setattr("toolang.cli.common.attachments.capture_attachments", capture)
-    with pytest.raises(ValueError, match="TOOLANG_PROGRESS_MAX_WIDTH"):
+    with pytest.raises(ValueError, match=setting):
         asyncio.run(
             script._execute_remote(
                 layout=AgentLayout.resident(tmp_path, "alice"),
@@ -2127,3 +2130,124 @@ def test_remote_script_rejects_invalid_progress_width_before_side_effects(
             )
         )
     assert effects == []
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("quiet", [False, True])
+def test_script_passes_resolved_surfaces_before_starting_run(
+    tmp_path, monkeypatch, remote, quiet
+):
+    from toolang.cli.common import terminal_surfaces
+    from toolang.cli.common.script_progress import ScriptRunPresenter
+
+    class ReachedRun(Exception):
+        pass
+
+    stream = StringIO()
+    monkeypatch.setattr(script.sys, "stderr", stream)
+    environ = {"TOOLANG_COLOR_SCHEME": "light"}
+    monkeypatch.setattr(
+        script, "load_runtime_environ", lambda *_args, **_kwargs: environ
+    )
+    resolutions = []
+
+    def resolve(**kwargs):
+        assert kwargs == {"environment": environ, "output_stream": stream}
+        resolutions.append(kwargs)
+        return terminal_surfaces.resolve_terminal_surfaces(**kwargs)
+
+    monkeypatch.setattr(script, "resolve_terminal_surfaces", resolve)
+
+    def check(tracer):
+        assert len(resolutions) == (0 if quiet else 1)
+        if quiet:
+            assert tracer is None
+        else:
+            assert isinstance(tracer, ScriptRunPresenter)
+            assert tracer.console.surfaces == terminal_surfaces.LIGHT_TERMINAL_SURFACES
+        raise ReachedRun
+
+    common: dict[str, Any] = dict(
+        sandbox="host",
+        runnable="agic:demo",
+        override=RunOverride(),
+        input=CallInput({"_": "hello"}),
+        raw_named=CallInput({"count": "1"}),
+        session_override=RunOverride(),
+        quiet=quiet,
+    )
+    if remote:
+
+        class Client:
+            def __init__(self, endpoint, **kwargs):
+                self.endpoint = endpoint
+
+            async def connect(self):
+                pass
+
+            async def disconnect(self):
+                pass
+
+            async def run(self, request, *, tracer):
+                check(tracer)
+
+        async def inspect(*args, **kwargs):
+            pass
+
+        async def defaults(*args, **kwargs):
+            return SessionSetting(
+                model=ModelRequest("test/scripted"), runnable="agic:demo"
+            )
+
+        async def create_thread(*args, **kwargs):
+            return "script_remote"
+
+        async def capture(_http, _endpoint, request, **kwargs):
+            return request
+
+        monkeypatch.setattr("toolang.execution.remote.RemoteRunClient", Client)
+        monkeypatch.setattr(
+            "toolang.cli.common.remote_runtime.inspect_remote_runtime", inspect
+        )
+        monkeypatch.setattr(
+            "toolang.cli.common.attachments.capture_attachments", capture
+        )
+        monkeypatch.setattr(script, "_remote_script_defaults", defaults)
+        monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
+        with pytest.raises(ReachedRun):
+            asyncio.run(
+                script._execute_remote(
+                    layout=AgentLayout.resident(tmp_path, "alice"),
+                    endpoint="http://runtime.test:7001",
+                    **common,
+                )
+            )
+    else:
+        harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+
+        async def current_setup(_watcher):
+            return harness.setup
+
+        async def current_state(_watcher):
+            return harness.state
+
+        def run(_executor, spec, *, run_id, tracer):
+            check(tracer)
+
+        monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
+        monkeypatch.setattr("toolang.state.watcher.StateWatcher.refresh", current_state)
+        monkeypatch.setattr("toolang.execution.executor.RunExecutor.run", run)
+        try:
+            with pytest.raises(ReachedRun):
+                asyncio.run(
+                    script._execute(
+                        layout=harness.setup.layout,
+                        state=harness.state,
+                        store=harness.store,
+                        ids=harness.ids,
+                        run_id="run_test",
+                        **common,
+                    )
+                )
+        finally:
+            harness.store.close()

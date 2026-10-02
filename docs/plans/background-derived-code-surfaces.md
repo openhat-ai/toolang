@@ -1,13 +1,14 @@
 # Background-derived code surfaces
 
 Status: approved through the inline contrast 1.15 visual review and the request
-to implement it in a pull request. This supersedes the code-surface decisions in
+to implement it in a pull request, extended by the explicit request to make
+Script and Chat consistent. This supersedes the code-surface decisions in
 [terminal-adaptive-chat-surfaces.md](terminal-adaptive-chat-surfaces.md).
 
 ## Goal and scope
 
 Make inline code distinguishable without adding spaces or changing wrapping.
-Chat code backgrounds depend only on the terminal background, independently of
+Chat and Script code backgrounds depend only on the terminal background, independently of
 its default foreground. Input/queue colors, text attributes, and ANSI syntax
 highlighting retain their existing behavior.
 
@@ -24,13 +25,22 @@ highlighting retain their existing behavior.
 - Carry both backgrounds through Chat live, committed, and durable `/output`
   rendering. Rich retains ownership of Markdown text styling.
 - Shared render functions accept an optional inline override, falling back to
-  the block background for existing callers. Script retains its ANSI policy.
+  the block background for existing callers.
+- Script local/remote execution and retry/rerun resolve the same palette once
+  at command orchestration, before starting run output, using loaded runtime
+  environment and stderr as the output stream. Quiet execution does not probe.
+- Script's presenter and console receive concrete surfaces without performing
+  terminal I/O. All live and committed Markdown paths pass both backgrounds
+  and inherit the terminal foreground, matching Chat. TTY output uses truecolor;
+  non-TTY output remains uncolored. The shared resolver only probes when stdin
+  and stderr are the same TTY with no pending input.
 - Retain the existing input/queue derivation, including its historical weak
   surface reference used for compression and quantization.
 
 ## Touchpoints
 
-`terminal_surfaces.py` owns palette derivation and configuration. Chat's TUI,
+`terminal_surfaces.py` owns palette derivation and configuration. Script and
+thread command entry points resolve colors for the Script presenter/console. Chat's TUI,
 presenter, and blocks pass colors into `human_values.py` and shared execution
 progress rendering. Focused terminal-surface, Markdown, and Chat tests cover the
 policy and propagation. Update `docs/execution-presentation.md` to describe
@@ -48,7 +58,11 @@ is not part of the production change.
   override. Fences use their separate background, wrapping/text are unchanged,
   and the console theme is restored after rendering.
 - Live, committed, and durable slash outputs propagate the selected colors.
-- Explicit three-color configuration and Script output retain their behavior.
+- Script and Chat render identical Markdown colors with dark, light, custom,
+  and detected palettes, in both live and committed paths.
+- Script CLI wiring honors loaded environment, probes its stderr terminal once,
+  and avoids probing quiet/non-TTY output. Invalid configuration fails before
+  starting a run. Explicit three-color values still control both code colors.
 - Run all default repository checks before commit and PR handoff.
 
 ## Risks and open questions

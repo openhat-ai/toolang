@@ -11,6 +11,8 @@ from os import terminal_size
 
 import pytest
 from rich.console import Console
+from rich.ansi import AnsiDecoder
+from rich.color import Color
 from rich.live import Live
 
 from toolang.base.types.message import (
@@ -29,6 +31,8 @@ from toolang.cli.common.execution_progress import (
 )
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.common.execution_progress.rich_rendering import run_footer_renderable
+from toolang.cli.common import terminal_surfaces
+from toolang.cli.toolang.commands.chat.blocks import ExecutionProgressBlock
 from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.common.script_progress.blocks import RunBlock, RunContext
 from toolang.cli.common.script_progress.console import ProgressConsole
@@ -694,32 +698,74 @@ def test_progress_markdown_uses_a_quiet_unicode_horizontal_rule() -> None:
     ]
 
 
-def test_tty_markdown_shares_inline_and_fenced_code_background() -> None:
-    stream = _TtyStream()
-    console = ProgressConsole(stream, width=40)
-    console.apply(
-        ProgressUpdate(
-            committed=(
-                ProgressBlock(
-                    "step:run_one.0",
-                    (
-                        ProgressRow(
-                            "before `value`\n\n```python\nx = 1\n```",
-                            "normal",
-                            format="markdown",
-                            prefix="• ",
-                        ),
-                    ),
-                ),
-            )
-        )
+@pytest.mark.parametrize(
+    "scheme", ["dark", "light", "#123456,#234567,#345678", "detected"]
+)
+@pytest.mark.parametrize("mode", ["committed", "live", "show_live_rows"])
+def test_script_and_chat_share_markdown_colors(monkeypatch, scheme, mode) -> None:
+    monkeypatch.setattr(
+        terminal_surfaces,
+        "_query_terminal_defaults",
+        lambda *_: ((119, 119, 119), (255, 255, 255)),
     )
-
-    rendered = stream.getvalue()
-    assert "\x1b[1;36;100mvalue\x1b[0m" in rendered
-    assert "\x1b[100m" in rendered or ";100m" in rendered
-    assert "\x1b[38;2" not in rendered
-    assert "\x1b[48;2" not in rendered
+    palette = terminal_surfaces.resolve_terminal_surfaces(
+        environment={} if scheme == "detected" else {"TOOLANG_COLOR_SCHEME": scheme}
+    )
+    # Rendering consumes a concrete palette and must never query the terminal.
+    monkeypatch.setattr(
+        terminal_surfaces,
+        "_query_terminal_defaults",
+        lambda *_: pytest.fail("unexpected probe"),
+    )
+    stream = _TtyStream()
+    presenter = ScriptRunPresenter(
+        run_id="run_one", stream=stream, width=40, surfaces=palette
+    )
+    console = presenter.console
+    progress = ProgressBlock(
+        "step:run_one.0",
+        (
+            ProgressRow(
+                "before `value`\n\n```text\nblock\n```",
+                "normal",
+                format="markdown",
+                prefix="• ",
+            ),
+        ),
+    )
+    # Capture the same renderables supplied to Rich Live without terminal movement.
+    monkeypatch.setattr(
+        console,
+        "_set_live",
+        lambda values: [console.console.print(value) for value in values],
+    )
+    if mode == "show_live_rows":
+        console.show_live_rows(list(progress.rows))
+    else:
+        console.apply(ProgressUpdate(**{mode: (progress,)}))
+    output = stream.getvalue()
+    assert "\x1b[48;2;" in output or ";48;2;" in output
+    chat = ExecutionProgressBlock(
+        progress,
+        code_background=palette.code_background,
+        inline_code_background=palette.inline_code_background,
+    )
+    segments = list(console.console.render(chat.render()))
+    lines = list(AnsiDecoder().decode(output))
+    for marker, background in (
+        ("value", palette.inline_code_background),
+        ("block", palette.code_background),
+    ):
+        line = next(line for line in lines if marker in line.plain)
+        style = line.get_style_at_offset(console.console, line.plain.index(marker))
+        chat_style = next(
+            segment.style for segment in segments if marker in segment.text
+        )
+        assert chat_style is not None
+        assert style.render(marker) == chat_style.render(marker)
+        assert style.bgcolor == Color.parse(background)
+        if marker == "block":
+            assert style.color is None
 
 
 def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
@@ -746,6 +792,7 @@ def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
     lines = stream.getvalue().splitlines()
     assert [line.strip() for line in lines] == ["•", "x = 1", ""]
     assert all(len(line) == 40 for line in lines)
+    assert "\x1b" not in stream.getvalue()
 
 
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
