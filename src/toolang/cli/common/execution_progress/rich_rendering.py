@@ -34,7 +34,6 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
-TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
 _SCRIPT_CODE_BACKGROUND = "bright_black"
 _SCRIPT_CODE_FOREGROUND = "bright_white"
 
@@ -737,14 +736,20 @@ class _MarkdownRow:
         prefix = self.row.prefix
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
-        segments = console.render(
-            _ProgressMarkdown(
-                self.row.text,
-                code_theme=f"{self.code_foreground or ''}|{self.code_background}",
-            ),
-            options.update_width(content_width),
+        inline_code_style = console.get_style("markdown.code") + Style(
+            bgcolor=self.code_background
         )
-        lines = list(Segment.split_lines(segments))
+        with console.use_theme(
+            Theme({"markdown.code": inline_code_style}, inherit=False)
+        ):
+            segments = console.render(
+                _ProgressMarkdown(
+                    self.row.text,
+                    code_theme=f"{self.code_foreground or ''}|{self.code_background}",
+                ),
+                options.update_width(content_width),
+            )
+            lines = list(Segment.split_lines(segments))
         preserve_background = True
         while lines and not _line_has_content(
             lines[0], preserve_background=preserve_background
