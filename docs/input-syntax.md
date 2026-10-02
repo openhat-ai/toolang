@@ -26,10 +26,11 @@ ChatInput = QuickCommand | RunOverrideHelp | RunOverride + CallInput[str]
   chat input.
 - `RunOverrideHelp` is the terminal-chat-only `:?` interaction. It describes
   colon syntax without creating a run.
-- The runnable branch is valid only when it contains primary or named input. A
-  colon override without runnable input is invalid and never changes the
-  session. Slash setting commands change `SessionSetting` without creating a
-  run.
+- The runnable branch requires primary or named input, or an explicit runnable
+  selection (`:agic`, `:flow`, or `:runnable`). An explicit selection may invoke
+  a runnable with no input; its signature still validates required parameters.
+  Other colon overrides alone are invalid and never change the session. Slash
+  setting commands change `SessionSetting` without creating a run.
 
 Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
 `CallInput[str]`; they do not parse `QuickCommand`. Agic, flow, and prompt
@@ -92,6 +93,11 @@ resolvable unqualified ref. `agic` and `flow` are exact shorthand:
 `default` resets only the generic runnable form. Kind-specific commands treat it
 as a normal name. Colon runnable commands may carry named runnable input, such
 as `:agic review focus=security`; slash runnable commands may not.
+`:flow research` invokes `research` with an empty argument map. It may be
+combined with other overrides, such as `:model effort=high` on a preceding
+line. `:runnable default` invokes the surface default, even if the session has
+selected another runnable. These forms do not synthesize an empty primary
+input; `:flow research -` instead supplies `_` as an empty string.
 
 Allow and limit bodies accept one or more assignments:
 
@@ -227,8 +233,10 @@ inside Script input still support fenced capture. The capture form is
 parser-only state and is not stored in `CallInput[str]`.
 
 Plain run-only parsing permits an empty `CallInput[str]` when the selected
-runnable accepts no primary or named input. A colon override still requires
-primary or named runnable input. Parsing is atomic: any invalid run override,
+runnable accepts empty input. Colon overrides also permit an empty argument map
+when they explicitly select a runnable; missing required input is rejected
+against that runnable's signature. Overrides without an explicit runnable still
+require primary or named input. Parsing is atomic: any invalid run override,
 named input, include, prompt, or coerced value rejects the complete input.
 
 ## Content

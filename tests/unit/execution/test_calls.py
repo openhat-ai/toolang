@@ -58,6 +58,94 @@ def test_parse_call_allows_an_empty_call_without_an_override() -> None:
     assert parse_call("") == (RunOverride(), CallInput())
 
 
+@pytest.mark.parametrize(
+    ("source", "runnable"),
+    [
+        (":agic review", "agic:review"),
+        (":flow research", "flow:research"),
+        (":runnable flow:research", "flow:research"),
+        (":runnable research", "research"),
+        (":runnable default", "default"),
+    ],
+)
+@pytest.mark.parametrize("prefix", ["", ":model effort=high\n"])
+def test_parse_call_allows_empty_input_for_explicit_runnable(
+    source: str, runnable: str, prefix: str
+) -> None:
+    assert parse_call(prefix + source) == (
+        RunOverride(
+            runnable=runnable,
+            model=ModelOverride(effort="high") if prefix else None,
+        ),
+        CallInput(),
+    )
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("signature", ["()", "(topic?: Text)"])
+@pytest.mark.parametrize("selector", ["explicit", "default"])
+def test_empty_colon_call_executes_without_primary_input(
+    tmp_path, kind: str, signature: str, selector: str
+) -> None:
+    body = "run worker" if kind == "flow" else "user: Complete the task."
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            f"{kind} work{signature}:\n  {body}\n\n"
+            "agic worker():\n  user: Complete the task.\n"
+        ),
+        responses=(ModelCallResult(message=Message.assistant("done")),),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            source = f":{kind} work" if selector == "explicit" else ":runnable default"
+            override, input = parse_call(source)
+            spec = resolve_spec(
+                override,
+                input,
+                setup=harness.setup,
+                state=harness.state,
+                thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                default_runnable=f"{kind}:work",
+            )
+            assert spec.input == CallInput()
+            assert spec.authored_input == CallInput()
+            result = await harness.executor.run(spec)
+            assert result.status == "succeeded", result.error
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize(
+    ("signature", "message"),
+    [
+        ("(_: Text)", "work requires primary input"),
+        ("(topic: Text)", "missing named inputs for work: topic"),
+    ],
+)
+def test_empty_colon_call_reports_missing_required_input(
+    tmp_path, kind: str, signature: str, message: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path, source=f"{kind} work{signature}:\n  pass\n", responses=[]
+    )
+    try:
+        override, input = parse_call(f":{kind} work")
+        with pytest.raises(ValueError, match=message):
+            resolve_spec(
+                override,
+                input,
+                setup=harness.setup,
+                state=harness.state,
+                thread="term_test",
+                default_runnable=f"{kind}:work",
+            )
+    finally:
+        harness.store.close()
+
+
 def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
     tmp_path,
 ) -> None:

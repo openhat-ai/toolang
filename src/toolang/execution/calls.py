@@ -66,7 +66,7 @@ def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
     body = _strip_final_line_break(source)
     override, call_input = parse_policy_prefix(body)
     input = parse_input(call_input)
-    if not override.empty and not input:
+    if not override.empty and override.runnable is None and not input:
         raise ValueError("colon override requires runnable input")
     return override, input
 

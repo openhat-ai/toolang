@@ -83,7 +83,10 @@ from toolang.cli.toolang.commands.chat.base import (
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.input import QuickCommand
-from toolang.cli.toolang.commands.chat.policy import update_session_setting
+from toolang.cli.toolang.commands.chat.policy import (
+    build_run_request,
+    update_session_setting,
+)
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.common.errors import ToolangError
 from toolang.execution.events import (
@@ -4379,6 +4382,66 @@ def test_chat_thread_creation_error_is_a_submission_error() -> None:
     assert not app.run_in_flight.is_set()
 
 
+@pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.parametrize(
+    ("source", "runnable"),
+    [
+        (":flow research", "flow:research"),
+        (":agic review", "agic:review"),
+        (":runnable default", "agic:chat"),
+    ],
+)
+def test_chat_tui_submits_empty_runnable_call(
+    monkeypatch: Any, busy: bool, source: str, runnable: str
+) -> None:
+    class RunnableClient(FakeClient):
+        def build_request(
+            self,
+            thread_id: str,
+            override: RunOverride,
+            input: CallInput[str],
+            setting: SessionSetting,
+        ) -> RunRequest:
+            return build_run_request(
+                thread_id=thread_id,
+                request_id="term_request",
+                input=input,
+                override=override,
+                setting=setting,
+                surface=self.initial_setting(),
+                resolve_model_ref=lambda ref: ref,
+                resolve_runnable_ref=lambda ref: ref,
+            )
+
+    setting = replace(FakeClient().initial_setting(), runnable="agic:session")
+    app = tui.ChatTuiApp(
+        thread_id="term_test",
+        setting=setting,
+        home="/tmp/agent",
+        input_history=None,
+        client=RunnableClient(),
+    )
+    submitted: list[QueuedCall] = []
+    monkeypatch.setattr(app, "submit_run", submitted.append)
+    if busy:
+        app.active_run_id = "run_busy"
+    source = ":model effort=high\n" + source
+    app.prompt.buffer.text = source
+
+    app.handle_ui_event(ChatUIEvent("submit", source))
+
+    calls = list(app.queue) if busy else submitted
+    assert len(calls) == 1
+    assert calls[0].request.runnable == RunnableRequest(runnable, CallInput())
+    assert calls[0].request.model == ModelRequest(
+        "openai/gpt-5", reasoning=Reasoning(effort="high")
+    )
+    assert app.setting == setting
+    assert app.prompt.buffer.text == ""
+    assert app.prompt.history.get_strings() == [source]
+    assert app.status_bar.error_message == ""
+
+
 def test_chat_queue_captures_settings_at_submission_time() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
@@ -5242,7 +5305,7 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
         (":missing value", "Unknown run override :missing · See :? for help"),
         (
             ":model effort=high",
-            "Include primary or named input with the override · See :? for help",
+            "Include primary or named input, or select a runnable · See :? for help",
         ),
     ],
 )

@@ -362,6 +362,8 @@ def test_run_override_help_covers_all_operations_and_input_forms() -> None:
     for expected in (
         "session defaults stay unchanged",
         "primary or named input",
+        "explicitly select a runnable",
+        "No input: :flow research",
         ":agic NAME",
         ":flow NAME",
         "max_output=POSITIVE_INT|auto",

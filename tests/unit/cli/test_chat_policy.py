@@ -251,7 +251,7 @@ def test_run_override_errors_add_contextual_help_guidance() -> None:
     )
     assert run_override_error(
         ":model effort=high", "colon override requires runnable input"
-    ) == ("Include primary or named input with the override · See :? for help")
+    ) == ("Include primary or named input, or select a runnable · See :? for help")
     assert run_override_error(":model effort=extreme\nhello", "invalid effort.") == (
         "invalid effort · See :? for help"
     )

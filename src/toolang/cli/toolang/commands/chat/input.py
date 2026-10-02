@@ -64,7 +64,7 @@ def parse_chat_input(chat_input: str) -> ChatInput:
         if combined is not None:
             raise ValueError("slash command cannot be combined with other input")
     runnable_input = parse_input(call_input)
-    if not runnable_input:
+    if not runnable_input and override.runnable is None:
         if not override.empty:
             raise ValueError("colon override requires runnable input")
         raise ValueError("chat input is empty")
