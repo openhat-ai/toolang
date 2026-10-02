@@ -8,8 +8,8 @@ Script and Chat consistent. This supersedes the code-surface decisions in
 ## Goal and scope
 
 Make inline code distinguishable without adding spaces or changing wrapping.
-Chat and Script code backgrounds depend only on the terminal background, independently of
-its default foreground. Input/queue colors, text attributes, and ANSI syntax
+Chat and Script code backgrounds depend only on the terminal background,
+independently of its default foreground. Input/queue colors, text attributes, and ANSI syntax
 highlighting retain their existing behavior.
 
 ## Design
@@ -29,18 +29,21 @@ highlighting retain their existing behavior.
 - Script local/remote execution and retry/rerun resolve the same palette once
   at command orchestration, before starting run output, using loaded runtime
   environment and stderr as the output stream. Quiet execution does not probe.
-- Script's presenter and console receive concrete surfaces without performing
-  terminal I/O. All live and committed Markdown paths pass both backgrounds
+- Script's presenter and console receive concrete surfaces without probing
+  the terminal. All live and committed Markdown paths pass both backgrounds
   and inherit the terminal foreground, matching Chat. TTY output uses truecolor;
   non-TTY output remains uncolored. The shared resolver only probes when stdin
   and stderr are the same TTY with no pending input.
 - Retain the existing input/queue derivation, including its historical weak
-  surface reference used for compression and quantization.
+  surface reference used for compression and quantization. Keep this helper
+  independent of the code-contrast constants so future code tuning cannot
+  change input/queue colors.
 
 ## Touchpoints
 
 `terminal_surfaces.py` owns palette derivation and configuration. Script and
-thread command entry points resolve colors for the Script presenter/console. Chat's TUI,
+thread command entry points resolve colors for the Script presenter/console.
+Chat's TUI,
 presenter, and blocks pass colors into `human_values.py` and shared execution
 progress rendering. Focused terminal-surface, Markdown, and Chat tests cover the
 policy and propagation. Update `docs/execution-presentation.md` to describe
@@ -53,7 +56,8 @@ is not part of the production change.
   including low-contrast black and white themes.
 - Quantized colors approximate the contrast targets; inline is stronger than
   block. Black produces #0b0b0b/#151515; white produces #f9f9f9/#efefef.
-- Input/queue outputs remain unchanged, including low-contrast/tinted themes.
+- Input/queue outputs remain unchanged, including low-contrast/tinted themes
+  and when the code-contrast constants change.
 - Paragraph, list, quote, and table inline spans receive only the background
   override. Fences use their separate background, wrapping/text are unchanged,
   and the console theme is restored after rendering.

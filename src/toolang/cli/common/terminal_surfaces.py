@@ -99,43 +99,7 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
 
     fg = _parse_hex_rgb(foreground)
     bg = _parse_hex_rgb(background)
-    minimum_text = min(MINIMUM_TEXT_CONTRAST, _contrast(fg, bg))
-    # Preserve the historical reference for input/queue compression. Code
-    # surfaces are derived independently below.
-    code_target = (
-        NEAR_BLACK_CODE_CONTRAST
-        if _luminance(fg) > _luminance(bg) and _luminance(bg) <= NEAR_BLACK_LUMINANCE
-        else DEFAULT_CODE_CONTRAST
-    )
-    input_amount, queue_amount, code_amount = (
-        _surface_mix_amount(bg, fg, target)
-        for target in (DEFAULT_INPUT_CONTRAST, DEFAULT_QUEUE_CONTRAST, code_target)
-    )
-    scale = _readable_mix_scale(
-        bg,
-        fg,
-        maximum=input_amount,
-        minimum_text=minimum_text,
-    )
-    if scale < 1:
-        # Compress the strengths together instead of clamping them to one color.
-        readable_input = input_amount * scale
-        if readable_input > code_amount:
-            interval_scale = (readable_input - code_amount) / (
-                input_amount - code_amount
-            )
-            input_amount = readable_input
-            queue_amount = code_amount + (queue_amount - code_amount) * interval_scale
-        else:
-            input_amount *= scale
-            queue_amount *= scale
-            code_amount *= scale
-    _, queue_color, input_color = _ordered_surface_colors(
-        bg,
-        fg,
-        amounts=(code_amount, queue_amount, input_amount),
-        minimum_text=minimum_text,
-    )
+    input_color, queue_color = _input_queue_backgrounds(bg, fg)
     return TerminalSurfaces(
         input_background=_hex_rgb(input_color),
         queue_background=_hex_rgb(queue_color),
@@ -149,6 +113,49 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
             bg, DEFAULT_INLINE_CODE_CONTRAST
         ),
     )
+
+
+def _input_queue_backgrounds(bg: RGB, fg: RGB) -> tuple[RGB, RGB]:
+    """Keep input and queue text readable without coupling them to code colors."""
+
+    minimum_text = min(MINIMUM_TEXT_CONTRAST, _contrast(fg, bg))
+    # Preserve the historical weak reference for compression and quantization.
+    # These values are independent of the code-surface contrast policy.
+    reference_target = (
+        1.07 if _luminance(fg) > _luminance(bg) and _luminance(bg) <= 0.005 else 1.05
+    )
+    input_amount, queue_amount, reference_amount = (
+        _surface_mix_amount(bg, fg, target)
+        for target in (DEFAULT_INPUT_CONTRAST, DEFAULT_QUEUE_CONTRAST, reference_target)
+    )
+    scale = _readable_mix_scale(
+        bg,
+        fg,
+        maximum=input_amount,
+        minimum_text=minimum_text,
+    )
+    if scale < 1:
+        # Compress the strengths together instead of clamping them to one color.
+        readable_input = input_amount * scale
+        if readable_input > reference_amount:
+            interval_scale = (readable_input - reference_amount) / (
+                input_amount - reference_amount
+            )
+            input_amount = readable_input
+            queue_amount = (
+                reference_amount + (queue_amount - reference_amount) * interval_scale
+            )
+        else:
+            input_amount *= scale
+            queue_amount *= scale
+            reference_amount *= scale
+    _, queue_color, input_color = _ordered_surface_colors(
+        bg,
+        fg,
+        amounts=(reference_amount, queue_amount, input_amount),
+        minimum_text=minimum_text,
+    )
+    return input_color, queue_color
 
 
 def _code_surface_background(background: RGB, target: float) -> str:

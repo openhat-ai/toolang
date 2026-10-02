@@ -467,3 +467,26 @@ def test_input_queue_reference_colors_are_unchanged(
     )
     assert palette.input_background == input_color
     assert palette.queue_background == queue_color
+
+
+@pytest.mark.parametrize(
+    ("foreground", "background"),
+    [("#e8dd50", "#045baa"), ("#93a1a1", "#002b36"), ("#777777", "#000000")],
+)
+def test_code_contrast_policy_does_not_change_input_queue(
+    monkeypatch: pytest.MonkeyPatch, foreground: str, background: str
+) -> None:
+    before = surfaces.derive_terminal_surfaces(
+        foreground=foreground, background=background
+    )
+    monkeypatch.setattr(surfaces, "DEFAULT_CODE_CONTRAST", 1.10)
+    monkeypatch.setattr(surfaces, "NEAR_BLACK_CODE_CONTRAST", 1.10)
+    monkeypatch.setattr(surfaces, "DEFAULT_INLINE_CODE_CONTRAST", 1.20)
+    after = surfaces.derive_terminal_surfaces(
+        foreground=foreground, background=background
+    )
+
+    assert after.code_background != before.code_background
+    assert after.inline_code_background != before.inline_code_background
+    assert after.input_background == before.input_background
+    assert after.queue_background == before.queue_background
