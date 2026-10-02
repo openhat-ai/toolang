@@ -35,8 +35,8 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
-_SCRIPT_CODE_BACKGROUND = "bright_black"
-_SCRIPT_CODE_FOREGROUND = "bright_white"
+_DEFAULT_CODE_BACKGROUND = "bright_black"
+_DEFAULT_CODE_FOREGROUND = "bright_white"
 
 
 class _ProgressCodeTheme(SyntaxTheme):
@@ -246,17 +246,22 @@ def progress_block_renderable(
     *,
     live: bool,
     max_width: int,
-    code_background: str = _SCRIPT_CODE_BACKGROUND,
-    code_foreground: str | None = _SCRIPT_CODE_FOREGROUND,
+    code_background: str = _DEFAULT_CODE_BACKGROUND,
+    inline_code_background: str | None = None,
+    code_foreground: str | None = _DEFAULT_CODE_FOREGROUND,
 ) -> RenderableType:
     """Render one semantic progress block with shared wrapping and Markdown."""
 
+    inline_code_background = (
+        code_background if inline_code_background is None else inline_code_background
+    )
     rows = (
         _row_renderable(
             row,
             live=live,
             max_width=max_width,
             code_background=code_background,
+            inline_code_background=inline_code_background,
             code_foreground=code_foreground,
         )
         for row in block.rows
@@ -270,6 +275,7 @@ def _row_renderable(
     live: bool,
     max_width: int,
     code_background: str,
+    inline_code_background: str,
     code_foreground: str | None,
 ) -> RenderableType:
     if row.leader in {"hyphen", "handoff"}:
@@ -281,6 +287,7 @@ def _row_renderable(
             row,
             max_width=max_width,
             code_background=code_background,
+            inline_code_background=inline_code_background,
             code_foreground=code_foreground,
         )
     else:
@@ -758,6 +765,7 @@ class _MarkdownRow:
     row: ProgressRow
     max_width: int
     code_background: str
+    inline_code_background: str
     code_foreground: str | None
 
     def __rich_console__(
@@ -770,7 +778,7 @@ class _MarkdownRow:
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
         inline_code_style = console.get_style("markdown.code", default="none") + Style(
-            bgcolor=self.code_background
+            bgcolor=self.inline_code_background
         )
         with console.use_theme(
             Theme({"markdown.code": inline_code_style}, inherit=False)

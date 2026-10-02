@@ -649,43 +649,54 @@ scrollback and retaining only replaceable fragments in its live container.
 
 Model and result Markdown leaves ordinary text on the terminal's default
 foreground and background. Semantic styles use named ANSI colors, so the
-terminal theme owns their actual RGB values. Inline code uses bold ANSI cyan
-text on the terminal's default background, distinguishing it from ordinary bold
-text without isolated background spans around short identifiers.
-In Script, fenced code uses ANSI slot 15 text on an ANSI slot 8 background with
-Rich's `ansi_dark` token palette. In interactive Chat, its base text inherits
-the terminal foreground and its background uses Code. Both paths retain the
-named ANSI syntax-token colors. Top and bottom padding, trailing background
-cells, and authored blank lines remain one rectangular surface.
+terminal theme owns their actual RGB values. Inline code retains Rich's
+Markdown text style (bold ANSI cyan by default) with an explicit background.
+Both Chat and Script derive a stronger inline background from the terminal
+background. Inline spans add no padding. In both modes, fenced-code base text
+inherits the terminal foreground and its background uses Code. Both retain
+Rich's `ansi_dark` named ANSI syntax-token colors. Top and bottom padding,
+trailing background cells, and authored blank lines remain one rectangular
+surface.
 
 Chat preserves terminal-default and 16-color ANSI identities through both its
-live prompt_toolkit path and stable scrollback path. Script uses the same
-identities on a TTY and continues to emit no color for non-TTY output.
+live prompt_toolkit path and stable scrollback path. Script uses the same ANSI
+identities and truecolor background fills on a TTY and continues to emit no
+color for non-TTY output.
 
 Interactive Chat resolves one concrete palette before prompt_toolkit begins
-reading keyboard input. The public backgrounds are Input, Queue, and Code, in
-that order. Input fills the input box and the non-accent cells of Run, Steer,
-and Quick Command bars. Queue fills the adjacent queue area; a focused queue
-selection uses Input. Code fills fenced-code rectangles. These surfaces assign
-no ordinary foreground: normal text inherits the terminal
-foreground, dim text adds only the dim attribute, and the input cursor uses
-reverse video.
+reading keyboard input. Script resolves the same palette before starting run
+output, including remote execution and retry/rerun. The public backgrounds are
+Input, Queue, and Code, in that order. Input fills the input box and the non-
+accent cells of Run, Steer, and Quick Command bars. Queue fills the adjacent
+queue area; a focused queue selection uses Input. Code fills fenced-code
+rectangles; inline code has a separate derived background. These surfaces
+assign no ordinary foreground: normal text inherits the terminal foreground,
+dim text adds only the dim attribute, and the input cursor uses reverse video.
 
 `TOOLANG_COLOR_SCHEME` accepts case-insensitive `dark` or `light`, or exactly
 three comma-separated `#RRGGBB` values in `input,queue,code` order. An explicit
-value is final and bypasses terminal discovery. Without one, Chat requests the
-terminal's default foreground and background through bounded OSC 10 and 11
-queries when stdin and stdout are the same TTY and no input is pending. A
-complete response derives subtle surfaces from those defaults; unsupported,
-incomplete, or failed queries always use the dark palette. `COLORFGBG` is not
-consulted. Script and non-interactive Chat never probe.
+value is final and bypasses terminal discovery. With three explicit colors, the
+third color fills both fenced and inline code. Without one, both modes request
+the terminal's default foreground and background through bounded OSC 10 and 11
+queries when stdin and the output stream (stdout for Chat, stderr for Script)
+are the same TTY and no input is pending. A complete response derives subtle
+surfaces from those defaults; unsupported, incomplete, or failed queries always
+use the dark palette. `COLORFGBG` is not consulted. Quiet Script execution and
+non-TTY output never probe; non-interactive Chat does not probe either.
 
 The fixed palettes are:
 
-| Scheme | Input | Queue | Code |
-| --- | --- | --- | --- |
-| Dark | `#1f1f1f` | `#121212` | `#0b0b0b` |
-| Light | `#e3e3e3` | `#f2f2f2` | `#f9f9f9` |
+| Scheme | Input | Queue | Code | Inline code |
+| --- | --- | --- | --- | --- |
+| Dark | `#1f1f1f` | `#121212` | `#0b0b0b` | `#151515` |
+| Light | `#e3e3e3` | `#f2f2f2` | `#f9f9f9` | `#efefef` |
+
+Detected code backgrounds mix the terminal background toward black or white
+(whichever offers greater contrast) in linear RGB. The block contrast target
+is 1.05, or 1.07 for near-black backgrounds with luminance at most 0.005; the
+inline target is 1.15. These targets describe contrast against the terminal
+background, not text readability. Neither code background depends on default
+foreground color. Input and Queue retain their foreground-based contrast cap.
 
 OSC reports RGB colors but not terminal opacity. All resolved surfaces paint
 RGB cells; they do not infer or preserve terminal transparency. A light

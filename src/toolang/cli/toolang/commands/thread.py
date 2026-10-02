@@ -57,6 +57,7 @@ from ...common.agent_server import (
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.run_client import acquire_run_client
 from ...common.script_progress import ScriptRunPresenter
+from ...common.terminal_surfaces import resolve_terminal_surfaces
 
 
 def steer_command(
@@ -427,6 +428,9 @@ async def _execute_retry_or_rerun(
             run_id=run_id,
             operation=kind,
             max_width=resolve_progress_max_width(environ),
+            surfaces=resolve_terminal_surfaces(
+                environment=environ, output_stream=sys.stderr
+            ),
         )
         if show_progress
         else None

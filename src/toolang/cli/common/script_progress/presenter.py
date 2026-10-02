@@ -9,6 +9,7 @@ from typing import TextIO
 
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 
+from ..terminal_surfaces import DARK_TERMINAL_SURFACES, TerminalSurfaces
 from ..execution_progress import ProgressProjector, ProgressBlock, ProgressUpdate
 from ..execution_progress.step_projection import runtime_tool_name, trace_live_rows
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
@@ -28,6 +29,7 @@ class ScriptRunPresenter(RunTracer):
         stream: TextIO | None = None,
         width: int | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
         self.run_id = run_id
         self.operation = operation
@@ -37,6 +39,7 @@ class ScriptRunPresenter(RunTracer):
             stream or sys.stderr,
             width=width,
             max_width=max_width,
+            surfaces=surfaces,
         )
         self._projector = ProgressProjector()
         self._root: RunBlock | None = None

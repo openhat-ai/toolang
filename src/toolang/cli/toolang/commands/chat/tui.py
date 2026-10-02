@@ -388,6 +388,7 @@ class ChatTuiApp:
         self.presenter = ChatRunPresenter(
             max_width=progress_max_width,
             code_background=surfaces.code_background,
+            inline_code_background=surfaces.inline_code_background,
         )
         self._model_effort_applicability: dict[str, bool] = {}
 
@@ -1114,6 +1115,7 @@ class ChatTuiApp:
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
                 code_background=self.surfaces.code_background,
+                inline_code_background=self.surfaces.inline_code_background,
             ).render()
         elif isinstance(content, slashes.SlashTable):
             renderable = blocks.SlashTableBlock(

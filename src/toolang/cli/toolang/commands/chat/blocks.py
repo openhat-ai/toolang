@@ -240,6 +240,7 @@ class ExecutionProgressBlock(MutableBlock):
     live: bool = False
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     code_background: str = DARK_TERMINAL_SURFACES.code_background
+    inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background
 
     def update(self, event: Any) -> None:
         if isinstance(event, ProgressBlock):
@@ -251,6 +252,7 @@ class ExecutionProgressBlock(MutableBlock):
             live=self.live,
             max_width=self.max_width,
             code_background=self.code_background,
+            inline_code_background=self.inline_code_background,
             code_foreground=None,
         )
         if self.live:
@@ -526,6 +528,7 @@ class AssistantResponseBlock(MutableBlock):
     shape: str = ""
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     code_background: str = DARK_TERMINAL_SURFACES.code_background
+    inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background
 
     @classmethod
     def create(
@@ -533,11 +536,13 @@ class AssistantResponseBlock(MutableBlock):
         event: StepEnd,
         *,
         code_background: str = DARK_TERMINAL_SURFACES.code_background,
+        inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background,
     ) -> AssistantResponseBlock:
         return cls(
             text=parts_response_text(output_parts(event)),
             shape=shape_label(event),
             code_background=code_background,
+            inline_code_background=inline_code_background,
         )
 
     @classmethod
@@ -547,11 +552,13 @@ class AssistantResponseBlock(MutableBlock):
         *,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         code_background: str = DARK_TERMINAL_SURFACES.code_background,
+        inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background,
     ) -> AssistantResponseBlock:
         return cls(
             text=parts_response_text(parts),
             max_width=max_width,
             code_background=code_background,
+            inline_code_background=inline_code_background,
         )
 
     def update(self, event: Any) -> None:
@@ -563,6 +570,7 @@ class AssistantResponseBlock(MutableBlock):
                 self.text,
                 max_width=self.max_width,
                 code_background=self.code_background,
+                inline_code_background=self.inline_code_background,
                 code_foreground=None,
             )
         if self.shape:
@@ -580,6 +588,7 @@ class SlashResultBlock:
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
     code_background: str = DARK_TERMINAL_SURFACES.code_background
+    inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background
 
     def render(self) -> RenderableType:
         return self
@@ -594,6 +603,7 @@ class SlashResultBlock:
             self.parts,
             max_width=self.max_width,
             code_background=self.code_background,
+            inline_code_background=self.inline_code_background,
         ).render()
         lines = [
             *_slash_control_lines(

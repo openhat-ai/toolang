@@ -42,6 +42,7 @@ from toolang.lang.input import CallInput, parse_input
 from toolang.lang.types import display_runnable_ref
 from toolang.plugin.models.query import first_model_ref
 
+from ...common.terminal_surfaces import resolve_terminal_surfaces
 from ...common.context import load_runtime_environ
 from ...common.workspaces import (
     WorkspaceOptions,
@@ -873,6 +874,11 @@ async def _execute_remote(
     environ = load_runtime_environ(layout, base_environ=os.environ)
     request_input = _remote_script_input(input, raw_named=raw_named)
     progress_width = None if quiet else resolve_progress_max_width(environ)
+    surfaces = (
+        None
+        if quiet
+        else resolve_terminal_surfaces(environment=environ, output_stream=sys.stderr)
+    )
     tracer: ScriptRunPresenter | None = None
     async with httpx.AsyncClient(
         transport=transport,
@@ -924,10 +930,12 @@ async def _execute_remote(
                 http, client.endpoint, request, procdir=Path.cwd()
             )
             if progress_width is not None:
+                assert surfaces is not None
                 tracer = ScriptRunPresenter(
                     run_id=None,
                     context=RunContext(request.runnable.ref, request.model),
                     max_width=progress_width,
+                    surfaces=surfaces,
                 )
             handle = await client.run(
                 request,
@@ -1240,6 +1248,12 @@ async def _execute(
         ),
     )
     executor.validate(spec)
+    progress_width = None if quiet else resolve_progress_max_width(environ)
+    surfaces = (
+        None
+        if quiet
+        else resolve_terminal_surfaces(environment=environ, output_stream=sys.stderr)
+    )
     thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
     spec = replace(spec, thread=thread)
     if spec.bindings.runnable is None:
@@ -1248,9 +1262,10 @@ async def _execute(
         ScriptRunPresenter(
             run_id=run_id,
             context=RunContext(spec.bindings.runnable, spec.model_request),
-            max_width=resolve_progress_max_width(environ),
+            max_width=progress_width,
+            surfaces=surfaces,
         )
-        if not quiet
+        if progress_width is not None and surfaces is not None
         else None
     )
     executor.start()
