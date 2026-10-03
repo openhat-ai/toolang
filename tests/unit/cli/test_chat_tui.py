@@ -1008,7 +1008,7 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
         ProgressBlock(
             "step:run_1.0.0",
             (
-                ProgressRow("--- iteration 1 of 3 ---"),
+                ProgressRow("1/3", leader="iteration"),
                 ProgressRow(""),
                 ProgressRow("[0] Run review"),
                 ProgressRow(""),
@@ -1025,7 +1025,9 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
 
     transcript = _render_text(header.render()) + _render_text(model.render())
 
-    assert "--- iteration 1 of 3 ---\n\n[0] Run review" in transcript
+    assert transcript.startswith("───")
+    assert " 1/3 ─" in transcript
+    assert "─\n\n[0] Run review" in transcript
     assert "[0] Run review\n\n• Thinking" in transcript
     assert "[0] Run review\n\n\n• Thinking" not in transcript
 

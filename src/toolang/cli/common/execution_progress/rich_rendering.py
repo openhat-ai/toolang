@@ -278,8 +278,8 @@ def _row_renderable(
     inline_code_background: str,
     code_foreground: str | None,
 ) -> RenderableType:
-    if row.leader in {"hyphen", "handoff"}:
-        renderable: RenderableType = _HyphenDividerRow(row, max_width=max_width)
+    if row.leader in {"run", "handoff", "iteration"}:
+        renderable: RenderableType = _DividerRow(row, max_width=max_width)
     elif row.format == "plain" and row.right_text:
         renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
     elif row.format == "markdown":
@@ -553,8 +553,8 @@ class _TwoEndedPlainRow:
 
 
 @dataclass(frozen=True, slots=True)
-class _HyphenDividerRow:
-    """Render Run and execute boundaries with elastic borders."""
+class _DividerRow:
+    """Render execution boundaries with shared thin rules and aligned captions."""
 
     row: ProgressRow
     max_width: int
@@ -572,12 +572,20 @@ class _HyphenDividerRow:
             yield from self._header(width)
 
     def _header(self, width: int) -> RenderResult:
-        caption = self.row.text.removeprefix("---  ")
+        rule_width = width - display_width(self.row.text) - 2
+        if self.row.leader == "iteration" and rule_width >= 6:
+            left_width = rule_width // 2
+            yield Text(
+                f"{'─' * left_width} {self.row.text} {'─' * (rule_width - left_width)}",
+                style="dim",
+                no_wrap=True,
+            )
+            return
         yield from self._left_boundary(
             width,
-            prefix="---  " if self.row.leader == "handoff" else "╓ ",
-            character="-" if self.row.leader == "handoff" else "─",
-            content=caption,
+            prefix="┌ " if self.row.leader == "run" else "- ",
+            character="─",
+            content=self.row.text,
             border_style="dim",
         )
 
@@ -641,9 +649,9 @@ class _HyphenDividerRow:
             yield line
 
     def _footer(self, width: int) -> RenderResult:
-        prefix = "╙ "
+        prefix = "└ "
         prefix_width = display_width(prefix)
-        border_style = _terminal_status_color(self.row.right_status) or "dim"
+        border_style = "dim"
         facts = " · ".join(self.row.facts)
         left = f"{prefix}{facts}"
         right = self.row.right_status
@@ -683,7 +691,7 @@ class _HyphenDividerRow:
             for status_line in wrap_display(self.row.right_status, width):
                 yield Text(
                     status_line,
-                    style="dim",
+                    style=terminal_status_style(self.row.right_status),
                     no_wrap=True,
                 )
             for identity_line in wrap_display(self.row.right_identity, width):
@@ -729,7 +737,7 @@ class _HyphenDividerRow:
             line = Text(indent, style="dim", no_wrap=True)
             line.append(
                 status_line,
-                style="dim",
+                style=terminal_status_style(self.row.right_status),
             )
             yield line
         if self.row.right_identity:
@@ -744,7 +752,9 @@ class _HyphenDividerRow:
                 )
 
     def _append_right(self, line: Text) -> None:
-        line.append(self.row.right_status, style="dim")
+        line.append(
+            self.row.right_status, style=terminal_status_style(self.row.right_status)
+        )
         if self.row.right_identity:
             line.append(f" {self.row.right_identity}", style="dim")
 

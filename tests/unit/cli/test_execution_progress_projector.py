@@ -1137,7 +1137,8 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
     assert terminal.committed == ()
 
 
-def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
+@pytest.mark.parametrize("count", [3, None])
+def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) -> None:
     reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
@@ -1150,11 +1151,16 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
         StepBegin(
             step=StepRef.parse("run_root.2"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
+            given=RepeatStmt(span=SPAN, count=count, runnable="completion_check"),
         )
     )
     assert _rows(repeat_header.committed) == [
-        ["[2] Repeat up to 3 times, until completion_check is true", ""]
+        [
+            "[2] Repeat "
+            + ("up to 3 times, " if count is not None else "")
+            + "until completion_check is true",
+            "",
+        ]
     ]
     iteration_header = reducer.handle(
         StepBegin(
@@ -1162,13 +1168,19 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             kind="run",
             given=RunStmt(span=SPAN, runnable="review"),
             occurrence=Occurrence(
-                iteration=IterationOccurrence(index=0, count=3, phase="body")
+                iteration=IterationOccurrence(index=0, count=count, phase="body")
             ),
         )
     )
     assert _rows(iteration_header.committed) == [
-        ["--- iteration 1 of 3 ---", "", "[0] Run review", ""]
+        [
+            "1/3" if count is not None else "1",
+            "",
+            "[0] Run review",
+            "",
+        ]
     ]
+    assert iteration_header.committed[0].rows[0].leader == "iteration"
     reducer.handle(
         RunBegin(
             run="run_review",
@@ -1176,7 +1188,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             control=ControlRef.for_run("run_review", 0),
             runnable="agic:review",
             occurrence=Occurrence(
-                iteration=IterationOccurrence(index=0, count=3, phase="body")
+                iteration=IterationOccurrence(index=0, count=count, phase="body")
             ),
         )
     )
@@ -2128,7 +2140,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         )
     )
 
-    assert _rows(live.committed) == [["--- iteration 1 of 2 ---", ""]]
+    assert _rows(live.committed) == [["1/2", ""]]
     assert _rows(live.live) == [["• Thinking"]]
     assert live.committed[0].gap_before is False
     assert live.live[0].gap_before is False

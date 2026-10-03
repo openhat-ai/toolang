@@ -193,9 +193,9 @@ agic child() -> Text:
             assert projector._root_ended
             if outcome == "succeeded":
                 assert len(handoffs) == 1
-                assert handoffs[0].text == f"---  execute {target}"
+                assert handoffs[0].text == f"Execute {target}"
                 if target_kind == "agic":
-                    assert any(row.text == "---  run agic:child" for row in rows)
+                    assert any(row.text == "Run agic:child" for row in rows)
                     child = harness.store.list_run_tree(root_run_id=root.id)[1]
                     assert any(row.right_identity == child.id for row in rows)
                 else:
