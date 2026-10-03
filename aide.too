@@ -1,7 +1,7 @@
 #!/usr/bin/env too
 
 ## Generate CHANGELOG.md following Keep a Changelog 1.1.0.
-agic changelog(since?: Text):
+agic update_changelog(since?: Text):
   Read the repository guidance, release tags, and history. First check whether
   CHANGELOG.md exists in the current worktree. If it exists, read and update it.
   If it is absent, generate it anew from the selected commit range and current

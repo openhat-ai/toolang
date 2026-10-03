@@ -85,9 +85,10 @@ applies, raise the ambiguity and ask the human before proceeding.
 - In each relevant pull request, update `Unreleased` for user-visible behavior,
   compatibility, and important fixes. Omit internal-only refactors, tests, CI,
   and empty categories.
-- Generate changelog updates with `too aide.too changelog`, or select a baseline
-  with `too aide.too changelog since=v0.3.4`. Have a maintainer verify every entry
-  against the rules above before merge; make corrections through the runnable.
+- Generate changelog updates with `too aide.too update_changelog`, or select a
+  baseline with `too aide.too update_changelog since=v0.3.4`. Have a maintainer
+  verify every entry against the rules above before merge; make corrections
+  through the runnable.
 - Preserve existing records and prepend new information. Change old entries only
   to correct verified factual errors or necessary migration guidance, and report
   the reason for each correction. If the record is complete and accurate, skip
