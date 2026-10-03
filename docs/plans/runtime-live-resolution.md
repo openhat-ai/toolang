@@ -1,6 +1,6 @@
 # Live State resolution
 
-Definition only: apply published agent, flow, and cap updates to ongoing Runs
+Apply published agent, flow, and cap updates to ongoing Runs
 while keeping active code stable. This replaces binding, resource-freezing,
 and lineage rules in [latest-State binding](revision-refresh-calls.md) and
 [Flow exec](flow-exec.md).
@@ -38,6 +38,12 @@ Their unrelated lifecycle rules remain. Syntax belongs to the separate
    runnable invocations from its response use rule 3. Later boundaries may see
    newer State. Record code bindings and model-call dependency State separately
    for inspection/restoration; never substitute current data for past data.
+
+`Step.state` keeps its code-binding control reference. Rename
+`ModelStepGiven.catalog_state` and `StoredModelStepGiven.catalog_state` to `state`:
+this revision identifies the complete dependency snapshot for that model call.
+Keep event, storage, and inspection codecs aligned; restore recorded calls
+without resolving current resources.
 
 Apply the same reentry check to every invocation: `run`, `exec`, `map`, other
 collection/helper calls, inline agics, and runtime tools. Keep captured Setup,
@@ -86,13 +92,26 @@ versioned names. Neither stage can return to an ancestor through a child Run.
 
 ## Implementation and limits
 
-Current code freezes dependencies and blocks historical handoff identities.
-Change shared resolution and frame preparation in
+Implement in this order:
+
+1. Consume `tree-sitter-toolang` 0.3.4 and support named/inline `ExecStmt` in
+   `src/toolang/lang/`, including lowering, validation, and formatting.
+2. Execute Flow exec through the shared same-Run replacement mechanism.
+3. Unify runnable resolution and branch-path checks for authored and model calls.
+4. Resolve resources from each model call's latest State using pinned directive
+   rules, their module scopes, and external authority ceilings.
+5. Rename `_toolang/execute` to `_toolang/exec` and update its protocol.
+6. Record code and model-call States using the fields above; update storage,
+   event, and inspection codecs together.
+7. Complete the Step/Event lifecycle in [Flow exec](flow-exec.md), including
+   repeat closure, failure handling, and consistent live/history presentation.
+
+Shared resolution and frame preparation belong in
 `src/toolang/execution/executor/{executor,resources,frame,tool_runtime}.py` and
-`runs/agic.py`; update records/store/schema and focused execution tests as needed.
-Keep publication/visibility in `src/toolang/state/` and contract checks in
-`src/toolang/lang/contracts.py`.
+`runs/agic.py`. Keep publication/visibility in `src/toolang/state/` and contract
+checks in `src/toolang/lang/contracts.py`. Add deterministic acceptance tests
+alongside each change, then run the repository's default verification.
 
 Valid intermediate States may publish between file writes; this is not a
 multi-file transaction. Incompatible updates can fail a future call. No open
-semantic alternatives; implementation and acceptance tests are a separate change.
+semantic alternatives.
