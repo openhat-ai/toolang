@@ -1,10 +1,9 @@
 # Flow exec and runtime exec naming
 
-Follow-up definitions: [live State resolution](runtime-live-resolution.md)
-replaces binding, resource-freezing, and lineage rules below; the separate
-[grammar plan](https://github.com/openhat-ai/tree-sitter-toolang/pull/41)
-replaces target syntax with named runnables and inline agics, excluding dynamic
-target expressions. Unrelated handoff and presentation rules remain unchanged.
+Target syntax follows the separate
+[grammar plan](https://github.com/openhat-ai/tree-sitter-toolang/pull/41).
+Binding and resource selection follow [live State resolution](runtime-live-resolution.md).
+This definition covers handoff lifecycle, tool naming, and presentation.
 
 ## Goal and scope
 
@@ -21,28 +20,21 @@ Grammar implementation belongs in a separate `openhat-ai/tree-sitter-toolang` PR
 ## Syntax and binding
 
 ```too
-exec grow_v2
-exec {{successor}}
-exec {{next.runnable}}
+exec grow
+exec: Complete the remaining work.
+exec -> Text:
+  Complete the remaining work and return the result.
 ```
 
-- Allow exec directly in Flow and repeat bodies. It has no result binding,
-  inline body, argument-list syntax, or modifiers; both `let x = exec ...` and
-  `let exec ...` are invalid. Successful exec skips all remaining old statements.
-- Literal targets use the existing named-runnable token. Dynamic targets accept
-  exactly one `{{path}}`: a local, including `_`, followed by optional dotted
-  fields. Permit horizontal whitespace inside braces. No multiline references,
-  mixed text, expressions, or prompt expansion. The selected value must be
-  nonempty Text containing an existing runnable-reference form.
-- Flow exec captures the latest published State once at acceptance and uses it
-  for resolution, input validation, and binding. The target may have been added
-  after the old Flow was accepted; do not require it in the old program.
-- Literal targets carry authored-call authority, like `run`. Dynamic targets
-  must match explicit or inherited `handoffs`; `none` or user-requested-only
-  authority is insufficient for autonomous dispatch. Preserve module visibility
-  and generated-target restrictions.
-- Bind only the target's declared inputs from current locals, using named-`run`
-  rules and preserving typed provenance. Missing or incompatible inputs fail
+- Allow exec directly in Flow and repeat bodies, with named runnable or inline
+  agic targets as in `run`. It has no result binding, argument-list syntax, or
+  modifiers; both `let x = exec ...` and `let exec ...` are invalid. Named targets
+  cannot introduce inline bodies. Success skips all remaining old statements.
+- Apply the shared runtime identity, State, visibility, and branch-path checks.
+  Authored targets carry the same authority as authored `run` calls; inline
+  targets retain their containing code.
+- Bind inputs from current locals using the corresponding `run` rules and
+  preserving typed provenance. Missing or incompatible inputs fail
   before handoff. Lower to a typed `ExecStmt`; runtime must not reparse source.
 
 ## Handoff and records
@@ -50,15 +42,15 @@ exec {{next.runnable}}
 The [shared executor](../../src/toolang/execution/executor/executor.py) already
 supports agic/Flow replacement. Reuse it through these two frontends:
 
-| Frontend | State and input |
+| Frontend | Input |
 | --- | --- |
-| Flow `exec` | Latest published State at acceptance; selected Flow locals. |
-| `_toolang/exec` | Existing advertised catalog snapshot; `{runnable, input}`. |
+| Flow `exec` | Selected Flow locals. |
+| `_toolang/exec` | `{runnable, input}`. |
 
-Preserve Run ID, parent, thread, captured Setup, effective resource ceiling,
+Preserve Run ID, parent, thread, captured Setup, external authority ceilings,
 root accounting, and the original entry output contract. Start the successor
-from its entry with its selected State and bound inputs. Current/ancestor lineage
-reentry, including earlier handoff targets, remains forbidden. Existing agic-local
+from its entry with its selected binding and inputs. Reject current/ancestor
+targets on the calling branch's path; earlier handoffs do not block calls. Agic-local
 counter resets and Run retry/rerun rules remain unchanged.
 
 - Add an `exec` Step kind whose `given` is `ExecStmt`, with no output. Its terminal
@@ -110,8 +102,8 @@ reset or double counting. Apply the same rules in Script, Chat, and inspection.
 ## Separate grammar PR and implementation touchpoints
 
 In [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang), add
-`exec_statement` with `target: runnable | exec_target_reference`; the reference
-exposes `path`. Add `flow_exec_keyword` and scanner recognition at Flow structural
+`exec_statement` with `target: runnable | inline_agic`.
+Add `flow_exec_keyword` and scanner recognition at Flow structural
 boundaries. Explicit text and prefixes such as `executor` stay unchanged. Keep
 exec out of bindable operations and prevent invalid exec from recovering as prose.
 
@@ -131,13 +123,13 @@ remain separate; Toolang updates the published dependency and consumers together
 
 Acceptance tests must cover:
 
-1. Target syntax/format/AST round trips and precise invalid-form diagnostics;
-   a successor published after Flow acceptance resolves from the captured State.
+1. Named/inline syntax, format, and AST round trips with precise invalid-form
+   diagnostics; target binding follows the live-resolution acceptance scenarios.
 2. Flow-to-Flow, Flow-to-Agic, and Agic-to-Flow transfers preserve identity,
    provenance, resource limits, accounting, and original output validation.
 3. Nested repeats close exactly once and skip remaining body/until statements;
    the enclosing parent Run keeps waiting and later resumes normally.
-4. Invalid targets/inputs, unauthorized dynamic routes, and lineage reentry
+4. Invalid targets/inputs, unauthorized routes, and current/ancestor calls
    commit no transfer. Failure injection verifies atomic native handoff records
    and cancellation behavior after commit.
 5. `_toolang__exec` retains the receipt and one-call rules; the old name is neither

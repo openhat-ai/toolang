@@ -22,7 +22,7 @@ Their unrelated lifecycle rules remain. Syntax belongs to the separate
    Referenced content can change while its selecting directive stays fixed.
 3. At a named invocation, establish target identity from the accepted caller's
    definitions or the current model call's advertised catalog. The name must
-   already exist there; no dynamic target expressions are added. Reject the
+   already exist there. Reject the
    current runnable or any ancestor, regardless of revision; omit these targets
    from advertisements. For other targets, capture latest published State once
    and resolve there. Preserve visibility, existing signature checks against
