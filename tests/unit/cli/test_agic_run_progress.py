@@ -172,7 +172,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     assert len(header.committed) == 1
     assert header.live == ()
     assert header.committed[0].rows == (
-        ProgressRow("---  run agic:summarize", leader="hyphen"),
+        ProgressRow("Run agic:summarize", leader="run"),
         ProgressRow(""),
     )
     projector.handle(
@@ -217,8 +217,8 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
 
     assert len(footer.committed) == 1
     row = footer.committed[0].rows[0]
-    assert row.text == "---  "
-    assert row.leader == "hyphen"
+    assert row.text == ""
+    assert row.leader == "run"
     assert row.facts == ("2s", "1 run 1 model", "↑4 ↓2")
     assert row.right_status == "succeeded"
     assert row.right_identity == "run_child"
@@ -303,31 +303,63 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
 
     assert header.committed[0].rows == (
         ProgressRow(
-            "---  execute agic:abc",
+            "Execute agic:abc",
             leader="handoff",
         ),
         ProgressRow(""),
     )
     assert header.live[0].rows == (ProgressRow("• Thinking", "active"),)
     assert re.search(
-        r"---  execute agic:abc -+",
+        r"─ Execute agic:abc ─+",
         _render_progress(header.committed[0], width=72),
     )
 
 
 @pytest.mark.parametrize("width", [1, 4, 5, 16, 72])
-def test_handoff_uses_ascii_hyphens_without_losing_its_target(width: int) -> None:
+def test_handoff_uses_thin_rules_without_losing_its_target(width: int) -> None:
     block = ProgressBlock(
         "handoff",
-        (ProgressRow("---  execute agic:delegate", leader="handoff"),),
+        (ProgressRow("Execute agic:delegate", leader="handoff"),),
     )
     for render in (_render_progress, _render_chat_progress):
         output = render(block, width=width)
         lines = output.splitlines()
         assert max(display_width(line) for line in lines) <= width
-        assert "".join(output.split()).replace("-", "") == "executeagic:delegate"
+        assert "".join(output.split()).replace("─", "") == "Executeagic:delegate"
         if width == 72:
-            assert lines == ["---  execute agic:delegate " + "-" * 45]
+            assert lines == ["─ Execute agic:delegate " + "─" * 48]
+
+
+@pytest.mark.parametrize("width", [1, 2, 5, 16, 32, 72])
+def test_script_and_chat_share_aligned_execution_dividers(width: int) -> None:
+    runnable = "agic:summary" if width == 1 else "agic:总结"
+    block = ProgressBlock(
+        "dividers",
+        (
+            ProgressRow(f"Run {runnable}", leader="run"),
+            ProgressRow(
+                "",
+                leader="run",
+                facts=("2.0s", "1 run"),
+                right_status="succeeded",
+                right_identity="run_child",
+            ),
+            ProgressRow("Execute flow:test", leader="handoff"),
+            ProgressRow("Iteration 1/10", leader="iteration"),
+        ),
+    )
+    output = _render_progress(block, width=width)
+    assert output == _render_chat_progress(block, width=width)
+    lines = output.splitlines()
+    assert all(display_width(line) <= width for line in lines)
+    compact = "".join(output.split()).translate(str.maketrans("", "", "╭╰─·"))
+    assert compact == (
+        f"Run{runnable}2.0s1runsucceededrun_childExecuteflow:testIteration1/10"
+    )
+    if width == 72:
+        assert [line[:2] for line in lines] == ["╭ ", "╰ ", "─ ", "─ "]
+        assert all(display_width(line) == width for line in lines)
+        assert lines[1].endswith("succeeded run_child")
 
 
 def test_execute_uses_its_persisted_running_description() -> None:
@@ -423,7 +455,7 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
     ended = projector.handle(RunEnd(run="run_root", status=status))
     rows = tuple(row for block in ended.committed for row in block.rows)
     assert rows == (
-        ProgressRow("---  execute agic:abc", leader="handoff"),
+        ProgressRow("Execute agic:abc", leader="handoff"),
         ProgressRow(""),
     )
     assert not projector._broken
@@ -599,7 +631,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     assert header.live == ()
     assert header.committed[0].rows == (
         ProgressRow(
-            "---  execute flow:delegate",
+            "Execute flow:delegate",
             leader="handoff",
         ),
         ProgressRow(""),
@@ -619,12 +651,12 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
                     "dynamic",
                     (
                         ProgressRow(
-                            "---  run agic:summarize",
-                            leader="hyphen",
+                            "Run agic:summarize",
+                            leader="run",
                         ),
                         ProgressRow(
-                            "---  ",
-                            leader="hyphen",
+                            "",
+                            leader="run",
                             facts=("2.0s", "1 run", "1 model call"),
                             right_status="succeeded",
                             right_identity="run_abc123",
@@ -635,8 +667,8 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
         )
     )
     wide_lines = wide.getvalue().splitlines()
-    assert wide_lines[0].startswith("╓ run agic:summarize ───")
-    assert wide_lines[1].startswith("╙ 2.0s · 1 run · 1 model call ───")
+    assert wide_lines[0].startswith("╭ Run agic:summarize ───")
+    assert wide_lines[1].startswith("╰ 2.0s · 1 run · 1 model call ───")
     assert wide_lines[1].endswith("succeeded run_abc123")
     assert all(display_width(line) == 72 for line in wide_lines)
 
@@ -648,8 +680,8 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
                     "dynamic",
                     (
                         ProgressRow(
-                            "---  ",
-                            leader="hyphen",
+                            "",
+                            leader="run",
                             facts=(
                                 "31.0s",
                                 "6 runs",
@@ -676,12 +708,12 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
                     "dynamic",
                     (
                         ProgressRow(
-                            "---  run agic:总结",
-                            leader="hyphen",
+                            "Run agic:总结",
+                            leader="run",
                         ),
                         ProgressRow(
-                            "---  ",
-                            leader="hyphen",
+                            "",
+                            leader="run",
                             facts=("2.0s", "1 run"),
                             right_status="succeeded",
                             right_identity="run_完整",
@@ -693,7 +725,7 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
     )
     tiny_lines = tiny.getvalue().splitlines()
     compact = "".join(line.replace(" ", "") for line in tiny_lines)
-    assert "runagic:总结" in compact
+    assert "Runagic:总结" in compact
     assert "2.0s1run" in compact
     assert "succeededrun_完整" in compact
     assert all(display_width(line) <= 5 for line in tiny_lines)
@@ -788,8 +820,8 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     )
 
     assert outer_header.committed[0].rows[0] == ProgressRow(
-        "---  run flow:publish",
-        leader="hyphen",
+        "Run flow:publish",
+        leader="run",
     )
     assert flow_header.committed[0].rows[0].text == "[0] Run validate"
     assert flow_footer.committed[0].rows[-2].right_text == "run_publish.0"
@@ -830,12 +862,12 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
     projector.handle(RunEnd(run="run_child", status="succeeded"))
     outer_footer = projector.handle(StepEnd(step=outer, kind="run", status="succeeded"))
 
-    assert outer_header.committed[0].rows[0].text == "---  run agic:child"
-    assert inner_header.committed[0].rows[0].text == "---  run agic:leaf"
+    assert outer_header.committed[0].rows[0].text == "Run agic:child"
+    assert inner_header.committed[0].rows[0].text == "Run agic:leaf"
     assert inner_footer.committed[0].rows[0].right_identity == "run_leaf"
     assert outer_footer.committed[0].rows[0].right_identity == "run_child"
     assert all(
-        row.text.startswith("---  ")
+        row.leader == "run"
         for row in (
             outer_header.committed[0].rows[0],
             inner_header.committed[0].rows[0],
@@ -902,23 +934,23 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "border_color"),
+    ("status", "status_color"),
     [
         ("succeeded", None),
         ("failed", "red"),
         ("canceled", "yellow"),
     ],
 )
-def test_dynamic_footer_colors_only_the_terminal_border(
+def test_dynamic_footer_colors_only_the_terminal_status(
     status: str,
-    border_color: str | None,
+    status_color: str | None,
 ) -> None:
     block = ProgressBlock(
         "dynamic",
         (
             ProgressRow(
-                "---  ",
-                leader="hyphen",
+                "",
+                leader="run",
                 facts=("2.0s", "1 run"),
                 right_status=status,
                 right_identity="run_child",
@@ -934,23 +966,22 @@ def test_dynamic_footer_colors_only_the_terminal_border(
         if segment.text.strip()
     ]
 
-    marker = next(segment for segment in segments if "╙" in segment.text)
+    marker = next(segment for segment in segments if "╰" in segment.text)
     border = next(segment for segment in segments if "─" in segment.text)
     facts = next(segment for segment in segments if "2.0s" in segment.text)
     terminal = next(segment for segment in segments if status in segment.text)
     identity = next(segment for segment in segments if "run_child" in segment.text)
-    for segment in (facts, terminal, identity):
+    for segment in (marker, border, facts, identity):
         assert segment.style is not None
         assert segment.style.dim
         assert segment.style.color is None
-    for segment in (marker, border):
-        assert segment.style is not None
-        if border_color is None:
-            assert segment.style.dim
-            assert segment.style.color is None
-        else:
-            assert segment.style.color is not None
-            assert segment.style.color.name == border_color
+    assert terminal.style is not None
+    if status_color is None:
+        assert terminal.style.dim
+        assert terminal.style.color is None
+    else:
+        assert terminal.style.color is not None
+        assert terminal.style.color.name == status_color
 
 
 def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> None:
@@ -1029,7 +1060,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
     assert hidden.committed == ()
     assert "_internal_run_action" not in visible
     assert "runtime-call" not in visible
-    assert "run agic:child" in visible
+    assert "Run agic:child" in visible
 
 
 def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
@@ -1060,23 +1091,23 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     )
     caption = header.committed[0].rows[0].text
 
-    assert caption.startswith("---  run flow: missing name")
+    assert caption.startswith("Run flow: missing name")
     assert "\x00" not in caption
     assert "\n" not in caption
-    assert len(caption.removeprefix("---  run ")) == 240
+    assert len(caption.removeprefix("Run ")) == 240
 
 
 def test_script_and_chat_render_dynamic_boundaries_identically() -> None:
     progress = ProgressBlock(
         "dynamic",
         (
-            ProgressRow("---  run agic:summarize", leader="hyphen"),
+            ProgressRow("Run agic:summarize", leader="run"),
             ProgressRow(""),
             ProgressRow("• Summary", "normal"),
             ProgressRow(""),
             ProgressRow(
-                "---  ",
-                leader="hyphen",
+                "",
+                leader="run",
                 facts=("2.0s", "1 run", "1 model call"),
                 right_status="succeeded",
                 right_identity="run_child",
@@ -1101,13 +1132,13 @@ def test_dynamic_boundaries_keep_single_blank_row_between_sections() -> None:
     progress = ProgressBlock(
         "dynamic",
         (
-            ProgressRow("---  run agic:summarize", leader="hyphen"),
+            ProgressRow("Run agic:summarize", leader="run"),
             ProgressRow(""),
             ProgressRow("• Summary", "normal"),
             ProgressRow(""),
             ProgressRow(
-                "---  ",
-                leader="hyphen",
+                "",
+                leader="run",
                 facts=("2.0s", "1 run", "1 model call"),
                 right_status="succeeded",
                 right_identity="run_child",
@@ -1119,8 +1150,8 @@ def test_dynamic_boundaries_keep_single_blank_row_between_sections() -> None:
     rendered = _render_progress(progress, width=72)
 
     assert "\n\n\n" not in rendered
-    assert re.search(r"╓ run agic:summarize ─+\n\n• Summary", rendered)
-    assert re.search(r"• Summary\n\n╙ 2.0s", rendered)
+    assert re.search(r"╭ Run agic:summarize ─+\n\n• Summary", rendered)
+    assert re.search(r"• Summary\n\n╰ 2.0s", rendered)
     assert re.search(r"succeeded run_child\n\n• Parent continues", rendered)
 
 

@@ -215,18 +215,17 @@ extend the Tool Step's lifetime. Cancellation before dispatch closes the schedul
 target without a `RunBegin`.
 
 ```text
----  run agic:summarize -----------------------------------------------
+╭ Run agic:summarize ───────────────────────────────────────────────────
 
 • Summary text from the child.
 
----  2s · 1 run 1 model ------------------------- succeeded run_abc123
+╰ 2s · 1 run 1 model ────────────────────────────── succeeded run_abc123
 ```
 
-The fixed prefix is three ASCII hyphens followed by two spaces. The caption,
-facts, elastic hyphen leader, and child Run ID are dim. A successful status has
-normal intensity and the terminal's default foreground; failed and canceled
-statuses use normal-intensity red and yellow. The status style does not affect
-the surrounding fields.
+Run boundaries pair `╭` and `╰`, each followed by one space. Captions, facts,
+elastic `─` rules, child Run IDs, and successful statuses are dim. Failed and
+canceled statuses use normal-intensity red and yellow without affecting the
+surrounding fields.
 
 The header contains no Run ID. It displays the resolved `agic:NAME` or
 `flow:NAME`; a failure before resolution displays bounded terminal-safe request
@@ -239,7 +238,7 @@ identity:
 ```text
 • Runnable not found: missing
 
----  -------------------------------------------------------------- failed
+╰ ────────────────────────────────────────────────────────────── failed
 ```
 
 Every structural marker remains in column zero; nested dynamic calls do not
@@ -249,7 +248,7 @@ caller-owned dynamic boundary and callee-owned grammar stay distinct. Dynamic
 calls inside compact parallel lanes remain one physical lane row.
 
 At narrow widths the renderer shortens the leader first. Facts then wrap at
-fact boundaries under a five-cell hanging indent, followed by a final leader
+fact boundaries under a two-cell hanging indent, followed by a final leader
 and complete status-plus-ID field. Long captions and identities fold by display
 cells without truncation. Exactly one blank row follows the header, precedes the
 footer, and follows the footer; adjacent child-owned gaps coalesce.
@@ -258,12 +257,13 @@ A confirmed `execute` transfer displays one dim boundary before the target's
 first Step:
 
 ```text
----  execute agic:delegate ---------------------------------------------
+─ Execute agic:delegate ────────────────────────────────────────────────
 ```
 
-Its prefix is three ASCII hyphens and two spaces. The right-hand ASCII hyphens
-fill the available width. Long target names wrap under a five-cell indent
-without truncation. Script and Chat use the same rendering.
+Execute and iteration boundaries use `─` followed by one space. All divider
+captions start in the third column, use sentence case, and extend with thin
+rules to the same right edge. Long target names wrap under a two-cell indent
+without truncation. Script and Chat share the projector and renderer.
 
 ## Flow Headers
 
@@ -544,13 +544,15 @@ Repeat and Settle use the same loop presentation. Each iteration follows the
 normal trace-or-lane rule for its child statement:
 
 ```text
---- iteration 1 of 3 ---
+─ Iteration 1/3 ────────────────────────────────────────────────────────
 
 <?> Run completion_check to check whether to break
 
 • Thinking
 • true
 ```
+
+When the total is unknown, the caption is `Iteration 1` without a denominator.
 
 The condition is a child Run, not a synthetic `executed completion_check`
 Step. Generated condition names use `<?> Check whether to break` instead of

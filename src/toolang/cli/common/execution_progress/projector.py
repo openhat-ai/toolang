@@ -1133,7 +1133,7 @@ class ProgressProjector:
             rows.extend(
                 (
                     ProgressRow(
-                        f"---  execute {handoff.runnable}",
+                        f"Execute {handoff.runnable}",
                         leader="handoff",
                     ),
                     ProgressRow(""),
@@ -1161,7 +1161,7 @@ class ProgressProjector:
                 rows.extend(
                     (
                         ProgressRow(
-                            f"---  execute {pending.runnable}",
+                            f"Execute {pending.runnable}",
                             leader="handoff",
                         ),
                         ProgressRow(""),
@@ -1174,8 +1174,8 @@ class ProgressProjector:
         rows = (
             *self._rows_for_boundaries(state.boundaries),
             ProgressRow(
-                f"---  run {self._dynamic_runnable_label(state)}",
-                leader="hyphen",
+                f"Run {self._dynamic_runnable_label(state)}",
+                leader="run",
             ),
             ProgressRow(""),
         )
@@ -1204,8 +1204,8 @@ class ProgressProjector:
         )
         return (
             ProgressRow(
-                "---  ",
-                leader="hyphen",
+                "",
+                leader="run",
                 facts=facts,
                 right_status=event.status,
                 right_identity=state.dynamic_child_run_id or "",
@@ -1263,11 +1263,14 @@ class ProgressProjector:
                 continue
             iteration = occurrence.iteration
             if iteration.phase == "body":
-                suffix = f" of {iteration.count}" if iteration.count is not None else ""
-                boundary = f"--- iteration {iteration.index + 1}{suffix} ---"
+                suffix = f"/{iteration.count}" if iteration.count is not None else ""
+                boundary = f"Iteration {iteration.index + 1}{suffix}"
                 iteration_key = f"iteration:{step.begin.step}:{iteration.index}"
                 candidates.append(
-                    (iteration_key, (ProgressRow(boundary), ProgressRow("")))
+                    (
+                        iteration_key,
+                        (ProgressRow(boundary, leader="iteration"), ProgressRow("")),
+                    )
                 )
             else:
                 until_key = f"until:{step.begin.step}:{iteration.index}"
