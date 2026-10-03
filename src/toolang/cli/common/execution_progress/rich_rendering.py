@@ -572,9 +572,18 @@ class _DividerRow:
             yield from self._header(width)
 
     def _header(self, width: int) -> RenderResult:
+        rule_width = width - display_width(self.row.text) - 2
+        if self.row.leader == "iteration" and rule_width >= 6:
+            left_width = rule_width // 2
+            yield Text(
+                f"{'─' * left_width} {self.row.text} {'─' * (rule_width - left_width)}",
+                style="dim",
+                no_wrap=True,
+            )
+            return
         yield from self._left_boundary(
             width,
-            prefix="╭ " if self.row.leader == "run" else "─ ",
+            prefix="┌ " if self.row.leader == "run" else "- ",
             character="─",
             content=self.row.text,
             border_style="dim",
@@ -640,7 +649,7 @@ class _DividerRow:
             yield line
 
     def _footer(self, width: int) -> RenderResult:
-        prefix = "╰ "
+        prefix = "└ "
         prefix_width = display_width(prefix)
         border_style = "dim"
         facts = " · ".join(self.row.facts)

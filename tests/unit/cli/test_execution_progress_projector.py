@@ -1174,7 +1174,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
     )
     assert _rows(iteration_header.committed) == [
         [
-            "Iteration 1/3" if count is not None else "Iteration 1",
+            "1/3" if count is not None else "1",
             "",
             "[0] Run review",
             "",
@@ -2140,7 +2140,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         )
     )
 
-    assert _rows(live.committed) == [["Iteration 1/2", ""]]
+    assert _rows(live.committed) == [["1/2", ""]]
     assert _rows(live.live) == [["• Thinking"]]
     assert live.committed[0].gap_before is False
     assert live.live[0].gap_before is False

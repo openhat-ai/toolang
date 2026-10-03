@@ -215,14 +215,14 @@ extend the Tool Step's lifetime. Cancellation before dispatch closes the schedul
 target without a `RunBegin`.
 
 ```text
-╭ Run agic:summarize ───────────────────────────────────────────────────
+┌ Run agic:summarize ───────────────────────────────────────────────────
 
 • Summary text from the child.
 
-╰ 2s · 1 run 1 model ────────────────────────────── succeeded run_abc123
+└ 2s · 1 run 1 model ────────────────────────────── succeeded run_abc123
 ```
 
-Run boundaries pair `╭` and `╰`, each followed by one space. Captions, facts,
+Run boundaries pair `┌` and `└`, each followed by one space. Captions, facts,
 elastic `─` rules, child Run IDs, and successful statuses are dim. Failed and
 canceled statuses use normal-intensity red and yellow without affecting the
 surrounding fields.
@@ -238,7 +238,7 @@ identity:
 ```text
 • Runnable not found: missing
 
-╰ ────────────────────────────────────────────────────────────── failed
+└ ────────────────────────────────────────────────────────────── failed
 ```
 
 Every structural marker remains in column zero; nested dynamic calls do not
@@ -257,10 +257,10 @@ A confirmed `execute` transfer displays one dim boundary before the target's
 first Step:
 
 ```text
-─ Execute agic:delegate ────────────────────────────────────────────────
+- Execute agic:delegate ────────────────────────────────────────────────
 ```
 
-Execute and iteration boundaries use `─` followed by one space. All divider
+Execute boundaries use a short `-` followed by one space. Run and Execute
 captions start in the third column, use sentence case, and extend with thin
 rules to the same right edge. Long target names wrap under a two-cell indent
 without truncation. Script and Chat share the projector and renderer.
@@ -544,7 +544,7 @@ Repeat and Settle use the same loop presentation. Each iteration follows the
 normal trace-or-lane rule for its child statement:
 
 ```text
-─ Iteration 1/3 ────────────────────────────────────────────────────────
+───────────────────────────────── 1/3 ──────────────────────────────────
 
 <?> Run completion_check to check whether to break
 
@@ -552,7 +552,11 @@ normal trace-or-lane rule for its child statement:
 • true
 ```
 
-When the total is unknown, the caption is `Iteration 1` without a denominator.
+Iteration captions show only the count, such as `1/10`, dim and centered
+between thin rules. Odd remaining widths add one cell to the right rule. If
+there is insufficient room for three rule cells on each side, use the
+left-aligned `- 1/10` layout with wrapping. When the total is unknown, show
+only the current count: `1`.
 
 The condition is a child Run, not a synthetic `executed completion_check`
 Step. Generated condition names use `<?> Check whether to break` instead of

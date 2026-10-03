@@ -1264,7 +1264,7 @@ class ProgressProjector:
             iteration = occurrence.iteration
             if iteration.phase == "body":
                 suffix = f"/{iteration.count}" if iteration.count is not None else ""
-                boundary = f"Iteration {iteration.index + 1}{suffix}"
+                boundary = f"{iteration.index + 1}{suffix}"
                 iteration_key = f"iteration:{step.begin.step}:{iteration.index}"
                 candidates.append(
                     (

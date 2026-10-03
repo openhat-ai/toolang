@@ -310,7 +310,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
     )
     assert header.live[0].rows == (ProgressRow("• Thinking", "active"),)
     assert re.search(
-        r"─ Execute agic:abc ─+",
+        r"- Execute agic:abc ─+",
         _render_progress(header.committed[0], width=72),
     )
 
@@ -325,9 +325,12 @@ def test_handoff_uses_thin_rules_without_losing_its_target(width: int) -> None:
         output = render(block, width=width)
         lines = output.splitlines()
         assert max(display_width(line) for line in lines) <= width
-        assert "".join(output.split()).replace("─", "") == "Executeagic:delegate"
+        assert (
+            "".join(output.split()).replace("─", "").replace("-", "")
+            == "Executeagic:delegate"
+        )
         if width == 72:
-            assert lines == ["─ Execute agic:delegate " + "─" * 48]
+            assert lines == ["- Execute agic:delegate " + "─" * 48]
 
 
 @pytest.mark.parametrize("width", [1, 2, 5, 16, 32, 72])
@@ -345,21 +348,56 @@ def test_script_and_chat_share_aligned_execution_dividers(width: int) -> None:
                 right_identity="run_child",
             ),
             ProgressRow("Execute flow:test", leader="handoff"),
-            ProgressRow("Iteration 1/10", leader="iteration"),
+            ProgressRow("1/10", leader="iteration"),
         ),
     )
     output = _render_progress(block, width=width)
     assert output == _render_chat_progress(block, width=width)
     lines = output.splitlines()
     assert all(display_width(line) <= width for line in lines)
-    compact = "".join(output.split()).translate(str.maketrans("", "", "╭╰─·"))
-    assert compact == (
-        f"Run{runnable}2.0s1runsucceededrun_childExecuteflow:testIteration1/10"
-    )
+    compact = "".join(output.split()).translate(str.maketrans("", "", "┌└─·-"))
+    assert compact == f"Run{runnable}2.0s1runsucceededrun_childExecuteflow:test1/10"
     if width == 72:
-        assert [line[:2] for line in lines] == ["╭ ", "╰ ", "─ ", "─ "]
+        assert [line[:2] for line in lines] == ["┌ ", "└ ", "- ", "──"]
         assert all(display_width(line) == width for line in lines)
         assert lines[1].endswith("succeeded run_child")
+
+
+@pytest.mark.parametrize("width", [12, 13, 72])
+@pytest.mark.parametrize("caption", ["1/10", "1"])
+def test_iteration_caption_is_centered_on_both_surfaces(
+    width: int, caption: str
+) -> None:
+    block = ProgressBlock("iteration", (ProgressRow(caption, leader="iteration"),))
+    script = _render_progress(block, width=width)
+    assert script == _render_chat_progress(block, width=width)
+    (line,) = script.splitlines()
+    left, right = line.split(f" {caption} ")
+    assert set(left) == set(right) == {"─"}
+    assert min(len(left), len(right)) >= 3
+    assert abs(len(left) - len(right)) <= 1
+    assert display_width(line) == width
+
+
+@pytest.mark.parametrize("width", [12, 72])
+@pytest.mark.parametrize(
+    "row",
+    [
+        ProgressRow("Run agic:hello", leader="run"),
+        ProgressRow("Execute flow:test", leader="handoff"),
+        ProgressRow("1/10", leader="iteration"),
+    ],
+)
+def test_execution_headers_keep_dim_style(width: int, row: ProgressRow) -> None:
+    block = ProgressBlock("header", (row,))
+    segments = rendering.render_segments(
+        blocks.ExecutionProgressBlock(block, max_width=width).render(), width=width
+    )
+    captions = [s for s in segments if any(c.isalnum() for c in s.text)]
+    assert captions
+    for segment in captions:
+        assert segment.style is not None
+        assert segment.style.dim and not segment.style.bold
 
 
 def test_execute_uses_its_persisted_running_description() -> None:
@@ -667,8 +705,8 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
         )
     )
     wide_lines = wide.getvalue().splitlines()
-    assert wide_lines[0].startswith("╭ Run agic:summarize ───")
-    assert wide_lines[1].startswith("╰ 2.0s · 1 run · 1 model call ───")
+    assert wide_lines[0].startswith("┌ Run agic:summarize ───")
+    assert wide_lines[1].startswith("└ 2.0s · 1 run · 1 model call ───")
     assert wide_lines[1].endswith("succeeded run_abc123")
     assert all(display_width(line) == 72 for line in wide_lines)
 
@@ -915,7 +953,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     rows = update.live[0].rows
     assert len(rows) == 2
     assert rows[1].text.endswith("• Running agic:leaf...")
-    assert "---" not in " ".join(row.text for row in rows)
+    assert all(row.leader == "none" for row in rows)
 
     projector.handle(
         RunBegin(
@@ -930,7 +968,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
 
     assert terminal.committed == ()
     assert terminal.live[0].rows[1].text.endswith("• Ran agic:leaf")
-    assert "---" not in " ".join(row.text for row in terminal.live[0].rows)
+    assert all(row.leader == "none" for row in terminal.live[0].rows)
 
 
 @pytest.mark.parametrize(
@@ -966,7 +1004,7 @@ def test_dynamic_footer_colors_only_the_terminal_status(
         if segment.text.strip()
     ]
 
-    marker = next(segment for segment in segments if "╰" in segment.text)
+    marker = next(segment for segment in segments if "└" in segment.text)
     border = next(segment for segment in segments if "─" in segment.text)
     facts = next(segment for segment in segments if "2.0s" in segment.text)
     terminal = next(segment for segment in segments if status in segment.text)
@@ -1150,8 +1188,8 @@ def test_dynamic_boundaries_keep_single_blank_row_between_sections() -> None:
     rendered = _render_progress(progress, width=72)
 
     assert "\n\n\n" not in rendered
-    assert re.search(r"╭ Run agic:summarize ─+\n\n• Summary", rendered)
-    assert re.search(r"• Summary\n\n╰ 2.0s", rendered)
+    assert re.search(r"┌ Run agic:summarize ─+\n\n• Summary", rendered)
+    assert re.search(r"• Summary\n\n└ 2.0s", rendered)
     assert re.search(r"succeeded run_child\n\n• Parent continues", rendered)
 
 
