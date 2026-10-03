@@ -1,5 +1,9 @@
 # Latest-State Run Binding
 
+Follow-up definition: [live State resolution](runtime-live-resolution.md)
+replaces binding, resource-freezing, and lineage rules below. Unrelated
+publication, module visibility, and contract rules remain unchanged.
+
 ## Status and Goal
 
 Approved design, including removal of explicit reload without compatibility.

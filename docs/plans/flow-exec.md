@@ -1,5 +1,11 @@
 # Flow exec and runtime exec naming
 
+Follow-up definitions: [live State resolution](runtime-live-resolution.md)
+replaces binding, resource-freezing, and lineage rules below; the separate
+[grammar plan](https://github.com/openhat-ai/tree-sitter-toolang/pull/41)
+replaces target syntax with named runnables and inline agics, excluding dynamic
+target expressions. Unrelated handoff and presentation rules remain unchanged.
+
 ## Goal and scope
 
 Proposed definition; this PR contains no implementation. `run` calls a child
