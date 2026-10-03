@@ -17,6 +17,7 @@ from tests.support.execution_harness import (
     RecordingTool,
 )
 from toolang.base.types.message import Message, message_text
+from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.records import RunControlPayload, StoredModelStepGiven
 from toolang.execution.events import StepEnd
@@ -1056,7 +1057,9 @@ flow() -> Text:
             await asyncio.wait_for(gate.wait_until_entered(), 2)
             module.write_text(
                 module.read_text().replace("Module advice.", "New module advice.")
+                + "\npsyche added:\n  New private module advice.\n"
             )
+            (home / "psyches/added.md").write_text("New excluded external advice.")
             publish(harness, source)
             gate.release()
             root = await handle
@@ -1068,13 +1071,153 @@ flow() -> Text:
                 "agic:helper"
             ]
             assert "Module advice." in first.instructions
+            assert "New private module advice." not in first.instructions
             for call in (helper, resumed):
                 assert "New module advice." in call.instructions
+                assert "New private module advice." in call.instructions
                 assert "Excluded external advice." not in call.instructions
+                assert "New excluded external advice." not in call.instructions
             assert "Local helper body." in str(helper.messages)
             assert "Agent helper must not run." not in str(helper.messages)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["skill", "service"])
+@pytest.mark.parametrize("restriction", ["ancestor", "ceiling"])
+def test_new_caps_refresh_under_pinned_rules_and_prepared_picks_stay_frozen(
+    tmp_path, kind, restriction
+):
+    plural = f"{kind}s"
+    source = f"""
+flow parent() -> Text:
+  {plural} -= {kind}/private*
+  psyches -= psyche/private*
+  run worker
+agic worker() -> Text:
+  {plural} = *
+  psyches = *
+  context = none
+  hands = none
+  handoffs = none
+  Original body.
+"""
+    if restriction == "ceiling":
+        source = source.replace(f"  {plural} -= {kind}/private*\n", "")
+    home = tmp_path / "agents/alice"
+
+    def write_cap(name):
+        path = home / (
+            f"skills/{name}/SKILL.md" if kind == "skill" else f"services/{name}.md"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\ndescription: {name} guidance\n---\nBody of {name}.\n")
+        return path
+
+    removed = write_cap("public_removed")
+    write_cap("private_old")
+    (home / "psyches").mkdir()
+    (home / "psyches/goal.md").write_text("Initial goal.")
+    (home / "psyches/private_old.md").write_text("Excluded old psyche.")
+
+    def pick(identity, name):
+        return ToolCall(
+            identity,
+            identity,
+            "_toolang__pick",
+            {"kind": kind, "ref": f"{kind}/{name}"},
+        )
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(tool_calls=(pick("early", "public_added"),)), gate=gate
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    pick("eligible", "public_added"),
+                    pick("excluded", "private_added"),
+                )
+            ),
+            answer("done"),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                    ceilings=(AgentCeiling(**{plural: (f"{kind}/public*",)}),)
+                    if restriction == "ceiling"
+                    else (),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            write_cap("public_added")
+            write_cap("private_added")
+            removed.unlink()
+            (home / "psyches/goal.md").write_text("Updated goal.")
+            (home / "psyches/added.md").write_text("New eligible psyche.")
+            (home / "psyches/private_added.md").write_text("Excluded new psyche.")
+            latest = publish(
+                harness,
+                source.replace(
+                    "  run worker", f"  {plural} = none\n  run worker"
+                ).replace("Original body.", "Changed body."),
+            )
+            gate.release()
+            root = await asyncio.wait_for(handle, 2)
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            first, second, third = [i.call for i in harness.adapter.invocations]
+            assert f'ref="{kind}/public_removed"' in first.instructions
+            assert f'ref="{kind}/public_added"' not in first.instructions
+            assert "Initial goal." in first.instructions
+            assert last_tool_result(second).error
+            for call in (second, third):
+                assert f'ref="{kind}/public_added"' in call.instructions
+                assert f'ref="{kind}/public_removed"' not in call.instructions
+                assert f'ref="{kind}/private_added"' not in call.instructions
+                assert f'ref="{kind}/private_old"' not in call.instructions
+                assert "Updated goal." in call.instructions
+                assert "New eligible psyche." in call.instructions
+                assert "Excluded new psyche." not in call.instructions
+                assert "Excluded old psyche." not in call.instructions
+                assert "Original body." in str(call.messages)
+                assert "Changed body." not in str(call.messages)
+            assert "Body of public_added." in str(third.messages)
+            assert "Body of private_added." not in str(third.messages)
+            assert last_tool_result(third).error
+            child = next(
+                r for r in harness.store.list_run_tree(root_run_id=root.id) if r.parent
+            )
+            steps = harness.store.list_steps(run_id=child.id)
+            assert [s.status for s in steps if s.kind == "tool"] == [
+                "failed",
+                "succeeded",
+                "failed",
+            ]
+            models = [
+                (s, s.given) for s in steps if isinstance(s.given, StoredModelStepGiven)
+            ]
+            assert [given.state for _, given in models] == [
+                harness.state.revision,
+                latest.revision,
+                latest.revision,
+            ]
+            assert all(s.state == child.state for s, _ in models)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
 
 
 def test_external_tool_ceiling_does_not_require_children_to_restore_excluded_tools(
