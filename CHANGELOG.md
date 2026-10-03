@@ -1,45 +1,41 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-This record begins at the [v0.3.4](https://github.com/openhat-ai/toolang/releases/tag/v0.3.4)
-release tag; earlier history is not backfilled.
+This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-03
+
 ### Added
 
-- Flows can use the new `exec` statement to replace the current runnable within
-  the same Run, binding the target's declared inputs from the current locals
-  ([#675](https://github.com/openhat-ai/toolang/pull/675)).
+- Flow `exec` statements replace the current runnable within the same Run and
+  never return on success. Named and inline targets use the same forms and input
+  binding as `run`, and named targets resolve from the latest published State. (#675)
 
 ### Changed
 
-- Cap resource selectors, recall, and hands/handoffs are now resolved against the
-  latest published State before each model call, scoped to their declaring
-  modules, instead of binding resources when the Run is accepted
-  ([#675](https://github.com/openhat-ai/toolang/pull/675)).
-- Hands/handoffs snapshots omit only the current runnable and its ancestors on the
-  calling branch, so earlier handoffs, completed children, and siblings remain
-  callable ([#675](https://github.com/openhat-ai/toolang/pull/675)).
-- **Breaking:** Same-Run transfers are exposed to models as `_toolang/exec`, renamed
-  from `_toolang/execute`, and the public runtime method `ToolRuntime.execute(...)`
-  is renamed to `ToolRuntime.exec(...)`. Update any psyche, prompt, documentation,
-  or custom tool plugin that references or implements the old names; they are
-  removed without an alias
-  ([#675](https://github.com/openhat-ai/toolang/pull/675)).
-- `too inspect` execution trees show Step ordinals, `exec → target` boundaries,
-  and a `handed off` marker for replaced runnables
-  ([#675](https://github.com/openhat-ai/toolang/pull/675)).
+- Resource selectors (`models`, `tools`, `psyches`, `skills`, `services`,
+  `prompts`) now filter the latest State within their declaring modules. Children
+  inherit restrictions rather than an earlier selected list, and `+=` restores
+  only items still allowed by ancestors and authority ceilings. (#675)
+- Hands/handoffs snapshots now omit only the current runnable and its ancestors
+  on the calling branch, so earlier handoffs, completed children, and siblings are
+  callable again. (#675)
+- **Breaking:** the runtime call tool `_toolang/execute` (exposed as
+  `_toolang__execute`) is renamed to `_toolang/exec` (`_toolang__exec`), and the
+  public `ToolRuntime.execute()` method to `ToolRuntime.exec()`. Integrations that
+  invoke the tool or implement the method must switch to `exec`. (#675)
+- Execution progress dividers are unified: Run boundaries use `┌`/`└`, `Run` and
+  `Execute` captions use sentence case, and loop iterations show centered counters
+  such as `1/3`. (#672)
 
 ### Fixed
 
-- Execution progress renders run, exec, handoff, and iteration boundaries with one
-  thin-rule style instead of inconsistent hyphen dividers
-  ([#672](https://github.com/openhat-ai/toolang/pull/672)).
-- Flow sources containing `exec` statements format consistently with other flow
-  statements ([#676](https://github.com/openhat-ai/toolang/pull/676)).
+- The formatter normalizes `exec` statements consistently with other flow
+  statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/openhat-ai/toolang/compare/v0.3.4...v0.3.5
