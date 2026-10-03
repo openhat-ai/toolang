@@ -42,6 +42,7 @@ _COMMENT_SPLIT_KINDS = {
 _FLOW_STATEMENT_TYPES = {
     "let_statement",
     "run_statement",
+    "exec_statement",
     "seek_statement",
     "ask_statement",
     "scatter_statement",

@@ -1,5 +1,7 @@
 """Named and inline exec share run target lowering and validation."""
 
+from textwrap import indent
+
 import pytest
 
 from toolang.lang import Program, format_source, to_data
@@ -30,6 +32,35 @@ def test_exec_round_trip_and_target_parity(statement):
     assert isinstance(run_stmt, RunStmt)
     assert stmt.runnable == run_stmt.runnable
     assert program.agics == run.agics
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["flow", "repeat"])
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("exec    successor # handoff\n", "exec successor # handoff\n"),
+        ("exec  :  Keep   this spacing.\n", "exec: Keep   this spacing.\n"),
+        (
+            "exec   ->  Text[] :\n  Keep   this spacing.\n",
+            "exec -> Text[]:\n  Keep   this spacing.\n",
+        ),
+        (
+            "First task.\nexec successor\nNext task.\n",
+            "First task.\n\nexec successor\n\nNext task.\n",
+        ),
+    ],
+)
+def test_exec_formatting_normalizes_syntax_and_preserves_prose(
+    source, expected, nested
+):
+    prefix = "agic successor():\n  Work.\n\nflow grow():\n"
+    if nested:
+        prefix += "  repeat 2 times:\n"
+    padding = "    " if nested else "  "
+    formatted = format_source(prefix + indent(source, padding))
+    assert formatted == prefix + indent(expected, padding)
+    assert format_source(formatted) == formatted
+    Program.from_source(formatted)
 
 
 @pytest.mark.parametrize(
