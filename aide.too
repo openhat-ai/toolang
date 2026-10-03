@@ -1,0 +1,72 @@
+#!/usr/bin/env too
+
+## Generate CHANGELOG.md following Keep a Changelog 1.1.0.
+agic update_changelog(since?: Text, version?: Text, date?: Text):
+  Release preparation: target version {{version}}, planned release date {{date}}.
+  First check the current CHANGELOG.md and project version. With both release
+  arguments supplied, validate them as described below. If the matching version
+  heading, date, and comparison links already exist and Unreleased has no entries,
+  return the exact no-change response immediately, without auditing history or
+  investigating coverage again. Use the default mode to refresh change coverage.
+
+  Read the repository guidance, release tags, and history. First check whether
+  CHANGELOG.md exists in the current worktree. If it exists, read and update it.
+  If it is absent, generate it anew from the selected commit range and current
+  implementation. Do not use historical changelog contents or restore the file
+  from Git when the current worktree file is absent.
+  Follow Keep a Changelog 1.1.0: https://keepachangelog.com/en/1.1.0/
+  Use {{since}} as the baseline when supplied; otherwise use the latest
+  release tag reachable from HEAD. Verify it before writing. Inspect history
+  through HEAD and the pending release diff against the implementation.
+  Reuse the current dedicated worktree and write only CHANGELOG.md, in English.
+  Limit evidence gathering to this repository's current files, relevant commits,
+  and release tags. Do not inspect agent/run histories, temporary files, unrelated
+  branches, or directories outside the repository. Stop once the requested
+  content and coverage are verified; do not investigate speculative omissions.
+
+  With neither supplied, update Unreleased. If only one is supplied, report
+  that both are required and do not write. Validate the date as YYYY-MM-DD and
+  the version against the project version before writing.
+  With both supplied, prepare the release before publication: move the verified
+  Unreleased entries unchanged under a new version-and-date heading, keeping an
+  empty Unreleased section above it. This is an explicit release-preparation
+  request; the target tag need not exist yet. Point its comparison link from the
+  verified baseline tag to the planned target tag, and Unreleased from the target
+  tag to HEAD. Never create duplicate version sections or entries on repeated
+  runs. If the target section already exists, preserve it and add only missing
+  changes; do not move changes from later releases into it.
+
+  For an existing worktree CHANGELOG.md, preserve wording, order, dates, and
+  references. Add new information at the front: Unreleased stays first, new
+  releases go above older ones, and new entries precede existing entries in
+  their category. Skip changes already recorded. Do not rewrite, summarize,
+  reorder, or regenerate existing records for style or consistency.
+  Only if the worktree file exists and the requested update or release preparation
+  is complete and accurate, skip writing and
+  report that no update is needed. Wording and formatting preferences alone
+  never justify an edit; repeated runs must leave complete records unchanged.
+  Correct an existing entry only when verified evidence shows a factual error
+  or a necessary migration correction; explain each correction in your summary.
+
+  Use only nonempty Added, Changed, Deprecated, Removed, Fixed, and Security
+  categories. Describe user-visible impact concisely, link relevant pull
+  requests, and explain breaking changes with concrete migration steps.
+  Verify compatibility claims against source and repository policy. Do not
+  infer Semantic Versioning adherence from version numbers or a template;
+  state it only if repository policy outside the changelog explicitly does.
+  For breaking tool or plugin API renames, cover exposed tool names and public
+  runtime methods, with migration instructions for affected integrations.
+  Omit internal-only changes. If the file is new, state the tracking baseline
+  without backfilling history. Never invent changes, dates, or release tags.
+  Use only the supplied date and target version for a planned release; otherwise
+  keep pending changes under Unreleased. Preserve older release sections and
+  comparison links. Preparing a release entry does not mean it is published.
+
+  Do not invoke this runnable recursively, edit other files, commit, push,
+  create issues or pull requests, tag, or publish. Validate entries and links,
+  and run git diff --check. Keep investigation and verification details out of
+  the final response. If no update is needed, reply only:
+  "CHANGELOG.md is up to date. No changes made."
+  Otherwise, report additions and any necessary corrections in at most three
+  short bullets and 60 words total. Include a blocker only if it prevents
+  completion. Do not include headings, tables, coverage audits, or speculation.

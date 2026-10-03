@@ -1,0 +1,3 @@
+# config file for .too files under this dir
+[default]
+model = "deepseek/deepseek-v4-flash"
