@@ -206,9 +206,9 @@ input and other fields are declared parameters. The model reads the latest
 hands/handoffs signatures and asks for missing required values before calling.
 Questions about parameters alone do not execute the target.
 
-Omitted hands/handoffs settings inherit their parent; without an inherited value,
-all module-visible targets are available for named user requests. Their snapshots
-have `requested_only="true"`, directing the model not to delegate autonomously.
+Omitted hands/handoffs settings inherit within the same module. Without an
+inherited value, all module-visible targets are available for named user requests.
+Their snapshots have `requested_only="true"`, directing the model not to delegate autonomously.
 Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
 remain runtime-enforced limits, independently for run and exec. On a conflict,
 the model reports the restriction without switching operation or target. Snapshot

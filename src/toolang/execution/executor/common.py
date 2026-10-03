@@ -158,11 +158,14 @@ class _ExecuteCommitted(Exception):
         binding: BoundRun,
         runnable: AgicDecl | FlowDecl,
         locals: Mapping[str, Local],
+        *,
+        triggered_by: StepRef,
     ) -> None:
         super().__init__(binding.bindings.runnable or runnable.name)
         self.binding = binding
         self.runnable = runnable
         self.locals = dict(locals)
+        self.triggered_by = triggered_by
         self.interruption: asyncio.CancelledError | None = None
 
 

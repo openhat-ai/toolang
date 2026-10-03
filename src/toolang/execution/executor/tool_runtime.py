@@ -233,7 +233,9 @@ class _ToolRuntime(ToolRuntime):
         except Exception as exc:
             self.failure = exc
             raise
-        self.transfer = _ExecuteCommitted(committed, target.executable, locals)
+        self.transfer = _ExecuteCommitted(
+            committed, target.executable, locals, triggered_by=self.step
+        )
         return ToolResult(
             {
                 "controls": [

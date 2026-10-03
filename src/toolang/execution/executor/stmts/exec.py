@@ -40,7 +40,7 @@ async def execute(
             )
             parent = parent.parent
         successor = execution.commit_execute(successor, triggered_by=path, loops=loops)
-        transfer = _ExecuteCommitted(successor, runnable, inputs)
+        transfer = _ExecuteCommitted(successor, runnable, inputs, triggered_by=path)
         # All records are already terminal. Delivery can never turn an applied
         # handoff into a failed old Step or resume its repeat body.
         for ref in (path, *(ref for ref, _ in loops)):

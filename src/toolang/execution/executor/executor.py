@@ -1935,6 +1935,7 @@ class _Execution:
                             binding,
                             runnable,
                             current,
+                            step_start=step_start,
                         )
                         current["_"] = result
                     else:
@@ -1952,7 +1953,8 @@ class _Execution:
                     runnable = transfer.runnable
                     current = transfer.locals
                     statement_start = 0
-                    step_start = self.next_step(binding.run_id)
+                    # A committed handoff is the last Step of the outgoing body.
+                    step_start = transfer.triggered_by.indices[0] + 1
                     transferred = True
                     if transfer.interruption is not None and not self.immediate_steer(
                         binding.run_id

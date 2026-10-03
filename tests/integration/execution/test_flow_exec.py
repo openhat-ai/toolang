@@ -11,7 +11,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, message_text
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd, run_event_from_data, run_event_to_data
 from toolang.execution.records import ExecuteControlPayload, RunControlPayload
 from toolang.execution.types import ExecStepNoted, LoopStepNoted, ThreadPrefix, TypedRef
@@ -20,6 +20,71 @@ from toolang.state.prepare import prepare_agent_state
 
 def answer(text):
     return ModelCallResult(message=Message.assistant(text))
+
+
+@pytest.mark.parametrize("kind", ["flow", "agic"])
+def test_repeated_handoffs_do_not_reload_step_history(tmp_path, monkeypatch, kind):
+    count = 20
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="\n".join(
+            [
+                f"{kind} stage_{i}(_: Text):\n"
+                + (
+                    f"  exec stage_{i + 1}"
+                    if kind == "flow"
+                    else "  handoffs = *\n  Continue."
+                )
+                for i in range(count)
+            ]
+            + [f"flow stage_{count}(_: Text):\n  pass"]
+        ),
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        str(i),
+                        str(i),
+                        "_toolang__exec",
+                        {"runnable": f"stage_{i + 1}", "input": {"_": "work"}},
+                    ),
+                )
+            )
+            for i in range(count)
+        ]
+        if kind == "agic"
+        else [],
+    )
+    list_steps = harness.store.list_steps
+    loaded = 0
+
+    def track_reads(**kwargs):
+        nonlocal loaded
+        steps = list_steps(**kwargs)
+        loaded += len(steps)
+        return steps
+
+    monkeypatch.setattr(harness.store, "list_steps", track_reads)
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="stage_0",
+                    named={"_": "work"},
+                )
+            )
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            steps = list_steps(run_id=root.id)
+            assert len(steps) == count * (2 if kind == "agic" else 1)
+            assert [step.index for step in steps] == list(range(len(steps)))
+            # Bound history reads by work performed, without timing assertions.
+            assert loaded <= len(steps)
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("timing", ["immediate", "next_step", "next_call"])

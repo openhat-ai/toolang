@@ -190,6 +190,8 @@ async def execute(
     binding: BoundRun,
     agic: AgicDecl,
     locals: Mapping[str, Local],
+    *,
+    step_start: int,
 ) -> Local:
     """Execute one complete agic model-tool cycle."""
 
@@ -262,7 +264,7 @@ async def execute(
         messages=MessageBuffer(),
         output_binding=output_binding,
         execution=execution,
-        next_step=execution.next_step(binding.run_id),
+        next_step=step_start,
         initial_inputs=tuple(
             local.ref
             for _name, local in sorted(locals.items())
