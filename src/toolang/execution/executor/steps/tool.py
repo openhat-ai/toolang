@@ -275,11 +275,9 @@ async def _execute(
                 history=_ToolHistory(state.execution.store.db_path, run.thread)
                 if plugin_name == "history" and state.execution is not None
                 else None,
-                workspaces=run.setup.workspace_roots(agent_state.workspaces),
-                workspace_names=tuple(
-                    run.setup.workspace_grants(agent_state.workspaces)
-                ),
-                workspace_bindings=run.setup.workspace_grants(agent_state.workspaces),
+                workspaces=run.setup.workspace_roots(run.workspaces),
+                workspace_names=tuple(run.setup.workspace_grants(run.workspaces)),
+                workspace_bindings=run.setup.workspace_grants(run.workspaces),
                 cwd=state.execution.cwd_for_run(run.run_id)
                 if state.execution is not None
                 else run.cwd,

@@ -102,7 +102,7 @@ class _ToolRuntime(ToolRuntime):
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured = self.state.prepared.run.state
+        captured = self.state.prepared.run
         context = ToolContext(
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),

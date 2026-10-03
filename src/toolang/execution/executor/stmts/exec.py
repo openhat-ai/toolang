@@ -76,5 +76,4 @@ async def execute(
         controls=controls,
         occurrence=occurrence,
         evaluate=evaluate,
-        inputs=tuple(local.ref for local in locals.values() if local.ref is not None),
     )

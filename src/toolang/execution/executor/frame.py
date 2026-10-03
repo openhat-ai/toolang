@@ -313,10 +313,8 @@ def build_agic_frame(
         routes=routes,
         state=state,
         services=_tool_services(services, context.setup.envs),
-        workspaces=workspace_declarations(
-            run.setup.workspace_grants(run.state.workspaces)
-        ),
-        workspace_names=available_workspaces(run.setup, run.state),
+        workspaces=workspace_declarations(run.setup.workspace_grants(run.workspaces)),
+        workspace_names=available_workspaces(run.setup, run.workspaces),
         recall=recall_sources(run.settings.recall),
         reasoning=reasoning,
         output_budget=output,

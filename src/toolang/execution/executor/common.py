@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import json
 import re
 from typing import Any, Literal, cast
@@ -122,6 +122,8 @@ class BoundRun:
     state_ref: ControlRef
     setup: AgentSetup
     created_at: str
+    # Root-accepted grants survive child acceptance and same-Run replacement.
+    workspaces: Mapping[str, str] = field(default_factory=dict)
     model_request: ModelRequest | None = None
     module: str = "agent"
     control_index: int = 0
@@ -489,7 +491,13 @@ def statement_input_refs(
 def _statement_child_runnable(statement: FlowStmt) -> str | None:
     if isinstance(
         statement,
-        RunStmt | ScatterStmt | GatherStmt | SettleStmt | MapStmt | StormStmt,
+        RunStmt
+        | ExecStmt
+        | ScatterStmt
+        | GatherStmt
+        | SettleStmt
+        | MapStmt
+        | StormStmt,
     ):
         return statement.runnable
     if isinstance(statement, SortStmt):

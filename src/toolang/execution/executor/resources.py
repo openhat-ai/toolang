@@ -49,11 +49,13 @@ from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
 _Runnable = AgicDecl | FlowDecl
 
 
-def available_workspaces(setup: AgentSetup, state: AgentState) -> tuple[str, ...]:
+def available_workspaces(
+    setup: AgentSetup, workspaces: Mapping[str, str]
+) -> tuple[str, ...]:
     """Return usable workspace names in runtime order."""
     return tuple(
         name
-        for name, root in setup.workspace_roots(state.workspaces).items()
+        for name, root in setup.workspace_roots(workspaces).items()
         if root.is_dir()
     )
 
@@ -75,7 +77,7 @@ def default_workspace_workdir(
     setup: AgentSetup, state: AgentState, *, workdir: str | None = None
 ) -> str:
     """Resolve an initial location without run history or filesystem mutation."""
-    names = available_workspaces(setup, state)
+    names = available_workspaces(setup, state.workspaces)
     if not names or names[0] != IMPLICIT_WORKSPACE_NAME:
         raise ToolangError("implicit lab workspace is unavailable")
     default = workspace_uri(names[-1])

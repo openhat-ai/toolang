@@ -154,6 +154,94 @@ def test_publication_preserves_committed_cwd_before_next_model_call(tmp_path, ch
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("operation", ["run", "exec", "_toolang/run", "_toolang/exec"])
+def test_new_runnable_state_preserves_root_workspace_grants(tmp_path, operation):
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.state.prepare import prepare_agent_state
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    config = home / "config.toml"
+    config.write_text(tomlkit.dumps({"workspaces": {"repo": str(repo)}}))
+    gate = AsyncGate()
+    runtime = operation.startswith("_toolang/")
+    entry = (
+        "agic grow() -> Text:\n  hands = *\n  handoffs = *\n  Wait for publication.\n"
+        if runtime
+        else f"flow grow() -> Text:\n  run: Wait for publication.\n  {operation} successor\n"
+    )
+    first = (
+        ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "transfer",
+                    "transfer",
+                    operation.replace("/", "__"),
+                    {"runnable": "successor", "input": {}},
+                ),
+            )
+        )
+        if runtime
+        else ModelCallResult(message=Message.assistant("ready"))
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=entry
+        + """
+agic successor() -> Text:
+  context = none
+  Write the result.
+""",
+        prepare_state=True,
+        tools=load_tools(queries=("fs/*",)),
+        responses=[
+            ScriptedModelTurn(result=first, gate=gate),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "write",
+                        "write",
+                        "fs__write",
+                        {"path": "result.txt", "text": "done"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ]
+        + (
+            [ModelCallResult(message=Message.assistant("finished"))]
+            if operation == "_toolang/run"
+            else []
+        ),
+    )
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="grow",
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            config.write_text(tomlkit.dumps({"workspaces": {"repo": str(other)}}))
+            harness.published = prepare_agent_state(harness.setup.layout)
+            gate.release()
+            result = await handle
+            assert result.status == "succeeded", (
+                harness.store.resolve_error(result.error) if result.error else None
+            )
+            assert (repo / "result.txt").is_file()
+            assert (repo / "result.txt").read_text() == "done"
+            assert not (other / "result.txt").exists()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("count", [0, 1, 2])
 def test_initial_workdir_uses_last_available_workspace(tmp_path, count):
     roots = {}

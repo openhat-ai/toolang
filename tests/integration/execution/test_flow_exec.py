@@ -22,6 +22,88 @@ def answer(text):
     return ModelCallResult(message=Message.assistant(text))
 
 
+@pytest.mark.parametrize("timing", ["immediate", "next_step", "next_call"])
+def test_flow_handoffs_allow_scheduled_cancellation(tmp_path, monkeypatch, timing):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="\n".join(
+            [f"flow stage_{i}(_: Text):\n  exec stage_{i + 1}" for i in range(10)]
+            + ["flow stage_10(_: Text):\n  pass"]
+        ),
+        responses=[],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        scheduled = False
+
+        def cancel():
+            if not handle.task.done():
+                handle.cancel(timing=timing)
+
+        async def on_event(event):
+            nonlocal scheduled
+            await RecordingRunTracer.on_event(tracer, event)
+            if isinstance(event, StepEnd) and event.kind == "exec" and not scheduled:
+                scheduled = True
+                asyncio.get_running_loop().call_soon(cancel)
+
+        monkeypatch.setattr(tracer, "on_event", on_event)
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="stage_0",
+                    named={"_": "work"},
+                ),
+                tracer=tracer,
+            )
+            root = await handle
+            assert scheduled
+            assert root.status == "canceled", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert len(controls) == 1
+            assert harness.store.list_steps(run_id=root.id)[0].status == "succeeded"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("target", ["successor", "-> Text: Continue {{_}}."])
+def test_exec_records_only_consumed_inputs(tmp_path, target):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+flow grow(_: Text, unused: Text) -> Text:
+  exec {target}
+agic successor(_: Text) -> Text:
+  Continue {{{{_}}}}.
+""",
+        responses=[answer("done")],
+    )
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="grow",
+                    named={"_": "work", "unused": "unrelated"},
+                )
+            )
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            step = harness.store.list_steps(run_id=root.id)[0]
+            assert step.kind == "exec"
+            assert [
+                harness.store.resolve_value(TypedRef(ref, "Text")) for ref in step.input
+            ] == ["work"]
+
+    asyncio.run(scenario())
+
+
 def test_nested_exec_closes_only_own_repeats_and_parent_resumes(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,

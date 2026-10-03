@@ -1958,6 +1958,9 @@ class _Execution:
                         binding.run_id
                     ):
                         raise transfer.interruption
+                    # Pure Flow successors may never suspend. Let cancellation,
+                    # time limits, and State publication run between handoffs.
+                    await asyncio.sleep(0)
             if transferred:
                 assert not isinstance(entry_runnable, CompactSpec)
                 result = _coerce_execute_output(
@@ -2259,6 +2262,7 @@ class _Execution:
             state=state,
             state_ref=state_ref,
             setup=parent.setup,
+            workspaces=parent.workspaces,
             module=module,
             limits=parent.limits,
             ceilings=parent.ceilings,
@@ -2906,6 +2910,7 @@ def _child_binding(
         state=state,
         state_ref=state_ref,
         setup=parent.setup,
+        workspaces=parent.workspaces,
         module=module,
         limits=parent.limits,
         ceilings=parent.ceilings,
@@ -2996,6 +3001,7 @@ def _bind_run(
         state=spec.state,
         state_ref=ControlRef(RunRef(run_id), 0),
         setup=spec.setup,
+        workspaces=spec.state.workspaces,
         module=module,
         limits=spec.limits,
         ceilings=spec.ceilings,
