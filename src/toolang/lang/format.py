@@ -135,6 +135,8 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
 def format_statement_head(statement: ast.FlowStmt) -> str:
     """Return one compact source-like head for a lowered flow statement."""
 
+    if isinstance(statement, ast.ExecStmt):
+        return _statement_words("exec", _authored_runnable(statement.runnable))
     if isinstance(statement, ast.LetStmt):
         return _statement_words("let", statement.binding)
     if isinstance(statement, ast.RunStmt):

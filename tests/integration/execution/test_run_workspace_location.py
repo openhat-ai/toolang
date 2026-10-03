@@ -1202,7 +1202,7 @@ agic target() -> Text:
                     ToolCall(
                         "execute",
                         "execute",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target", "input": {}},
                     ),
                 )

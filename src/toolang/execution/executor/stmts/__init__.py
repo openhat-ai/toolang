@@ -17,6 +17,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    ExecStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
@@ -36,6 +37,7 @@ from . import (
     sort,
     repeat,
     run,
+    exec as exec_stmt,
     scatter,
     seek,
     settle,
@@ -58,6 +60,10 @@ async def execute(
 ) -> Local:
     """Dispatch one lowered flow statement to its semantic implementation."""
 
+    if isinstance(statement, ExecStmt):
+        return await exec_stmt.execute(
+            execution, binding, locals, path, statement, controls, occurrence
+        )
     if isinstance(statement, RunStmt):
         return await run.execute(
             execution, binding, locals, path, statement, controls, occurrence

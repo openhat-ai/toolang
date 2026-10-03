@@ -47,7 +47,7 @@ without resolving current resources.
 
 Apply the same reentry check to every invocation: `run`, `exec`, `map`, other
 collection/helper calls, inline agics, and runtime tools. Keep captured Setup,
-external authority ceilings, Run identity, accounting, and the entry output
+external authority ceilings (including accepted workspace grants), Run identity, accounting, and the entry output
 contract. No new publication barrier, revision
 ordering, root-spawn API, or cross-agent behavior is introduced.
 

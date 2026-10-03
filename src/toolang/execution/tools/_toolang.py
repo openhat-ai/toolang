@@ -25,7 +25,7 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["run", "execute", "pick", "honor", "compact", "chdir"]
+    name: Literal["run", "exec", "pick", "honor", "compact", "chdir"]
     description: str
     parameters: dict[str, object]
 
@@ -153,7 +153,7 @@ class ToolangTool(Tool):
             raise ToolangError(f"_toolang/{self.name} input must be an object")
         if self.name == "run":
             return await runtime.run(runnable, input)
-        return await runtime.execute(runnable, input)
+        return await runtime.exec(runnable, input)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,10 +266,10 @@ _TOOLS = (
         _RUN_PARAMETERS,
     ),
     ToolangTool(
-        "execute",
+        "exec",
         "Transfer the remainder of this Run to an authorized handoff target. "
         "The caller never resumes, and this must be the only tool call in the "
-        "Model Call. Use execute for a named invocation with no requested follow-up. "
+        "Model Call. Use exec for a named invocation with no requested follow-up. "
         "Follow the latest handoffs scope and requested_only policy.",
         _RUN_PARAMETERS,
     ),

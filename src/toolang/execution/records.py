@@ -52,6 +52,7 @@ from .types import (
     IterationOccurrence,
     Local,
     LoopStepNoted,
+    ExecStepNoted,
     MessageTemplate,
     ModelAccounting,
     ModelCost,
@@ -367,11 +368,6 @@ class ExecuteControlPayload:
         if not self.runnable or self.runnable != self.runnable.strip():
             raise ValueError("execute payload requires a canonical runnable")
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
-        for value in self.input.values():
-            if not isinstance(value, TypedRef) or value.type != "Json":
-                raise TypeError(
-                    "execute payload input must point to raw Json model input"
-                )
 
 
 _RECALL_TARGET_ADAPTER = TypeAdapter(RecallTarget)
@@ -588,15 +584,15 @@ class StoredModelStepGiven:
     model: str
     call: ModelCallRefs
     setup: str = field(kw_only=True)
-    catalog_state: str | None = field(default=None, kw_only=True)
+    state: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
             raise ValueError("stored model given requires a model identity")
         if not isinstance(self.setup, str) or not self.setup:
             raise TypeError("stored model setup requires a revision string")
-        if self.catalog_state is not None:
-            _validate_state_revision(self.catalog_state, label="model catalog State")
+        if self.state is not None:
+            _validate_state_revision(self.state, label="model-call State")
         if not isinstance(self.call, ModelCallRefs):
             raise TypeError("stored model given requires ModelCallRefs")
 
@@ -1210,11 +1206,7 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
         payload = _canonical_object(
             data,
             fields={"model", "setup", "call"}
-            | (
-                {"catalog_state"}
-                if isinstance(data, Mapping) and "catalog_state" in data
-                else set()
-            ),
+            | ({"state"} if isinstance(data, Mapping) and "state" in data else set()),
             label="model given",
         )
         model = payload["model"]
@@ -1223,10 +1215,8 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
         return ModelStepGiven(
             model=model,
             setup=_required_text(payload["setup"], label="setup revision"),
-            catalog_state=_required_text(
-                payload["catalog_state"], label="catalog State revision"
-            )
-            if "catalog_state" in payload
+            state=_required_text(payload["state"], label="model-call State revision")
+            if "state" in payload
             else None,
             call=model_call_from_data(payload["call"]),
         )
@@ -1265,11 +1255,7 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
     validate_step_given(kind, given)
     if isinstance(given, ModelStepGiven):
         return {
-            **(
-                {"catalog_state": given.catalog_state}
-                if given.catalog_state is not None
-                else {}
-            ),
+            **({"state": given.state} if given.state is not None else {}),
             "model": given.model,
             "setup": given.setup,
             "call": model_call_to_data(given.call),
@@ -1297,11 +1283,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     payload = _canonical_object(
         data,
         fields={"model", "setup", "call"}
-        | (
-            {"catalog_state"}
-            if isinstance(data, Mapping) and "catalog_state" in data
-            else set()
-        ),
+        | ({"state"} if isinstance(data, Mapping) and "state" in data else set()),
         label="model given",
     )
     model = payload["model"]
@@ -1342,10 +1324,8 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     return StoredModelStepGiven(
         model=model,
         setup=_required_text(payload["setup"], label="setup revision"),
-        catalog_state=_required_text(
-            payload["catalog_state"], label="catalog State revision"
-        )
-        if "catalog_state" in payload
+        state=_required_text(payload["state"], label="model-call State revision")
+        if "state" in payload
         else None,
         call=ModelCallRefs(
             instructions=instructions,
@@ -1383,11 +1363,7 @@ def stored_step_given_to_data(
         if kind != "model":
             raise TypeError(f"{kind} Step cannot store model given facts")
         return {
-            **(
-                {"catalog_state": given.catalog_state}
-                if given.catalog_state is not None
-                else {}
-            ),
+            **({"state": given.state} if given.state is not None else {}),
             "model": given.model,
             "setup": given.setup,
             "call": {
@@ -1422,6 +1398,15 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
 
     if data is None:
         return None
+    if kind == "exec":
+        payload = _canonical_object(
+            data, fields={"control", "runnable"}, label="exec noted"
+        )
+        if not isinstance(payload["control"], str) or not isinstance(
+            payload["runnable"], str
+        ):
+            raise ValueError("exec noted requires text control and runnable refs")
+        return ExecStepNoted(ControlRef.parse(payload["control"]), payload["runnable"])
     if kind == "tool":
         payload = _canonical_object(data, fields={"summary"}, label="tool noted")
         summary = payload["summary"]
@@ -1454,12 +1439,12 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
             )
         payload = cast(Mapping[str, object], data)
         termination = payload["termination"]
-        if termination not in {"exhausted", "satisfied", "failed", "canceled"}:
+        if termination not in {"exhausted", "satisfied", "exec", "failed", "canceled"}:
             raise ValueError("loop noted termination is invalid")
         return LoopStepNoted(
             iterations=_required_int(payload["iterations"], label="loop iterations"),
             termination=cast(
-                Literal["exhausted", "satisfied", "failed", "canceled"],
+                Literal["exhausted", "satisfied", "exec", "failed", "canceled"],
                 termination,
             ),
             total=_optional_int(payload.get("total"), label="loop total"),
@@ -1488,6 +1473,8 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
     validate_step_noted(kind, noted)
     if noted is None:
         return None
+    if isinstance(noted, ExecStepNoted):
+        return {"control": str(noted.control), "runnable": noted.runnable}
     if isinstance(noted, ToolStepNoted):
         return {"summary": noted.summary}
     if isinstance(noted, CollectionStepNoted):

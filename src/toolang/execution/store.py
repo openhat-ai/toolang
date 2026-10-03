@@ -99,6 +99,8 @@ from .types import (
     StepKind,
     StepGiven,
     StepNoted,
+    ExecStepNoted,
+    LoopStepNoted,
     StepStatus,
     RunRef,
     RunLink,
@@ -122,7 +124,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 49
+_SCHEMA_VERSION = 50
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -534,6 +536,7 @@ class RunStore:
         triggered_by: StepRef,
         input: CallInput[Value | TypedRef],
         created_at: str,
+        loops: Sequence[tuple[StepRef, LoopStepNoted]] = (),
     ) -> ControlRecord:
         """Atomically record one applied same-Run runnable replacement."""
 
@@ -560,10 +563,10 @@ class RunStore:
             ).fetchone()
             if (
                 step is None
-                or str(step["kind"]) != "tool"
+                or str(step["kind"]) not in {"tool", "exec"}
                 or str(step["status"]) != "running"
             ):
-                raise ValueError("execute trigger must be a running Tool Step")
+                raise ValueError("execute trigger must be a running tool or exec Step")
             row = self._conn.execute(
                 'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
                 "FROM controls WHERE target = ?",
@@ -584,6 +587,40 @@ class RunStore:
                 claimed=True,
                 triggered_by=triggered_by,
             )
+            if str(step["kind"]) == "exec":
+                self.finish_step(
+                    ref=triggered_by,
+                    kind="exec",
+                    status="succeeded",
+                    output=None,
+                    noted=ExecStepNoted(control_ref, runnable),
+                    error=None,
+                    finished_at=created_at,
+                )
+                parent = triggered_by.parent
+                for ref, noted in loops:
+                    if ref != parent or noted.termination != "exec":
+                        raise ValueError(
+                            "exec must close repeat ancestors from inner to outer"
+                        )
+                    ancestor = self.get_step(ref=ref)
+                    if ancestor is None or ancestor.status != "running":
+                        raise ValueError("exec repeat ancestor is not running")
+                    self.finish_step(
+                        ref=ref,
+                        kind="loop",
+                        status="succeeded",
+                        output=None,
+                        noted=noted,
+                        error=None,
+                        finished_at=created_at,
+                        aborted_by=control_ref,
+                    )
+                    parent = ref.parent
+                if parent is not None:
+                    raise ValueError("exec must close all repeat ancestors")
+            elif loops:
+                raise ValueError("tool exec cannot close Flow repeats")
             inserted = self._conn.execute(
                 "SELECT * FROM controls WHERE id = ?",
                 (str(control_ref),),
@@ -2082,7 +2119,12 @@ class RunStore:
                         pending_runs.append(run.id)
 
             records = tuple(runs.values())
-            entries = tuple(item.entry for item in self._inspect_runs_locked(records))
+            handoffs = self.list_run_controls_for_runs(
+                run_ids=tuple(runs), kind="execute"
+            )
+            entries = tuple(
+                item.entry for item in self._inspect_runs_locked(records)
+            ) + tuple(control for controls in handoffs.values() for control in controls)
             return ExecutionSnapshot(
                 root=root_record,
                 runs=tuple(sorted(records, key=lambda run: (run.created_at, run.id))),
@@ -2717,7 +2759,7 @@ class RunStore:
                     setup=given.setup,
                     call=given.call,
                     messages=given.messages,
-                    catalog_state=given.catalog_state,
+                    state=given.state,
                 )
                 if isinstance(given, ModelStepGiven)
                 else cast(StoredStepGiven, given)
@@ -2929,7 +2971,7 @@ class RunStore:
         setup: str,
         call: ModelCall,
         messages: ModelMessages | None = None,
-        catalog_state: str | None = None,
+        state: str | None = None,
     ) -> StoredModelStepGiven:
         """Persist call settings and the new message templates for this boundary."""
 
@@ -3006,7 +3048,7 @@ class RunStore:
         from .records import ModelCallRefs
 
         return StoredModelStepGiven(
-            catalog_state=catalog_state,
+            state=state,
             model=model,
             setup=setup,
             call=ModelCallRefs(
@@ -3976,6 +4018,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
 
 def _step_kind_from_data(value: object) -> StepKind:
     if not isinstance(value, str) or value not in {
+        "exec",
         "run",
         "agent",
         "human",

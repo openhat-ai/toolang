@@ -673,6 +673,7 @@ def _stmt_runnable(stmt: ast.FlowStmt) -> str:
     if isinstance(
         stmt,
         ast.RunStmt
+        | ast.ExecStmt
         | ast.ScatterStmt
         | ast.StormStmt
         | ast.GatherStmt

@@ -546,7 +546,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             [Message.user("direct hello")],
         ]
         assert setup.reads == 7
-        assert state.reads == 7
+        assert state.reads == 11
         assert duplicate.status_code == 422
         assert duplicate.json()["detail"] == (
             "run control request already exists: selected_request"

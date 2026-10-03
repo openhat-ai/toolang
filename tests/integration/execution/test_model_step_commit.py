@@ -426,8 +426,8 @@ flow parent() -> Text:
             )
             assert step.state == entry
             (call,) = harness.adapter.invocations
-            assert "original instructions" in call.call.instructions
-            assert "updated instructions" not in call.call.instructions
+            assert "original instructions" not in call.call.instructions
+            assert "updated instructions" in call.call.instructions
             assert call.call.messages[1] == steer_message("change")
 
     asyncio.run(scenario())

@@ -28,6 +28,7 @@ from toolang.base.utils.workspace_paths import (
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
+    ExecStmt,
     FlowStmt,
     Parameter,
     Program,
@@ -49,7 +50,7 @@ from toolang.lang.input import (
     validate_value,
 )
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.types import Array, Value, is_unnamed_ref
+from toolang.lang.types import Array, Value, is_unnamed_ref, is_generated_ref
 from toolang.plugin.models.query import first_model_ref, resolve_model
 from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
@@ -95,6 +96,7 @@ from ..types import (
     StepRef,
     RunRef,
     ModelStepNoted,
+    LoopStepNoted,
     ModelStepGiven,
     ToolStepGiven,
     ToolStepNoted,
@@ -112,6 +114,7 @@ from ..runnables import (
     resolve_module_runnable,
     resolve_state_runnable,
 )
+from .steps import loop as loop_step
 from .common import (
     BoundRun,
     EventEmitter,
@@ -132,10 +135,10 @@ from ..settings import resolve_settings
 from ..recall import history_variables
 from .iteration import iteration_values
 from .resources import (
-    intersect_resources,
     apply_agent_ceiling,
     resource_caps,
     resolve_agent_resources,
+    resolve_path_resources,
     resolve_runnable_resources,
     snapshot_model_selection,
     validate_model_binding,
@@ -1061,7 +1064,6 @@ class RunExecutor:
             if active.execution is not None:
                 active.execution._active_bindings.pop(event.run, None)
                 active.execution._cwd_cache.pop(event.run, None)
-                active.execution._run_lineages.pop(event.run, None)
         if active.tracer is not None:
             try:
                 await active.tracer.on_event(event)
@@ -1340,9 +1342,7 @@ class _Execution:
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
         # Durable controls are authoritative; this is only an online projection.
         self._cwd_cache: dict[str, str] = {}
-        self._run_lineages: dict[str, tuple[str, ...]] = {
-            root.run_id: (_qualified_identity(root),)
-        }
+        self.repeat_progress: dict[StepRef, loop_step.LoopProgress] = {}
         self._history: MessageHistory | None = None
         self._history_horizon = root.horizon
         self._history_versions = {root.horizon}
@@ -1592,6 +1592,7 @@ class _Execution:
     ) -> AgicDecl | FlowDecl:
         state, _ = state_snapshot or self.state_for_step(step)
         target = resolve_call_target(state, binding.module, name)
+        self.require_inactive_runnable(binding, target, action="run")
         runnable = target.executable
         self._validate_child_contract(step, name, runnable)
         _bind_child_input(
@@ -1619,12 +1620,15 @@ class _Execution:
             raise ToolangError("until requires an inline agic")
         settings = resolve_settings(runnable, binding.module, binding.settings)
         templates = [message.content for message in runnable.messages]
+        dependencies = (
+            self.latest_state() if self.executor._state is not None else state
+        )
         for setting, kind in (
             (settings.instruct, "instruct"),
             (settings.context, "context"),
         ):
             if setting is not None and setting.name != "none":
-                program = state_program(state, setting.module)
+                program = state_program(dependencies, setting.module)
                 declaration = (
                     program.find_instruct(setting.name)
                     if kind == "instruct"
@@ -1669,32 +1673,94 @@ class _Execution:
         )
         return input
 
-    def active_runnable_identities(self, parent: BoundRun) -> frozenset[str]:
-        """Return the identities blocked by the current and ancestor lineages."""
+    def active_path(self, binding: BoundRun) -> tuple[BoundRun, ...]:
+        """Return this branch's pinned bindings, ordered root to current."""
+        path = [binding]
+        while binding.parent is not None:
+            binding = self._active_bindings[binding.parent.run_id]
+            path.append(binding)
+        return tuple(reversed(path))
 
-        identities: set[str] = set()
-        run_id: str | None = parent.run_id
-        while run_id is not None:
-            identities.update(self._run_lineages.get(run_id, ()))
-            active = self._active_bindings.get(run_id)
-            run_id = (
-                active.parent.run_id if active and active.parent is not None else None
-            )
-        return frozenset(identities)
+    def active_runnable_identities(self, parent: BoundRun) -> frozenset[str]:
+        """History and sibling branches are not part of the active path."""
+        return frozenset(_qualified_identity(item) for item in self.active_path(parent))
 
     def require_inactive_runnable(
-        self,
-        parent: BoundRun,
-        target: ResolvedRunnable,
-        *,
-        action: str,
+        self, parent: BoundRun, target: ResolvedRunnable, *, action: str
     ) -> None:
-        """Reject a model route already active in this or an ancestor lineage."""
-
-        if target.qualified in self.active_runnable_identities(parent):
-            raise ValueError(
+        if target.identity in self.active_runnable_identities(parent):
+            raise ToolangError(
                 f"{action} cannot call the current or an ancestor runnable: {target.ref}"
             )
+
+    def resolve_invocation(
+        self,
+        parent: BoundRun,
+        reference: str,
+        *,
+        baseline_state: AgentState | None = None,
+        authorize: Callable[[ResolvedRunnable], None] | None = None,
+        action: str,
+    ) -> tuple[AgentState, ResolvedRunnable]:
+        """Resolve one known target once, preserving inline code and contracts."""
+        baseline_state = baseline_state or parent.state
+        baseline = resolve_call_target(baseline_state, parent.module, reference)
+        self.require_inactive_runnable(parent, baseline, action=action)
+        if authorize is not None:
+            authorize(baseline)
+        if is_generated_ref(baseline.ref):
+            return baseline_state, baseline
+        state = self.latest_state()
+        try:
+            target = resolve_call_target(state, parent.module, reference)
+            if target.identity != baseline.identity:
+                raise ToolangError("runnable module changed")
+            expected = RunnableContract.resolve(
+                baseline.executable,
+                structs={
+                    item.name: item
+                    for item in state_program(baseline_state, baseline.module).structs
+                },
+            )
+            actual = RunnableContract.resolve(
+                target.executable,
+                structs={
+                    item.name: item
+                    for item in state_program(state, target.module).structs
+                },
+            )
+            if expected != actual:
+                raise ToolangError("runnable signature changed")
+        except (ToolangError, KeyError, ValueError) as exc:
+            raise ToolangError(
+                f"Cannot bind {baseline.qualified}: baseline {baseline_state.revision}, "
+                f"candidate {state.revision}: {exc}"
+            ) from exc
+        return state, target
+
+    def prepare_flow_exec(
+        self, parent: BoundRun, statement: ExecStmt, locals: Mapping[str, Local]
+    ) -> tuple[BoundRun, AgicDecl | FlowDecl, dict[str, Local]]:
+        """Bind authored input before committing a native same-Run handoff."""
+        state, target = self.resolve_invocation(
+            parent, statement.runnable, action="exec"
+        )
+        input, provenance = _bind_child_input(
+            target.executable,
+            locals,
+            structs={
+                item.name: item for item in state_program(state, target.module).structs
+            },
+        )
+        binding, successor_locals = self.prepare_execute(
+            parent,
+            target,
+            input,
+            control_input=provenance,
+            state=state,
+            state_ref=parent.state_ref,
+        )
+        return binding, target.executable, successor_locals
 
     def prepare_execute(
         self,
@@ -1702,20 +1768,18 @@ class _Execution:
         target: ResolvedRunnable,
         input: RunnableInput,
         *,
-        source: FieldRef,
+        control_input: CallInput[Value | TypedRef],
         state: AgentState,
         state_ref: ControlRef,
     ) -> tuple[BoundRun, dict[str, Local]]:
         """Prepare a same-Run replacement without committing the transition."""
 
-        self.require_inactive_runnable(parent, target, action="_toolang/execute")
-        agent_resources, resources = self._public_runnable_resources(
-            parent,
-            target.module,
-            target.executable,
-            state=state,
+        self.require_inactive_runnable(parent, target, action="_toolang/exec")
+        ancestor = (
+            self._active_bindings[parent.parent.run_id]
+            if parent.parent is not None
+            else None
         )
-        control_input = _execute_control_input(input, source=source)
         binding = replace(
             parent,
             horizon=self.horizon_for(parent.run_id),
@@ -1728,14 +1792,13 @@ class _Execution:
             state=state,
             state_ref=state_ref,
             module=target.module,
-            agent_resources=agent_resources,
-            resources=resources,
-            parent_resources=parent.resources,
-            settings_base=parent.settings,
             settings=resolve_settings(
-                target.executable, target.module, parent.settings
+                target.executable,
+                target.module,
+                ancestor.settings if ancestor is not None else None,
             ),
         )
+        binding = self.prepare_resources(binding, target.executable)
         return binding, _execute_locals(input, target.executable, control_input)
 
     def commit_execute(
@@ -1743,14 +1806,11 @@ class _Execution:
         binding: BoundRun,
         *,
         triggered_by: StepRef,
+        loops: Sequence[tuple[StepRef, LoopStepNoted]] = (),
     ) -> BoundRun:
         """Persist and activate one prepared same-Run runnable replacement."""
 
-        lineage = self._run_lineages.get(binding.run_id)
-        if lineage is None:  # pragma: no cover - active Run invariant
-            raise RuntimeError(f"active Run lineage is missing: {binding.run_id}")
         ref = _bound_runnable(binding)
-        identity = _qualified_identity(binding)
         control = self.store.accept_execute_control(
             run_id=binding.run_id,
             state=binding.state.revision,
@@ -1758,10 +1818,10 @@ class _Execution:
             triggered_by=triggered_by,
             input=binding.control_input,
             created_at=utc_now(),
+            loops=loops,
         )
         binding = replace(binding, control_index=control.index, state_ref=control.ref)
         self._preceding_controls.append(control.ref)
-        self._run_lineages[binding.run_id] = (*lineage, identity)
         self._active_bindings[binding.run_id] = binding
         self._run_outputs.pop(binding.run_id, None)
         self.executor._observe_control(control)
@@ -1894,6 +1954,10 @@ class _Execution:
                     statement_start = 0
                     step_start = self.next_step(binding.run_id)
                     transferred = True
+                    if transfer.interruption is not None and not self.immediate_steer(
+                        binding.run_id
+                    ):
+                        raise transfer.interruption
             if transferred:
                 assert not isinstance(entry_runnable, CompactSpec)
                 result = _coerce_execute_output(
@@ -2104,55 +2168,26 @@ class _Execution:
             state: AgentState,
             state_ref: ControlRef,
         ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
-            baseline_state = state if resolution == "state" else parent.state
-            if resolution == "state":
-                baseline = resolve_call_target(baseline_state, parent.module, name)
-                self.require_inactive_runnable(parent, baseline, action="_toolang/run")
-                if authorize is not None:
-                    authorize(baseline)
-            else:
-                baseline = resolve_call_target(baseline_state, parent.module, name)
-            # Generated declarations belong to their containing, accepted plan.
-            state = (
-                baseline_state if baseline.name.startswith("<") else self.latest_state()
+            state, target = self.resolve_invocation(
+                parent,
+                name,
+                baseline_state=state if resolution == "state" else parent.state,
+                authorize=authorize,
+                action="_toolang/run" if resolution == "state" else "run",
             )
-            try:
-                runnable = resolve_bound_runnable(state, baseline.module, baseline.ref)
-                expected = RunnableContract.resolve(
-                    baseline.executable,
-                    structs={
-                        item.name: item
-                        for item in state_program(
-                            baseline_state, baseline.module
-                        ).structs
-                    },
-                )
-                actual = RunnableContract.resolve(
-                    runnable,
-                    structs={
-                        item.name: item
-                        for item in state_program(state, baseline.module).structs
-                    },
-                )
-                if expected != actual:
-                    raise ToolangError("runnable signature changed")
-            except (ToolangError, KeyError, ValueError) as exc:
-                raise ToolangError(
-                    f"Cannot bind {baseline.qualified}: baseline {baseline_state.revision}, "
-                    f"candidate {state.revision}: {exc}"
-                ) from exc
+            runnable = target.executable
             if resolution == "state":
                 input = self.resolve_public_input(
                     state,
-                    baseline.module,
-                    baseline.name,
+                    target.module,
+                    target.name,
                     runnable,
                     {} if raw_input is None else raw_input,
                 )
                 return self._prepare_public_child(
                     parent,
-                    baseline.module,
-                    baseline.name,
+                    target.module,
+                    target.name,
                     runnable,
                     input,
                     parent_step=step,
@@ -2165,15 +2200,15 @@ class _Execution:
                     runnable.output or "Part[]",
                     structs={
                         item.name: item
-                        for item in state_program(state, baseline.module).structs
+                        for item in state_program(state, target.module).structs
                     },
                     name=name,
                 )
             binding = _child_binding(
                 self,
                 parent,
-                baseline.module,
-                baseline.name,
+                target.module,
+                target.name,
                 runnable,
                 locals,
                 parent_step=step,
@@ -2181,7 +2216,7 @@ class _Execution:
                 state=state,
                 state_ref=state_ref,
             )
-            return _prepare_child_run(binding, runnable), runnable
+            return self.prepare_resources(binding, runnable), runnable
 
         binding, runnable = await self._begin_child(
             prepare,
@@ -2210,13 +2245,7 @@ class _Execution:
                 runnable=runnable,
                 input=input,
             )
-        agent_resources, resources = self._public_runnable_resources(
-            parent,
-            module,
-            runnable,
-            state=state,
-        )
-        return BoundRun(
+        binding = BoundRun(
             run_id=self.executor.ids.issue_run(),
             root_run_id=parent.root_run_id,
             thread=parent.thread,
@@ -2233,48 +2262,46 @@ class _Execution:
             module=module,
             limits=parent.limits,
             ceilings=parent.ceilings,
-            agent_resources=agent_resources,
-            resources=resources,
-            parent_resources=parent.resources,
-            settings_base=parent.settings,
             settings=resolve_settings(runnable, module, parent.settings),
             created_at=utc_now(),
             call="run",
             parent=parent_step,
         )
+        return self.prepare_resources(binding, runnable)
 
-    def _public_runnable_resources(
+    def prepare_resources(
         self,
-        parent: BoundRun,
-        module: str,
+        binding: BoundRun,
         runnable: AgicDecl | FlowDecl,
         *,
-        state: AgentState,
-    ) -> tuple[AgentResources, AgentResources]:
-        agent_resources = resolve_agent_resources(
-            parent.setup,
-            state,
-            AgentCeiling(),
-            module=module,
+        state: AgentState | None = None,
+    ) -> BoundRun:
+        """Select fresh resources without changing any accepted code binding."""
+        path = self.active_path(binding)
+        rules = tuple(
+            (
+                ancestor.module,
+                resolve_bound_runnable(
+                    ancestor.state, ancestor.module, _bound_runnable(ancestor)
+                ),
+            )
+            for ancestor in path[:-1]
+        ) + ((binding.module, runnable),)
+        agent_resources, resources = resolve_path_resources(
+            binding.setup,
+            state or binding.state,
+            rules=rules,
+            ceilings=binding.ceilings,
+            external=self._agent_resources,
         )
-        selection = snapshot_model_selection(parent.setup)
-        resources = resolve_runnable_resources(
-            selection,
-            runnable=runnable,
-            base=intersect_resources(
-                parent.resources or agent_resources, agent_resources
-            ),
-            setup=parent.setup,
-            state=state,
-            module=module,
-        )
-        validate_model_binding(
-            selection,
-            runnable=runnable,
-            resources=resources,
-            model=parent.bindings.model,
-        )
-        return agent_resources, resources
+        if isinstance(runnable, AgicDecl):
+            validate_model_binding(
+                self.models,
+                runnable=runnable,
+                resources=resources,
+                model=binding.bindings.model,
+            )
+        return replace(binding, agent_resources=agent_resources, resources=resources)
 
     async def _begin_child(
         self,
@@ -2317,7 +2344,6 @@ class _Execution:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
             try:
                 self._active_bindings[binding.run_id] = binding
-                self._run_lineages[binding.run_id] = (_qualified_identity(binding),)
                 if resume is None:
                     self.store.accept_run(
                         run_id=binding.run_id,
@@ -2379,7 +2405,6 @@ class _Execution:
                         )
                 self._active_bindings.pop(binding.run_id, None)
                 self._cwd_cache.pop(binding.run_id, None)
-                self._run_lineages.pop(binding.run_id, None)
                 raise
             return binding, runnable
 
@@ -2467,6 +2492,7 @@ class _Execution:
         source_local = locals.get("_", Local())
         input_type = source_local.type_name
         target = resolve_call_target(state, binding.module, runnable)
+        self.require_inactive_runnable(binding, target, action="run")
         declaration = target.executable
         self._validate_child_contract(parent, runnable, declaration)
         # Later children may adopt publications; the caller keeps its output type.
@@ -2883,12 +2909,6 @@ def _child_binding(
         module=module,
         limits=parent.limits,
         ceilings=parent.ceilings,
-        agent_resources=resolve_agent_resources(
-            parent.setup, state, AgentCeiling(), module=module
-        ),
-        resources=None,
-        parent_resources=parent.resources,
-        settings_base=parent.settings,
         settings=resolve_settings(runnable, module, parent.settings),
         created_at=utc_now(),
         call="run",
@@ -3095,40 +3115,6 @@ def _setup_sandbox(setup: AgentSetup) -> str:
     return sandbox
 
 
-def _prepare_child_run(
-    binding: BoundRun,
-    runnable: AgicDecl | FlowDecl,
-) -> BoundRun:
-    agent_resources = binding.agent_resources
-    if agent_resources is None:
-        raise RuntimeError(f"agent resources missing: {binding.run_id}")
-    base = (
-        intersect_resources(binding.parent_resources, agent_resources)
-        if binding.parent_resources is not None
-        else agent_resources
-    )
-    selection = snapshot_model_selection(binding.setup)
-    resources = resolve_runnable_resources(
-        selection,
-        runnable=runnable,
-        base=base,
-        setup=binding.setup,
-        state=binding.state,
-        module=binding.module,
-    )
-    if isinstance(runnable, AgicDecl):
-        validate_model_binding(
-            selection,
-            runnable=runnable,
-            resources=resources,
-            model=binding.bindings.model,
-        )
-    return replace(
-        binding,
-        resources=resources,
-    )
-
-
 def _validate_inputs(
     *,
     program: Program,
@@ -3194,25 +3180,12 @@ def _snapshot_input(
     )
 
 
-def _execute_control_input(
-    input: RunnableInput, *, source: FieldRef
-) -> CallInput[TypedRef]:
-    """Point replacement inputs into the originating Model ToolCall."""
-
-    return CallInput(
-        {
-            name: TypedRef(source.select("input", "input", name), "Json")
-            for name in input
-        }
-    )
-
-
 def _execute_locals(
     input: RunnableInput,
     runnable: AgicDecl | FlowDecl,
-    records: CallInput[TypedRef],
+    records: CallInput[Value | TypedRef],
 ) -> dict[str, Local]:
-    """Bind replacement values to their durable model-output sources."""
+    """Bind replacement inputs while retaining their typed provenance."""
 
     types = {item.name: item.type_name or "Part[]" for item in runnable.params}
     if runnable.input is not None:
@@ -3220,7 +3193,13 @@ def _execute_locals(
     result: dict[str, Local] = {"_": Local()}
     for name, pointer in records.items():
         result[name] = Local(
-            input[name], "item", pointer.ref, types[name], RecordLocal(pointer)
+            input[name],
+            "item",
+            pointer.ref if isinstance(pointer, TypedRef) else None,
+            types[name],
+            RecordLocal.typed(types[name], pointer)
+            if not isinstance(pointer, TypedRef)
+            else RecordLocal(pointer),
         )
     return result
 
@@ -3263,14 +3242,11 @@ def _bound_runnable(binding: BoundRun) -> str:
 
 
 def _qualified_identity(binding: BoundRun) -> str:
-    """Return one module-qualified identity for lineage comparisons."""
-
-    runnable = binding.bindings.runnable
-    if not runnable:
+    """Identify a runnable by module and name, independently of kind/revision."""
+    if not binding.bindings.runnable:
         raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    if "::" in runnable:
-        return runnable
-    return f"{binding.module}::{runnable}"
+    name, _ = parse_runnable_ref(binding.bindings.runnable)
+    return f"{binding.module}::{name}"
 
 
 def _bound_model(binding: BoundRun) -> str:

@@ -68,7 +68,7 @@ agic helper() -> Text:
 ## Use this entry for the general request.
 {target}
 """
-    action = "run" if directive == "hands" else "execute"
+    action = "run" if directive == "hands" else "exec"
     responses = [
         ModelCallResult(
             tool_calls=(
@@ -102,11 +102,20 @@ agic helper() -> Text:
             )
             child_call = harness.adapter.invocations[1].call
             child_routes = route_snapshots(child_call)
-            assert child_routes[directive] == []
-            other = "handoffs" if directive == "hands" else "hands"
-            assert [item["ref"] for item in child_routes[other]] == (
-                ["agic:helper"] if kind == "agic" else []
-            )
+            if directive == "hands":
+                assert child_routes[directive] == []
+                assert [item["ref"] for item in child_routes["handoffs"]] == (
+                    ["agic:helper"] if kind == "agic" else []
+                )
+            else:
+                # Exec removes the caller's rules and identity from the path.
+                expected = (
+                    ["agic:caller", "agic:helper"]
+                    if kind == "agic"
+                    else ["agic:caller"]
+                )
+                for routes in child_routes.values():
+                    assert [item["ref"] for item in routes] == expected
             assert without_runtime_snapshots(child_call.messages) == [
                 Message.user("Main.")
             ]
@@ -226,12 +235,12 @@ agic child(_: Text) -> Text:
             prohibitions = harness.adapter.invocations[1].call.instructions.split(
                 "## Don't", 1
             )[1]
-            assert "call run or execute without authorized routes" in prohibitions
+            assert "call run or exec without authorized routes" in prohibitions
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
             }
@@ -805,7 +814,7 @@ flow -> Text:
 def test_generic_dispatch_requires_per_call_runtime_authority(tmp_path: Path) -> None:
     from toolang.plugin.toolsets.loading import load_tools
 
-    call = ToolCall("execute", "provider-execute", "_toolang__execute", {})
+    call = ToolCall("execute", "provider-execute", "_toolang__exec", {})
     context = ToolContext(tmp_path, tmp_path)
     result = asyncio.run(
         invoke_tool_call(
@@ -1295,7 +1304,7 @@ agic target(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__execute",
+                        name="_toolang__exec",
                         input={"runnable": "target", "input": {"_": "work"}},
                     ),
                 ),
@@ -1361,14 +1370,14 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "web__search",
@@ -1377,7 +1386,7 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "web__search",
@@ -1417,7 +1426,7 @@ agic target(_: Text) -> Boolean:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__execute",
+                        name="_toolang__exec",
                         input={"runnable": "target", "input": {"_": "work"}},
                     ),
                 ),
@@ -1473,7 +1482,7 @@ agic blocked -> Text:
                     ToolCall(
                         tool_call_id="blocked-handoff",
                         call_id="provider-blocked",
-                        name="_toolang__execute",
+                        name="_toolang__exec",
                         input={"runnable": "agic:blocked"},
                     ),
                 )
@@ -1529,7 +1538,7 @@ agic caller() -> Text:
                     ToolCall(
                         "unavailable",
                         "provider-unavailable",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1554,14 +1563,14 @@ agic caller() -> Text:
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
             }
             assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
             assert '"runnables"' not in first_call.instructions
             prohibitions = first_call.instructions.split("## Don't", 1)[1]
-            assert "call run or execute without authorized routes" in prohibitions
+            assert "call run or exec without authorized routes" in prohibitions
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
@@ -1589,13 +1598,13 @@ agic target() -> Text:
                     ToolCall(
                         "first",
                         "provider-first",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                     ToolCall(
                         "second",
                         "provider-second",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1630,14 +1639,14 @@ agic target() -> Text:
             assert all(
                 isinstance(item, ToolResultPart)
                 and item.error
-                == "_toolang/execute must be the only tool call in its Model Call"
+                == "_toolang/exec must be the only tool call in its Model Call"
                 for item in results
             )
 
     asyncio.run(scenario())
 
 
-def test_chained_execute_rejects_a_runnable_already_in_the_lineage(
+def test_exec_can_return_to_a_replaced_runnable(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1663,7 +1672,7 @@ agic target() -> Text:
                     ToolCall(
                         "to-target",
                         "provider-target",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1673,12 +1682,12 @@ agic target() -> Text:
                     ToolCall(
                         "to-caller",
                         "provider-caller",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "caller"},
                     ),
                 )
             ),
-            ModelCallResult(message=Message.assistant("target recovered")),
+            ModelCallResult(message=Message.assistant("caller completed")),
         ),
     )
 
@@ -1695,25 +1704,27 @@ agic target() -> Text:
                 ("model", "succeeded"),
                 ("tool", "succeeded"),
                 ("model", "succeeded"),
-                ("tool", "failed"),
+                ("tool", "succeeded"),
                 ("model", "succeeded"),
             ]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
-            assert len(controls) == 1
-            assert isinstance(controls[0].payload, ExecuteControlPayload)
-            assert controls[0].payload.runnable == "agic:target"
-            result = last_tool_result(harness.adapter.invocations[2].call)
-            assert isinstance(result, ToolResultPart)
-            assert result.error == (
-                "_toolang/execute cannot call the current or an ancestor runnable: "
-                "agic:caller"
-            )
-            first, *following = harness.adapter.invocations
+            assert len(controls) == 2
             assert [
-                target["ref"] for target in route_snapshots(first.call)["handoffs"]
-            ] == ["agic:target"]
-            for invocation in following:
-                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
+                control.payload.runnable
+                for control in controls
+                if isinstance(control.payload, ExecuteControlPayload)
+            ] == ["agic:target", "agic:caller"]
+            assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            for invocation, expected in zip(
+                harness.adapter.invocations,
+                ["agic:target", "agic:caller", "agic:target"],
+                strict=True,
+            ):
+                assert [
+                    route["ref"]
+                    for route in route_snapshots(invocation.call)["handoffs"]
+                ] == [expected]
+            assert "Call." in str(harness.adapter.invocations[2].call.messages)
 
     asyncio.run(scenario())
 
@@ -1748,7 +1759,7 @@ flow deliver(_: Text) -> Text:
                     ToolCall(
                         "to-middle",
                         "provider-middle",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "middle", "input": {"_": "work"}},
                     ),
                 )
@@ -1758,7 +1769,7 @@ flow deliver(_: Text) -> Text:
                     ToolCall(
                         "to-deliver",
                         "provider-deliver",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "flow:deliver", "input": {"_": "work"}},
                     ),
                 )
@@ -1868,7 +1879,7 @@ agic target() -> Text:
                     ToolCall(
                         "handoff",
                         "provider-handoff",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1917,7 +1928,7 @@ agic target() -> Text:
                     ToolCall(
                         "handoff",
                         "provider-handoff",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -2036,20 +2047,20 @@ agic target(_: Text) -> Text:
             after_publication = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_publication.tools} == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "beta__use",
             }
             assert {tool.name for tool in after_publication.tools} == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "beta__use",
             }
             assert "old target state" in before_publication.instructions
-            assert "old target state" in after_publication.instructions
+            assert "new target state" in after_publication.instructions
             assert f"bound route {target}" in before_publication.instructions
             assert f"bound route {target}" in after_publication.instructions
 
@@ -2057,13 +2068,13 @@ agic target(_: Text) -> Text:
 
 
 @pytest.mark.parametrize(
-    "operation,directive", [("run", "hands"), ("execute", "handoffs")]
+    "operation,directive", [("run", "hands"), ("exec", "handoffs")]
 )
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("selection", [None, "*", "target", "other", "none"])
 def test_named_requests_follow_effective_scope(
     tmp_path: Path,
-    operation: Literal["run", "execute"],
+    operation: Literal["run", "exec"],
     directive: str,
     kind: str,
     selection: str | None,
@@ -2084,6 +2095,7 @@ agic caller() -> Text:
 {setting}  user: Call {kind}:target with payload and count 3{follow_up}.
 
 {kind} target(_: Text, count: Number) -> Text:
+  context = none
   hands = none
   handoffs = none
 {body}
@@ -2131,9 +2143,7 @@ agic other() -> Text:
             assert root.status == "succeeded", root.error
             runs = harness.store.list_run_tree(root_run_id=root.id)
             first = harness.adapter.invocations[0].call
-            assert {"_toolang__run", "_toolang__execute"} <= {
-                t.name for t in first.tools
-            }
+            assert {"_toolang__run", "_toolang__exec"} <= {t.name for t in first.tools}
             snapshots = route_snapshots(
                 first,
                 requested_only={
@@ -2151,7 +2161,8 @@ agic other() -> Text:
                     else root
                 )
                 (invocation,) = harness.store.list_run_controls(
-                    run_id=target_run.id, kind=operation
+                    run_id=target_run.id,
+                    kind="execute" if operation == "exec" else "run",
                 )
                 assert isinstance(
                     invocation.payload, RunControlPayload | ExecuteControlPayload

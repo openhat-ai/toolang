@@ -185,7 +185,7 @@ agic helper(_: Text) -> Boolean:
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
                 "_toolang__chdir",
-                "_toolang__execute",
+                "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "lookup__value",
@@ -1089,7 +1089,7 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
 
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
-@pytest.mark.parametrize("tool_name", ["math__double", "_toolang__execute"])
+@pytest.mark.parametrize("tool_name", ["math__double", "_toolang__exec"])
 def test_cancel_during_tool_result_delivery_preserves_output(
     tmp_path: Path, boundary: str, tool_name: str
 ) -> None:
@@ -1122,7 +1122,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                         call_id="provider-1",
                         name=tool_name,
                         input={"runnable": "agic:target"}
-                        if tool_name == "_toolang__execute"
+                        if tool_name == "_toolang__exec"
                         else {},
                     ),
                 )
@@ -1153,7 +1153,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             assert part.tool_call_id == "call-1" and part.tool_name == tool_name
             if tool_name == "math__double":
                 assert part.output == {"value": 6}
-            elif tool_name == "_toolang__execute":
+            elif tool_name == "_toolang__exec":
                 control = next(
                     c
                     for c in harness.store.list_run_controls(run_id=run.id)

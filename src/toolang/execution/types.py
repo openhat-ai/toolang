@@ -41,6 +41,7 @@ from toolang.lang.ast import (
     Node,
     RepeatStmt,
     RunStmt,
+    ExecStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
@@ -1372,6 +1373,7 @@ StepStatus = Literal[
 ControlStatus = Literal["pending", "applied", "wontapply", "revoked"]
 
 StepKind = Literal[
+    "exec",
     "run",
     "agent",
     "human",
@@ -1448,7 +1450,7 @@ class ModelStepGiven:
     model: str
     call: ModelCall
     setup: str = field(kw_only=True)
-    catalog_state: str | None = field(default=None, kw_only=True)
+    state: str | None = field(default=None, kw_only=True)
     # Internal recording metadata; public event codecs expose only the call.
     messages: ModelMessages | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
@@ -1651,7 +1653,7 @@ class ToolStepNoted:
         _validate_step_summary(self.summary, label="tool Step noted")
 
 
-LoopTermination = Literal["exhausted", "satisfied", "failed", "canceled"]
+LoopTermination = Literal["exhausted", "satisfied", "exec", "failed", "canceled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1697,6 +1699,7 @@ class LoopStepNoted:
             if self.iterations > self.total:
                 raise ValueError("loop Step iterations cannot exceed total")
         if self.termination not in {
+            "exec",
             "exhausted",
             "satisfied",
             "failed",
@@ -1705,8 +1708,27 @@ class LoopStepNoted:
             raise ValueError(f"unknown loop Step termination: {self.termination}")
 
 
+@dataclass(frozen=True, slots=True)
+class ExecStepNoted:
+    """Committed native handoff, independent of successor Step delivery."""
+
+    control: ControlRef
+    runnable: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.control, ControlRef):
+            raise TypeError("exec Step requires a ControlRef")
+        if not self.runnable or self.runnable != self.runnable.strip():
+            raise ValueError("exec Step requires a canonical runnable")
+
+
 StepNoted: TypeAlias = (
-    ModelStepNoted | ToolStepNoted | CollectionStepNoted | LoopStepNoted | None
+    ExecStepNoted
+    | ModelStepNoted
+    | ToolStepNoted
+    | CollectionStepNoted
+    | LoopStepNoted
+    | None
 )
 
 
@@ -1803,6 +1825,14 @@ def validate_step_noted(
 ) -> StepNoted:
     """Validate one end payload against its enclosing Step kind."""
 
+    if kind == "exec":
+        if noted is not None and not isinstance(noted, ExecStepNoted):
+            raise TypeError("exec Step noted requires ExecStepNoted or None")
+        if status == "succeeded" and noted is None:
+            raise ValueError("succeeded exec Step requires committed handoff facts")
+        if status is not None and status != "succeeded" and noted is not None:
+            raise ValueError("only succeeded exec Steps have handoff facts")
+        return noted
     if kind == "model":
         if noted is not None and not isinstance(noted, ModelStepNoted):
             raise TypeError("model Step noted requires ModelStepNoted or None")
@@ -1823,6 +1853,7 @@ def validate_step_noted(
             and noted is not None
             and noted.termination
             not in {
+                "exec",
                 "exhausted",
                 "satisfied",
             }
@@ -1872,6 +1903,8 @@ def _validate_step_summary(
 
 
 def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
+    if kind == "exec":
+        return isinstance(value, ExecStmt)
     if kind == "value":
         return isinstance(value, LetStmt) or (
             isinstance(value, KeepStmt | DropStmt) and value.runnable is None
@@ -2108,6 +2141,7 @@ class PromptSetting:
 
 @dataclass(frozen=True, slots=True)
 class RunnableSettings:
+    module: str = "agent"
     lanes: int = 4
     recall: tuple[str, ...] = ("far", "near")
     hands: tuple[str, ...] = ()

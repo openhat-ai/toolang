@@ -694,10 +694,11 @@ class AgentState:
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return the precomputed effective caps for one executing module."""
 
-        try:
+        if module in self.caps_by_module:
             return self.caps_by_module[module]
-        except KeyError as exc:
-            raise ValueError(f"Program not found: {module}") from exc
+        # Accepted code may outlive its module. Only current external caps remain.
+        base = tuple(self.caps.values()) if self.base_caps is None else self.base_caps
+        return _allowed_state_caps(self, base)
 
     def to_snapshot(self) -> dict[str, object]:
         return {
@@ -721,21 +722,26 @@ class AgentState:
 def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]:
     """Apply configured allows and frozen startup replacements once per State."""
 
-    from .config import resolve_cap_allows
-
-    allows = resolve_cap_allows(
-        (state.root_config, state.home_config), overrides=state.allow_overrides
-    )
     base = tuple(state.caps.values()) if state.base_caps is None else state.base_caps
     return {
-        module: _allowed_caps(
-            effective_caps(base, here),
-            root=state.toolang_root,
-            agent_name=state.name,
-            allows=allows,
-        )
+        module: _allowed_state_caps(state, effective_caps(base, here))
         for module, here in state.module_caps.items()
     }
+
+
+def _allowed_state_caps(
+    state: AgentState, caps: tuple[StateCap, ...]
+) -> tuple[StateCap, ...]:
+    from .config import resolve_cap_allows
+
+    return _allowed_caps(
+        caps,
+        root=state.toolang_root,
+        agent_name=state.name,
+        allows=resolve_cap_allows(
+            (state.root_config, state.home_config), overrides=state.allow_overrides
+        ),
+    )
 
 
 def _allowed_caps(

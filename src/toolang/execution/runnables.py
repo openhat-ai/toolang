@@ -48,6 +48,11 @@ class ResolvedRunnable:
     executable: Runnable
 
     @property
+    def identity(self) -> str:
+        """Return a module/name identity independent of the selected revision."""
+        return f"{self.module}::{self.name}"
+
+    @property
     def ref(self) -> str:
         """Return the kind-qualified runnable reference."""
 
@@ -60,7 +65,7 @@ class ResolvedRunnable:
         return f"{self.module}::{self.ref}"
 
 
-RouteAction: TypeAlias = Literal["run", "execute"]
+RouteAction: TypeAlias = Literal["run", "exec"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +90,7 @@ class AgicRoutes:
 
         return tuple(
             action
-            for action, references in (("run", self.hands), ("execute", self.handoffs))
+            for action, references in (("run", self.hands), ("exec", self.handoffs))
             if not references
         )
 
@@ -119,7 +124,7 @@ def resolve_public_runnable(
 
 def resolve_agic_routes(
     state: AgentState,
-    agic: AgicDecl,
+    agic: Runnable,
     *,
     hands: tuple[str, ...] | None = None,
     handoffs: tuple[str, ...] | None = None,
@@ -132,7 +137,7 @@ def resolve_agic_routes(
     actions_by_ref: dict[str, set[RouteAction]] = {}
     groups: tuple[tuple[RouteAction, tuple[str, ...]], ...] = (
         ("run", hands),
-        ("execute", handoffs),
+        ("exec", handoffs),
     )
     if module == "agent":
         index = getattr(state, "runnables", None)
@@ -177,7 +182,7 @@ def resolve_agic_routes(
                 module=item.module,
                 executable=item.executable,
             ),
-            actions=tuple(action for action in ("run", "execute") if action in actions),
+            actions=tuple(action for action in ("run", "exec") if action in actions),
         )
         for item in targets
         if (actions := actions_by_ref.get(item.ref)) is not None
@@ -185,7 +190,7 @@ def resolve_agic_routes(
     return AgicRoutes(hands=hands, handoffs=handoffs, resolved=resolved)
 
 
-def _directive_values(agic: AgicDecl, name: str) -> tuple[str, ...]:
+def _directive_values(agic: Runnable, name: str) -> tuple[str, ...]:
     directive = next((item for item in agic.directives if item.name == name), None)
     return directive.values if directive is not None else ()
 

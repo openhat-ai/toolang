@@ -52,6 +52,7 @@ from toolang.execution.schemas import (
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     CollectionStepNoted,
+    LoopStepNoted,
     ContentRef,
     ControlRef,
     ErrorMessage,
@@ -417,6 +418,14 @@ def _render_execution_tree(
             step = steps.get(node.pointer)
             if step is None:  # pragma: no cover - typed tree invariant
                 raise RuntimeError(f"tree Step record is missing: {node.pointer}")
+            ordinal = value.step_ordinal(step)
+            if ordinal is not None:
+                activity = f"[{ordinal}] {activity}"
+            if (
+                isinstance(step.noted, LoopStepNoted)
+                and step.noted.termination == "exec"
+            ):
+                activity += " · handed off"
             occur = _step_occurrence_label(
                 step,
                 fallback=_tree_child_occurrence_totals(node.pointer, value.nodes),
@@ -435,6 +444,14 @@ def _render_execution_tree(
                 (
                     "",
                     Text(f"error: {bounded}", style="red"),
+                    "",
+                )
+            )
+        for boundary in value.handoffs_after(node.pointer):
+            rows.append(
+                (
+                    "   " * boundary.depth + str(boundary.control),
+                    Text(f"── exec → {boundary.runnable} ──", style="dim"),
                     "",
                 )
             )

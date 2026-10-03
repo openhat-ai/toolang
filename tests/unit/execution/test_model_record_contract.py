@@ -23,6 +23,7 @@ from toolang.execution.records import (
     step_noted_to_data,
 )
 from toolang.execution.store import RunStore
+from toolang.execution.events import StepBegin, run_event_from_data, run_event_to_data
 from toolang.execution.types import (
     ControlRef,
     ModelCost,
@@ -35,9 +36,9 @@ from toolang.execution.types import (
 )
 
 
-@pytest.mark.parametrize("catalog_state", [None, "2" * 64])
+@pytest.mark.parametrize("state", [None, "2" * 64])
 def test_call_settings_and_setup_survive_store_reopening(
-    tmp_path: Path, catalog_state: str | None
+    tmp_path: Path, state: str | None
 ) -> None:
     path = tmp_path / "runs.db"
     ref = StepRef.parse("run_contract.0")
@@ -50,6 +51,19 @@ def test_call_settings_and_setup_survive_store_reopening(
         max_output_tokens=512,
         reasoning=Reasoning(budget_tokens=128),
     )
+    event = StepBegin(
+        step=ref,
+        kind="model",
+        state=ControlRef.for_run(ref.run_id, 0),
+        input=(),
+        started_at="now",
+        given=ModelStepGiven("test/one", call, setup="setup-v1", state=state),
+    )
+    encoded = run_event_to_data(event)
+    assert encoded["state"] == str(event.state)
+    assert encoded["given"].get("state") == state
+    assert "catalog_state" not in encoded["given"]
+    assert run_event_from_data(encoded) == event
     with closing(RunStore(path)) as store:
         store.begin_step(
             ref=ref,
@@ -57,15 +71,14 @@ def test_call_settings_and_setup_survive_store_reopening(
             input=(),
             state=ControlRef.for_run(ref.run_id, 0),
             started_at="now",
-            given=ModelStepGiven(
-                "test/one", call, setup="setup-v1", catalog_state=catalog_state
-            ),
+            given=ModelStepGiven("test/one", call, setup="setup-v1", state=state),
         )
     with closing(RunStore(path)) as store:
         step = store.get_step(ref=ref)
         assert step is not None and isinstance(step.given, StoredModelStepGiven)
         assert step.given.setup == "setup-v1"
-        assert step.given.catalog_state == catalog_state
+        assert step.given.state == state
+        assert step.state == event.state
         assert step.given.call.reasoning == call.reasoning
         assert store.rebuild_model_call(step) == call
         assert {"tokens", "price", "cost"}.isdisjoint(

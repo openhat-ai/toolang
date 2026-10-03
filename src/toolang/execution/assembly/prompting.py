@@ -72,7 +72,7 @@ def instructions(
     program = (
         inputs.program
         if inputs.instruct is None
-        else state_program(inputs.state, inputs.instruct.module)
+        else _prompt_program(inputs.state, inputs.instruct.module, inputs.agic)
     )
     name = (
         inputs.instruct.name
@@ -223,6 +223,14 @@ def output_schema(
     )
 
 
+def _prompt_program(state: AgentState, module: str, agic: AgicDecl) -> Program:
+    """A deleted module supplies no text; explicit missing dependencies still fail."""
+    modules = getattr(state, "modules", None)
+    if modules is not None and module not in modules:
+        return Program(span=agic.span)
+    return state_program(state, module)
+
+
 @dataclass(frozen=True)
 class PromptInputs:
     """Bound frame inputs; cache shared variables and authored input once.
@@ -240,6 +248,7 @@ class PromptInputs:
     caps: Sequence[StateCap]
     facts: Mapping[str, object]
     values: Mapping[str, object]
+    code: AgentState | None = None
     runnables: Sequence[Mapping[str, object]] = ()
     requested_only: tuple[str, ...] = ()
     instruct: PromptSetting | None = None
@@ -247,7 +256,12 @@ class PromptInputs:
 
     @cached_property
     def program(self) -> Program:
-        return state_program(self.state, self.module)
+        program = _prompt_program(self.state, self.module, self.agic)
+        if self.code is not None:
+            program = replace(
+                program, structs=state_program(self.code, self.module).structs
+            )
+        return program
 
     @cached_property
     def psyches(self) -> dict[str, str]:
@@ -289,7 +303,9 @@ class PromptInputs:
         )
         context["run"] = {
             **cast(Mapping[str, object], self.facts.get("run", {})),
-            "program_source": state_program_source(self.state, self.module),
+            "program_source": state_program_source(
+                self.code or self.state, self.module
+            ),
         }
         environment = self.setup.environment
         if environment is not None:
@@ -400,7 +416,7 @@ class PromptInputs:
             for part in (
                 _render_routes(self.runnables, requested_only=self.requested_only),
                 _render_context(
-                    state_program(self.state, self.context.module)
+                    _prompt_program(self.state, self.context.module, agic)
                     if self.context
                     else program,
                     replace(agic, context=self.context.name) if self.context else agic,
@@ -466,7 +482,7 @@ def _render_routes(
             "Narrow hands or handoffs."
         )
     parts = []
-    for action, tag in (("run", "hands"), ("execute", "handoffs")):
+    for action, tag in (("run", "hands"), ("exec", "handoffs")):
         requested = "true" if action in requested_only else "false"
         entries = [
             {key: value for key, value in item.items() if key != "actions"}

@@ -202,27 +202,22 @@ async def execute(
     def prepare_model_frame(repairing_output: bool = False) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         selected = execution.message_history().select(horizon)
-        # Omitted routes also need fresh targets; snapshot-only executors
-        # retain their bound catalog when no publication source is available.
-        catalog = (
+        dependencies = (
             execution.latest_state()
-            if not repairing_output
-            and execution.executor._state is not None
-            and (
-                binding.settings.hands != ("none",)
-                or binding.settings.handoffs != ("none",)
-            )
+            if execution.executor._state is not None
             else binding.state
         )
-        key = (catalog.revision, horizon, estimate.counter.scale, repairing_output)
+        key = (dependencies.revision, horizon, estimate.counter.scale, repairing_output)
         cached = frames.get(key)
         if cached is not None:
             return cached
         prepared = build_agic_frame(
             execution,
-            replace(binding, horizon=horizon),
+            execution.prepare_resources(
+                replace(binding, horizon=horizon), agic, state=dependencies
+            ),
             agic,
-            catalog=catalog,
+            state=dependencies,
             runtime_tools_enabled=not repairing_output,
             variables={**variables, **iteration_values()},
             far=selected.far,

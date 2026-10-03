@@ -567,10 +567,8 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["run", "execute"])
-def test_pick_intersects_caller_resources_with_target_module_visibility(
-    tmp_path: Path, operation
-):
+@pytest.mark.parametrize("operation", ["run", "exec"])
+def test_pick_applies_scoped_rules_to_target_module_caps(tmp_path: Path, operation):
     home_ref, module_ref = "service/github", "service/github"
     module_guidance = "Use the target module's guidance."
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -649,16 +647,16 @@ flow research() -> Text:
                     and "not available" in results[identity].error
                 )
             assert results["caller"].error is None
-            assert "not available" in (results["target"].error or "")
+            assert results["target"].error is None
             contents = [
                 c.payload.content for run in runs for c in _recalls(harness, run)
             ]
-            assert contents == [GUIDANCE]
+            assert contents == [GUIDANCE, module_guidance]
             caller = harness.adapter.invocations[0].call.instructions
             target = harness.adapter.invocations[2].call.instructions
-            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' not in target
+            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' in target
             assert "Module guidance." not in caller
-            assert "Module guidance." not in target
+            assert "Module guidance." in target
             assert caller != target
             if operation == "run":
                 assert results["resumed"].output == {"controls": []}
@@ -731,7 +729,7 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
 
 
 @pytest.mark.parametrize("same_batch", [False, True])
-def test_bound_guidance_survives_published_revision_reversals(
+def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
     tmp_path: Path, same_batch
 ):
     a, b = "Revision A.", "Revision B."
@@ -789,12 +787,14 @@ def test_bound_guidance_survives_published_revision_reversals(
             )
             assert run.status == "succeeded", run.error
             controls = _recalls(harness, run)
-            assert [c.payload.content for c in controls] == [a]
+            assert [c.payload.content for c in controls] == (
+                [a] if same_batch else [a, "", b, "", a]
+            )
             results = _results(harness, run)
             if same_batch:
                 assert results["a"].output == results["a-again"].output
             else:
-                assert results["a-again"].output == {"controls": []}
+                assert results["a-again"].output != {"controls": []}
             assert results["visible"].output == {"controls": []}
             assert all(result.error is None for result in results.values())
             assert_run_event_integrity(tracer.events)
@@ -1002,7 +1002,7 @@ agic target() -> Text:
             _calls(_pick("before")),
             _calls(
                 ToolCall(
-                    "transfer", "transfer", "_toolang__execute", {"runnable": "target"}
+                    "transfer", "transfer", "_toolang__exec", {"runnable": "target"}
                 )
             ),
             _calls(_pick("after")),

@@ -30,7 +30,7 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     assert set(tools.runtime) == {
         "_toolang__run",
         "_toolang__chdir",
-        "_toolang__execute",
+        "_toolang__exec",
         "_toolang__pick",
         "_toolang__honor",
         "_toolang__compact",
@@ -53,7 +53,7 @@ def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
 def test_runnable_tool_descriptions_follow_user_intent_and_scope() -> None:
     tools = load_tools()
     run = tools["_toolang__run"].definition().description
-    execute = tools["_toolang__execute"].definition().description
+    execute = tools["_toolang__exec"].definition().description
     assert "further processing" in run and "hands scope and requested_only" in run
     assert "no requested follow-up" in execute
     assert "handoffs scope and requested_only" in execute
@@ -84,7 +84,7 @@ class _Runtime:
             {"run_id": self.marker, "output_type": "Text", "output": input["_"]}
         )
 
-    async def execute(self, runnable, input):
+    async def exec(self, runnable, input):
         self.calls.append((runnable, dict(input)))
         await asyncio.sleep(0)
         return ToolResult({"controls": [self.marker]})
@@ -110,7 +110,7 @@ class _Runtime:
         return ToolResult({"controls": [self.marker]})
 
 
-@pytest.mark.parametrize("name", ["run", "execute", "pick", "honor", "compact"])
+@pytest.mark.parametrize("name", ["run", "exec", "pick", "honor", "compact"])
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -153,7 +153,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("compact", {"thread": "term_ab12", "end": 1}),
         ("compact", {"thread": "term_ab12", "end": "run_ab12", "summary": "bad"}),
         ("run", {"runnable": "child", "step": "another"}),
-        ("execute", {"runnable": "child", "input": []}),
+        ("exec", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),
         (
             "pick",
@@ -192,3 +192,9 @@ def test_tool_trigger_roundtrips_in_the_record_codec(trigger) -> None:
     del data["trigger"]
     with pytest.raises(ValueError, match="trigger"):
         step_given_from_data("tool", data)
+
+
+def test_execute_name_is_no_longer_callable() -> None:
+    tools = load_tools()
+    assert "_toolang__exec" in tools
+    assert "_toolang__execute" not in tools

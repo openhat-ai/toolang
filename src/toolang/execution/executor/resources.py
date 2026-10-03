@@ -1,8 +1,9 @@
-"""Resolve and narrow stable resources available to agent execution."""
+"""Apply pinned resource rules to one captured State and Setup."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
@@ -238,17 +239,6 @@ def _apply_cap_ceiling(
     )
 
 
-def intersect_resources(
-    parent: AgentResources, visible: AgentResources
-) -> AgentResources:
-    """Keep stable identities shared by the parent and the target module."""
-    return AgentResources(
-        models=tuple(item for item in parent.models if item in visible.models),
-        tools=tuple(item for item in parent.tools if item in visible.tools),
-        caps=tuple(item for item in parent.caps if item in visible.caps),
-    )
-
-
 def resolve_runnable_resources(
     selection: Sequence[Model],
     *,
@@ -300,6 +290,47 @@ def resolve_runnable_resources(
         if (item.kind, item.name, item.ref) in selected_cap_ids
     )
     return _agent_resources(models=models, tools=tools, caps=caps)
+
+
+def resolve_path_resources(
+    setup: AgentSetup,
+    state: AgentState,
+    *,
+    rules: Sequence[tuple[str, _Runnable]],
+    ceilings: Sequence[AgentCeiling],
+    external: AgentResources,
+) -> tuple[AgentResources, AgentResources]:
+    """Replay pinned selectors in their own scopes over one fresh State."""
+    denied: set[AgentCapResource] = set()
+    models, tools = external.models, external.tools
+    selection = snapshot_model_selection(setup)
+    for module, runnable in rules:
+        visible = resolve_agent_resources(
+            setup, state, AgentCeiling(), module=module, all_tools=True
+        )
+        base = replace(visible, models=external.models, tools=external.tools)
+        for ceiling in ceilings:
+            base = apply_agent_ceiling(setup, state, base, ceiling, module=module)
+        agent_resources = base
+        base = replace(
+            base,
+            models=models,
+            tools=tools,
+            caps=tuple(cap for cap in base.caps if cap not in denied),
+        )
+        selected = resolve_runnable_resources(
+            selection,
+            runnable=runnable,
+            base=base,
+            setup=setup,
+            state=state,
+            module=module,
+        )
+        # Rules only exclude resources visible in their declaring module.
+        # A different module's private caps are outside that scope.
+        denied.update(set(visible.caps) - set(selected.caps))
+        models, tools = selected.models, selected.tools
+    return agent_resources, selected
 
 
 def validate_model_binding(

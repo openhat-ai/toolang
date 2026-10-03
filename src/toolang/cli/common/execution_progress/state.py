@@ -128,6 +128,7 @@ class RunState:
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
     end: RunEnd | None = None
     cancellation_reported: bool = False
+    step_origin: int = 0
     pending_executes: list[PendingExecute] = field(default_factory=list)
 
 

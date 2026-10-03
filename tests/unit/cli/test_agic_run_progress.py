@@ -59,8 +59,8 @@ def _model_given() -> ModelStepGiven:
 def _execute_part(runnable: object = "agic:abc") -> ToolCallPart:
     return ToolCallPart(
         tool_call_id="execute-1",
-        tool_name="_toolang__execute",
-        tool_family="_toolang__execute",
+        tool_name="_toolang__exec",
+        tool_family="_toolang__exec",
         input={"runnable": runnable, "input": {}},
     )
 
@@ -81,7 +81,7 @@ def _execute_step(
                 call=ToolCall(
                     "execute-1",
                     "execute-1",
-                    "_toolang__execute",
+                    "_toolang__exec",
                     {"runnable": runnable},
                 ),
                 summary=f"Executing {runnable}...",
@@ -95,8 +95,8 @@ def _execute_step(
     assert len(starting.live) == 1
     result = ToolResultPart(
         tool_call_id="execute-1",
-        tool_name="_toolang__execute",
-        tool_family="_toolang__execute",
+        tool_name="_toolang__exec",
+        tool_family="_toolang__exec",
         error=error,
         output={} if error else {"controls": [f"{step.run_id}@1"]},
     )
@@ -303,14 +303,14 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
 
     assert header.committed[0].rows == (
         ProgressRow(
-            "Execute agic:abc",
+            "exec → agic:abc",
             leader="handoff",
         ),
         ProgressRow(""),
     )
     assert header.live[0].rows == (ProgressRow("• Thinking", "active"),)
     assert re.search(
-        r"- Execute agic:abc ─+",
+        r"- exec → agic:abc ─+",
         _render_progress(header.committed[0], width=72),
     )
 
@@ -319,7 +319,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
 def test_handoff_uses_thin_rules_without_losing_its_target(width: int) -> None:
     block = ProgressBlock(
         "handoff",
-        (ProgressRow("Execute agic:delegate", leader="handoff"),),
+        (ProgressRow("exec → agic:delegate", leader="handoff"),),
     )
     for render in (_render_progress, _render_chat_progress):
         output = render(block, width=width)
@@ -327,10 +327,10 @@ def test_handoff_uses_thin_rules_without_losing_its_target(width: int) -> None:
         assert max(display_width(line) for line in lines) <= width
         assert (
             "".join(output.split()).replace("─", "").replace("-", "")
-            == "Executeagic:delegate"
+            == "exec→agic:delegate"
         )
         if width == 72:
-            assert lines == ["- Execute agic:delegate " + "─" * 48]
+            assert lines == ["- exec → agic:delegate " + "─" * 49]
 
 
 @pytest.mark.parametrize("width", [1, 2, 5, 16, 32, 72])
@@ -347,7 +347,7 @@ def test_script_and_chat_share_aligned_execution_dividers(width: int) -> None:
                 right_status="succeeded",
                 right_identity="run_child",
             ),
-            ProgressRow("Execute flow:test", leader="handoff"),
+            ProgressRow("exec → flow:test", leader="handoff"),
             ProgressRow("1/10", leader="iteration"),
         ),
     )
@@ -356,7 +356,7 @@ def test_script_and_chat_share_aligned_execution_dividers(width: int) -> None:
     lines = output.splitlines()
     assert all(display_width(line) <= width for line in lines)
     compact = "".join(output.split()).translate(str.maketrans("", "", "┌└─·-"))
-    assert compact == f"Run{runnable}2.0s1runsucceededrun_childExecuteflow:test1/10"
+    assert compact == f"Run{runnable}2.0s1runsucceededrun_childexec→flow:test1/10"
     if width == 72:
         assert [line[:2] for line in lines] == ["┌ ", "└ ", "- ", "──"]
         assert all(display_width(line) == width for line in lines)
@@ -384,7 +384,7 @@ def test_iteration_caption_is_centered_on_both_surfaces(
     "row",
     [
         ProgressRow("Run agic:hello", leader="run"),
-        ProgressRow("Execute flow:test", leader="handoff"),
+        ProgressRow("exec → flow:test", leader="handoff"),
         ProgressRow("1/10", leader="iteration"),
     ],
 )
@@ -416,7 +416,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
             given=ToolStepGiven(
                 plugin="_toolang",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
                 ),
                 summary="Transferring to next...",
             ),
@@ -447,7 +447,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
             given=ToolStepGiven(
                 plugin="_toolang",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
                 ),
             ),
         )
@@ -493,7 +493,7 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
     ended = projector.handle(RunEnd(run="run_root", status=status))
     rows = tuple(row for block in ended.committed for row in block.rows)
     assert rows == (
-        ProgressRow("Execute agic:abc", leader="handoff"),
+        ProgressRow("exec → agic:abc", leader="handoff"),
         ProgressRow(""),
     )
     assert not projector._broken
@@ -541,7 +541,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             given=ToolStepGiven(
                 plugin="_toolang",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
                 ),
                 summary="Transferring to next...",
             ),
@@ -553,6 +553,18 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             kind="tool",
             status="succeeded",
             noted=ToolStepNoted(summary="Transferred to next"),
+            output=Output(
+                Local.typed(
+                    "ToolResultPart",
+                    ToolResultPart(
+                        tool_call_id="execute-1",
+                        call_id="execute-1",
+                        tool_name="_toolang__exec",
+                        tool_family="_toolang__exec",
+                        output={"controls": ["run_worker@1"]},
+                    ),
+                )
+            ),
         )
     )
     if next_tool is not None:
@@ -669,11 +681,11 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     assert header.live == ()
     assert header.committed[0].rows == (
         ProgressRow(
-            "Execute flow:delegate",
+            "exec → flow:delegate",
             leader="handoff",
         ),
         ProgressRow(""),
-        ProgressRow("[2] Run agic:worker"),
+        ProgressRow("[0] Run agic:worker"),
         ProgressRow(""),
     )
 

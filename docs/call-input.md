@@ -48,7 +48,7 @@ signature `demo(_: Text, arg1: Text, arg2: Number)`, the dictionary is:
 }
 ```
 
-The `_toolang/run` and `_toolang/execute` tools accept this flat dictionary in
+The `_toolang/run` and `_toolang/exec` tools accept this flat dictionary in
 their `input` field. Omit `_` when the signature forbids primary input, and
 omit unsupplied optional arguments. Supplied values must satisfy the target
 signature; arguments do not sit inside a nested `arguments` or `named` object.

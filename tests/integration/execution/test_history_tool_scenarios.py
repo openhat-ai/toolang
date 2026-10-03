@@ -347,14 +347,14 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
     source = step(
         store,
         kind="model",
-        output=(ToolCallPart("call", "_toolang__execute", "_toolang", arguments),),
+        output=(ToolCallPart("call", "_toolang__exec", "_toolang", arguments),),
     )
     trigger = store.begin_step(
         ref=StepRef.parse("run_a.1"),
         kind="tool",
         input=(),
         given=ToolStepGiven(
-            "_toolang", ToolCall("call", "provider", "_toolang__execute", arguments)
+            "_toolang", ToolCall("call", "provider", "_toolang__exec", arguments)
         ),
         started_at="2026-01-01T00:00:03Z",
     )
@@ -383,7 +383,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
             Local.typed(
                 "ToolResultPart",
                 ToolResultPart(
-                    "call", "_toolang__execute", "_toolang", {"controls": [control.id]}
+                    "call", "_toolang__exec", "_toolang", {"controls": [control.id]}
                 ),
             ),
             None,

@@ -1,5 +1,7 @@
 """Configuration overrides remain independent of resource selection."""
 
+from dataclasses import replace
+
 from toolang.execution.settings import resolve_settings
 from toolang.execution.types import PromptSetting
 from toolang.lang.ast import AgicDecl, FlowDecl, Directive, Span
@@ -27,7 +29,7 @@ def test_settings_inherit_across_runnable_kinds_without_changing_siblings():
         "parent",
     )
     flow = resolve_settings(FlowDecl(name="flow", span=SPAN), "module", parent)
-    assert flow == parent
+    assert flow == replace(parent, module="module", hands=())
     child = resolve_settings(
         AgicDecl(
             name="child",
@@ -50,9 +52,7 @@ def test_settings_inherit_across_runnable_kinds_without_changing_siblings():
     assert child.instruct == PromptSetting("module", "none")
     assert parent.lanes == 2 and parent.hands == ("worker",)
     assert flow.instruct == PromptSetting("parent", "guidance")
-    assert (
-        resolve_settings(AgicDecl(name="sibling", span=SPAN), "module", flow) == parent
-    )
+    assert resolve_settings(AgicDecl(name="sibling", span=SPAN), "module", flow) == flow
 
 
 def test_root_defaults_are_concrete():

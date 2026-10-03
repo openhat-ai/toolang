@@ -32,6 +32,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    ExecStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
@@ -128,9 +129,7 @@ class BoundRun:
     ceilings: tuple[AgentCeiling, ...] = ()
     agent_resources: AgentResources | None = None
     resources: AgentResources | None = None
-    parent_resources: AgentResources | None = None
     settings: RunnableSettings = RunnableSettings()
-    settings_base: RunnableSettings | None = None
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
@@ -162,6 +161,7 @@ class _ExecuteCommitted(Exception):
         self.binding = binding
         self.runnable = runnable
         self.locals = dict(locals)
+        self.interruption: asyncio.CancelledError | None = None
 
 
 async def execute_step(
@@ -220,6 +220,8 @@ async def execute_step(
     try:
         evaluated = await evaluate()
         result = transform_flow_result(statement, locals, evaluated)
+    except _ExecuteCommitted:
+        raise
     except asyncio.CancelledError:
         await emit(
             StepEnd(
@@ -551,6 +553,7 @@ def statement_has_call(statement: FlowStmt) -> bool:
     if isinstance(
         statement,
         RunStmt
+        | ExecStmt
         | SeekStmt
         | AskStmt
         | ScatterStmt

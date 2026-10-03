@@ -13,7 +13,7 @@ Success includes handoff from nested repeats and clear presentation of each succ
 
 Scope: language consumers, runtime tools, handoff records, repeat unwinding,
 and shared Script/Chat/inspection presentation. Root spawning, scheduling,
-ordered State revisions, hot reload, and broader resource authority are excluded.
+ordered State revisions, and broader resource authority are excluded.
 Grammar implementation belongs in a separate `openhat-ai/tree-sitter-toolang` PR.
 
 ## Syntax and binding

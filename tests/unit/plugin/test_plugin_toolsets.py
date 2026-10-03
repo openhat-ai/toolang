@@ -222,7 +222,7 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     assert tools["service__init"].definition().name == "service__init"
     assert tools["service__start_auth"].definition().name == "service__start_auth"
     assert tools["service__call_tool"].definition().name == "service__call_tool"
-    assert {"_toolang__run", "_toolang__execute"} <= tools.keys()
+    assert {"_toolang__run", "_toolang__exec"} <= tools.keys()
     assert not any(name.startswith(("_too__", "_me__")) for name in tools)
     assert (
         not {

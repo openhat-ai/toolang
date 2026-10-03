@@ -10,6 +10,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
+from toolang.lang.input import CallInput
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
@@ -18,7 +19,6 @@ from ..assembly.run_results import run_receipt
 from ..runnables import (
     AgicRoutes,
     ResolvedRunnable,
-    resolve_call_target,
 )
 from ..types import (
     ControlRef,
@@ -29,6 +29,7 @@ from ..types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     StepRef,
+    TypedRef,
     WorkspaceRecallTarget,
 )
 from .common import _ExecuteCommitted, _RunRejected
@@ -78,7 +79,7 @@ class _ToolRuntime(ToolRuntime):
             (
                 cap
                 for cap in resource_caps(
-                    frame.run.state, resources, module=frame.run.module
+                    frame.state, resources, module=frame.run.module
                 )
                 if cap.kind == kind and cap.effective_ref == ref
             ),
@@ -101,7 +102,7 @@ class _ToolRuntime(ToolRuntime):
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured, _ref = execution.state_for_step(self.step)
+        captured = self.state.prepared.run.state
         context = ToolContext(
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),
@@ -173,7 +174,7 @@ class _ToolRuntime(ToolRuntime):
                 raw_input=input,
                 authorize=lambda target: self._authorize("run", target),
                 state_snapshot=(
-                    state.prepared.catalog or state.prepared.run.state,
+                    state.prepared.state,
                     state.prepared.run.state_ref,
                 ),
             )
@@ -185,24 +186,26 @@ class _ToolRuntime(ToolRuntime):
         state.scheduled_run = (binding, target)
         return ToolResult(run_receipt(binding.run_id))
 
-    async def execute(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
+    async def exec(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         if self.source is None:
-            raise ToolangError("execute requires a model ToolCall source")
+            raise ToolangError("exec requires a model ToolCall source")
         if self.tool_call_count != 1:
             raise ToolangError(
-                "_toolang/execute must be the only tool call in its Model Call"
+                "_toolang/exec must be the only tool call in its Model Call"
             )
         state = self.state
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        captured = state.prepared.catalog or state.prepared.run.state
+        captured = state.prepared.state
         state_ref = state.prepared.run.state_ref
-        target = resolve_call_target(captured, state.prepared.run.module, runnable)
-        execution.require_inactive_runnable(
-            state.prepared.run, target, action="_toolang/execute"
+        captured, target = execution.resolve_invocation(
+            state.prepared.run,
+            runnable,
+            baseline_state=captured,
+            authorize=lambda target: self._authorize("exec", target),
+            action="_toolang/exec",
         )
-        self._authorize("execute", target)
         try:
             values = execution.resolve_public_input(
                 captured, target.module, target.name, target.executable, input
@@ -211,7 +214,14 @@ class _ToolRuntime(ToolRuntime):
                 state.prepared.run,
                 target,
                 values,
-                source=self.source,
+                control_input=CallInput(
+                    {
+                        name: TypedRef(
+                            self.source.select("input", "input", name), "Json"
+                        )
+                        for name in values
+                    }
+                ),
                 state=captured,
                 state_ref=state_ref,
             )
@@ -233,7 +243,7 @@ class _ToolRuntime(ToolRuntime):
         )
 
     def _authorize(
-        self, operation: Literal["run", "execute"], target: ResolvedRunnable
+        self, operation: Literal["run", "exec"], target: ResolvedRunnable
     ) -> None:
         if not self.routes.allows(operation, target):
             selector = "hands" if operation == "run" else "handoffs"
