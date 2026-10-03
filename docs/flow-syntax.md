@@ -157,6 +157,7 @@ repeat [windowing P]:
 
 ```text
 run      run a named agic or flow, or an inline agic
+exec     replace the current runnable with a named or inline runnable; never return
 seek     seek another agent's help with a named runnable or inline request
 ask      ask the human owner for input, judgment, or confirmation
 scatter  scatter the current item into a list in one run

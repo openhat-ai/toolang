@@ -118,6 +118,7 @@ flow pipeline:
     repeat 1 time:
       run action
     until: Complete?
+  exec action
 """
     sexp = runner.invoke(app, ["parse", "-"], input=source)
     serialized = runner.invoke(app, ["parse", "-", "--json"], input=source)
@@ -151,6 +152,7 @@ flow pipeline:
         "sort",
         "let",
         "repeat",
+        "exec",
     }
     for value in (
         'doc: "Module documentation."',
@@ -229,6 +231,24 @@ def test_fmt_surfaces_share_stable_compact_directive_grouping(tmp_path):
     path.write_text(source)
     check = runner.invoke(app, ["fmt", str(path), "--check"])
     assert check.exit_code == 1
+    assert path.read_text() == source
+    assert runner.invoke(app, ["fmt", str(path)]).exit_code == 0
+    assert path.read_text() == expected
+    assert runner.invoke(app, ["fmt", str(path), "--check"]).exit_code == 0
+
+
+def test_fmt_exec_check_and_write(tmp_path):
+    source = "agic next():\n  Done.\n\nflow grow():\n  exec    next\n"
+    expected = "agic next():\n  Done.\n\nflow grow():\n  exec next\n"
+    path = tmp_path / "grow.too"
+    path.write_text(source)
+
+    check = runner.invoke(app, ["fmt", str(path), "--check"])
+    assert check.exit_code == 1, check.output
+    assert path.read_text() == source
+    stdout = runner.invoke(app, ["fmt", str(path), "--stdout"])
+    assert stdout.exit_code == 0, stdout.output
+    assert stdout.stdout == expected
     assert path.read_text() == source
     assert runner.invoke(app, ["fmt", str(path)]).exit_code == 0
     assert path.read_text() == expected
