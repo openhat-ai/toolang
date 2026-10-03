@@ -106,12 +106,18 @@ class _FlowChecker:
         *,
         window: int | None,
         settings: Mapping[str, str | None],
-    ) -> _Locals:
+    ) -> _Locals | None:
         locals = dict(locals)
         for stmt in statements:
             with source_location(stmt.span.line):
+                if isinstance(stmt, ast.ExecStmt):
+                    self.statement(stmt, locals, window, settings)
+                    return None
                 if isinstance(stmt, ast.RepeatStmt):
-                    locals = self.repeat(stmt, locals, settings)
+                    result_locals = self.repeat(stmt, locals, settings)
+                    if result_locals is None:
+                        return None
+                    locals = result_locals
                     continue
                 result = self.statement(stmt, locals, window, settings)
                 if stmt.binding is not None:
@@ -123,29 +129,31 @@ class _FlowChecker:
         stmt: ast.RepeatStmt,
         locals: _Locals,
         settings: Mapping[str, str | None],
-    ) -> _Locals:
+    ) -> _Locals | None:
         # Runtime preflights the condition window even when the body is skipped.
         if stmt.runnable is not None:
             self.history(self.runnables[stmt.runnable], stmt.window, settings)
         if stmt.count == 0:
             return locals
 
-        def body(entry: _Locals) -> _Locals:
+        def body(entry: _Locals) -> _Locals | None:
             result = self.statements(
                 stmt.stmts, entry, window=stmt.window, settings=settings
             )
-            if stmt.runnable is not None:
+            if result is not None and stmt.runnable is not None:
                 self.inputs(self.runnables[stmt.runnable], result)
             return result
 
         result = body(locals)
-        if stmt.count == 1:
+        if result is None or stmt.count == 1:
             return result
         # Finite widening: names can only be added, and differing facts become
         # unknown. Include the first iteration and possible later iterations.
         entry = _join(locals, result)
         while True:
             following = body(entry)
+            if following is None:
+                return result
             result = _join(result, following)
             widened = _join(entry, following)
             if widened == entry:

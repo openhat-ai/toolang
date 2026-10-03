@@ -108,15 +108,19 @@ async def execute(
                 break
         return Local()
 
-    return await loop_step.execute(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
-        binding=binding,
-        path=path,
-        statement=statement,
-        locals=locals,
-        controls=controls,
-        occurrence=occurrence,
-        evaluate=evaluate,
-        progress=progress,
-    )
+    execution.repeat_progress[path] = progress
+    try:
+        return await loop_step.execute(
+            execution.emit,
+            begin_step=execution.step_starter(binding),
+            binding=binding,
+            path=path,
+            statement=statement,
+            locals=locals,
+            controls=controls,
+            occurrence=occurrence,
+            evaluate=evaluate,
+            progress=progress,
+        )
+    finally:
+        execution.repeat_progress.pop(path, None)

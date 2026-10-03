@@ -17,6 +17,7 @@ from tests.support.execution_harness import (
     RecordingTool,
 )
 from toolang.base.types.message import Message, message_text
+from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.records import RunControlPayload, StoredModelStepGiven
 from toolang.execution.events import StepEnd
@@ -186,7 +187,11 @@ def test_named_calls_capture_one_publication_each_and_allow_rollback(tmp_path):
         responses=[answer("first"), answer("second"), answer("third")],
     )
     updated = publish(harness, source.replace("Old child", "New child"))
-    revisions = iter((harness.state, updated, harness.state))
+    revisions = iter(
+        tuple(
+            state for state in (harness.state, updated, harness.state) for _ in range(3)
+        )
+    )
     reads = 0
 
     def latest():
@@ -205,7 +210,7 @@ def test_named_calls_capture_one_publication_each_and_allow_rollback(tmp_path):
                 )
             )
             assert root.status == "succeeded", root.error
-            assert reads == 3
+            assert reads == 9
             children = sorted(
                 (
                     r
@@ -459,7 +464,7 @@ def test_model_catalog_is_frozen_but_acceptance_selects_latest(
                 )
             first = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(first.given, StoredModelStepGiven)
-            assert first.given.catalog_state == advertised.revision
+            assert first.given.state == advertised.revision
             assert (
                 harness.store.resolve_state_revision(first.state)
                 == harness.state.revision
@@ -469,7 +474,7 @@ def test_model_catalog_is_frozen_but_acceptance_selects_latest(
 
 
 @pytest.mark.parametrize("routes", ["", "  hands = *\n  handoffs = *\n"])
-@pytest.mark.parametrize("operation, mode", [("run", "hands"), ("execute", "handoffs")])
+@pytest.mark.parametrize("operation, mode", [("run", "hands"), ("exec", "handoffs")])
 def test_unadvertised_target_waits_for_next_model_catalog(
     tmp_path, routes, operation, mode
 ):
@@ -600,7 +605,7 @@ def test_tool_batch_reuses_frame_and_next_model_discovers_publication(tmp_path, 
     asyncio.run(scenario())
 
 
-def test_execute_uses_advertised_snapshot_and_records_explicit_binding(tmp_path):
+def test_exec_uses_latest_snapshot_and_records_explicit_binding(tmp_path):
     source = (
         "agic parent() -> Text:\n  handoffs = worker\n  context = none\n  Delegate.\n"
     )
@@ -616,7 +621,7 @@ def test_execute_uses_advertised_snapshot_and_records_explicit_binding(tmp_path)
                         ToolCall(
                             "execute",
                             "execute",
-                            "_toolang__execute",
+                            "_toolang__exec",
                             {"runnable": "worker", "input": {}},
                         ),
                     )
@@ -637,28 +642,25 @@ def test_execute_uses_advertised_snapshot_and_records_explicit_binding(tmp_path)
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            publish(harness, source)
+            latest = publish(harness, source + "flow worker():\n  run: Latest body.\n")
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
             transfer = harness.store.list_run_controls(run_id=root.id, kind="execute")[
                 0
             ]
-            assert (
-                harness.store.resolve_state_revision(transfer.ref)
-                == advertised.revision
-            )
+            assert harness.store.resolve_state_revision(transfer.ref) == latest.revision
             steps = harness.store.list_steps(run_id=root.id)
+            assert isinstance(steps[0].given, StoredModelStepGiven)
+            assert steps[0].given.state == advertised.revision
             assert steps[0].state == ControlRef.for_run(root.id, 0)
             assert steps[-1].state == transfer.ref
-            assert "Advertised body." in str(
-                harness.adapter.invocations[1].call.messages
-            )
+            assert "Latest body." in str(harness.adapter.invocations[1].call.messages)
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["run", "execute"])
+@pytest.mark.parametrize("operation", ["run", "exec"])
 @pytest.mark.parametrize("selector", ["helper", "*"])
 def test_flow_model_routes_are_local_and_keep_advertised_identity(
     tmp_path, operation, selector
@@ -726,9 +728,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
             if operation == "run":
                 assert not last_tool_result(harness.adapter.invocations[2].call).error
             messages = str(helper_call.messages)
-            assert (
-                "New local helper." if operation == "run" else "Old local helper."
-            ) in messages
+            assert "New local helper." in messages
             assert "Main helper." not in messages
 
     asyncio.run(scenario())
@@ -814,7 +814,7 @@ def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
                 assert [item["ref"] for item in snapshots[mode]] == ["flow:worker"]
             first = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(first.given, StoredModelStepGiven)
-            assert first.given.catalog_state == harness.state.revision
+            assert first.given.state == harness.state.revision
 
     asyncio.run(scenario())
 
@@ -872,3 +872,388 @@ def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targ
     asyncio.run(scenario())
 
     assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_model_dependencies_refresh_but_prepared_tool_reads_and_code_stay_pinned(
+    tmp_path,
+):
+    source = """
+instruct evolution: GENERATION = 1
+context progress: Context one.
+agic grow() -> Text:
+  instruct = evolution
+  context = progress
+  psyches -= psyche/private
+  skills = skill/testing
+  hands = none
+  handoffs = none
+  Original body.
+"""
+    home = tmp_path / "agents/alice"
+    (home / "skills/testing").mkdir(parents=True)
+    skill = home / "skills/testing/SKILL.md"
+    skill.write_text("---\ndescription: Test skill\n---\nOld skill body.\n")
+    (home / "psyches").mkdir()
+    (home / "psyches/private.md").write_text("Private advice.")
+    (home / "psyches/goal.md").write_text("Initial goal.")
+
+    def pick(identity):
+        return ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    identity,
+                    identity,
+                    "_toolang__pick",
+                    {"kind": "skill", "ref": "skill/testing"},
+                ),
+            )
+        )
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            ScriptedModelTurn(pick("old"), gate=gate),
+            pick("new"),
+            answer("done"),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="grow",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            skill.write_text("---\ndescription: Test skill\n---\nNew skill body.\n")
+            (home / "psyches/goal.md").write_text("Updated goal.")
+            (home / "psyches/added.md").write_text("New eligible advice.")
+            latest = publish(
+                harness,
+                source.replace("GENERATION = 1", "GENERATION = 2")
+                .replace("Context one.", "Context two.")
+                .replace("Original body.", "Changed body.")
+                .replace("psyches -= psyche/private", "psyches = none")
+                .replace("skills = skill/testing", "skills = none"),
+            )
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            first, second, third = [i.call for i in harness.adapter.invocations]
+            assert "GENERATION = 1" in first.instructions
+            assert "Initial goal." in first.instructions
+            assert "New eligible advice." not in first.instructions
+            for call in (second, third):
+                assert "GENERATION = 2" in call.instructions
+                assert "Updated goal." in call.instructions
+                assert "New eligible advice." in call.instructions
+                assert "Private advice." not in call.instructions
+                text = str(call.messages)
+                assert "Context two." in text
+                assert "Original body." in text and "Changed body." not in text
+            from toolang.execution.records import RecallControlPayload
+            from toolang.execution.types import SkillRecallTarget
+
+            recalls = [
+                c.payload
+                for c in harness.store.list_run_controls(run_id=root.id)
+                if isinstance(c.payload, RecallControlPayload)
+                and isinstance(c.payload.target, SkillRecallTarget)
+            ]
+            assert [c.content for c in recalls] == [
+                "Old skill body.",
+                "",
+                "New skill body.",
+            ]
+            models = [
+                (s, s.given)
+                for s in harness.store.list_steps(run_id=root.id)
+                if isinstance(s.given, StoredModelStepGiven)
+            ]
+            assert [given.state for _, given in models] == [
+                harness.state.revision,
+                latest.revision,
+                latest.revision,
+            ]
+            assert all(s.state == root.state for s, _ in models)
+            assert (
+                harness.store.resolve_state_revision(root.state)
+                == harness.state.revision
+            )
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_ancestor_rules_do_not_exclude_another_modules_private_caps_or_routes(tmp_path):
+    source = """
+flow root() -> Text:
+  psyches = none
+  hands = none
+  instruct = none
+  context = none
+  run research
+agic helper() -> Text:
+  Agent helper must not run.
+"""
+    home = tmp_path / "agents/alice"
+    (home / "flows").mkdir(parents=True)
+    (home / "psyches").mkdir()
+    (home / "psyches/common.md").write_text("Excluded external advice.")
+    module = home / "flows/research.too"
+    module.write_text("""
+psyche local:
+  Module advice.
+agic driver() -> Text:
+  Delegate to helper.
+agic helper() -> Text:
+  Local helper body.
+flow() -> Text:
+  run driver
+""")
+    from toolang.common.layout import AgentLayout
+
+    (home / "agent.too").write_text(source)
+    initial = prepare_agent_state(AgentLayout.resident(tmp_path, "alice"))
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        program=initial.modules["agent"],
+        state=initial,
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            "helper", "helper", "_toolang__run", {"runnable": "helper"}
+                        ),
+                    )
+                ),
+                gate=gate,
+            ),
+            answer("helped"),
+            answer("done"),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="root",
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            module.write_text(
+                module.read_text().replace("Module advice.", "New module advice.")
+                + "\npsyche added:\n  New private module advice.\n"
+            )
+            (home / "psyches/added.md").write_text("New excluded external advice.")
+            publish(harness, source)
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            first, helper, resumed = [i.call for i in harness.adapter.invocations]
+            assert [r["ref"] for r in route_snapshots(first)["hands"]] == [
+                "agic:helper"
+            ]
+            assert "Module advice." in first.instructions
+            assert "New private module advice." not in first.instructions
+            for call in (helper, resumed):
+                assert "New module advice." in call.instructions
+                assert "New private module advice." in call.instructions
+                assert "Excluded external advice." not in call.instructions
+                assert "New excluded external advice." not in call.instructions
+            assert "Local helper body." in str(helper.messages)
+            assert "Agent helper must not run." not in str(helper.messages)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["skill", "service"])
+@pytest.mark.parametrize("restriction", ["ancestor", "ceiling"])
+def test_new_caps_refresh_under_pinned_rules_and_prepared_picks_stay_frozen(
+    tmp_path, kind, restriction
+):
+    plural = f"{kind}s"
+    source = f"""
+flow parent() -> Text:
+  {plural} -= {kind}/private*
+  psyches -= psyche/private*
+  run worker
+agic worker() -> Text:
+  {plural} = *
+  psyches = *
+  context = none
+  hands = none
+  handoffs = none
+  Original body.
+"""
+    if restriction == "ceiling":
+        source = source.replace(f"  {plural} -= {kind}/private*\n", "")
+    home = tmp_path / "agents/alice"
+
+    def write_cap(name):
+        path = home / (
+            f"skills/{name}/SKILL.md" if kind == "skill" else f"services/{name}.md"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\ndescription: {name} guidance\n---\nBody of {name}.\n")
+        return path
+
+    removed = write_cap("public_removed")
+    write_cap("private_old")
+    (home / "psyches").mkdir()
+    (home / "psyches/goal.md").write_text("Initial goal.")
+    (home / "psyches/private_old.md").write_text("Excluded old psyche.")
+
+    def pick(identity, name):
+        return ToolCall(
+            identity,
+            identity,
+            "_toolang__pick",
+            {"kind": kind, "ref": f"{kind}/{name}"},
+        )
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(tool_calls=(pick("early", "public_added"),)), gate=gate
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    pick("eligible", "public_added"),
+                    pick("excluded", "private_added"),
+                )
+            ),
+            answer("done"),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                    ceilings=(AgentCeiling(**{plural: (f"{kind}/public*",)}),)
+                    if restriction == "ceiling"
+                    else (),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            write_cap("public_added")
+            write_cap("private_added")
+            removed.unlink()
+            (home / "psyches/goal.md").write_text("Updated goal.")
+            (home / "psyches/added.md").write_text("New eligible psyche.")
+            (home / "psyches/private_added.md").write_text("Excluded new psyche.")
+            latest = publish(
+                harness,
+                source.replace(
+                    "  run worker", f"  {plural} = none\n  run worker"
+                ).replace("Original body.", "Changed body."),
+            )
+            gate.release()
+            root = await asyncio.wait_for(handle, 2)
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            first, second, third = [i.call for i in harness.adapter.invocations]
+            assert f'ref="{kind}/public_removed"' in first.instructions
+            assert f'ref="{kind}/public_added"' not in first.instructions
+            assert "Initial goal." in first.instructions
+            assert last_tool_result(second).error
+            for call in (second, third):
+                assert f'ref="{kind}/public_added"' in call.instructions
+                assert f'ref="{kind}/public_removed"' not in call.instructions
+                assert f'ref="{kind}/private_added"' not in call.instructions
+                assert f'ref="{kind}/private_old"' not in call.instructions
+                assert "Updated goal." in call.instructions
+                assert "New eligible psyche." in call.instructions
+                assert "Excluded new psyche." not in call.instructions
+                assert "Excluded old psyche." not in call.instructions
+                assert "Original body." in str(call.messages)
+                assert "Changed body." not in str(call.messages)
+            assert "Body of public_added." in str(third.messages)
+            assert "Body of private_added." not in str(third.messages)
+            assert last_tool_result(third).error
+            child = next(
+                r for r in harness.store.list_run_tree(root_run_id=root.id) if r.parent
+            )
+            steps = harness.store.list_steps(run_id=child.id)
+            assert [s.status for s in steps if s.kind == "tool"] == [
+                "failed",
+                "succeeded",
+                "failed",
+            ]
+            models = [
+                (s, s.given) for s in steps if isinstance(s.given, StoredModelStepGiven)
+            ]
+            assert [given.state for _, given in models] == [
+                harness.state.revision,
+                latest.revision,
+                latest.revision,
+            ]
+            assert all(s.state == child.state for s, _ in models)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_external_tool_ceiling_does_not_require_children_to_restore_excluded_tools(
+    tmp_path,
+):
+    from toolang.base.types.policy import AgentCeiling
+
+    tool = RecordingTool("test__probe", output={})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent() -> Text:
+  tools = none
+  run worker
+agic worker() -> Text:
+  tools = *
+  Work without user tools.
+""",
+        tools={tool.name: tool},
+        responses=[answer("done")],
+    )
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                    ceilings=(AgentCeiling(tools=("test/*",)),),
+                )
+            )
+            assert root.status == "succeeded", (
+                harness.store.resolve_error(root.error) if root.error else None
+            )
+            assert tool.name not in {
+                t.name for t in harness.adapter.invocations[0].call.tools
+            }
+
+    asyncio.run(scenario())

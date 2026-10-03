@@ -7,14 +7,13 @@ This definition covers handoff lifecycle, tool naming, and presentation.
 
 ## Goal and scope
 
-Proposed definition; this PR contains no implementation. `run` calls a child
-and returns; `exec` replaces the current runnable within the same Run and never
+`run` calls a child and returns; `exec` replaces the current runnable within the same Run and never
 returns on success. Add Flow `exec` and rename `_toolang/execute` to `_toolang/exec`.
 Success includes handoff from nested repeats and clear presentation of each successor.
 
 Scope: language consumers, runtime tools, handoff records, repeat unwinding,
 and shared Script/Chat/inspection presentation. Root spawning, scheduling,
-ordered State revisions, hot reload, and broader resource authority are excluded.
+ordered State revisions, and broader resource authority are excluded.
 Grammar implementation belongs in a separate `openhat-ai/tree-sitter-toolang` PR.
 
 ## Syntax and binding
@@ -68,6 +67,13 @@ counter resets and Run retry/rerun rules remain unchanged.
   the model; native exec failure follows normal Flow failure propagation.
   Post-commit cancellation or delivery failure cannot undo the handoff.
 
+Use existing `StepBegin`/`StepEnd` events. Native exec begins under the outgoing
+code binding; after the atomic commit, deliver its end and repeat ends from
+inner to outer, then start the successor's top-level Steps under the new binding.
+Emit no additional `RunBegin` or intermediate `RunEnd`. `_toolang/exec` remains
+a tool Step with a control receipt. Event replay must agree with stored facts,
+including an empty successor and interrupted or repeated terminal delivery.
+
 Keep the tool's existing success receipt, `{controls: [...]}`, and requirement
 that exec be the only tool call in its model response. Expose `_toolang__exec`
 to providers; remove the old callable name without an alias. Update protocol,
@@ -101,16 +107,10 @@ reset or double counting. Apply the same rules in Script, Chat, and inspection.
 
 ## Separate grammar PR and implementation touchpoints
 
-In [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang), add
-`exec_statement` with `target: runnable | inline_agic`.
-Add `flow_exec_keyword` and scanner recognition at Flow structural
-boundaries. Explicit text and prefixes such as `executor` stay unchanged. Keep
-exec out of bindable operations and prevent invalid exec from recovering as prose.
-
-Update grammar, scanner, `GRAMMAR.md`, queries, corpus/fixture/binding tests, and
-regenerated parser artifacts together. Cover nesting/dedents, comments/docs,
-LF/CRLF/EOF, and malformed targets/bindings/bodies. Grammar release/version bumps
-remain separate; Toolang updates the published dependency and consumers together.
+Consume published `tree-sitter-toolang` 0.3.4 with
+`exec_statement.target: runnable | inline_agic`. Keep grammar changes and releases
+in [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang).
+Toolang updates the dependency, AST consumers, and their acceptance tests together.
 
 | Concern | Toolang owners |
 | --- | --- |
@@ -135,11 +135,13 @@ Acceptance tests must cover:
 5. `_toolang__exec` retains the receipt and one-call rules; the old name is neither
    advertised nor callable. Repeated/empty/failed handoffs render consistently,
    with Run-aligned dividers, reset display numbering, and unique stored pointers.
+6. Exec events round-trip through codecs and replay consistently with storage;
+   native handoff records remain atomic across failure and interrupted delivery.
 
 Verify this definition against source and run `git diff --check`. Implementation
 requires each repository's default checks and the acceptance tests above.
 
 Risks: the tool rename breaks callers; reserving lowercase `exec` changes implicit
 prose starting with that token; transfer exceptions need dedicated handling;
-parser publication gates Toolang integration. No open technical alternatives;
-human definition approval and merge/release decisions remain pending.
+the grammar package must be published before integration. No open technical
+alternatives; humans retain merge and release decisions.

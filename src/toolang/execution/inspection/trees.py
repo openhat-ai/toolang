@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from bisect import bisect_right
+from dataclasses import dataclass, field
 from typing import Literal
 
 from toolang.base.money import add_cost, cost_text, normalize_cost
@@ -10,6 +11,7 @@ from toolang.base.money import add_cost, cost_text, normalize_cost
 from ..accounting import token_meter_quantity
 from ..records import (
     ControlRecord,
+    ExecuteControlPayload,
     RunRecord,
     StepRecord,
     occurrence_to_data,
@@ -20,6 +22,7 @@ from ..types import (
     ErrorRef,
     FieldRef,
     ModelStepNoted,
+    ControlRef,
     Occurrence,
     Pointer,
     StepKind,
@@ -64,12 +67,59 @@ class ExecutionTreeNode:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionHandoff:
+    """A committed divider after a completed Step subtree, at its Run depth."""
+
+    control: ControlRef
+    runnable: str
+    after: str
+    depth: int
+    step_origin: int
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionTree:
     """A validated flat tree plus its frozen snapshot for Human resolution."""
 
     nodes: tuple[ExecutionTreeNode, ...]
     records: tuple[Record, ...]
     entries: tuple[ControlRecord, ...]
+    handoffs: tuple[ExecutionHandoff, ...] = ()
+    _origins: dict[str, tuple[int, ...]] = field(init=False, repr=False, compare=False)
+    _boundaries: dict[str, tuple[ExecutionHandoff, ...]] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        origins: dict[str, list[int]] = {}
+        boundaries: dict[str, list[ExecutionHandoff]] = {}
+        for handoff in self.handoffs:
+            origins.setdefault(str(handoff.control.target), []).append(
+                handoff.step_origin
+            )
+            boundaries.setdefault(handoff.after, []).append(handoff)
+        object.__setattr__(
+            self,
+            "_origins",
+            {run: tuple(sorted(items)) for run, items in origins.items()},
+        )
+        object.__setattr__(
+            self,
+            "_boundaries",
+            {step: tuple(items) for step, items in boundaries.items()},
+        )
+
+    def handoffs_after(self, pointer: str) -> tuple[ExecutionHandoff, ...]:
+        return self._boundaries.get(pointer, ())
+
+    def step_ordinal(self, step: StepRecord) -> int | None:
+        """Return a successor display number without changing its pointer."""
+
+        if step.parent is not None:
+            return None
+        origins = self._origins.get(step.run_id, ())
+        index = bisect_right(origins, step.ref.index)
+        return step.ref.index - origins[index - 1] if index else None
 
     def resolve_error(self, error: ErrorMessage | ErrorRef | None) -> str | None:
         """Best-effort resolve one error reference without leaving the snapshot."""
@@ -242,14 +292,54 @@ def build_execution_tree(snapshot: ExecutionSnapshot) -> ExecutionTree:
         nodes=nodes,
         records=(*snapshot.runs, *snapshot.steps),
         entries=snapshot.entries,
+        handoffs=_handoffs(nodes, snapshot.entries),
     )
+
+
+def _handoffs(
+    nodes: tuple[ExecutionTreeNode, ...], entries: tuple[ControlRecord, ...]
+) -> tuple[ExecutionHandoff, ...]:
+    positions = {node.pointer: index for index, node in enumerate(nodes)}
+    result = []
+    for control in entries:
+        trigger = control.triggered_by
+        if (
+            control.status != "applied"
+            or not isinstance(control.payload, ExecuteControlPayload)
+            or trigger is None
+            or str(control.target) not in positions
+        ):
+            continue
+        top = str(StepRef.from_local(trigger.run_id, (trigger.indices[0],)))
+        start = positions.get(top)
+        if start is None:
+            continue
+        end = start + 1
+        while end < len(nodes) and nodes[end].depth > nodes[start].depth:
+            end += 1
+        result.append(
+            ExecutionHandoff(
+                control.ref,
+                control.payload.runnable,
+                nodes[end - 1].pointer,
+                nodes[positions[str(control.target)]].depth,
+                trigger.indices[0] + 1,
+            )
+        )
+    return tuple(result)
 
 
 def tree_to_data(tree: ExecutionTree) -> list[dict[str, object]]:
     """Serialize a tree as its stable flat depth-first JSON projection."""
 
-    return [
-        {
+    steps = {
+        str(record.ref): record
+        for record in tree.records
+        if isinstance(record, StepRecord)
+    }
+    result: list[dict[str, object]] = []
+    for node in tree.nodes:
+        item: dict[str, object] = {
             "pointer": node.pointer,
             "record_kind": node.record_kind,
             "step_kind": node.step_kind,
@@ -275,8 +365,21 @@ def tree_to_data(tree: ExecutionTree) -> list[dict[str, object]]:
                 "cost_approximate": node.metrics.cost_approximate,
             },
         }
-        for node in tree.nodes
-    ]
+        step = steps.get(node.pointer)
+        if step is not None and (ordinal := tree.step_ordinal(step)) is not None:
+            item["ordinal"] = ordinal
+        boundaries = tree.handoffs_after(node.pointer)
+        if boundaries:
+            item["handoffs_after"] = [
+                {
+                    "control": str(boundary.control),
+                    "runnable": boundary.runnable,
+                    "depth": boundary.depth,
+                }
+                for boundary in boundaries
+            ]
+        result.append(item)
+    return result
 
 
 def _ordered_step_children(

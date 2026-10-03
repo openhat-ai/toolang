@@ -193,24 +193,24 @@ updates. New Run acceptance and model catalogs read the published snapshot.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__execute`, `_toolang__pick`,
+`_toolang__run`, `_toolang__exec`, `_toolang__pick`,
 `_toolang__honor`, `_toolang__compact`, and `_toolang__chdir` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions.
 Statement-generated Flow evaluators, output-repair
 calls, and tool-disabled models receive no runtime tools.
 
-In chat, a named invocation without further requested work uses execute; a
+In chat, a named invocation without further requested work uses exec; a
 request to call a target and then summarize or process its result uses run.
 Both tools accept `runnable` and optional `input`, whose `_` field is primary
 input and other fields are declared parameters. The model reads the latest
 hands/handoffs signatures and asks for missing required values before calling.
 Questions about parameters alone do not execute the target.
 
-Omitted hands/handoffs settings inherit their parent; without an inherited value,
-all module-visible targets are available for named user requests. Their snapshots
-have `requested_only="true"`, directing the model not to delegate autonomously.
+Omitted hands/handoffs settings inherit within the same module. Without an
+inherited value, all module-visible targets are available for named user requests.
+Their snapshots have `requested_only="true"`, directing the model not to delegate autonomously.
 Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
-remain runtime-enforced limits, independently for run and execute. On a conflict,
+remain runtime-enforced limits, independently for run and exec. On a conflict,
 the model reports the restriction without switching operation or target. Snapshot
 limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
 
@@ -260,7 +260,7 @@ Compact elapsed time refreshes once per second in TTY/Chat; non-TTY prints
 start/end only.
 Tool traces show one summary line, plus
 an indented error line on failure, and no result blocks. Long lines are truncated.
-Run/execute retain their child and handoff hierarchy.
+Run/exec retain their child and handoff hierarchy.
 
 Workspace paths in tool summaries use the canonical `name://path` syntax,
 for example `repo://src/file.py`. Honor says `Loading rules...` /

@@ -546,6 +546,8 @@ class _Lowerer:
                 node, body=self._block_text(node), output=None
             )
             return ast.RunStmt(runnable=runnable, span=span, doc=doc)
+        if node.type == "exec_statement":
+            return ast.ExecStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "run_statement":
             return ast.RunStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "seek_statement":
@@ -655,7 +657,9 @@ class _Lowerer:
         evaluator: bool = False,
         default_output: str = "Text",
     ) -> str:
-        runnable = node.child_by_field_name("runnable")
+        runnable = node.child_by_field_name("runnable") or node.child_by_field_name(
+            "target"
+        )
         if runnable is not None and runnable.type == "runnable":
             return self._text(runnable).strip()
         agic = runnable or node.child_by_field_name("agic")

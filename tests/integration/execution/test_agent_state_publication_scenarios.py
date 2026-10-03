@@ -174,7 +174,7 @@ agic worker:
     asyncio.run(scenario())
 
 
-def test_publication_preserves_execute_configuration_for_nested_descendants(
+def test_exec_drops_outgoing_configuration_and_keeps_ancestor_rules(
     tmp_path: Path,
 ) -> None:
     source = """instruct delegate_instruct: Transferred instruction.
@@ -209,7 +209,7 @@ flow parent:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__execute",
+                        name="_toolang__exec",
                         input={"runnable": "flow:target", "input": {"_": "work"}},
                     ),
                 ),
@@ -246,10 +246,10 @@ flow parent:
             workers = harness.adapter.invocations[2:]
             assert len(workers) == 2
             for invocation in workers:
-                assert "Previous result" in message_text(
+                assert "Previous result" not in message_text(
                     without_runtime_snapshots(invocation.call.messages)[-1].parts
                 )
-                assert "Transferred instruction." in invocation.call.instructions
+                assert "Transferred instruction." not in invocation.call.instructions
 
     asyncio.run(scenario())
 
@@ -445,7 +445,7 @@ def test_publication_preserves_the_next_step_of_an_active_agic(tmp_path: Path) -
                 ControlRef.for_run(root.id, 0),
             ]
             assert "old state" in harness.adapter.invocations[0].call.instructions
-            assert "old state" in harness.adapter.invocations[1].call.instructions
+            assert "new state" in harness.adapter.invocations[1].call.instructions
             assert harness.adapter.invocations[0].call.output_schema == {
                 "type": "number"
             }
@@ -579,7 +579,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
 
 @pytest.mark.parametrize("layer", ["message", "context"])
 @pytest.mark.parametrize("initial_depth,updated_depth", [(0, 2), (2, 0)])
-def test_until_publication_preserves_the_bound_condition_history_requirement(
+def test_until_keeps_code_but_refreshes_context_history_requirements(
     tmp_path: Path, layer: str, initial_depth: int, updated_depth: int
 ) -> None:
     def condition(depth: int) -> str:
@@ -598,6 +598,7 @@ flow parent:
     until: {condition(initial_depth) if layer == "message" else "Return true."}
 """
     replacement = source.replace(condition(initial_depth), condition(updated_depth), 1)
+    expected_depth = updated_depth if layer == "context" else initial_depth
     first_call = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
@@ -609,7 +610,7 @@ flow parent:
             ),
             *(
                 ModelCallResult(message=Message.assistant(f"round {index + 2}"))
-                for index in range(initial_depth)
+                for index in range(expected_depth)
             ),
             ModelCallResult(message=Message.assistant("true")),
         ),
@@ -633,9 +634,9 @@ flow parent:
             assert root.status == "succeeded", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            assert len(harness.adapter.invocations) == initial_depth + 2
+            assert len(harness.adapter.invocations) == expected_depth + 2
             assert harness.store.run_output_text(run_id=root.id) == (
-                f"round {initial_depth + 1}"
+                f"round {expected_depth + 1}"
             )
 
     asyncio.run(scenario())

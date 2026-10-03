@@ -258,7 +258,7 @@ def _estimate_binding(prepared: _AgicFrame) -> object:
     return (
         prepared.model,
         prepared.reasoning,
-        prepared.run.state.revision,
+        prepared.state.revision,
         prepared.run.horizon,
         prepared.recall,
     )
@@ -461,7 +461,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             given=ModelStepGiven(
                 model=prepared.model.ref,
                 setup=prepared.run.setup.revision,
-                catalog_state=(prepared.catalog or prepared.run.state).revision,
+                state=prepared.state.revision,
                 call=request,
                 messages=recorded,
             ),

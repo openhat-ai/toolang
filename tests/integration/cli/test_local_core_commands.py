@@ -2519,7 +2519,7 @@ agic reply(_: Part[]) -> Part[]:
             retried.error if retried is not None else None,
             harness.adapter.pending_responses,
         )
-        assert state_reads == []
+        assert state_reads == [None, None]
         rerun = _invoke(
             harness.setup.layout.root,
             "alice",
@@ -2531,7 +2531,7 @@ agic reply(_: Part[]) -> Part[]:
         )
 
         assert rerun.exit_code == 0, rerun.stderr
-        assert state_reads == [None]
+        assert state_reads == [None] * 5
         assert runtime_selections == ["host", None]
         rerun_records = [
             run

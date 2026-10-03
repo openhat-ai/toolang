@@ -748,7 +748,10 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         binding: BoundRun,
         agic: AgicDecl,
         _locals: dict[str, Local],
+        *,
+        step_start: int,
     ) -> Local:
+        assert step_start == 0
         assert binding.resources is not None
         observed.append(
             (_name(agic), tuple(item.model_name for item in binding.resources.tools))

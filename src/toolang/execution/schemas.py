@@ -814,7 +814,7 @@ class StepData:
                 model=step.given.model,
                 setup=step.given.setup,
                 call=call,
-                catalog_state=step.given.catalog_state,
+                state=step.given.state,
             )
         else:
             given = step.given

@@ -40,7 +40,7 @@ agic target() -> Text:
                     ToolCall(
                         "execute",
                         "execute",
-                        "_toolang__execute",
+                        "_toolang__exec",
                         {"runnable": "agic:target"},
                     ),
                 )
@@ -113,7 +113,7 @@ agic child() -> Text:
             result=ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "execute", "execute", "_toolang__execute", {"runnable": target}
+                        "execute", "execute", "_toolang__exec", {"runnable": target}
                     ),
                 )
             ),
@@ -175,7 +175,7 @@ agic child() -> Text:
                 if (
                     isinstance(event, StepBegin)
                     and isinstance(event.given, ToolStepGiven)
-                    and event.given.call.name == "_toolang__execute"
+                    and event.given.call.name == "_toolang__exec"
                 ):
                     execute_step = event.step
                 if isinstance(event, StepEnd) and event.step == execute_step:
@@ -193,7 +193,7 @@ agic child() -> Text:
             assert projector._root_ended
             if outcome == "succeeded":
                 assert len(handoffs) == 1
-                assert handoffs[0].text == f"Execute {target}"
+                assert handoffs[0].text == f"exec → {target}"
                 if target_kind == "agic":
                     assert any(row.text == "Run agic:child" for row in rows)
                     child = harness.store.list_run_tree(root_run_id=root.id)[1]
@@ -203,7 +203,7 @@ agic child() -> Text:
             else:
                 assert handoffs == []
                 if outcome == "failed":
-                    assert any("Failed execute" in row.text for row in rows)
+                    assert any("Failed exec" in row.text for row in rows)
                 else:
                     assert execute_step is not None
                     skipped = harness.store.get_step(ref=execute_step)

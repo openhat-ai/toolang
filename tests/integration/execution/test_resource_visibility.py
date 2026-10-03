@@ -432,7 +432,7 @@ def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
 
 
 @pytest.mark.parametrize("kind,name", [("skill", "testing"), ("service", "github")])
-def test_definition_changes_preserve_bound_guidance(tmp_path, kind, name):
+def test_definition_changes_invalidate_and_refresh_guidance(tmp_path, kind, name):
     ref = f"{kind}/{name}"
     source = SOURCE.replace(
         "context = none", f"{kind}s = {kind}/{name}\n  context = none"
@@ -484,16 +484,22 @@ def test_definition_changes_preserve_bound_guidance(tmp_path, kind, name):
             assert run.status == "succeeded", run.error
             calls = [i.call for i in harness.adapter.invocations]
             guidance = _declarations(harness, run, kind)
-            assert [c.payload.content for c in guidance] == ["Original guidance."]
+            assert [c.payload.content for c in guidance] == [
+                "Original guidance.",
+                "",
+                "Changed <guidance>.",
+            ]
             triggers = _declarations(harness, run, f"{kind}-trigger")
-            assert not triggers
-            for call in calls[1:]:
+            assert len(triggers) == 1
+            for index, call in enumerate(calls[1:], 1):
                 text = "\n".join(message_text(m.parts) for m in call.messages)
                 assert "Original guidance." in text
-                assert escape("Changed <guidance>.", quote=False) not in text
-                assert (
-                    f'<toolang:{kind}-guidance ref="{ref}" removed="true"/>' not in text
+                assert (escape("Changed <guidance>.", quote=False) in text) == (
+                    index >= 3
                 )
+                assert (
+                    f'<toolang:{kind}-guidance ref="{ref}" removed="true"/>' in text
+                ) == (index >= 2)
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

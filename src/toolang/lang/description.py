@@ -14,6 +14,7 @@ from .ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    ExecStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
@@ -28,6 +29,8 @@ def _runnable_label(value: str | None) -> str:
 def statement_description(statement: FlowStmt) -> str:
     """Describe a statement's operation independently of its authored doc."""
 
+    if isinstance(statement, ExecStmt):
+        return f"Exec {_runnable_label(statement.runnable)}"
     if isinstance(statement, LetStmt):
         return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):

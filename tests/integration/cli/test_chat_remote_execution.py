@@ -192,7 +192,7 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])
-@pytest.mark.parametrize("operation", ["run", "execute"])
+@pytest.mark.parametrize("operation", ["run", "exec"])
 def test_chat_named_invocation_keeps_the_next_turn_on_the_session_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool, operation: str
 ) -> None:
@@ -204,7 +204,7 @@ def test_chat_named_invocation_keeps_the_next_turn_on_the_session_default(
         without_runtime_snapshots,
     )
 
-    target = "flow:abc" if operation == "execute" else "agic:xyz"
+    target = "flow:abc" if operation == "exec" else "agic:xyz"
     source = """
 agic chat(_: Text) -> Text:
   recall = none
@@ -315,7 +315,7 @@ agic xyz(_: Text) -> Text:
             {entry["ref"] for entry in targets} == {"flow:abc", "agic:xyz"}
             for targets in first.values()
         )
-        assert {"_toolang__run", "_toolang__execute"} <= {
+        assert {"_toolang__run", "_toolang__exec"} <= {
             tool.name for tool in calls[0].tools
         }
         assert without_runtime_snapshots(calls[-1].messages) == [

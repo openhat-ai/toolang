@@ -308,14 +308,18 @@ Built-in tool modules match their registered toolset names:
 `build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
 `ModelRoute`, one resolved `Model`, and one normalized `ModelCall` per model step.
+The frame retains accepted code in `run.state` and the captured dependency
+State in `state`. `Step.state` records the code-binding control; model
+`given.state` records that call's dependency revision. Reconstruction uses saved
+calls without consulting current State.
 Assembly helpers add no separate execution state or model-call lifecycle.
 There is no loop plugin, public run-context protocol, or separate
 effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,
-`_toolang__execute`, `_toolang__chdir`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
-execute targets; they do not select definitions. All tools use plugin registration
+`_toolang__exec`, `_toolang__chdir`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
+exec targets; they do not select definitions. All tools use plugin registration
 and the same Tool Step lifecycle. Every call includes `toolang:hands` and
 `toolang:handoffs` in messages, as siblings before `toolang:context`, even with
 `context = none`. Each snapshot has `enabled="true"` and a complete JSON target
@@ -455,32 +459,44 @@ its existing behavior: retrying an agic replaces its Step history and children.
 Automatic resumption of pending scheduled Runs after process loss is not
 implemented yet.
 
-A successful `_toolang__execute` records one applied execute control during its
+A successful `_toolang__exec` records one applied execute control during its
 Tool Step, then finishes that Step before transferring to the target. It creates
 no child Run, extra transition Step, or additional `RunBegin`:
 
 ```text
 RunBegin(entry)
   caller Model Step
-  execute Tool Step → applied execute control
+  exec Tool Step → applied execute control
   target Steps
 RunEnd(final target result)
 ```
 
 The control's `triggered_by` points to the Tool Step. Its payload records the
-Tool Step's captured State, the qualified runnable, and raw `Json` input pointers
+selected latest State, the qualified runnable, and raw `Json` input pointers
 into the originating Model ToolCall. Input, resources, authorization, and active
-runnable lineage are validated before commit. Validation failure creates no
+runnable path are validated before commit. Validation failure creates no
 control and returns a correlated tool error. Success returns a control receipt;
 the target starts with fresh continuation and local call counters, while prior
 Steps and message deltas remain in Run history.
-The entry runnable's output type remains the final Run contract. Repeated
-identities in the current or an active ancestor lineage are rejected.
+Native Flow `exec` uses an `exec` Step and the same durable `execute` control.
+Its typed inputs retain Flow provenance. One transaction commits the control,
+the exec Step, and all open same-Run repeat ancestors; loops succeed with
+`termination = exec`, completed iteration counts, and `aborted_by` pointing to
+the control. Terminal events arrive inner to outer before successor Steps.
+The transfer skips result binding and the remaining body/until statements.
+A parent Run still waits for its child's eventual result.
 
-Progress starts the execute marker at Tool Step begin, confirms the transfer from
+The entry runnable's output type remains the final Run contract. Repeated
+identities on the current branch's active path are rejected. Earlier handoffs
+are no longer on that path and can be called again.
+
+Progress starts the exec marker at Tool Step begin, confirms the transfer from
 its result, and attaches a handoff divider to the target's first Step. A receipt
 still confirms commit if result delivery was canceled; cancellation does not
 undo the control. No separate control event is needed for presentation.
+Handoff dividers align with the Run and appear even for empty successors.
+Successor display numbers restart at zero; durable pointers remain unique.
+Inspection includes the same boundaries and canonical navigation.
 
 
 ## Control Observation

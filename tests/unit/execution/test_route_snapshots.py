@@ -58,9 +58,7 @@ def _render(state: AgentState, routes: AgicRoutes) -> str:
 
 @pytest.mark.parametrize("name", ["DeepSearch", "deep-search", "_review"])
 @pytest.mark.parametrize("qualified", [False, True])
-@pytest.mark.parametrize(
-    "directive,action", [("hands", "run"), ("handoffs", "execute")]
-)
+@pytest.mark.parametrize("directive,action", [("hands", "run"), ("handoffs", "exec")])
 def test_routes_resolve_portable_exported_flow_names(
     name, qualified, directive, action
 ):
@@ -199,7 +197,7 @@ def test_protocol_requires_explicit_delegation_intent() -> None:
     assert "after a successful transfer, your current invocation ends" in instruction
     assert "If preparation fails" in instruction
     assert "Prefer run when either behavior works" not in instruction
-    assert '"Call flow:abc" uses execute' in instruction
+    assert '"Call flow:abc" uses exec' in instruction
     assert '"Call agic:xyz, then summarize its result" uses run' in instruction
     assert "question about parameters alone does not request execution" in instruction
     assert "On a scope conflict, explain the restriction" in instruction
@@ -454,7 +452,7 @@ agic caller:
     (entry,) = runnable_descriptions(state, routes)
     contract = runnable_signature(state, "agent", target)
     assert entry["ref"] == f"{kind}:main"
-    assert entry["actions"] == ["run", "execute"]
+    assert entry["actions"] == ["run", "exec"]
     assert entry["documentation"] == "Handle the general request."
     assert (
         entry["input"]
@@ -570,7 +568,7 @@ agic target:
     routes = resolve_agic_routes(
         state, child, hands=child_settings.hands, handoffs=child_settings.handoffs
     )
-    action = "run" if directive == "hands" else "execute"
+    action = "run" if directive == "hands" else "exec"
     authorized = [
         route.runnable.name for route in routes.resolved if action in route.actions
     ]
@@ -606,13 +604,13 @@ def test_default_routes_preserve_public_exports_and_module_boundaries():
         "agent::agic:caller",
         "flows::report::flow:report",
     }
-    assert public.requested_only == ("run", "execute")
-    assert all(route.actions == ("run", "execute") for route in public.resolved)
+    assert public.requested_only == ("run", "exec")
+    assert all(route.actions == ("run", "exec") for route in public.resolved)
     helper = state.modules[module].agics[0]
     private = resolve_agic_routes(state, helper, module=module)
     assert {route.runnable.qualified for route in private.resolved} == {
         "flows::report::flow:report",
         "flows::report::agic:helper",
     }
-    assert private.requested_only == ("run", "execute")
-    assert all(route.actions == ("run", "execute") for route in private.resolved)
+    assert private.requested_only == ("run", "exec")
+    assert all(route.actions == ("run", "exec") for route in private.resolved)

@@ -310,7 +310,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
             "run_end",
         ]
         assert setup_reads == 3
-        assert state_reads == 3
+        assert state_reads == 9
         assert include_setups == [harness.setup, harness.setup, harness.setup]
 
         await client.disconnect()
@@ -460,7 +460,7 @@ prompt rewrite:
         assert rerun.id == rerun_handle.run_id
         assert retried.status == rerun.status == resubmitted.status == "succeeded"
         assert setup_reads == 4
-        assert current_state_reads == 3
+        assert current_state_reads == 11
         assert loaded_revisions == [harness.state.revision]
         assert [
             without_runtime_snapshots(invocation.call.messages)

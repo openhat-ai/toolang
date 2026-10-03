@@ -44,7 +44,7 @@ from toolang.base.types.run import ModelCall
 from toolang.lang.input import CallInput, resolve_input_parts
 
 
-@pytest.mark.parametrize("action", ["run", "execute"])
+@pytest.mark.parametrize("action", ["run", "exec"])
 def test_child_rejects_its_own_runnable(tmp_path: Path, action: str) -> None:
     harness = ExecutionHarness.create(
         tmp_path,

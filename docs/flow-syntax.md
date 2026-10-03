@@ -12,7 +12,7 @@ NAME       local name
 T          Toolang type
 N          non-negative count or selection size
 P          positive concurrency limit
-VALUE_STMT a result-producing statement other than repeat
+VALUE_STMT a result-producing statement (excludes repeat and exec)
 RUNNABLE   named agic or flow
 AGENT      agent selector
 EXPANDER   one-run runnable returning a list
@@ -77,6 +77,21 @@ Runtime history names are supplied separately from authored bindings.
 body statements update the current flow locals normally as the loop proceeds.
 
 
+## Exec
+
+`exec` replaces the current runnable and never returns on success, including
+inside nested repeats. It binds the target's declared inputs from current locals
+and resolves named targets from one latest published State. Inline agics keep
+their containing code. The Run keeps its
+identity, resource ceiling, accounting, and original output contract.
+
+Named and inline targets use the same forms and input binding as `run`.
+Exec has no result binding, argument list, or modifiers. Named targets must
+exist in the accepted caller's definitions and keep compatible contracts.
+Current and ancestor targets are rejected on each branch; earlier handoffs may
+be called again. Failed validation leaves the binding unchanged and fails the
+Flow normally.
+
 ## Statements
 
 ```text
@@ -87,6 +102,10 @@ TEXT                                      shorthand for inline `run`
 seek AGENT RUNNABLE
 seek AGENT [-> T]: BODY
 ask: BODY
+
+# Replace the current runnable within the same Run
+exec RUNNABLE
+exec [-> T]: BODY
 
 # Expand one item into a list
 scatter using EXPANDER

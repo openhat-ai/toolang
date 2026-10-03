@@ -468,6 +468,8 @@ def _repeat_terminal_text(
     *,
     has_condition: bool,
 ) -> str:
+    if termination == "exec":
+        return f"Handed off after completing {_iteration_progress(iterations, total)}"
     if termination == "exhausted":
         completed = _completed_iterations(iterations)
         return (

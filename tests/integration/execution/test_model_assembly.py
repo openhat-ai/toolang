@@ -308,9 +308,7 @@ def test_execution_reset_uses_the_surviving_horizon(
     next_result = (
         ModelCallResult(
             tool_calls=(
-                ToolCall(
-                    "next", "next", "_toolang__execute", {"runnable": "agic:next"}
-                ),
+                ToolCall("next", "next", "_toolang__exec", {"runnable": "agic:next"}),
             )
         )
         if action == "execute"

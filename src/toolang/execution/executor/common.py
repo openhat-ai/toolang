@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import json
 import re
 from typing import Any, Literal, cast
@@ -32,6 +32,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    ExecStmt,
     ScatterStmt,
     SeekStmt,
     SettleStmt,
@@ -121,6 +122,8 @@ class BoundRun:
     state_ref: ControlRef
     setup: AgentSetup
     created_at: str
+    # Root-accepted grants survive child acceptance and same-Run replacement.
+    workspaces: Mapping[str, str] = field(default_factory=dict)
     model_request: ModelRequest | None = None
     module: str = "agent"
     control_index: int = 0
@@ -128,9 +131,7 @@ class BoundRun:
     ceilings: tuple[AgentCeiling, ...] = ()
     agent_resources: AgentResources | None = None
     resources: AgentResources | None = None
-    parent_resources: AgentResources | None = None
     settings: RunnableSettings = RunnableSettings()
-    settings_base: RunnableSettings | None = None
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
@@ -157,11 +158,15 @@ class _ExecuteCommitted(Exception):
         binding: BoundRun,
         runnable: AgicDecl | FlowDecl,
         locals: Mapping[str, Local],
+        *,
+        triggered_by: StepRef,
     ) -> None:
         super().__init__(binding.bindings.runnable or runnable.name)
         self.binding = binding
         self.runnable = runnable
         self.locals = dict(locals)
+        self.triggered_by = triggered_by
+        self.interruption: asyncio.CancelledError | None = None
 
 
 async def execute_step(
@@ -220,6 +225,8 @@ async def execute_step(
     try:
         evaluated = await evaluate()
         result = transform_flow_result(statement, locals, evaluated)
+    except _ExecuteCommitted:
+        raise
     except asyncio.CancelledError:
         await emit(
             StepEnd(
@@ -487,7 +494,13 @@ def statement_input_refs(
 def _statement_child_runnable(statement: FlowStmt) -> str | None:
     if isinstance(
         statement,
-        RunStmt | ScatterStmt | GatherStmt | SettleStmt | MapStmt | StormStmt,
+        RunStmt
+        | ExecStmt
+        | ScatterStmt
+        | GatherStmt
+        | SettleStmt
+        | MapStmt
+        | StormStmt,
     ):
         return statement.runnable
     if isinstance(statement, SortStmt):
@@ -551,6 +564,7 @@ def statement_has_call(statement: FlowStmt) -> bool:
     if isinstance(
         statement,
         RunStmt
+        | ExecStmt
         | SeekStmt
         | AskStmt
         | ScatterStmt

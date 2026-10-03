@@ -24,6 +24,7 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     CollectionStepNoted,
+    ExecStepNoted,
     ErrorMessage,
     ErrorRef,
     FieldRef,
@@ -397,7 +398,9 @@ class ProgressProjector:
         if run is None or run.end is not None:
             raise _PresentationError(f"StepBegin without active Run {event.step.run}")
         handoff = self._advance_execute(run, event)
-        ordinal = event.step.index
+        ordinal = event.step.index - (
+            run.step_origin if event.step.parent is None else 0
+        )
         parent = self._steps.get(event.step.parent) if event.step.parent else None
         if (
             parent is not None
@@ -1062,7 +1065,10 @@ class ProgressProjector:
         """Start execute presentation from its Tool Step, not the model's intent."""
 
         given = state.begin.given
-        if isinstance(given, ToolStepGiven) and given.call.name == "_toolang__execute":
+        if isinstance(given, ToolStepGiven) and given.call.name in {
+            "_toolang__exec",
+            "_toolang__execute",
+        }:
             run.pending_executes.append(
                 PendingExecute(
                     tool_call_id=given.call.tool_call_id,
@@ -1075,7 +1081,7 @@ class ProgressProjector:
         if not isinstance(event.given, ToolStepGiven):
             return None
         call = event.given.call
-        if call.name != "_toolang__execute":
+        if call.name not in {"_toolang__exec", "_toolang__execute"}:
             return None
         return next(
             (
@@ -1091,10 +1097,14 @@ class ProgressProjector:
     ) -> PendingExecute | None:
         """Confirm or reject a handoff from its actual Tool Step result."""
 
+        if isinstance(end.noted, ExecStepNoted):
+            pending = PendingExecute(str(begin.step), end.noted.runnable, ready=True)
+            run.pending_executes.append(pending)
+            return pending
         pending = self._pending_execute(run, begin)
         if pending is not None:
             index = run.pending_executes.index(pending)
-            committed = end.status == "succeeded" or any(
+            committed = any(
                 isinstance(part, ToolResultPart)
                 and part.error is None
                 and bool(part.output.get("controls"))
@@ -1118,6 +1128,7 @@ class ProgressProjector:
         if handoff is not None:
             run.pending_executes.remove(handoff)
             run.agic = isinstance(event.given, ModelStepGiven)
+            run.step_origin = event.step.index
         return handoff
 
     def _execute_prelude(
@@ -1133,7 +1144,7 @@ class ProgressProjector:
             rows.extend(
                 (
                     ProgressRow(
-                        f"Execute {handoff.runnable}",
+                        f"exec → {handoff.runnable}",
                         leader="handoff",
                     ),
                     ProgressRow(""),
@@ -1158,10 +1169,12 @@ class ProgressProjector:
         rows: list[ProgressRow] = []
         if run.lane_owner is None:
             for pending in run.pending_executes:
+                if not pending.ready:
+                    continue
                 rows.extend(
                     (
                         ProgressRow(
-                            f"Execute {pending.runnable}",
+                            f"exec → {pending.runnable}",
                             leader="handoff",
                         ),
                         ProgressRow(""),

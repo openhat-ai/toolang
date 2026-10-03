@@ -2312,6 +2312,7 @@ def _prepared_agic(
     from toolang.execution.runnables import AgicRoutes
 
     return _AgicFrame(
+        state=cast(Any, state),
         run=BoundRun(
             run_id="run_1",
             root_run_id="run_1",

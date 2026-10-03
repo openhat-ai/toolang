@@ -420,14 +420,16 @@ order: `=` retains matching selected items, `+=` includes matches from the fixed
 base, and `-=` excludes matches. `none` is the empty set, so `= none` clears the
 selection and `+= none` / `-= none` leave it unchanged.
 
-Resource selectors (`models`, `tools`, `psyches`, `skills`, `services`, and
-`prompts`) operate within the immediate parent's effective resources, intersected
-with the current module's visibility. `+=` can restore only resources in that
-fixed base. Roots start from agent resources; calls and execute transfers cannot
-expand the caller's boundary.
+Before each model call, the active path's fixed resource selectors filter the
+latest State in their declaring modules. Rules exclude only resources visible
+in that scope; another module's private caps remain available to its own rules.
+Children inherit restrictions, not an earlier list of selected resources.
+`+=` restores only items allowed by ancestors and external authority ceilings.
+An exec removes the outgoing runnable's rules; waiting ancestors still apply.
+Setup and accepted workspace grants stay bound.
 
 Both agics and flows accept `recall`, `hands`, and `handoffs`. Omission inherits
-the immediate parent's value. Root recall defaults to `far, near`; `default`
+the immediate parent's value within the rule's scope. Root recall defaults to `far, near`; `default`
 selects that default and `*` selects all available sources. `none`, `far`, `near`,
 and either CSV source order select a view of the full root snapshot. `auto` is
 not supported; use `far, near` to explicitly select those two sources.
@@ -456,11 +458,11 @@ available for user-directed calls. The model may invoke them when the user names
 a target; this requested-only rule is enforced by protocol guidance. An explicit
 list or `*` also permits autonomous delegation within its scope. Explicit lists
 and `none` are enforced by the runtime and cannot be bypassed by a user request.
-Inherited lists and `none` remain effective until a child explicitly replaces
-them. Additional restrictions stated by the user further constrain model use.
+Inherited lists and `none` remain effective within their module until a child
+explicitly replaces them. Additional restrictions stated by the user further constrain model use.
 
 For a named invocation with no requested follow-up, the model uses
-`_toolang/execute`. When asked to summarize, compare, or otherwise process the
+`_toolang/exec`. When asked to summarize, compare, or otherwise process the
 result afterward, it uses `_toolang/run`. Asking about parameters alone does not
 execute the target; missing required input is requested before invocation.
 Scope conflicts are reported without silently changing the target or operation.
@@ -478,10 +480,10 @@ definitions remain available independently of these lists.
 Each newly accepted named child Run selects the latest published State and checks
 its signature against the caller's bound definition or advertised model catalog.
 Missing targets and changed signatures reject the call. Accepted Runs retain
-their code, types, prompts, caps, and Step revision; inline Agics belong to that
-same plan. Collection items select independently when accepted. Main-module
+their code, types, and directives; inline Agics belong to that same plan.
+Collection items select independently when accepted. Main-module
 flows can call their own runnables and exported flow modules; a flow module can
-call only its own runnables. Explicit same-Run handoffs use the advertised catalog.
+call only its own runnables. Same-Run handoffs follow the same resolution rules.
 
 Configuration changes affect newly accepted runnables without mutating active
 parents or siblings. Lane defaults are 4 per parallel operation; a statement
@@ -594,9 +596,8 @@ flow research(_: Text) -> Report:
 ```
 
 Flows use the same declaration defaults, resource selectors, recall, and routing
-configuration as agics. Every call inherits the immediate parent's resource
-boundary, including nested flows and public run/execute calls. Configuration
-can be overridden; resources can only be narrowed.
+configuration as agics. Nested flows and public run/exec calls use the same
+scoped resource rules, external ceilings, and replacement semantics.
 
 Statement syntax, bindings, inline agics, and result shapes are defined in
 [flow-syntax.md](./flow-syntax.md).
@@ -710,9 +711,9 @@ output schema; each model adapter maps those fields to its provider API.
 | Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
 | Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
 
-Hands/handoffs snapshots omit targets in the current or ancestor runnable lineages,
-including earlier handoff targets in the same Run. Completed child runnables remain
-callable. If no callable targets remain for a mode, its snapshot is disabled. These
+Hands/handoffs snapshots omit the current runnable and its ancestors on the
+calling branch. Earlier handoffs, completed children, and siblings do not block
+calls. If no callable targets remain for a mode, its snapshot is disabled. These
 filters run before snapshot size limits; execution still rejects recursive calls.
 
 ### Selection And Priority
@@ -769,7 +770,7 @@ grants service tools.
   workspace roots are not exposed.
 - Lifecycle controls such as run, retry, execute, fork, and rewind do not
   themselves add a model-facing lifecycle message. Published updates change
-  future named Runs and model catalogs; accepted code and caps remain bound.
+  future named calls and model-call resources; accepted code remains bound.
 
 Skill/service recall is distinct from far/near conversation recall. A far
 summary or trigger does not count as a visible guidance body. Recalling

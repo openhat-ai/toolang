@@ -132,6 +132,7 @@ def test_reported_context_overflow_is_rejected_before_dispatch(calibrated) -> No
             input_overhead=0,
             model=MODEL,
             reasoning=None,
+            state=SimpleNamespace(revision="a"),
             run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
             recall=("near",),
         ),
@@ -225,6 +226,7 @@ def test_exact_budget_fits_but_one_more_token_requires_action() -> None:
         input_overhead=0,
         model=MODEL,
         reasoning=None,
+        state=SimpleNamespace(revision="a"),
         run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
         recall=("near",),
     )
@@ -284,6 +286,7 @@ def test_continuation_update_keeps_measured_prefix_in_admission():
             input_overhead=0,
             model=model,
             reasoning=None,
+            state=SimpleNamespace(revision="a"),
             run=SimpleNamespace(state=SimpleNamespace(revision="a"), horizon=None),
             recall=("near",),
         ),

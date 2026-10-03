@@ -13,7 +13,7 @@ FlowTransform = Literal["item", "list", "filter", "sort", "none"]
 
 def operation_transform(operation: str) -> FlowTransform:
     """Return the flow result transform shared by execution and source checks."""
-    if operation == "repeat":
+    if operation in {"repeat", "exec"}:
         return "none"
     if operation in {"scatter", "storm", "map"}:
         return "list"

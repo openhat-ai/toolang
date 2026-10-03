@@ -313,7 +313,12 @@ async def execute(
                 StepBegin(
                     step=model,
                     kind="model",
-                    given=ModelStepGiven(spec.model.ref, call, setup=spec.setup),
+                    given=ModelStepGiven(
+                        spec.model.ref,
+                        call,
+                        setup=spec.setup,
+                        state=binding.state.revision,
+                    ),
                     started_at=utc_now(),
                 )
             )
