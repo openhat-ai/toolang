@@ -1,0 +1,34 @@
+#!/usr/bin/env too
+
+## Generate CHANGELOG.md following Keep a Changelog 1.1.0.
+agic changelog(since?: Text):
+  Read the repository guidance, CHANGELOG.md, release tags, and history.
+  Follow Keep a Changelog 1.1.0: https://keepachangelog.com/en/1.1.0/
+  Use {{since}} as the baseline when supplied; otherwise use the latest
+  release tag reachable from HEAD. Verify it before writing. Inspect history
+  through HEAD and the pending release diff against the implementation.
+  Reuse the current dedicated worktree and write only CHANGELOG.md, in English.
+
+  Keep existing records stable, including their wording, order, dates, and
+  references. Add new information at the front: Unreleased stays first, new
+  releases go above older ones, and new entries precede existing entries in
+  their category. Skip changes already recorded. Do not rewrite, summarize,
+  reorder, or regenerate existing records for style or consistency.
+  If the record is already complete and accurate, skip writing the file and
+  report that no update is needed. Wording and formatting preferences alone
+  never justify an edit; repeated runs must leave complete records unchanged.
+  Correct an existing entry only when verified evidence shows a factual error
+  or a necessary migration correction; explain each correction in your summary.
+
+  Use only nonempty Added, Changed, Deprecated, Removed, Fixed, and Security
+  categories. Describe user-visible impact concisely, link relevant pull
+  requests, and explain breaking changes with concrete migration steps.
+  Omit internal-only changes. If the file is new, state the tracking baseline
+  without backfilling history. Never invent changes, dates, or release tags.
+  Keep pending changes under Unreleased until publication is confirmed.
+  Use YYYY-MM-DD for confirmed release dates and verified comparison links;
+  update the Unreleased comparison as needed without changing old release links.
+
+  Do not invoke this runnable recursively, edit other files, commit, push,
+  create issues or pull requests, tag, or publish. Validate entries and links,
+  run git diff --check, and briefly report additions, corrections, and uncertainty.

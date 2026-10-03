@@ -139,4 +139,5 @@ too more                              # Show additional commands
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
