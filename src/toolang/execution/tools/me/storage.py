@@ -66,9 +66,20 @@ class HomeFiles:
             and file.key == "agent.too"
             and self.layout.placement == "roaming"
         ):
-            expected = self.layout.root.parent / f"{self.layout.name}.too"
-            if not expected.is_symlink() and target.resolve() == expected:
-                target = expected
+            try:
+                source = target.resolve()
+                # Placement owns the mapping from source names to home identity.
+                # Reconstructing a filename loses whitespace normalized by it.
+                if (
+                    source.suffix == ".too"
+                    and AgentLayout.roaming(source) == self.layout
+                ):
+                    target = source
+            except RuntimeError as exc:
+                # Python 3.11/3.12 raise RuntimeError for a symlink loop.
+                raise UnsafeAuthoringPathError(
+                    "roaming program must link to its own source file"
+                ) from exc
         self._regular(target)
         return target
 

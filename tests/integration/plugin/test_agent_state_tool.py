@@ -642,10 +642,11 @@ def test_independent_files_can_be_saved_before_composition_is_valid(context):
         prepare_agent_state(context.layout)
 
 
-def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path):
+@pytest.mark.parametrize("source_name", ["parrot.too", " parrot .too"])
+def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_name):
     from toolang.up.process import materialize_roaming_program
 
-    source = tmp_path / "parrot.too"
+    source = tmp_path / source_name
     source.write_text("agic:\n  Original.\n")
     source.chmod(0o755)
     layout = materialize_roaming_program(source)
@@ -666,3 +667,70 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path):
     assert source.stat().st_mode & 0o777 == 0o755
     assert (layout.home / ".config.toml.lock").exists()
     assert not (layout.home / ".project.lock").exists()
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_valid_long_asset_filename_can_be_created_and_replaced(context, exists):
+    key = "skills/review/assets/" + "a" * 251 + ".bin"
+    path = context.home / key
+    arguments = {"key": key, "content": "/wA=", "encoding": "base64"}
+    operation = "create"
+    if exists:
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"original")
+        arguments["if_digest"] = read(context, key)["digest"]
+        operation = "update"
+    result = invoke(context, operation, **arguments)
+    assert result.error is None, result.output
+    assert path.read_bytes() == b"\xff\0"
+    assert read(context, key) == result.output["item"]
+    assert tuple(path.parent.iterdir()) == (path,)
+
+
+@pytest.mark.parametrize("operation", ["list", "get", "update", "delete"])
+def test_roaming_link_loop_returns_a_structured_error(tmp_path, operation):
+    from toolang.up.process import materialize_roaming_program
+
+    source = tmp_path / "parrot.too"
+    source.write_text("agic:\n  Original.\n")
+    layout = materialize_roaming_program(source)
+    context = MeToolContext(
+        home=layout.home, room=layout.tool_room("me"), layout=layout
+    )
+    layout.program.unlink()
+    layout.program.symlink_to("agent.too")
+    arguments = {} if operation == "list" else {"key": "agent.too"}
+    if operation in {"update", "delete"}:
+        arguments["if_digest"] = sha256(source.read_bytes()).hexdigest()
+    if operation == "update":
+        arguments["content"] = "replacement"
+    result = invoke(context, operation, **arguments)
+    assert result.output["error"]["code"] == "storage_error"
+    assert source.read_text() == "agic:\n  Original.\n"
+    assert layout.program.is_symlink()
+
+
+@pytest.mark.parametrize("relative", ["other.too", "other/parrot.too"])
+def test_roaming_program_cannot_edit_another_home_source(tmp_path, relative):
+    from toolang.up.process import materialize_roaming_program
+
+    source = tmp_path / "parrot.too"
+    source.write_text("agic:\n  Original.\n")
+    layout = materialize_roaming_program(source)
+    context = MeToolContext(
+        home=layout.home, room=layout.tool_room("me"), layout=layout
+    )
+    other = tmp_path / relative
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("agic:\n  Untouched.\n")
+    layout.program.unlink()
+    layout.program.symlink_to(other)
+    result = invoke(
+        context,
+        "update",
+        key="agent.too",
+        content="replacement",
+        if_digest=sha256(other.read_bytes()).hexdigest(),
+    )
+    assert result.output["error"]["code"] == "storage_error"
+    assert other.read_text() == "agic:\n  Untouched.\n"

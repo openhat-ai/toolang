@@ -70,7 +70,8 @@ def atomic_write_bytes(
 ) -> None:
     """Replace exact bytes atomically, preserving the existing file mode."""
     _prepare_directory(path.parent, inherit_owner=inherit_owner)
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    # A valid target name may already occupy the filesystem's full name limit.
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".toolang-")
     try:
         with os.fdopen(descriptor, "wb") as stream:
             if inherit_owner:
