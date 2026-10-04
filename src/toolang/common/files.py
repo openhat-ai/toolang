@@ -23,6 +23,11 @@ _LOCK_STATES: dict[Path, _LockState] = {}
 _LOCK_STATES_MUTEX = threading.Lock()
 
 
+def file_lock_path(path: Path) -> Path:
+    """Return the lock name shared by writers of an authored target."""
+    return path.with_name(f".{path.name}.lock")
+
+
 @contextmanager
 def file_write_lock(path: Path, *, inherit_owner: bool = False) -> Iterator[None]:
     """Lock across processes, optionally retaining the parent owner as root."""
@@ -57,10 +62,18 @@ def file_write_lock(path: Path, *, inherit_owner: bool = False) -> Iterator[None
 def atomic_write_text(path: Path, content: str, *, inherit_owner: bool = False) -> None:
     """Replace UTF-8 text, preserving mode and optionally the parent owner."""
 
+    atomic_write_bytes(path, content.encode("utf-8"), inherit_owner=inherit_owner)
+
+
+def atomic_write_bytes(
+    path: Path, content: bytes, *, inherit_owner: bool = False
+) -> None:
+    """Replace exact bytes atomically, preserving the existing file mode."""
     _prepare_directory(path.parent, inherit_owner=inherit_owner)
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    # A valid target name may already occupy the filesystem's full name limit.
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".toolang-")
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        with os.fdopen(descriptor, "wb") as stream:
             if inherit_owner:
                 _inherit_owner(descriptor, path.parent)
             if path.exists():

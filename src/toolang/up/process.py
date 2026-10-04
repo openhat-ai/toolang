@@ -368,14 +368,14 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
         script_sources,
         source_catalog,
     )
-    from toolang.common.files import atomic_write_text, file_write_lock
+    from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 
     sources = script_sources(source)
     catalog = source_catalog(sources, roaming=True, validate=False)
     projected = project_sources(sources, source=source, catalog=catalog)
     target = home / "config.toml"
     catalog_target = home / "catalog.json"
-    with file_write_lock(home / ".project.lock"):
+    with file_write_lock(file_lock_path(target)):
         previous_catalog = None
         previous_source = None
         if (

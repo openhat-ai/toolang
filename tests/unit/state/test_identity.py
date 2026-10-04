@@ -153,3 +153,77 @@ def test_old_composition_is_rejected_and_current_cache_is_rebuilt(tmp_path):
     restored = asyncio.run(StateWatcher(layout).refresh())
     assert restored == current
     assert (directory / "layers.json").read_bytes() == encoded
+
+
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
+    tmp_path, scope
+):
+    layout = _layout(tmp_path)
+    path = layout.root_config if scope == "root" else layout.config
+    content = b'# Original\r\n[workspaces]\r\nrepo = "."\r\n'
+    path.write_bytes(content)
+    watcher = StateWatcher(layout)
+    before = asyncio.run(watcher.refresh())
+    modified = content.replace(b"Original", b"Revised ")
+    path.write_bytes(modified)
+    after = asyncio.run(watcher.refresh())
+    assert after.revision != before.revision
+    assert after.config == before.config
+    expected = {
+        "scope": scope,
+        "key": "config.toml",
+        "digest": sha256(content).hexdigest(),
+    }
+    before_files = before.to_snapshot()["files"]
+    after_files = after.to_snapshot()["files"]
+    assert isinstance(before_files, list) and isinstance(after_files, list)
+    assert expected in before_files
+    assert {**expected, "digest": sha256(modified).hexdigest()} in after_files
+    path.unlink()
+    assert load_agent_state(layout, before.revision).files == before.files
+    assert load_agent_state(layout, after.revision).files == after.files
+
+
+def test_historical_canonical_manifests_do_not_claim_raw_config_identity(tmp_path):
+    import json
+    import shutil
+
+    from toolang.state.cache import (
+        LAYER_SCHEMA,
+        _agent_check_lock,
+        _persist_agent_revision,
+        layer_revision_dir,
+        publish_layer_current,
+    )
+
+    layout = _layout(tmp_path)
+    layout.config.write_text('[workspaces]\nrepo = "."\n')
+    current = prepare_agent_state(layout)
+    current_dir = layer_revision_dir(layout, "home", current.home_revision)
+    document = json.loads((current_dir / "layer.json").read_text())
+    document["schema"] = LAYER_SCHEMA - 1
+    document["source"]["schema"] = 3
+    for item in document["source"]["files"]:
+        item.pop("raw_sha256")
+    encoded = canonical_json(document)
+    legacy_home = sha256(encoded).hexdigest()
+    legacy_dir = layer_revision_dir(layout, "home", legacy_home)
+    shutil.copytree(current_dir, legacy_dir)
+    (legacy_dir / "layer.json").write_bytes(encoded)
+    publish_layer_current(layout, "home", legacy_home)
+    with _agent_check_lock(layout):
+        legacy_revision = _persist_agent_revision(
+            layout, root_revision=current.root_revision, home_revision=legacy_home
+        )
+    historical = load_agent_state(layout, legacy_revision)
+    assert [item.key for item in historical.files if item.scope == "home"] == [
+        "agent.too"
+    ]
+    assert historical.files[0].digest == sha256(layout.program.read_bytes()).hexdigest()
+    rebuilt = prepare_agent_state(layout)
+    assert rebuilt.revision == current.revision
+    assert rebuilt.files == current.files
+    assert (legacy_dir / "layer.json").read_bytes() == encoded
+    layout.config.write_text("invalid toml [")
+    assert load_agent_state(layout, legacy_revision).files == historical.files

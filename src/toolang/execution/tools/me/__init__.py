@@ -15,28 +15,12 @@ from .schemas import Operation, decode_request, tool_parameters
 from .errors import ResourceError
 
 _DESCRIPTIONS: dict[Operation, str] = {
-    "list": (
-        "List current-agent authored resources of one kind. Task and chore "
-        "results include ready documents only; large content is omitted."
-    ),
-    "get": (
-        "Get one current-agent authored resource by key, where key is a "
-        "task/chore id or a cap/flow name."
-    ),
-    "create": (
-        "Create one current-agent authored resource. Task/chore keys are "
-        "allocated; named cap/flow kinds require key. Content fields depend "
-        "on kind."
-    ),
-    "update": (
-        "Update fields on one current-agent authored resource by key. Omitted "
-        "content fields are preserved; if_digest is an optional concurrency "
-        "precondition."
-    ),
-    "delete": (
-        "Delete one authored psyche, skill, service, prompt, or flow by key. "
-        "Task and chore lifecycle is not delete."
-    ),
+    "list": "List supported files in the current agent home, with exact-byte SHA-256 digests. Returns {files: [{key, digest, bytes}]}. Reads latest disk files; no kind or revision selector.",
+    "get": "Read complete current home file content and its SHA-256 digest by relative path. Returns {key, digest, bytes, content, encoding}, with utf-8 text or base64 for non-UTF-8 bytes. Reads latest authored files, not bound Run code.",
+    "create": "Create one complete home file, failing if it already exists. Returns {key, digest}. Allowed: agent.too, config.toml, flows/*.too, psyches/services/prompts/*.md, skills/*/SKILL.md, skills/*/assets/**, tasks/*.md, chores/*.md. Saving does not validate content, publish State, or switch running code.",
+    "update": "Replace one complete current home file and return {key, digest}. Requires if_digest from get/list or a successful write; reread and reconcile on conflict. Preserves exact content bytes; saving does not validate content or switch running code or Setup.",
+    "loaded": "Compare {key, digest} receipts with the AgentState already loaded for this call, not latest disk files or publication. Returns {loaded, revision, mismatches: [{key, digest}]}; mismatch digests are loaded values. Missing or untracked files have null digest. Does not refresh or switch State.",
+    "delete": "Delete exactly one current home file using required if_digest. Returns {key, digest: null}. Never recursively removes skill assets, archives jobs, or cancels Runs.",
 }
 
 
@@ -76,8 +60,7 @@ class MeToolset:
     config: dict[str, Any]
     name: str = "me"
     description: str | None = (
-        "List, get, create, update, and delete this agent's tasks, chores, "
-        "psyches, skills, services, prompts, and flows."
+        "Manage current home files and compare receipts with the calling State."
     )
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
@@ -88,6 +71,7 @@ class MeToolset:
             "create",
             "update",
             "delete",
+            "loaded",
         )
         self._tools = {operation: MeTool(operation) for operation in operations}
 

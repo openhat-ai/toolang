@@ -57,6 +57,7 @@ from .types import (
     RunnableKind,
     CapForm,
     SourceOrigin,
+    StateFile,
 )
 
 _PORTABLE_SOURCE_UPDATED_AT = "1970-01-01T00:00:00+00:00"
@@ -529,6 +530,7 @@ class AgentState:
     module_sources: Mapping[str, str]
     module_digests: Mapping[str, str]
     module_caps: Mapping[str, tuple[StateCap, ...]]
+    files: tuple[StateFile, ...] = ()
     toolang_root: Path | None = None
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
@@ -548,6 +550,10 @@ class AgentState:
 
     def __post_init__(self) -> None:
         _require_revision(self.revision, name="Agent State revision")
+        files = tuple(sorted(self.files, key=lambda item: (item.scope, item.key)))
+        if len({(item.scope, item.key) for item in files}) != len(files):
+            raise ValueError("Agent State file keys must be unique within each scope")
+        object.__setattr__(self, "files", files)
         if self.revision != agent_state_revision(
             self.root_revision,
             self.home_revision,
@@ -705,6 +711,7 @@ class AgentState:
             "revision": self.revision,
             "root_revision": self.root_revision,
             "home_revision": self.home_revision,
+            "files": [item.to_data() for item in self.files],
             "caps": [cap.path for cap in self.caps.values()],
             "modules": [
                 program_term_data(
@@ -791,6 +798,7 @@ def compose_agent_state(
     module_sources: Mapping[str, str],
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
+    files: tuple[StateFile, ...] = (),
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
@@ -823,6 +831,7 @@ def compose_agent_state(
         module_digests=module_digests,
         module_caps=module_caps,
         base_caps=effective_base,
+        files=files,
         revision_dir=revision_dir,
     )
 

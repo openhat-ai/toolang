@@ -170,16 +170,23 @@ def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
         "If you cannot verify syntax or a command, state the uncertainty" in authoring
     )
     assert "ask for the missing information. Do not guess" in authoring
-    assert "Use permitted me tools for home caps and flows" in authoring
     assert (
-        "for agent.too or Setup, provide source or obtain an authorized editing path"
-        in (authoring)
+        "Use permitted me tools to manage the current agent's latest home files"
+        in authoring
     )
+    assert "Update/delete require its whole-file SHA-256 as if_digest" in authoring
+    assert "On conflict, get again and reconcile" in authoring
+    assert "me.loaded(receipts)" in authoring
+    assert "mismatch digests are loaded values" in authoring
+    assert "loaded=false is a successful comparison" in authoring
+    assert "Failures return {error, message, key?}" in authoring
+    assert "Configured cap references live in config.toml" in authoring
+    assert "Static flow calls retain their parent's bound program" in authoring
     assert "Validate with that runtime" in authoring
     assert "Do not edit immutable State or execution records" in authoring
     assert "treat a source write as adopted State" in authoring
     assert (
-        "New named Runs select the latest publication; accepted Runs keep their code, caps, and permissions."
+        "new named Runs select the latest publication within bound authority."
         in authoring
     )
     assert "or assume it grants permissions" in authoring

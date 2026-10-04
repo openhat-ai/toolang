@@ -15,7 +15,8 @@ from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from ..lang.ast import FlowDecl, Program
 
 SourceNodeKind = Literal["file", "directory"]
-SOURCE_SCHEMA = 3
+SOURCE_SCHEMA = 4
+CANONICAL_SOURCE_SCHEMA = 3
 LEGACY_SOURCE_SCHEMA = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -110,11 +111,12 @@ class SourceObservation:
 
 @dataclass(frozen=True, slots=True)
 class SourceManifestEntry:
-    """Portable semantic identity for one selected source file."""
+    """Captured and raw content identities for one selected source file."""
 
     path: str
     size: int
     digest: str
+    raw_digest: str | None = None
 
     def __post_init__(self) -> None:
         _portable_relative_path(self.path)
@@ -122,22 +124,42 @@ class SourceManifestEntry:
             raise ValueError("source manifest size must be non-negative")
         if _SHA256_RE.fullmatch(self.digest) is None:
             raise ValueError("source manifest digest must be a SHA-256 hex value")
+        if (
+            self.raw_digest is not None
+            and _SHA256_RE.fullmatch(self.raw_digest) is None
+        ):
+            raise ValueError("raw source digest must be a SHA-256 hex value")
 
     def to_data(self) -> dict[str, object]:
-        return {"path": self.path, "sha256": self.digest, "size": self.size}
+        result: dict[str, object] = {
+            "path": self.path,
+            "sha256": self.digest,
+            "size": self.size,
+        }
+        if self.raw_digest is not None:
+            result["raw_sha256"] = self.raw_digest
+        return result
 
     @classmethod
     def from_data(cls, data: Mapping[str, object]) -> SourceManifestEntry:
-        if set(data) != {"path", "sha256", "size"}:
+        if set(data) not in (
+            {"path", "sha256", "size"},
+            {"path", "sha256", "size", "raw_sha256"},
+        ):
             raise ValueError("source manifest file fields do not match schema")
         path = data.get("path")
         digest = data.get("sha256")
         size = data.get("size")
+        raw_digest = data.get("raw_sha256")
+        if "raw_sha256" in data and not isinstance(raw_digest, str):
+            raise TypeError("raw source digest must be a string")
         if not isinstance(path, str) or not isinstance(digest, str):
             raise TypeError("source manifest path and digest must be strings")
         if not isinstance(size, int) or isinstance(size, bool):
             raise TypeError("source manifest size must be an integer")
-        return cls(path=path, size=size, digest=digest)
+        return cls(
+            path=path, size=size, digest=digest, raw_digest=cast(str | None, raw_digest)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,11 +170,15 @@ class SourceManifest:
     schema: int = SOURCE_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema != SOURCE_SCHEMA:
+        if self.schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
             raise ValueError(f"unsupported source manifest schema: {self.schema}")
         paths = tuple(item.path for item in self.files)
         if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)):
             raise ValueError("source manifest paths must be sorted and unique")
+        if self.schema == SOURCE_SCHEMA and any(
+            item.raw_digest is None for item in self.files
+        ):
+            raise ValueError("current source manifest requires raw file digests")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -165,7 +191,7 @@ class SourceManifest:
         if set(data) != {"files", "schema"}:
             raise ValueError("source manifest fields do not match schema")
         schema = _integer_field(data, "schema")
-        if schema != SOURCE_SCHEMA:
+        if schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
             raise ValueError(f"unsupported source manifest schema: {schema}")
         raw_files = data.get("files")
         if not isinstance(raw_files, list):
@@ -258,10 +284,11 @@ def build_source_manifest(
             and previous_manifest is not None
         ):
             cached = previous_files.get(item.path)
-            if cached is not None:
+            if cached is not None and cached.raw_digest is not None:
                 entries.append(cached)
                 continue
         content = item.source.read_bytes()
+        raw_digest = sha256(content).hexdigest()
         if item.path == "config.toml":
             from toolang.common.config_sources import rebase_config_content
 
@@ -275,6 +302,7 @@ def build_source_manifest(
                 path=item.path,
                 size=len(content),
                 digest=sha256(content).hexdigest(),
+                raw_digest=raw_digest,
             )
         )
     return SourceManifest(files=tuple(entries))
@@ -444,6 +472,7 @@ class SourceFile:
     content: bytes
     digest: str
     size: int
+    raw_digest: str
 
     def read_text(self) -> str:
         return self.content.decode("utf-8")
@@ -551,6 +580,7 @@ def source_manifest_from_snapshot(
                 path=path.as_posix(),
                 size=item.size,
                 digest=item.digest,
+                raw_digest=item.raw_digest,
             )
         )
     return SourceManifest(files=tuple(sorted(entries, key=lambda item: item.path)))
@@ -730,6 +760,7 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
+    raw_digest = sha256(content).hexdigest()
     if category == "config":
         from toolang.common.config_sources import rebase_config_content
 
@@ -748,6 +779,7 @@ def _collect_file(
             content=content,
             digest=sha256(content).hexdigest(),
             size=len(content),
+            raw_digest=raw_digest,
         )
     ]
 

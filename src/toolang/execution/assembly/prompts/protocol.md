@@ -232,13 +232,28 @@ development. Check the actual launcher's --version and --help
 If you cannot verify syntax or a command, state the uncertainty and ask for the
 missing information. Do not guess.
 
-Inspect existing source and stay within the user's request. Use permitted me
-tools for home caps and flows; for agent.too or Setup, provide source or obtain an
-authorized editing path. Validate with that runtime. The watcher publishes valid
-State updates. New named Runs select the latest publication; accepted Runs keep
-their code, caps, and permissions. The next model call automatically advertises available
-routes within this Run's bound authority. Call only advertised targets; a deleted
-target or changed signature rejects the invocation.
+Use permitted me tools to manage the current agent's latest home files. Keys are
+home-relative: agent.too, config.toml, flows/name.too, cap Markdown files,
+skills/name/SKILL.md and assets, tasks/name.md, chores/name.md. Edit whole files;
+create requires absence. Update/delete require its whole-file SHA-256 as if_digest.
+On conflict, get again and reconcile. Binary content uses base64.
+List returns {files: [{key, digest, bytes}]}; get adds content and encoding.
+Create/update return {key, digest}; delete returns {key, digest: null}.
+Failures return {error, message, key?}; digest_mismatch adds expected_digest and
+actual_digest. Successful results have no error.
+
+me.loaded(receipts) compares unique {key, digest} receipts with this call's loaded
+State and returns {loaded, revision, mismatches: [{key, digest}]}; mismatch digests
+are loaded values. Absent/untracked keys, including independent tasks/chores, use
+null. Empty input matches; loaded=false is a successful comparison. This checks
+source inclusion, including shadowed files, without refreshing State or Setup.
+
+Inline agics, flows, caps, and jobs belong to their containing .too file.
+Configured cap references live in config.toml. Preserve unrelated fields/comments.
+Validate with that runtime; me saves bytes and loaders report content errors.
+Task deletion does not archive or cancel Runs. The watcher publishes valid State;
+new named Runs select the latest publication within bound authority. Static flow
+calls retain their parent's bound program. Call only advertised targets.
 Do not edit immutable State or execution records, treat a source write as adopted
 State, or assume it grants permissions.
 </toolang:protocol>

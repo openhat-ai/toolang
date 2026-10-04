@@ -269,6 +269,7 @@ async def _execute(
                 raise ToolangError(f"unknown tool call: {call.name}")
             context = _tool_context(
                 layout=state.layout,
+                state=agent_state,
                 tool=tool,
                 services=prepared.services,
                 runtime=runtime,
@@ -768,6 +769,7 @@ def _tool_context(
     layout: AgentLayout,
     tool: Tool,
     services: tuple[ToolService, ...],
+    state: AgentState | None = None,
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
@@ -793,5 +795,5 @@ def _tool_context(
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":
-        return MeToolContext(*args, layout=layout)
+        return MeToolContext(*args, layout=layout, state=state)
     return ToolContext(*args)
