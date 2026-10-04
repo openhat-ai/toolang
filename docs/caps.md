@@ -1,16 +1,21 @@
 # Capability Model
 
-Caps are composable agent primitives.
+Caps are reusable definitions made available through State. A cap's kind
+determines how execution consumes it; availability alone does not invoke it.
 
 
 ## Kinds
 
-Current cap kinds are:
+| Kind | Execution role |
+| --- | --- |
+| `psyche` | Selected instructions included in model-call instruction assembly. |
+| `skill` | Workflow guidance advertised by a short trigger; the model loads its body on demand. |
+| `service` | MCP connection metadata and optional guidance, also advertised by a trigger. Loading guidance neither connects the service nor grants its tools. |
+| `prompt` | Content template expanded with explicit input and arguments; it is not a runnable. |
 
-- `psyche`
-- `skill`
-- `service`
-- `prompt`
+[Instruction layers](program.md#instruction-layers),
+[guidance loading](tools.md#pick-guidance), and
+[prompt expansion](call-input.md#prompt-expansion) own the corresponding contracts.
 
 
 ## Runtime Scope

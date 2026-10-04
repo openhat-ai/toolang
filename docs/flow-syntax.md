@@ -36,6 +36,10 @@ Runtime history names are supplied separately from authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
+A flow body containing only `pass` lowers to no statements and leaves its
+initial locals unchanged. It still applies the declared output contract to the
+final primary local; `pass` does not manufacture a missing output.
+
 
 ## Exec
 
@@ -57,6 +61,7 @@ Flow normally.
 | Operation | Runtime behavior |
 | --- | --- |
 | `run` / implicit prose | Invoke a named runnable or inline agic as a child Run. |
+| `let NAME = BODY` | Evaluate Content into one `Part[]` local without a child Run. |
 | `exec` | Replace the current runnable within the same Run. |
 | `scatter` / `gather` | One child expands an item into a list / reduces a list into an item. |
 | `storm` / `map` | Independent calls from one input / one call per list item; preserve result order. |
@@ -113,7 +118,8 @@ bind their complete result once.
   otherwise. Explicit signatures remain authoritative.
 - Scatter requires an array output type, including an explicit annotation's
   complete array suffix. Map/storm preserve array-valued child results as nested
-  arrays. Gather/settle may return any value type.
+  arrays. Gather permits any output type; settle is constrained by its seed
+  contract as described below.
 - Inline agics capture their own free template references, excluding runtime
   variables. References inside sections also capture existing outer locals;
   section fields take precedence. Item-only fields do not require outer inputs.
@@ -143,8 +149,9 @@ bind their complete result once.
 
 ### Runs
 
-- `run RUNNABLE` resolves in the current program. Inline `run` creates an
-  inline agic.
+- `run RUNNABLE` follows the caller's [module visibility](program.md#program-modules)
+  and binds compatible named targets from the latest published State. Inline
+  `run` creates an inline agic from the accepted containing code.
 - Bare `TEXT` is shorthand for inline `run` and starts the same child run.
 - `scatter` and `gather` each start one child run, then reshape its result.
 - Scatter has no count; its child must return an array, whose length determines

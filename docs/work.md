@@ -40,9 +40,11 @@ Tasks use every `JobStatus`. Chores normally use `pending`, `running`, and
 
 ## Definition and identity
 
-[Authored jobs](tasks.md) owns stable identity and stage transitions. The scheduler
-normalizes each effective source into an immutable `Job` with `id`, `kind`,
-`title`, `body`, `schedule`, `revision`, `source` and optional `path`.
+[Authored jobs](tasks.md) owns Markdown identity and stage transitions;
+[program declarations](program.md#job-declarations) use their declaration names
+as IDs. The scheduler normalizes each effective source into an immutable `Job`
+with `id`, `kind`, `title`, `body`, `schedule`, `revision`, `source` and optional
+`path`.
 
 `revision` hashes the normalized body. Title, filename and path do not affect it;
 schedule changes are compared separately. Display title falls back to the first
@@ -66,9 +68,10 @@ wakeup hints: it debounces a change, reads a stable complete snapshot, and
 publishes only a different value. Startup always performs a complete ready
 refresh, and an infrequent safety refresh repairs missed notifications.
 
-Program task and chore declarations arrive through `StateWatcher` and are
-inherently ready. `JobScheduler` merges both sources by id. A duplicate id is
-an error; sources do not silently shadow one another.
+Task and chore declarations in State's `agent` module arrive through
+`StateWatcher` and are inherently ready. Declarations in flow modules are not
+scheduled. `JobScheduler` merges program and ready Markdown jobs by ID. A
+duplicate ID is an error; sources do not silently shadow one another.
 
 A manually added ready file without an id receives one under the authored-job
 write lock before the snapshot is published.
@@ -211,21 +214,10 @@ adds no separate bandwidth pool or limit. Execution owns Run limits shared with 
 
 ## Execution Attribution
 
-The scheduler does not modify `RunSpec`, `RunExecutor`, or execution-owned run
-context. The stable job thread's existing create control carries the minimum
-attribution already accepted by the execution API:
-
-```python
-{
-    "job": {
-        "id": job.id,
-        "kind": job.kind,
-    }
-}
-```
-
-Runs are associated with the job through that thread. Trigger, revision,
-RRULE, scheduled timestamps, next timestamps, and scheduler status remain
+The scheduler creates or reuses `<kind>_<id>` with thread `origin` equal to the
+job kind. Its `create` Control has an empty payload. Runs associate with the job
+through that thread. Trigger, revision, RRULE, scheduled timestamps, next
+timestamps, and scheduler status remain
 exclusively in `jobs.db`. No separate root-run job context is added.
 
 
@@ -266,9 +258,11 @@ chore run.
 
 ## Inspection And Control
 
-Job inspection joins the authored/effective job with its scheduler record and
-the latest run summary for the stable job thread. This is an inspection path,
-not a scheduler dependency on `runs.db`. CLI job lists expose scheduler status,
+Job inspection joins each Markdown catalog job with its scheduler record and
+the latest run summary for the stable job thread. Program declarations are
+outside this catalog projection; see [caller projection](tasks.md#caller-projection).
+This is an inspection path, not a scheduler dependency on `runs.db`.
+CLI job lists expose scheduler status,
 latest-run status, the next chore occurrence, and the most relevant scheduler
 or run error. The small control surface retains source meaning:
 
@@ -291,6 +285,7 @@ controls and does not depend on `toolang.work`.
 [Scheduler](../src/toolang/work/scheduler.py),
 [watcher](../src/toolang/work/watcher.py), and
 [store](../src/toolang/work/store.py) implement these boundaries.
-[Scheduler tests](../tests/unit/work/test_scheduler.py) and
-[scheduled-run scenarios](../tests/integration/execution/test_scheduled_runs.py)
+[Scheduler tests](../tests/unit/work/test_scheduler.py),
+[checkpoint tests](../tests/unit/work/test_store.py), and
+[Run binding tests](../tests/unit/work/test_run_binding.py)
 verify claims, loop isolation, recurrence and recovery.

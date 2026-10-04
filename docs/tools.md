@@ -66,7 +66,17 @@ sandbox is restarted with that binding.
 
 ## Web Search
 
-`web` returns structured search results for model use.
+`web/search` accepts `query`, `top_k`, optional `domains`, and optional
+`preferred_backend`. It returns URLs, titles and snippets, not full page content.
+Domain restrictions include subdomains and are checked against returned URLs.
+
+The tool tries search providers sequentially within one total time budget,
+stopping at the first usable result set. A configured backend selection takes
+precedence over a per-call preference. Results expose `status`, `backend` and
+`attempts`; failures include recovery guidance. An unavailable provider or an
+empty usable result set is not evidence that no relevant pages exist. See
+[the toolset](../src/toolang/plugin/toolsets/web.py) and its
+[offline tests](../tests/unit/plugin/test_web_search.py).
 
 
 ## Service
@@ -333,7 +343,9 @@ and shell cwd, including reads; paths hidden in shell commands are not inspected
 
 Compact likewise stays out of model messages. Its result is
 `{controls: [{ref, horizon}]}`, referencing the compact Run output; the compact
-control changes the horizon used by subsequent ModelCalls.
+control changes the horizon used by subsequent ModelCalls. See
+[history recall and compaction](execution.md#history-recall-and-compaction) for
+the internal child Run, publication and failure boundaries.
 
 ## Implementation and verification
 

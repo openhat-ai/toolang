@@ -1,7 +1,9 @@
 # Authored Jobs
 
-Toolang uses Markdown task and chore documents for durable authored jobs. The
-runtime scheduling and recovery model is defined in [work.md](./work.md).
+This guide owns Markdown task and chore files, their identity and stage
+transitions. [Program job declarations](program.md#job-declarations) are another
+source of scheduled work. The shared runtime scheduling and recovery model is
+defined in [work.md](./work.md).
 
 Current job kinds are:
 
@@ -142,27 +144,20 @@ All task revisions, reopens, manual chore runs, and scheduled chore runs reuse
 the same thread. Moving or archiving a job never deletes that thread or its run
 history.
 
-The stable job thread's create control stores minimal attribution without
-changing run context:
-
-```json
-{
-  "job": {
-    "id": "3nprht9x",
-    "kind": "task"
-  }
-}
-```
-
-Revision, schedule cursors, and trigger details remain exclusively in
-`jobs.db`. Runs refer to this attribution through their thread.
+The thread's `origin` is `task` or `chore`; its ID identifies the job. Its
+`create` Control has an empty payload. Revision, schedule cursors, and trigger
+details remain exclusively in `jobs.db`. Runs associate with the job through
+their thread.
 
 
 ## Caller Projection
 
-The jobs API joins authored fields with the current scheduler checkpoint and a
-latest-run summary derived from the stable job thread. Full execution history
-remains an independent thread and run projection.
+CLI/API job lists and details project the Markdown catalog, joining authored
+fields with the current scheduler checkpoint and a latest-run summary from the
+stable job thread. They do not enumerate `agent.too` declarations. Program jobs
+still have scheduler checkpoints and durable threads/runs; inspect their
+execution through the thread and run interfaces. Catalog edits and stage moves
+operate on Markdown files.
 
 ```json
 {

@@ -188,6 +188,44 @@ nonempty. Both transport spellings lower to canonical `transport` metadata.
 For HTTP, `target` is a URL; for stdio it stays opaque command text at the language
 boundary. Markdown cap frontmatter belongs to [caps](caps.md#local-cap-frontmatter).
 
+## Job declarations
+
+`task` and `chore` declare background work; they do not add runnables. The
+scheduler reads these declarations only from the published `agent` module
+(`agent.too`), not from `flows/<name>.too` modules. For example:
+
+```too
+agic task:
+  Perform {{_}}.
+
+agic chore:
+  Perform {{_}}.
+
+task review_api:
+  title = Review API changes
+
+  Review the API changes and summarize risks.
+
+chore stale_prs:
+  schedule = FREQ=HOURLY;INTERVAL=6
+
+  Check stale pull requests and report actionable items.
+```
+
+The declaration name is the job ID; renaming it creates a different job
+identity. `title` is optional. A chore's optional `schedule` defaults to
+`FREQ=HOURLY;INTERVAL=1`. Published declarations are inherently ready and have no
+directory-based draft/archive stage. Edit or remove the declaration to change
+its source definition. IDs must not collide with other effective program or
+Markdown jobs; neither source shadows the other.
+
+Bodies use the same run-only [call input](tasks.md#body) as Markdown jobs, with
+includes relative to the agent home. Dispatch defaults to the `task` or `chore`
+runnable, then the unnamed entry if the named default is absent. The example
+supplies both named defaults. [Scheduling](work.md) owns body revisions,
+recurrence, serial execution and recovery; [authored jobs](tasks.md) owns the
+separate Markdown catalog and its caller projections.
+
 ## Runnable Signatures
 
 Agics and flows use the same signature rules:

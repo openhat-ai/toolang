@@ -156,8 +156,10 @@ in [Chat](chat.md#recovery), and never synthesizes missed events.
 
 ## Jobs and consumer projections
 
-Unified `/jobs` reads combine kinds; `kind=task|chore` filters them. Mutations use
-`/tasks` or `/chores`. Default lists/details select ready jobs; `/archived` selects
+Unified `/jobs` reads combine Markdown job kinds; `kind=task|chore` filters them.
+These catalog routes do not enumerate or edit `agent.too` declarations; see
+[caller projection](tasks.md#caller-projection). Mutations use `/tasks` or
+`/chores`. Default lists/details select ready jobs; `/archived` selects
 archived jobs. Draft files exist but are not exposed by a dedicated draft-list
 route. Lists return arrays without body; detail and mutation return the resource
 with body. [Tasks](tasks.md) owns authored stage/identity and [work](work.md) owns

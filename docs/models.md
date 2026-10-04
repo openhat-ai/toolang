@@ -157,7 +157,7 @@ or `too serve alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `start` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. See [execution controls](execution.md#run-controls) and the
+captured configuration. See [history recall and compaction](execution.md#history-recall-and-compaction) and the
 [compaction implementation](../src/toolang/execution/compaction.py) for coverage
 and history adoption.
 

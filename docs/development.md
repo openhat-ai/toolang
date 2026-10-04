@@ -27,7 +27,7 @@ schemas must not acquire runtime services, watchers or stores.
 | Binding/coercion | [lower.py](../src/toolang/lang/lower.py), [input.py](../src/toolang/lang/input.py) | [language tests](../tests/unit/lang/), [flow scenarios](../tests/integration/execution/test_flow_scenarios.py) |
 | Setup/State visibility | [setup](../src/toolang/setup/), [state](../src/toolang/state/) | [latest binding](../tests/integration/execution/test_latest_state_binding.py) |
 | Acceptance and persistence | [executor](../src/toolang/execution/executor/executor.py), [store](../src/toolang/execution/store.py) | [control relations](../tests/integration/execution/test_control_relations.py), [schema compatibility](../tests/unit/execution/test_store_schema.py) |
-| Scheduling | [work](../src/toolang/work/) | [scheduler](../tests/unit/work/test_scheduler.py), [scheduled runs](../tests/integration/execution/test_scheduled_runs.py) |
+| Scheduling | [work](../src/toolang/work/) | [scheduler](../tests/unit/work/test_scheduler.py), [checkpoints](../tests/unit/work/test_store.py) |
 | CLI/API integration | [CLI routing](../src/toolang/cli/toolang/routing.py), [API routers](../src/toolang/api/routers/) | [CLI integration](../tests/integration/cli/), [remote runs](../tests/integration/api/test_remote_runs.py) |
 
 Use [package-boundary tests](../tests/architecture/test_package_boundaries.py)

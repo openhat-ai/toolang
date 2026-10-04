@@ -21,6 +21,13 @@ verification. User installation, guides and examples belong on
   [source tooling](source-commands.md) and their linked tests.
 - **Change binding or state:** [layout](layout.md) →
   [State publication](agent-state.md) → [run acceptance](execution.md).
+- **Change resources or plugins:** [caps](caps.md) / [models and Setup](models.md) /
+  [tools](tools.md) → [query selection](queries.md) → [plugin contracts](plugins.md).
+- **Change background work:** [Markdown jobs](tasks.md) /
+  [program declarations](program.md#job-declarations) → [scheduling and recovery](work.md).
+- **Change history or compaction:** [threads](execution.md#threads) →
+  [recall and compaction](execution.md#history-recall-and-compaction) →
+  [durable records](run-step-records.md).
 - **Change a caller or integration:** [CLI](cli.md) / [HTTP](api.md) →
   [execution](execution.md) → [durable records](run-step-records.md).
 
@@ -30,9 +37,9 @@ verification. User installation, guides and examples belong on
 | --- | --- |
 | Orientation | [Architecture](architecture.md), [development](development.md) |
 | Language | [Program semantics](program.md), [flow evaluation](flow-syntax.md), [call input](call-input.md), [source commands](source-commands.md) |
-| Source placement | [Script projects](script-projects.md), [layout/storage](layout.md), [prepared State](agent-state.md) |
+| Configuration and State | [Script projects](script-projects.md), [layout/storage](layout.md), [prepared State](agent-state.md) |
 | Resources | [Caps](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
-| Work | [Authored tasks/chores](tasks.md), [scheduling/recovery](work.md) |
+| Work | [Markdown tasks/chores](tasks.md), [program declarations](program.md#job-declarations), [scheduling/recovery](work.md) |
 | Execution | [Lifecycle and policy](execution.md), [records/references](run-step-records.md), [presentation](execution-presentation.md) |
 | Callers | [CLI orchestration](cli.md), [Chat](chat.md), [HTTP API](api.md) |
 

@@ -73,7 +73,8 @@ updated_at
 horizon
 ```
 
-`horizon` references the thread's current compaction output. Caller-facing `ThreadInfo` adds
+`horizon` references the thread's current
+[compaction output](execution.md#history-recall-and-compaction). Caller-facing `ThreadInfo` adds
 `created_by` and `head` projections from thread controls; they are not fields of
 `ThreadRecord`. The projected head supports optimistic fork/rewind checks.
 

@@ -350,6 +350,41 @@ transaction. The store keeps expected-head comparison as an internal defensive
 check; it is not part of the public manager API.
 
 
+## History recall and compaction
+
+Each root recalls a fixed logical prefix of earlier root Runs in its thread.
+`far` supplies a summary of covered history; `near` reconstructs retained recent
+exchanges from durable records. Fork/rewind controls determine the logical view.
+The [recall directive](program.md#directives) selects which sources are visible
+and when a root agic prepends them to its messages. Child agics access history
+only through explicit runtime-variable references.
+
+A `horizon` is a Run or Step reference to a validated compaction result:
+`{thread, begin, end, summary}`. Its half-open `[begin, end)` range identifies
+covered history using Run or Step boundaries, so a summary may end inside a
+root Run. Compaction changes the model's history view; it does not delete or
+rewrite the underlying Runs and Steps. Provider continuation cursors are a
+separate mechanism for continuing model calls.
+
+When model preflight needs compaction, a runtime-only `_toolang/compact` Tool
+Step starts an internal compact child Run. Neither is a public model-callable
+tool or user-startable runnable. The child uses ordinary durable model/tool
+Steps, and its usage counts against the enclosing root's token/cost limits.
+Model choice, thresholds and retained-history budgets belong to
+[compaction configuration](models.md#automatic-compaction-configuration).
+
+A cancellable thread-scoped file lock serializes compaction across processes.
+After acquiring it, execution rechecks the current history boundary and may
+reuse a compatible saved result. Successful publication validates coverage and
+the complete normal request's fit, then commits the thread horizon and applied
+compact Control together. Failure or cancellation leaves the horizon unchanged
+and prevents dispatch of the oversized normal model call.
+
+Later Steps can adopt the published horizon throughout an active root tree.
+An already prepared model call retains its captured history view. Durable
+checkpoints support explicit retry/recovery; they do not provide automatic
+resumption after owner-process loss.
+
 ## State Capture
 
 `RunSpec` carries one explicit immutable `AgentState`,
@@ -381,5 +416,8 @@ Publication never rebinds accepted Runs. Invalid source is not published.
   covers changed named callees versus pinned accepted code.
 - [Thread controls](../tests/integration/execution/test_thread_control_scenarios.py)
   cover fork/rewind history boundaries.
+- [Compaction lifecycle](../tests/integration/execution/test_batched_compact_run.py)
+  and [compact controls](../tests/integration/execution/test_compact_controls.py)
+  cover coverage, cancellation, durable publication and history adoption.
 - [Policy tests](../tests/unit/execution/test_policy.py) cover caller layering;
   [remote runs](../tests/integration/api/test_remote_runs.py) exercise transport parity.

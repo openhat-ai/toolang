@@ -66,6 +66,7 @@ some package-wide rules are still explicitly pending review.
 | Job | Authored `task` or RRULE `chore`. One stable job ID yields one thread, `<kind>_<id>`, across attempts. |
 | Thread / Run / Step | Thread groups related runs; Run is one accepted invocation; Step records an execution unit within it. Child Runs point to their triggering Step. |
 | Control | Durable run/thread transition or request, including run, retry, execute, steer, cancel, cwd, recall, compact, create, fork and rewind. Rerun creates a new run entry. |
+| History / horizon | Logical thread history honors fork/rewind; a compaction horizon identifies a summary covering its older prefix. `far` and `near` select summary/recent recall. Provider continuation is separate. |
 | CallInput | Flat immutable mapping: `_` is primary input; other keys are named arguments. Omission differs from an empty supplied value. |
 | Local / Output | Durable `Local` holds a typed value/reference and `dim`; `Output` adds its destination binding. The executor has a separate internal Local carrying flow shape and provenance. |
 | Message / Part | Ordered canonical model content. Parts include text, reasoning, image, audio, document, tool call and tool result, subject to role restrictions. |
@@ -195,7 +196,8 @@ are navigation anchors, not a claim that every test was run for this document.
 | Language, input or flow semantics | [lang tests](../tests/unit/lang/), [flow scenarios](../tests/integration/execution/test_flow_scenarios.py), [typed template regression](../tests/unit/execution/test_execution_template.py) |
 | State publication or changed source | [State tests](../tests/unit/state/), [latest binding scenarios](../tests/integration/execution/test_latest_state_binding.py) |
 | Setup readiness or lazy loading | [Setup tests](../tests/unit/setup/), [lazy setup integration](../tests/integration/setup/test_lazy_setup.py) |
-| Scheduling and recovery | [scheduler tests](../tests/unit/work/test_scheduler.py), [scheduled runs](../tests/integration/execution/test_scheduled_runs.py) |
+| Scheduling and recovery | [scheduler tests](../tests/unit/work/test_scheduler.py), [checkpoint tests](../tests/unit/work/test_store.py) |
+| History recall and compaction | [recall tests](../tests/unit/execution/test_recall.py), [compact lifecycle](../tests/integration/execution/test_batched_compact_run.py) |
 | Records, controls or history | [value tests](../tests/unit/execution/test_values.py), [control relations](../tests/integration/execution/test_control_relations.py), [inspection tests](../tests/unit/execution/test_inspection.py) |
 | Local/remote CLI or HTTP behavior | [CLI integration](../tests/integration/cli/), [remote runs](../tests/integration/api/test_remote_runs.py) |
 | Plugins or hosting | [plugin tests](../tests/unit/plugin/), [sandbox lifecycle](../tests/integration/up/test_sandbox_lifecycle.py) |
