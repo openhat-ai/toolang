@@ -1,849 +1,668 @@
+"""The me toolset reads and atomically replaces current home files."""
+
 from __future__ import annotations
 
 import asyncio
+import base64
+from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
-import frontmatter
+import pytest
 
-from toolang.base.protocols.tool import Tool
 from toolang.base.types.tool import ToolContext
-from toolang.catalog import cap as caps
-from toolang.catalog.job import AuthoredJobs
+from toolang.common.layout import AgentLayout
 from toolang.execution.tools.me import create_toolset
 from toolang.execution.tools.me.types import MeToolContext
-from toolang.common.layout import AgentLayout
+from toolang.state.errors import StatePreparationError
+from toolang.state.prepare import prepare_agent_state
+from toolang.state.watcher import StateWatcher
 
 
-def _context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
-    home = toolang_root / "agents" / agent_name
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "agent.too").write_text(f"# Agent {agent_name}\n", encoding="utf-8")
-    return MeToolContext(
-        home=home,
-        room=home / ".runtime" / "tools" / "me",
-        layout=AgentLayout(root=toolang_root, name=agent_name, placement="resident"),
-    )
+@pytest.fixture
+def context(tmp_path: Path) -> MeToolContext:
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic alice():\n  Hello.\n")
+    return MeToolContext(home=layout.home, room=layout.tool_room("me"), layout=layout)
 
 
-def _invoke(
-    tool: Tool,
-    arguments: dict[str, object],
-    context: ToolContext,
-) -> dict[str, Any]:
-    return asyncio.run(tool.invoke(arguments, context)).output
+def invoke(context: ToolContext, operation: str, **arguments):
+    return asyncio.run(create_toolset({}).tools()[operation].invoke(arguments, context))
 
 
-def _tools() -> dict[str, Tool]:
-    return dict(create_toolset({}).tools())
+def read(context, key):
+    result = invoke(context, "get", key=key)
+    assert result.error is None, result.output
+    return result.output["item"]
 
 
-def _error(
-    tool: Tool,
-    arguments: dict[str, object],
-    context: ToolContext,
-) -> dict[str, Any]:
-    result = asyncio.run(tool.invoke(arguments, context))
-    assert result.error is not None
-    return result.output["error"]
-
-
-def test_compact_toolset_exposes_five_closed_schemas() -> None:
-    tools = _tools()
-
+def test_five_closed_file_schemas():
+    tools = create_toolset({}).tools()
     assert tuple(tools) == ("list", "get", "create", "update", "delete")
     for name, tool in tools.items():
         schema = tool.definition().parameters
         assert schema["additionalProperties"] is False
-        properties = schema["properties"]
-        assert {"agent", "agent_name", "home", "root", "path", "scope"}.isdisjoint(
-            properties
+        assert {"kind", "revision", "root", "home", "scope"}.isdisjoint(
+            schema["properties"]
         )
-        kinds = properties["kind"]["enum"]
-        if name == "delete":
-            assert kinds == ["psyche", "skill", "service", "prompt", "flow"]
-        else:
-            assert kinds == [
-                "task",
-                "chore",
-                "psyche",
-                "skill",
-                "service",
-                "prompt",
-                "flow",
-            ]
+        assert ("if_digest" in schema["required"]) == (name in {"update", "delete"})
+        if name in {"create", "update"}:
+            assert schema["properties"]["content"]["type"] == "string"
+    assert tools["list"].definition().parameters["properties"] == {}
 
 
-def test_compact_tools_bound_invalid_identifiers_and_error_fields(
-    tmp_path: Path,
-) -> None:
-    context = _context(tmp_path / "toolang")
-    long_key = "k" * 1_000
-    long_field = "field_" + "x" * 1_000
-
-    key_error = _error(
-        _tools()["get"],
-        {"kind": "prompt", "key": long_key},
-        context,
-    )
-    field_error = _error(
-        _tools()["create"],
-        {
-            "kind": "task",
-            "content": {"body": "Keep this bounded.", long_field: "value"},
-        },
-        context,
-    )
-
-    assert key_error["code"] == "invalid_request"
-    assert len(key_error["key"]) == 128
-    assert len(field_error["issues"][0]["path"]) == 256
-    assert len(str(field_error)) < 2_000
-
-
-def test_compact_tools_create_list_get_and_update_ready_jobs(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    tools = _tools()
-
-    task = _invoke(
-        tools["create"],
-        {
-            "kind": "task",
-            "content": {"title": "Review plan", "body": "Review it."},
-        },
-        context,
-    )["item"]
-    chore = _invoke(
-        tools["create"],
-        {
-            "kind": "chore",
-            "content": {
-                "title": "Check PRs",
-                "body": "Report stale PRs.",
-                "schedule": "FREQ=HOURLY;INTERVAL=6",
-            },
-        },
-        context,
-    )["item"]
-
-    listed = _invoke(tools["list"], {"kind": "task"}, context)
-    loaded = _invoke(tools["get"], {"kind": "task", "key": task["key"]}, context)
-    updated = _invoke(
-        tools["update"],
-        {
-            "kind": "chore",
-            "key": chore["key"],
-            "content": {
-                "schedule": "FREQ=DAILY;INTERVAL=1",
-                "body": "Report blockers.",
-            },
-        },
-        context,
-    )
-
-    assert listed["items"][0]["key"] == task["key"]
-    assert loaded["item"]["content"] == {
-        "title": "Review plan",
-        "body": "Review it.",
+@pytest.mark.parametrize(
+    ("key", "content"),
+    [
+        ("config.toml", '# Keep comments\r\n[default]\r\nmodel = "test/model"\r\n'),
+        ("flows/research.too", "flow:\n  pass\n"),
+        ("psyches/careful.md", "Think carefully.\n"),
+        ("prompts/ask.md", "Ask café.\r\n"),
+        (
+            "services/docs.md",
+            "---\ndescription: Docs\ntransport: http\ntarget: https://example.com\n---\nUse docs.\n",
+        ),
+        (
+            "skills/review/SKILL.md",
+            "---\ndescription: Review\n---\nReview carefully.\n",
+        ),
+        ("skills/review/assets/notes/example.txt", "Example.\n"),
+        ("skills/review/assets/notes/a:b.txt", "POSIX filename.\n"),
+        ("skills/review/assets/notes/line\nbreak.txt", "POSIX filename.\n"),
+        ("tasks/review.md", "---\nid: job-a\ntitle: Review\n---\nReview.\n"),
+        ("chores/check.md", "---\nid: job-b\nschedule: FREQ=HOURLY\n---\nCheck.\n"),
+    ],
+)
+def test_complete_file_crud_and_exact_bytes(context, key, content):
+    created = invoke(context, "create", key=key, content=content)
+    assert created.error is None, created.output
+    assert created.output["created"] is True
+    item = read(context, key)
+    encoded = content.encode("utf-8")
+    assert item == {
+        "key": key,
+        "content": content,
+        "encoding": "utf-8",
+        "digest": sha256(encoded).hexdigest(),
+        "bytes": len(encoded),
     }
-    assert updated["changed"] is True
-    assert updated["item"]["content"]["schedule"] == "FREQ=DAILY;INTERVAL=1"
-    assert updated["item"]["content"]["body"] == "Report blockers."
-    assert all(not Path(item["path"]).is_absolute() for item in listed["items"])
+    path = context.home / key
+    assert path.read_bytes() == encoded
+    listed = invoke(context, "list").output["items"]
+    assert [entry["key"] for entry in listed] == sorted(
+        entry["key"] for entry in listed
+    )
+    assert (
+        next(entry for entry in listed if entry["key"] == key)["digest"]
+        == item["digest"]
+    )
+    assert all("content" not in entry for entry in listed)
+    duplicate = invoke(context, "create", key=key, content=content)
+    assert duplicate.output["error"]["code"] == "conflict"
+    identical = invoke(
+        context, "update", key=key, content=content, if_digest=item["digest"]
+    )
+    assert identical.output["changed"] is False
+    updated_text = content + "\n"
+    updated = invoke(
+        context, "update", key=key, content=updated_text, if_digest=item["digest"]
+    )
+    assert updated.error is None, updated.output
+    assert updated.output["changed"] is True
+    assert read(context, key) == updated.output["item"]
+    stale = invoke(context, "delete", key=key, if_digest=item["digest"])
+    assert stale.output["error"]["code"] == "digest_mismatch"
+    assert path.read_bytes() == updated_text.encode()
+    deleted = invoke(
+        context, "delete", key=key, if_digest=updated.output["item"]["digest"]
+    )
+    assert deleted.error is None
+    assert not path.exists()
+    assert invoke(context, "get", key=key).output["error"]["code"] == "not_found"
 
-    invalid_schedule = _error(
-        tools["create"],
-        {
-            "kind": "chore",
-            "content": {"body": "Never write this.", "schedule": "not-an-rrule"},
-        },
+
+def test_reads_latest_main_source_and_does_not_publish(context):
+    state = prepare_agent_state(context.layout)
+    original_revision = state.revision
+    source = "# New café source\r\nagic alice():\r\n  Changed.\r\n"
+    context.layout.program.write_bytes(source.encode())
+    item = read(context, "agent.too")
+    assert item["content"] == source
+    assert item["digest"] != state.module_digests["agent"]
+    context.layout.program.chmod(0o751)
+    saved = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="agic alice():\n  Saved.\n",
+        if_digest=item["digest"],
     )
-    assert invalid_schedule["code"] == "invalid_content"
-    assert len(_invoke(tools["list"], {"kind": "chore"}, context)["items"]) == 1
+    assert saved.error is None, saved.output
+    assert read(context, "agent.too") == saved.output["item"]
+    assert context.layout.program.stat().st_mode & 0o777 == 0o751
+    assert state.revision == original_revision
+    from toolang.state.cache import load_current_agent_revision
+
+    assert load_current_agent_revision(context.layout) == original_revision
 
 
-def test_invalid_job_content_does_not_allocate_an_id(tmp_path: Path) -> None:
-    context = _context(tmp_path / "toolang")
-
-    error = _error(
-        _tools()["create"],
-        {
-            "kind": "chore",
-            "content": {"body": "Invalid.", "schedule": "not-an-rrule"},
-        },
-        context,
+def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp_path):
+    from tests.support.execution_harness import (
+        AsyncGate,
+        ExecutionHarness,
+        ScriptedModelTurn,
     )
+    from toolang.base.types.message import Message, ToolResultPart
+    from toolang.base.types.run import ModelCallResult, ToolCall
+    from toolang.execution.types import ThreadPrefix
+    from toolang.plugin.toolsets.loading import load_tools
 
-    assert error["code"] == "invalid_content"
-    assert not context.home.joinpath(".runtime", "ids.json").exists()
-    assert not context.home.joinpath("chores").exists()
-
-
-def test_compact_tools_report_invalid_authored_frontmatter_without_echoing_it(
-    tmp_path: Path,
-) -> None:
-    context = _context(tmp_path / "toolang")
-    prompt_path = context.home / "prompts" / "broken.md"
-    prompt_path.parent.mkdir()
-    prompt_path.write_text(
-        "---\nprivate_marker: [\n---\nDo not echo this.\n",
-        encoding="utf-8",
-    )
-    task_path = context.home / "tasks" / "broken.md"
-    task_path.parent.mkdir()
-    task_path.write_text(
-        "---\nprivate_marker: [\n---\nDo not echo this either.\n",
-        encoding="utf-8",
-    )
-
-    prompt_error = _error(
-        _tools()["get"],
-        {"kind": "prompt", "key": "broken"},
-        context,
-    )
-    task_error = _error(_tools()["list"], {"kind": "task"}, context)
-
-    assert prompt_error["code"] == "invalid_content"
-    assert prompt_error["issues"] == [
-        {
-            "code": "invalid-frontmatter",
-            "path": "key",
-            "message": "authored front matter is invalid",
-        }
-    ]
-    assert task_error["code"] == "invalid_content"
-    assert task_error["issues"][0]["path"] == "kind"
-    assert "private_marker" not in str(prompt_error)
-    assert "private_marker" not in str(task_error)
-
-
-def test_compact_job_conflicts_do_not_expose_storage_paths(tmp_path: Path) -> None:
-    context = _context(tmp_path / "toolang")
-    tasks = context.home / "tasks"
-    tasks.mkdir()
-    content = "---\nid: duplicate\n---\nDo work.\n"
-    tasks.joinpath("one.md").write_text(content, encoding="utf-8")
-    tasks.joinpath("two.md").write_text(content, encoding="utf-8")
-
-    error = _error(_tools()["list"], {"kind": "task"}, context)
-
-    assert error["code"] == "conflict"
-    assert error["message"] == "authored task conflicts with existing content"
-    assert str(tmp_path) not in str(error)
-
-
-def test_compact_job_tools_use_only_ready_documents(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    tools = _tools()
-    catalog = AuthoredJobs(context.home)
-    created = _invoke(
-        tools["create"],
-        {"kind": "task", "content": {"body": "Archive me."}},
-        context,
-    )["item"]
-    catalog.move("task", created["key"], "archived")
-
-    assert _invoke(tools["list"], {"kind": "task"}, context)["items"] == []
-    error = _error(tools["get"], {"kind": "task", "key": created["key"]}, context)
-
-    assert error["code"] == "not_found"
-
-
-def test_compact_cap_tools_round_trip_all_content_and_stay_home_only(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    tools = _tools()
-    root_caps = caps.AuthoredCaps(root)
-    root_caps.create(caps.CapFile.parse("Root.\n", kind="psyche", name="shared"))
-
-    assert _invoke(tools["list"], {"kind": "psyche"}, context)["items"] == []
-    created = _invoke(
-        tools["create"],
-        {"kind": "psyche", "key": "shared", "content": {"body": "Home."}},
-        context,
-    )
-    skill = _invoke(
-        tools["create"],
-        {
-            "kind": "skill",
-            "key": "reviewer",
-            "content": {"description": "Review code.", "body": "Check tests."},
-        },
-        context,
-    )
-    service = _invoke(
-        tools["create"],
-        {
-            "kind": "service",
-            "key": "search",
-            "content": {
-                "description": "Search service.",
-                "transport": "http",
-                "target": "https://example.com/mcp",
-                "headers": {"Authorization": "Bearer $TOKEN"},
-                "env": ["TOKEN"],
-            },
-        },
-        context,
-    )
-    prompt = _invoke(
-        tools["create"],
-        {
-            "kind": "prompt",
-            "key": "summarize",
-            "content": {"body": "Summarize: {{input}}"},
-        },
-        context,
+    source = "agic inspect():\n  tools = me/*\n  Inspect.\n"
+    broken = "agic ("
+    repaired = "agic inspect():\n  tools = me/*\n  Repaired.\n"
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        tools=load_tools(queries=("me/*",)),
+        responses=[
+            ScriptedModelTurn(
+                gate=gate,
+                result=ModelCallResult(
+                    tool_calls=(
+                        ToolCall("read", "read", "me__get", {"key": "agent.too"}),
+                    )
+                ),
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "write",
+                        "write",
+                        "me__update",
+                        {
+                            "key": "agent.too",
+                            "content": repaired,
+                            "if_digest": sha256(broken.encode()).hexdigest(),
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
     )
 
-    assert created["item"]["content"] == {"body": "Home."}
-    assert skill["item"]["content"]["description"] == "Review code."
-    assert service["item"]["content"]["headers"] == {"Authorization": "Bearer $TOKEN"}
-    assert prompt["item"]["content"] == {"body": "Summarize: {{input}}"}
-    assert root_caps.get("psyche", "shared") is not None
-
-    invalid_service = _error(
-        tools["create"],
-        {
-            "kind": "service",
-            "key": "broken",
-            "content": {
-                "description": "Broken.",
-                "transport": "pipe",
-                "target": "command",
-            },
-        },
-        context,
-    )
-    assert invalid_service["code"] == "invalid_content"
-    assert not context.home.joinpath("services", "broken.md").exists()
-
-    deleted = _invoke(tools["delete"], {"kind": "skill", "key": "reviewer"}, context)
-    assert deleted == {"kind": "skill", "key": "reviewer", "deleted": True}
-    assert not (context.home / "skills" / "reviewer").exists()
-
-
-def test_compact_service_update_replaces_legacy_protocol_metadata(
-    tmp_path: Path,
-) -> None:
-    context = _context(tmp_path / "toolang")
-    path = context.home / "services" / "legacy.md"
-    path.parent.mkdir()
-    path.write_text(
-        "---\n"
-        "description: Legacy service.\n"
-        "protocol: stdio\n"
-        "target: legacy-command\n"
-        "---\n"
-        "Legacy.\n",
-        encoding="utf-8",
-    )
-
-    updated = _invoke(
-        _tools()["update"],
-        {
-            "kind": "service",
-            "key": "legacy",
-            "content": {"transport": "http", "target": "https://example.com/mcp"},
-        },
-        context,
-    )
-    metadata = frontmatter.load(path).metadata
-
-    assert updated["changed"] is True
-    assert metadata["transport"] == "http"
-    assert "protocol" not in metadata
-
-
-def test_compact_update_supports_digest_preconditions_and_noop(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    tools = _tools()
-    created = _invoke(
-        tools["create"],
-        {
-            "kind": "prompt",
-            "key": "note",
-            "content": {"body": "First."},
-        },
-        context,
-    )["item"]
-    path = context.home / created["path"]
-
-    mismatch = _error(
-        tools["update"],
-        {
-            "kind": "prompt",
-            "key": "note",
-            "content": {"body": "Second."},
-            "if_digest": "0" * 64,
-        },
-        context,
-    )
-    unchanged = path.read_text(encoding="utf-8")
-    noop = _invoke(
-        tools["update"],
-        {
-            "kind": "prompt",
-            "key": "note",
-            "content": {"body": "First."},
-            "if_digest": created["digest"],
-        },
-        context,
-    )
-
-    assert mismatch["code"] == "digest_mismatch"
-    assert path.read_text(encoding="utf-8") == unchanged
-    assert noop["changed"] is False
-
-
-def test_compact_mutations_check_digests_for_every_supported_kind(
-    tmp_path: Path,
-) -> None:
-    context = _context(tmp_path / "toolang")
-    tools = _tools()
-    cases = (
-        ("task", None, {"body": "Task."}, {"body": "Task."}),
-        (
-            "chore",
-            None,
-            {"body": "Chore.", "schedule": "FREQ=DAILY;INTERVAL=1"},
-            {"body": "Chore."},
-        ),
-        ("psyche", "calm", {"body": "Calm."}, {"body": "Calm."}),
-        (
-            "skill",
-            "review",
-            {"description": "Review.", "body": "Review."},
-            {"description": "Review."},
-        ),
-        (
-            "service",
-            "search",
-            {
-                "description": "Search.",
-                "transport": "http",
-                "target": "https://example.com/mcp",
-            },
-            {"target": "https://example.com/mcp"},
-        ),
-        ("prompt", "note", {"body": "Note."}, {"body": "Note."}),
-        (
-            "flow",
-            "research",
-            {"source": "flow:\n  pass\n"},
-            {"source": "flow:\n  pass\n"},
-        ),
-    )
-
-    for kind, requested_key, create_content, update_content in cases:
-        arguments: dict[str, object] = {
-            "kind": kind,
-            "content": create_content,
-        }
-        if requested_key is not None:
-            arguments["key"] = requested_key
-        item = _invoke(tools["create"], arguments, context)["item"]
-        path = context.home / item["path"]
-        before = path.read_bytes()
-
-        mismatch = _error(
-            tools["update"],
-            {
-                "kind": kind,
-                "key": item["key"],
-                "content": update_content,
-                "if_digest": "0" * 64,
-            },
-            context,
-        )
-        noop = _invoke(
-            tools["update"],
-            {
-                "kind": kind,
-                "key": item["key"],
-                "content": update_content,
-                "if_digest": item["digest"],
-            },
-            context,
-        )
-
-        assert mismatch["code"] == "digest_mismatch"
-        assert path.read_bytes() == before
-        assert noop["changed"] is False
-
-        if kind not in {"task", "chore"}:
-            delete_mismatch = _error(
-                tools["delete"],
-                {"kind": kind, "key": item["key"], "if_digest": "0" * 64},
-                context,
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            running = harness.executor.run(
+                harness.run_spec(thread=thread, runnable="inspect")
             )
-            assert delete_mismatch["code"] == "digest_mismatch"
-            assert path.read_bytes() == before
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
+            harness.setup.layout.program.write_text(broken)
+            gate.release()
+            run = await asyncio.wait_for(running, timeout=5)
+            assert run.status == "succeeded", run.error
+            assert (
+                harness.store.resolve_state_revision(run.state)
+                == harness.state.revision
+            )
+            returned = [
+                part
+                for message in harness.adapter.invocations[-1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+            ]
+            assert len(returned) == 2
+            assert all(part.error is None for part in returned)
+            assert returned[0].output["item"]["content"] == broken
+            assert returned[1].output["item"]["content"] == repaired
+            assert harness.setup.layout.program.read_text() == repaired
+
+    asyncio.run(scenario())
 
 
-def test_compact_runtime_validation_returns_structured_errors(tmp_path: Path) -> None:
-    context = _context(tmp_path / "toolang")
-    tools = _tools()
+def test_failed_atomic_save_preserves_original_file_and_digest(context, monkeypatch):
+    import toolang.common.files as files
 
-    foreign = _error(
-        tools["create"],
-        {"kind": "skill", "key": "review", "content": {"source": "flow:"}},
+    item = read(context, "agent.too")
+
+    def fail_replace(_source, _target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(files.os, "replace", fail_replace)
+    result = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="replacement",
+        if_digest=item["digest"],
     )
-    job_key = _error(
-        tools["create"],
-        {"kind": "task", "key": "manual", "content": {"body": "Task."}},
-        context,
-    )
-    job_delete = _error(tools["delete"], {"kind": "task", "key": "task-1"}, context)
-    path_key = _error(tools["get"], {"kind": "prompt", "key": "../root"}, context)
-    flow_key = _error(tools["get"], {"kind": "flow", "key": "not portable"}, context)
-    unknown_kind = _error(tools["list"], {"kind": "unknown"}, context)
-    missing_key = _error(
-        tools["create"], {"kind": "prompt", "content": {"body": "Hi."}}, context
-    )
-    empty_update = _error(
-        tools["update"],
-        {"kind": "skill", "key": "review", "content": {}},
-        context,
-    )
-    bad_digest = _error(
-        tools["update"],
-        {
-            "kind": "prompt",
-            "key": "note",
-            "content": {"body": "Hi."},
-            "if_digest": "ABC",
-        },
-        context,
-    )
-    many_issues = _error(
-        tools["create"],
-        {
-            "kind": "psyche",
-            "key": "busy",
-            "content": {"body": "Hi.", **{f"extra{index}": "x" for index in range(40)}},
-        },
-        context,
-    )
-
-    assert foreign["code"] == "invalid_content"
-    assert foreign["issues"][0]["path"] == "content.source"
-    assert job_key["code"] == "invalid_request"
-    assert job_delete["code"] == "unsupported_operation"
-    assert path_key["code"] == "invalid_request"
-    assert path_key["issues"][0]["path"] == "key"
-    assert flow_key["code"] == "invalid_request"
-    assert flow_key["issues"][0]["path"] == "key"
-    assert unknown_kind["code"] == "invalid_request"
-    assert missing_key["code"] == "invalid_request"
-    assert empty_update["code"] == "invalid_content"
-    assert bad_digest["code"] == "invalid_request"
-    assert len(many_issues["issues"]) == 32
-    assert many_issues["truncated"] is True
-
-
-def test_compact_flow_tools_validate_before_atomic_mutation(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    tools = _tools()
-
-    invalid = _error(
-        tools["create"],
-        {
-            "kind": "flow",
-            "key": "research",
-            "content": {"source": "flow research:\n  settle using missing\n"},
-        },
-        context,
-    )
-    target = context.home / "flows" / "research.too"
-    assert invalid["code"] == "invalid_flow"
-    assert invalid["issues"][0]["path"] == "content.source"
-    assert not target.exists()
-
-    created = _invoke(
-        tools["create"],
-        {
-            "kind": "flow",
-            "key": "research",
-            "content": {"source": "flow:\n  pass\n"},
-        },
-        context,
-    )["item"]
-    listed = _invoke(tools["list"], {"kind": "flow"}, context)
-    loaded = _invoke(tools["get"], {"kind": "flow", "key": "research"}, context)
-
-    assert listed["items"] == [
-        {
-            "key": "research",
-            "path": "flows/research.too",
-            "digest": created["digest"],
-            "bytes": len("flow:\n  pass\n"),
-        }
+    assert result.output["error"]["code"] == "storage_error"
+    assert read(context, "agent.too") == item
+    assert sorted(path.name for path in context.home.iterdir()) == [
+        ".agent.too.lock",
+        "agent.too",
     ]
-    assert loaded["item"]["content"] == {"source": "flow:\n  pass\n"}
 
-    failed_update = _error(
-        tools["update"],
-        {
-            "kind": "flow",
-            "key": "research",
-            "content": {"source": "flow other:\n  pass\n"},
-            "if_digest": created["digest"],
-        },
+
+def test_assets_round_trip_binary_and_do_not_get_deleted_with_skill(context):
+    definition = "skills/review/SKILL.md"
+    assert (
+        invoke(
+            context,
+            "create",
+            key=definition,
+            content="---\ndescription: Review\n---\nReview.",
+        ).error
+        is None
+    )
+    key = "skills/review/assets/image.bin"
+    encoded = b"\x00\xff\xfe\x80\r\n"
+    result = invoke(
         context,
+        "create",
+        key=key,
+        content=base64.b64encode(encoded).decode(),
+        encoding="base64",
     )
-    assert failed_update["code"] == "invalid_flow"
-    assert target.read_text(encoding="utf-8") == "flow:\n  pass\n"
+    assert result.error is None, result.output
+    item = read(context, key)
+    assert item["encoding"] == "base64"
+    assert base64.b64decode(item["content"]) == encoded
+    assert item["digest"] == sha256(encoded).hexdigest()
+    assert (context.home / key).read_bytes() == encoded
+    deleted = invoke(
+        context, "delete", key=definition, if_digest=read(context, definition)["digest"]
+    )
+    assert deleted.error is None
+    assert (context.home / key).read_bytes() == encoded
+    assert key in [item["key"] for item in invoke(context, "list").output["items"]]
 
-    deleted = _invoke(
-        tools["delete"],
-        {"kind": "flow", "key": "research", "if_digest": created["digest"]},
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "code"),
+    [
+        ("list", {"kind": "flow"}, "invalid_request"),
+        ("get", {"key": "agent.too", "revision": "0" * 64}, "invalid_request"),
+        ("get", {}, "invalid_request"),
+        (
+            "update",
+            {"key": "agent.too", "content": "agic:\n  Hi.\n"},
+            "invalid_request",
+        ),
+        ("delete", {"key": "agent.too", "if_digest": None}, "invalid_request"),
+        ("delete", {"key": "agent.too", "if_digest": "bad"}, "invalid_request"),
+        ("delete", {"key": "agent.too", "if_digest": "0" * 64}, "digest_mismatch"),
+        (
+            "create",
+            {"key": "prompts/a.md", "content": {"body": "hello"}},
+            "invalid_content",
+        ),
+        (
+            "create",
+            {"key": "prompts/a.md", "content": "hello", "encoding": {}},
+            "invalid_request",
+        ),
+        (
+            "create",
+            {"key": "skills/a/assets/x.bin", "content": "!!", "encoding": "base64"},
+            "invalid_content",
+        ),
+    ],
+)
+def test_bad_requests_do_not_mutate(context, operation, arguments, code):
+    before = context.layout.program.read_bytes()
+    result = invoke(context, operation, **arguments)
+    assert result.error is not None, result.output
+    assert result.output["error"]["code"] == code, result.output
+    assert context.layout.program.read_bytes() == before
+    assert not (context.home / "prompts/a.md").exists()
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "/tmp/agent.too",
+        "../agent.too",
+        "home:agent.too",
+        "root:psyches/a.md",
+        "flows/../agent.too",
+        "./agent.too",
+        "flows//a.too",
+        "flows/a.too/",
+        "agent.too\x00",
+        "flows\\a.too",
+        "agents/bob/agent.too",
+        ".runtime/execution.db",
+        "catalog.json",
+        "flows/nested/a.too",
+        "skills/a/scripts/run.py",
+        "archive/tasks/a.md",
+        "drafts/chores/a.md",
+        "skills/a/assets",
+    ],
+)
+def test_keys_cannot_escape_or_expand_whitelist(context, key):
+    result = invoke(context, "create", key=key, content="unwanted")
+    assert result.error is not None
+    assert result.output["error"]["code"] == "invalid_request"
+
+
+def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
+    for path in (
+        context.layout.root / "psyches/root.md",
+        context.layout.root / "agents/bob/agent.too",
+        context.home / "drafts/tasks/draft.md",
+        context.home / "skills/review/scripts/run.py",
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Excluded.")
+    result = invoke(context, "list")
+    assert result.error is None, result.output
+    assert [item["key"] for item in result.output["items"]] == ["agent.too"]
+
+
+def test_context_cannot_select_another_home(context):
+    from dataclasses import replace
+
+    other = context.layout.root / "agents/bob"
+    other.mkdir()
+    result = invoke(replace(context, home=other), "list")
+    assert result.output["error"]["code"] == "storage_error"
+    generic = ToolContext(home=context.home, room=context.room)
+    assert invoke(generic, "list").output["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize("writer", ["me", "filesystem"])
+@pytest.mark.parametrize("source", ["agic (", "flow main:\n  run missing\n"])
+def test_loader_rejects_bad_source_from_either_writer_and_recovers(
+    context, writer, source
+):
+    state = prepare_agent_state(context.layout)
+    watcher = StateWatcher(context.layout, initial_state=state)
+    if writer == "me":
+        result = invoke(
+            context,
+            "update",
+            key="agent.too",
+            content=source,
+            if_digest=read(context, "agent.too")["digest"],
+        )
+        assert result.error is None, result.output
+    else:
+        context.layout.program.write_text(source)
+    assert read(context, "agent.too")["content"] == source
+    rejected = asyncio.run(watcher.refresh_result())
+    assert rejected.state.revision == state.revision
+    assert rejected.diagnostics
+    repaired = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="agic alice():\n  Fixed.\n",
+        if_digest=read(context, "agent.too")["digest"],
     )
-    assert deleted == {"kind": "flow", "key": "research", "deleted": True}
-    assert not target.exists()
+    assert repaired.error is None, repaired.output
+    accepted = asyncio.run(watcher.refresh_result())
+    assert not accepted.diagnostics
+    assert accepted.state.revision != state.revision
 
 
-def test_compact_flow_create_rejects_public_runnable_conflict(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    context.home.joinpath("agent.too").write_text(
-        "# Agent alice\n\nflow research:\n  pass\n", encoding="utf-8"
-    )
-    error = _error(
-        _tools()["create"],
-        {
-            "kind": "flow",
-            "key": "research",
-            "content": {"source": "flow:\n  pass\n"},
-        },
+@pytest.mark.parametrize(
+    ("key", "content"),
+    [
+        ("services/a.md", "No metadata."),
+        ("skills/a/SKILL.md", "No description."),
+        ("chores/a.md", "---\nschedule: invalid\n---\nCheck."),
+        ("flows/bad-name.extra.too", "Not a program."),
+    ],
+)
+def test_content_validation_is_owned_by_loaders(context, key, content):
+    result = invoke(context, "create", key=key, content=content)
+    assert result.error is None, result.output
+    assert read(context, key)["content"] == content
+
+
+def test_binary_source_is_saved_and_can_be_repaired(context):
+    item = read(context, "agent.too")
+    result = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="/wA=",
+        encoding="base64",
+        if_digest=item["digest"],
     )
-
-    assert error["code"] == "invalid_flow"
-    assert error["issues"][0]["code"] == "public-runnable-conflict"
-    assert not (context.home / "flows" / "research.too").exists()
-
-
-def test_compact_flow_create_accepts_named_export_and_rejects_case_collision(
-    tmp_path: Path,
-) -> None:
-    context = _context(tmp_path / "toolang")
-    tools = _tools()
-
-    named = _invoke(
-        tools["create"],
-        {
-            "kind": "flow",
-            "key": "analysis",
-            "content": {"source": "flow analysis:\n  pass\n"},
-        },
+    assert result.error is None, result.output
+    assert context.layout.program.read_bytes() == b"\xff\0"
+    item = read(context, "agent.too")
+    assert item["content"] == "/wA="
+    assert item["encoding"] == "base64"
+    repaired = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="agic:\n  Fixed.\n",
+        if_digest=item["digest"],
     )
-    unnamed = _invoke(
-        tools["create"],
-        {
-            "kind": "flow",
-            "key": "Research",
-            "content": {"source": "flow:\n  pass\n"},
-        },
+    assert repaired.error is None, repaired.output
+
+
+@pytest.mark.parametrize("broken", [b"agic (", b"\xff"])
+def test_can_read_digest_and_repair_corrupt_main_source(context, broken):
+    context.layout.program.write_bytes(broken)
+    item = read(context, "agent.too")
+    result = invoke(
         context,
+        "update",
+        key="agent.too",
+        content="agic:\n  Repaired.\n",
+        if_digest=item["digest"],
     )
-    collision = _error(
-        tools["create"],
-        {
-            "kind": "flow",
-            "key": "research",
-            "content": {"source": "flow research:\n  pass\n"},
-        },
+    assert result.error is None, result.output
+
+
+def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context):
+    assert (
+        invoke(
+            context, "create", key="flows/research.too", content="flow:\n  pass\n"
+        ).error
+        is None
+    )
+    item = read(context, "agent.too")
+    assert (
+        invoke(
+            context,
+            "update",
+            key="agent.too",
+            content="flow main:\n  run research\n",
+            if_digest=item["digest"],
+        ).error
+        is None
+    )
+    flow = read(context, "flows/research.too")
+    state = prepare_agent_state(context.layout)
+    watcher = StateWatcher(context.layout, initial_state=state)
+    result = invoke(context, "delete", key=flow["key"], if_digest=flow["digest"])
+    assert result.error is None, result.output
+    assert not (context.home / flow["key"]).exists()
+    rejected = asyncio.run(watcher.refresh_result())
+    assert rejected.state.revision == state.revision
+    assert rejected.diagnostics
+    assert (context.home / ".agent.too.lock").is_file()
+    assert (context.home / ".flows.lock").is_file()
+    assert not (context.home / ".authored-flows.lock").exists()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[broken",
+        "[allow]\ntools = 1",
+        "[default]\nunexpected = true",
+        "[workspaces]\na = 42",
+    ],
+)
+def test_config_saves_invalid_content_without_projecting_original(context, content):
+    original = '# Preserve original paths/comments\n[workspaces]\nrepo = "."\n[plugin.model.test]\nvalue = "unchanged"\n'
+    (context.home / "config.toml").write_text(original)
+    item = read(context, "config.toml")
+    assert item["content"] == original
+    result = invoke(
+        context, "update", key="config.toml", content=content, if_digest=item["digest"]
+    )
+    assert result.error is None, result.output
+    assert read(context, "config.toml")["content"] == content
+
+
+def test_config_writes_preserve_original_fields_and_relative_paths(context):
+    source = (
+        '# Original\n[workspaces]\nrepo = "."\n[plugin.model.test]\nvalue = "kept"\n'
+    )
+    result = invoke(context, "create", key="config.toml", content=source)
+    assert result.error is None, result.output
+    assert read(context, "config.toml")["content"] == source
+    from toolang.catalog.config import ConfiguredCaps
+    from toolang.state.config import ConfiguredWorkspaces
+
+    config = context.home / "config.toml"
+    assert ConfiguredCaps(config).lock_path == ConfiguredWorkspaces(config).lock_path
+    assert ConfiguredCaps(config).lock_path == context.home / ".config.toml.lock"
+
+
+def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
+    source = "# Manual task without an id\n\nReview.\n"
+    created = invoke(context, "create", key="tasks/manual.md", content=source)
+    assert created.error is None, created.output
+    assert read(context, "tasks/manual.md")["content"] == source
+    invoke(context, "list")
+    assert not context.layout.id_state.exists()
+    replacement = "---\nid: task-1\n---\nReview now.\n"
+    assert (
+        invoke(
+            context,
+            "update",
+            key="tasks/manual.md",
+            content=replacement,
+            if_digest=created.output["item"]["digest"],
+        ).error
+        is None
+    )
+    duplicate = invoke(
+        context, "create", key="chores/duplicate.md", content=replacement
+    )
+    assert duplicate.error is None, duplicate.output
+    assert read(context, "chores/duplicate.md")["content"] == replacement
+    result = invoke(
         context,
+        "delete",
+        key="tasks/manual.md",
+        if_digest=read(context, "tasks/manual.md")["digest"],
     )
-    wrong_case = _error(tools["get"], {"kind": "flow", "key": "research"}, context)
-
-    assert named["created"] is True
-    assert unnamed["created"] is True
-    assert collision["code"] == "conflict"
-    assert wrong_case["code"] == "not_found"
-    assert {path.name for path in context.home.joinpath("flows").iterdir()} == {
-        "Research.too",
-        "analysis.too",
-    }
+    assert result.error is None
+    assert not (context.home / "archive").exists()
 
 
-def test_compact_flow_tools_reject_symlinked_storage(tmp_path: Path) -> None:
-    context = _context(tmp_path / "toolang")
-    external = tmp_path / "external"
-    external.mkdir()
-    external.joinpath("research.too").write_text(
-        "flow research:\n  pass\n", encoding="utf-8"
-    )
-    context.home.joinpath("flows").symlink_to(external, target_is_directory=True)
+@pytest.mark.parametrize("target", ["program", "directory", "asset", "config", "lock"])
+def test_symlinks_cannot_escape(context, tmp_path, target):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    external = outside / "external.md"
+    external.write_text("untouched")
+    if target == "program":
+        context.layout.program.unlink()
+        context.layout.program.symlink_to(external)
+        key = "agent.too"
+    elif target == "directory":
+        (context.home / "psyches").symlink_to(outside, target_is_directory=True)
+        key = "psyches/new.md"
+    elif target == "asset":
+        parent = context.home / "skills/a/assets"
+        parent.mkdir(parents=True)
+        (parent / "external.md").symlink_to(external)
+        key = "skills/a/assets/external.md"
+    elif target == "config":
+        (context.home / "config.toml").symlink_to(external)
+        key = "config.toml"
+    else:
+        (context.home / ".caps.lock").symlink_to(external)
+        key = "prompts/new.md"
+    result = invoke(context, "create", key=key, content="changed")
+    assert result.output["error"]["code"] == "storage_error"
+    assert external.read_text() == "untouched"
+    assert not (outside / "new.md").exists()
 
-    error = _error(_tools()["list"], {"kind": "flow"}, context)
 
-    assert error["code"] == "storage_error"
-    assert external.joinpath("research.too").is_file()
-
-    context.home.joinpath("flows").unlink()
-    context.home.joinpath("flows").mkdir()
-    context.home.joinpath("flows", "linked.too").symlink_to(external / "research.too")
-    create_error = _error(
-        _tools()["create"],
-        {
-            "kind": "flow",
-            "key": "new_flow",
-            "content": {"source": "flow:\n  pass\n"},
-        },
-        context,
-    )
-
-    assert create_error["code"] == "storage_error"
-    assert not context.home.joinpath("flows", "new_flow.too").exists()
-
-
-def test_compact_flow_update_and_delete_can_recover_invalid_bytes(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "toolang"
-    context = _context(root)
-    updated_path = context.home / "flows" / "updated.too"
-    updated_path.parent.mkdir()
-    updated_path.write_bytes(b"\xff")
-
-    updated = _invoke(
-        _tools()["update"],
-        {
-            "kind": "flow",
-            "key": "updated",
-            "content": {"source": "flow:\n  pass\n"},
-        },
-        context,
+def test_two_writers_cannot_overwrite_observed_snapshot(context):
+    item = read(context, "agent.too")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                invoke,
+                context,
+                "update",
+                key="agent.too",
+                content=f"agic:\n  Version {index}.\n",
+                if_digest=item["digest"],
+            )
+            for index in range(2)
+        ]
+        results = [future.result() for future in futures]
+    assert sum(result.error is None for result in results) == 1
+    assert (
+        next(result for result in results if result.error).output["error"]["code"]
+        == "digest_mismatch"
     )
 
-    deleted_path = context.home / "flows" / "deleted.too"
-    deleted_path.write_bytes(b"\xff")
 
-    deleted = _invoke(_tools()["delete"], {"kind": "flow", "key": "deleted"}, context)
-
-    assert updated["changed"] is True
-    assert updated_path.read_text(encoding="utf-8") == "flow:\n  pass\n"
-    assert deleted["deleted"] is True
-    assert not deleted_path.exists()
-
-
-def test_compact_tools_reject_symlinked_cap_job_and_runtime_storage(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "toolang"
-
-    cap_context = _context(root, "caps")
-    external_caps = tmp_path / "external-caps"
-    external_caps.mkdir()
-    external_caps.joinpath("secret.md").write_text("Secret.\n", encoding="utf-8")
-    cap_context.home.joinpath("psyches").symlink_to(
-        external_caps,
-        target_is_directory=True,
-    )
-    cap_error = _error(_tools()["list"], {"kind": "psyche"}, cap_context)
-    flow_created = _invoke(
-        _tools()["create"],
-        {
-            "kind": "flow",
-            "key": "isolated",
-            "content": {"source": "flow:\n  pass\n"},
-        },
-        cap_context,
-    )
-
-    job_context = _context(root, "jobs")
-    external_jobs = tmp_path / "external-jobs"
-    external_jobs.mkdir()
-    job_context.home.joinpath("tasks").symlink_to(
-        external_jobs,
-        target_is_directory=True,
-    )
-    job_error = _error(_tools()["list"], {"kind": "task"}, job_context)
-
-    runtime_context = _context(root, "runtime")
-    external_runtime = tmp_path / "external-runtime"
-    external_runtime.mkdir()
-    runtime_context.home.joinpath(".runtime").symlink_to(
-        external_runtime,
-        target_is_directory=True,
-    )
-    runtime_error = _error(
-        _tools()["create"],
-        {"kind": "task", "content": {"body": "Do not create."}},
-        runtime_context,
-    )
-
-    assert cap_error["code"] == "storage_error"
-    assert flow_created["created"] is True
-    assert job_error["code"] == "storage_error"
-    assert runtime_error["code"] == "storage_error"
-    assert external_caps.joinpath("secret.md").read_text(encoding="utf-8") == (
-        "Secret.\n"
-    )
-    assert list(external_jobs.iterdir()) == []
-    assert list(external_runtime.iterdir()) == []
+def test_independent_files_can_be_saved_before_composition_is_valid(context):
+    item = read(context, "agent.too")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        main = pool.submit(
+            invoke,
+            context,
+            "update",
+            key="agent.too",
+            content="agic research:\n  Research.\n",
+            if_digest=item["digest"],
+        )
+        flow = pool.submit(
+            invoke,
+            context,
+            "create",
+            key="flows/research.too",
+            content="flow:\n  pass\n",
+        )
+        results = [main.result(), flow.result()]
+    assert all(result.error is None for result in results)
+    with pytest.raises(StatePreparationError):
+        prepare_agent_state(context.layout)
 
 
-def test_compact_skill_delete_rejects_nested_symlinks(tmp_path: Path) -> None:
-    context = _context(tmp_path / "toolang")
-    tools = _tools()
-    _invoke(
-        tools["create"],
-        {
-            "kind": "skill",
-            "key": "review",
-            "content": {"description": "Review.", "body": "Review code."},
-        },
-        context,
-    )
-    external = tmp_path / "external.txt"
-    external.write_text("Keep.\n", encoding="utf-8")
-    context.home.joinpath("skills", "review", "external.txt").symlink_to(external)
+def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path):
+    from toolang.up.process import materialize_roaming_program
 
-    error = _error(tools["delete"], {"kind": "skill", "key": "review"}, context)
-
-    assert error["code"] == "storage_error"
-    assert context.home.joinpath("skills", "review", "SKILL.md").is_file()
-    assert external.read_text(encoding="utf-8") == "Keep.\n"
-
-
-def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    target = root / "agents" / "bob"
-    target.mkdir(parents=True)
-    target.joinpath("agent.too").write_text("# Agent bob\n", encoding="utf-8")
-    home = root / "agents" / "alice"
-    home.symlink_to(target, target_is_directory=True)
+    source = tmp_path / "parrot.too"
+    source.write_text("agic:\n  Original.\n")
+    source.chmod(0o755)
+    layout = materialize_roaming_program(source)
     context = MeToolContext(
-        home=home,
-        room=home / ".runtime" / "tools" / "me",
-        layout=AgentLayout(root=root, name="alice", placement="resident"),
+        home=layout.home, room=layout.tool_room("me"), layout=layout
     )
-
-    error = _error(_tools()["list"], {"kind": "task"}, context)
-
-    assert error["code"] == "invalid_request"
-
-
-def test_compact_tool_rejects_non_agent_home_with_structured_error(
-    tmp_path: Path,
-) -> None:
-    context = ToolContext(
-        home=tmp_path / "alice", room=tmp_path / "alice" / ".runtime" / "tools" / "me"
+    item = read(context, "agent.too")
+    result = invoke(
+        context,
+        "update",
+        key="agent.too",
+        content="agic:\n  Changed.\n",
+        if_digest=item["digest"],
     )
-
-    error = _error(_tools()["list"], {"kind": "task"}, context)
-
-    assert error["code"] == "invalid_request"
+    assert result.error is None, result.output
+    assert layout.program.is_symlink()
+    assert source.read_text() == result.output["item"]["content"]
+    assert source.stat().st_mode & 0o777 == 0o755
+    assert (layout.home / ".config.toml.lock").exists()
+    assert not (layout.home / ".project.lock").exists()

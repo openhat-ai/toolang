@@ -148,44 +148,67 @@ Missing targets and unresolved values fail as ordinary tool errors.
 
 ## Current Agent
 
-`me` exposes structured operations for the current agent's authored data. It
-follows normal resource selection and can be denied by policy.
-
-The executor injects the current agent layout through `AgentStateToolContext`. `me`
-tools do not accept an agent name, home directory, root directory, or arbitrary
-path for choosing another target. They expose no layer selector and operate
-only on the current agent's home layer; `me` does not read or modify root-layer
-caps.
-
-It exposes five leaves for all supported resource kinds:
+`me` reads and manages the current agent's latest home files, subject to normal
+tool permissions. The executor supplies `MeToolContext`; callers cannot select
+another agent, root directory, or State revision. File reads do not inspect the
+Run's captured State, and writes do not publish State or replace captured Setup.
 
 ```text
-me__list(kind)
-me__get(kind, key)
-me__create(kind, key?, content)
-me__update(kind, key, content, if_digest?)
-me__delete(kind, key, if_digest?)
+me__list()
+me__get(key)
+me__create(key, content, encoding="utf-8")
+me__update(key, content, if_digest, encoding="utf-8")
+me__delete(key, if_digest)
 ```
 
-`kind` is one of `task`, `chore`, `psyche`, `skill`, `service`, `prompt`, or
-`flow`. `key` is a task/chore id or an authored cap/flow name. Task and chore
-create allocates the key and addresses ready documents only. Their lifecycle
-does not support `me__delete`, and delete is never interpreted as archive.
+Keys are canonical paths relative to the current home:
 
-`content` is selected and validated from the operation and kind. Job writes
-reuse the Markdown document models, id allocation, and RRULE validation used
-by the CLI and jobs API. Cap writes reuse the authored cap file layout and
-validation used by the CLI and cap API. Flow writes manage only direct
-`flows/<key>.too` modules and validate the complete home program before an
-atomic write. Invalid create and update requests do not change existing
-authored files.
+| Files | Operations |
+| --- | --- |
+| `agent.too`, `config.toml` | Full-file CRUD |
+| `flows/<name>.too` | Full-file CRUD |
+| `psyches/<name>.md`, `services/<name>.md`, `prompts/<name>.md` | Full-file CRUD |
+| `skills/<name>/SKILL.md`, `skills/<name>/assets/**` | Full-file CRUD |
+| `tasks/<name>.md`, `chores/<name>.md` | Full-file CRUD on ready job files |
 
-Get and list return home-relative paths and SHA-256 digests. Update and delete
-accept an optional `if_digest` precondition. Expected failures remain failed
-tool calls and include a structured `output.error` with a stable code,
-operation, kind, optional key, and bounded field diagnostics. Source mutation
-does not publish State directly; the watcher prepares and publishes valid
-updates. New Run acceptance and model catalogs read the published snapshot.
+List returns sorted `items` containing `key`, `digest`, and `bytes`.
+Get returns an `item` with complete `content` and `encoding` as well. Text is
+UTF-8; non-UTF-8 files are returned as base64. Create/update accept a complete
+content string; `encoding="base64"` supplies exact binary bytes.
+There is no kind selector, parsed-field update, declaration edit, or inspect tool.
+
+All digests are lowercase SHA-256 of exact file bytes, including comments, front
+matter, whitespace, and original line endings. Update/delete require `if_digest`
+from a read or successful write and check it under the owning lock. On
+`digest_mismatch`, get the latest file and reconcile before retrying. Create fails
+if a target already exists. Successful create/update returns `item` and
+`created=true` or `changed`; delete returns `key` and `deleted=true`.
+
+Me does not parse or validate file content. A successful save only confirms that
+the bytes were written. Existing loaders/watchers handle syntax, metadata, and
+composition errors identically for me writes and direct filesystem edits. The
+State watcher retains its last valid publication and reports diagnostics for
+rejected candidates; repairing the files allows a later refresh to publish.
+Reads never allocate job ids. Path, encoding, digest, and I/O failures carry
+`output.error` with code, operation, key when known, and bounded diagnostics.
+
+Delete removes exactly one file. Deleting SKILL.md leaves assets in place; deleting
+a task/chore does not archive it or cancel an existing Run. Draft/archive job
+storage, root resources, external cap content, arbitrary paths, and directory
+operations are excluded. Symlinks are rejected except the canonical roaming
+`agent.too` link to its own original script; that link is preserved when editing.
+Linked config files are not writable through me.
+
+Main operations use `.agent.too.lock`; flows use `.flows.lock`. Config writers,
+including configured caps, workspaces, and roaming projection, share
+`.config.toml.lock`; caps/assets use `.caps.lock`, and jobs use `.jobs.lock`.
+Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
+
+Reading after a save observes the saved source. Running code remains governed by
+Run binding and publication: static calls in an accepted flow use its bound
+program; a later permitted named Run can use the latest published State. Editing
+config does not install new tools, refresh captured Setup, or grant authority to
+the active Run.
 
 
 ## Runtime Rule

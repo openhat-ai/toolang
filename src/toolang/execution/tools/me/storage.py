@@ -1,131 +1,199 @@
-"""Current-agent authored-storage safety checks."""
+"""Whitelisted current-home file storage with exact-byte concurrency checks."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from hashlib import sha256
 from pathlib import Path
 
-from toolang.catalog.types import CAP_DIR_BY_KIND, CapKind
+from toolang.catalog.types import CAP_KIND_BY_DIR
+from toolang.common.files import atomic_write_bytes, file_lock_path, file_write_lock
+from toolang.common.layout import AgentLayout
 
-_JOB_DIRECTORIES = (
-    Path("tasks"),
-    Path("chores"),
-    Path("drafts/tasks"),
-    Path("drafts/chores"),
-    Path("archive/tasks"),
-    Path("archive/chores"),
-)
+from .errors import DigestMismatchError, UnsafeAuthoringPathError
+from .types import HomeFile
 
 
-class UnsafeAuthoringPathError(ValueError):
-    """An authored storage path could escape or has an unsupported shape."""
+def classify(key: str) -> HomeFile:
+    """Classify a canonical key; request decoding has already rejected traversal."""
+    path = Path(key)
+    parts = path.parts
+    if key == "agent.too":
+        return HomeFile(key, "program")
+    if key == "config.toml":
+        return HomeFile(key, "config")
+    if len(parts) == 2 and parts[0] == "flows" and path.suffix == ".too":
+        return HomeFile(key, "program")
+    kind = CAP_KIND_BY_DIR.get(parts[0])
+    if (
+        kind is not None
+        and kind != "skill"
+        and len(parts) == 2
+        and path.suffix == ".md"
+        and path.stem
+    ):
+        return HomeFile(key, "cap")
+    if len(parts) >= 3 and parts[0] == "skills":
+        if len(parts) == 3 and parts[2] == "SKILL.md":
+            return HomeFile(key, "cap")
+        if len(parts) >= 4 and parts[2] == "assets":
+            return HomeFile(key, "asset")
+    if (
+        len(parts) == 2
+        and parts[0] in {"tasks", "chores"}
+        and path.suffix == ".md"
+        and path.stem
+    ):
+        return HomeFile(key, "job")
+    raise ValueError("key is outside the supported home file paths")
 
 
-def validate_job_storage(home: Path, *, allocator: bool) -> None:
-    """Reject unsafe job, lock, and optional allocator storage."""
+class HomeFiles:
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
+        self.home = layout.home
 
-    require_regular_file(home / ".jobs.lock", "job lock")
-    for relative in _JOB_DIRECTORIES:
-        directory = require_directory(home, relative, "job storage")
-        if directory is None:
-            continue
-        for path in directory.iterdir():
-            if path.suffix == ".md":
-                require_regular_file(path, "job document")
-    if allocator:
-        require_directory(home, Path(".runtime"), "runtime storage")
-        require_regular_file(home / ".runtime" / "ids.json", "id allocator")
+    def path(self, file: HomeFile) -> Path:
+        self._directory(self.home)
+        current = self.home
+        for part in Path(file.key).parts[:-1]:
+            current /= part
+            self._directory(current)
+        target = self.home / file.key
+        if (
+            target.is_symlink()
+            and file.key == "agent.too"
+            and self.layout.placement == "roaming"
+        ):
+            expected = self.layout.root.parent / f"{self.layout.name}.too"
+            if not expected.is_symlink() and target.resolve() == expected:
+                target = expected
+        self._regular(target)
+        return target
 
-
-def validate_cap_storage(
-    home: Path,
-    kind: CapKind,
-    *,
-    key: str | None = None,
-    recursive: bool = False,
-) -> None:
-    """Reject unsafe cap storage before an authored catalog can follow it."""
-
-    require_regular_file(home / ".caps.lock", "cap lock")
-    relative = Path(CAP_DIR_BY_KIND[kind])
-    directory = require_directory(home, relative, f"{kind} storage")
-    if directory is None:
-        return
-    if key is None:
-        _validate_cap_listing(directory, kind)
-        return
-    if kind == "skill":
-        skill_directory = require_directory(
-            home,
-            relative / key,
-            "skill directory",
-        )
-        if skill_directory is None:
-            return
-        require_regular_file(skill_directory / "SKILL.md", "skill definition")
-        if recursive:
-            _validate_tree(skill_directory)
-            require_directory(home, Path(".runtime"), "runtime storage")
-            require_directory(
-                home,
-                Path(".runtime/authored-cap-trash"),
-                "authored cap trash",
-            )
-        return
-    require_regular_file(directory / f"{key}.md", f"{kind} definition")
-
-
-def require_directory(home: Path, relative: Path, label: str) -> Path | None:
-    """Validate one relative directory path without following symlinks."""
-
-    current = home
-    for part in relative.parts:
-        current /= part
-        if current.is_symlink():
-            raise UnsafeAuthoringPathError(f"{label} must not be a symbolic link")
-        if not current.exists():
-            return None
-        if not current.is_dir():
-            raise UnsafeAuthoringPathError(f"{label} must be a directory")
-    return current
-
-
-def require_regular_file(path: Path, label: str) -> None:
-    """Require an existing node to be a non-symlink regular file."""
-
-    if path.is_symlink():
-        raise UnsafeAuthoringPathError(f"{label} must not be a symbolic link")
-    if path.exists() and not path.is_file():
-        raise UnsafeAuthoringPathError(f"{label} must be a regular file")
-
-
-def _validate_cap_listing(directory: Path, kind: CapKind) -> None:
-    if kind == "skill":
-        for path in directory.iterdir():
-            if path.is_symlink():
-                raise UnsafeAuthoringPathError(
-                    "skill directory must not be a symbolic link"
-                )
-            if not path.is_dir():
+    def keys(self) -> tuple[str, ...]:
+        """Walk only allowed locations, never following directory links."""
+        keys: list[str] = []
+        for key in ("agent.too", "config.toml"):
+            path = self.path(classify(key))
+            if path.is_file():
+                keys.append(key)
+        for directory, suffix in (
+            ("flows", ".too"),
+            ("psyches", ".md"),
+            ("services", ".md"),
+            ("prompts", ".md"),
+            ("tasks", ".md"),
+            ("chores", ".md"),
+        ):
+            path = self.home / directory
+            self._directory(path)
+            if not path.exists():
                 continue
-            require_regular_file(path / "SKILL.md", "skill definition")
-        return
-    for path in directory.iterdir():
-        if path.suffix == ".md":
-            require_regular_file(path, f"{kind} definition")
+            for entry in sorted(path.iterdir()):
+                if entry.suffix == suffix:
+                    key = entry.relative_to(self.home).as_posix()
+                    self.path(classify(key))
+                    keys.append(key)
+        skills = self.home / "skills"
+        self._directory(skills)
+        if skills.exists():
+            for skill in sorted(skills.iterdir()):
+                if skill.is_symlink():
+                    raise UnsafeAuthoringPathError(
+                        "skill directory must not be a symbolic link"
+                    )
+                if not skill.is_dir():
+                    continue
+                definition = skill / "SKILL.md"
+                self._regular(definition)
+                if definition.is_file():
+                    keys.append(definition.relative_to(self.home).as_posix())
+                assets = skill / "assets"
+                self._directory(assets)
+                if assets.exists():
+                    keys.extend(self._asset_keys(assets))
+        return tuple(sorted(keys))
 
-
-def _validate_tree(directory: Path) -> None:
-    pending = [directory]
-    while pending:
-        current = pending.pop()
-        for path in current.iterdir():
+    def _asset_keys(self, directory: Path) -> Iterator[str]:
+        for path in sorted(directory.iterdir()):
             if path.is_symlink():
-                raise UnsafeAuthoringPathError(
-                    "skill contents must not contain symbolic links"
-                )
+                raise UnsafeAuthoringPathError("asset must not be a symbolic link")
             if path.is_dir():
-                pending.append(path)
-            elif not path.is_file():
-                raise UnsafeAuthoringPathError(
-                    "skill contents must contain only regular files"
+                yield from self._asset_keys(path)
+            else:
+                self._regular(path)
+                yield path.relative_to(self.home).as_posix()
+
+    def read(self, file: HomeFile) -> bytes:
+        path = self.path(file)
+        if not path.is_file():
+            raise FileNotFoundError(f"home file not found: {file.key}")
+        return path.read_bytes()
+
+    def before_write(
+        self, file: HomeFile, *, create: bool, expected: str | None
+    ) -> bytes | None:
+        path = self.path(file)
+        if create:
+            # Portable identity: do not create a case-only sibling on Linux.
+            if path.exists() or (
+                path.parent.is_dir()
+                and any(
+                    sibling.name.casefold() == path.name.casefold()
+                    for sibling in path.parent.iterdir()
                 )
+            ):
+                raise FileExistsError("home file already exists")
+            return None
+        current = self.read(file)
+        actual = sha256(current).hexdigest()
+        if actual != expected:
+            raise DigestMismatchError(expected or "", actual)
+        return current
+
+    def save(self, file: HomeFile, content: bytes | None) -> None:
+        path = self.path(file)
+        if content is None:
+            path.unlink()
+        else:
+            atomic_write_bytes(path, content)
+
+    @contextmanager
+    def lock(self, file: HomeFile | None = None) -> Iterator[None]:
+        targets = {
+            "program": ("agent.too",)
+            if file and file.key == "agent.too"
+            else ("flows",),
+            "config": ("config.toml",),
+            "cap": ("caps",),
+            "asset": ("caps",),
+            "job": ("jobs",),
+        }
+        names = (
+            targets[file.category]
+            if file is not None
+            else ("agent.too", "flows", "config.toml", "caps", "jobs")
+        )
+        self._directory(self.home)
+        with ExitStack() as stack:
+            for name in names:
+                path = file_lock_path(self.home / name)
+                self._regular(path)
+                stack.enter_context(file_write_lock(path))
+            yield
+
+    @staticmethod
+    def _regular(path: Path) -> None:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise UnsafeAuthoringPathError(
+                "home files and locks must be regular files, not symbolic links"
+            )
+
+    @staticmethod
+    def _directory(path: Path) -> None:
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise UnsafeAuthoringPathError(
+                "home source directories must not be symbolic links or files"
+            )

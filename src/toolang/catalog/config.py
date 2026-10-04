@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import tomlkit
 
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 
 from .cap import _validate_kind, _validate_name
 from .errors import CatalogConflictError, CatalogNotFoundError
@@ -41,7 +41,7 @@ class ConfiguredCaps:
 
     @property
     def lock_path(self) -> Path:
-        return self.config_path.with_name(f".{self.config_path.name}.lock")
+        return file_lock_path(self.config_path)
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the lock shared by configured-cap mutations."""
