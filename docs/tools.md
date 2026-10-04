@@ -172,6 +172,10 @@ Keys are canonical paths relative to the current home:
 | `skills/<name>/SKILL.md`, `skills/<name>/assets/**` | Full-file CRUD |
 | `tasks/<name>.md`, `chores/<name>.md` | Full-file CRUD on ready job files |
 
+Use the exact spelling of existing file and directory names, as returned by
+`list`. Aliases with different casing are rejected as `invalid_request` on
+case-insensitive filesystems, keeping receipts consistent with State file keys.
+
 Successful results are flat objects:
 
 | Operation | Result |

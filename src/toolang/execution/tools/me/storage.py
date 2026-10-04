@@ -12,40 +12,39 @@ from toolang.common.files import atomic_write_bytes, file_lock_path, file_write_
 from toolang.common.layout import AgentLayout
 
 from .errors import DigestMismatchError, UnsafeAuthoringPathError
-from .types import HomeFile
+from .types import HomeFile, HomeFileCategory
+
+_SINGLE_FILES: dict[str, HomeFileCategory] = {
+    "agent.too": "program",
+    "config.toml": "config",
+}
+_DIRECTORIES: dict[str, tuple[str, HomeFileCategory]] = {
+    "flows": (".too", "program"),
+    **{
+        directory: (".md", "cap")
+        for directory, kind in CAP_KIND_BY_DIR.items()
+        if kind != "skill"
+    },
+    "tasks": (".md", "job"),
+    "chores": (".md", "job"),
+}
 
 
 def classify(key: str) -> HomeFile:
     """Classify a canonical key; request decoding has already rejected traversal."""
     path = Path(key)
     parts = path.parts
-    if key == "agent.too":
-        return HomeFile(key, "program")
-    if key == "config.toml":
-        return HomeFile(key, "config")
-    if len(parts) == 2 and parts[0] == "flows" and path.suffix == ".too":
-        return HomeFile(key, "program")
-    kind = CAP_KIND_BY_DIR.get(parts[0])
-    if (
-        kind is not None
-        and kind != "skill"
-        and len(parts) == 2
-        and path.suffix == ".md"
-        and path.stem
-    ):
-        return HomeFile(key, "cap")
+    if category := _SINGLE_FILES.get(key):
+        return HomeFile(key, category)
+    if len(parts) == 2 and (rule := _DIRECTORIES.get(parts[0])):
+        suffix, category = rule
+        if path.suffix == suffix and path.stem:
+            return HomeFile(key, category)
     if len(parts) >= 3 and parts[0] == "skills":
         if len(parts) == 3 and parts[2] == "SKILL.md":
             return HomeFile(key, "cap")
         if len(parts) >= 4 and parts[2] == "assets":
             return HomeFile(key, "asset")
-    if (
-        len(parts) == 2
-        and parts[0] in {"tasks", "chores"}
-        and path.suffix == ".md"
-        and path.stem
-    ):
-        return HomeFile(key, "job")
     raise ValueError("key is outside the supported home file paths")
 
 
@@ -53,6 +52,7 @@ class HomeFiles:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
         self.home = layout.home
+        self._names: dict[Path, set[str]] = {}
 
     def path(self, file: HomeFile) -> Path:
         self._directory(self.home)
@@ -60,7 +60,9 @@ class HomeFiles:
         for part in Path(file.key).parts[:-1]:
             current /= part
             self._directory(current)
+            self._exact_name(current)
         target = self.home / file.key
+        self._exact_name(target)
         if (
             target.is_symlink()
             and file.key == "agent.too"
@@ -86,18 +88,11 @@ class HomeFiles:
     def keys(self) -> tuple[str, ...]:
         """Walk only allowed locations, never following directory links."""
         keys: list[str] = []
-        for key in ("agent.too", "config.toml"):
+        for key in _SINGLE_FILES:
             path = self.path(classify(key))
             if path.is_file():
                 keys.append(key)
-        for directory, suffix in (
-            ("flows", ".too"),
-            ("psyches", ".md"),
-            ("services", ".md"),
-            ("prompts", ".md"),
-            ("tasks", ".md"),
-            ("chores", ".md"),
-        ):
+        for directory, (suffix, _category) in _DIRECTORIES.items():
             path = self.home / directory
             self._directory(path)
             if not path.exists():
@@ -142,6 +137,15 @@ class HomeFiles:
         if not path.is_file():
             raise FileNotFoundError(f"home file not found: {file.key}")
         return path.read_bytes()
+
+    def metadata(self, file: HomeFile) -> dict[str, object]:
+        digest = sha256()
+        size = 0
+        with self.path(file).open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        return {"key": file.key, "digest": digest.hexdigest(), "bytes": size}
 
     def before_write(
         self, file: HomeFile, *, create: bool, expected: str | None
@@ -193,7 +197,24 @@ class HomeFiles:
                 path = file_lock_path(self.home / name)
                 self._regular(path)
                 stack.enter_context(file_write_lock(path))
-            yield
+            try:
+                yield
+            finally:
+                self._names.clear()
+
+    def _exact_name(self, path: Path) -> None:
+        if not path.exists() and not path.is_symlink():
+            return
+        # Cache directory spellings only for this locked operation. Listing many
+        # assets must not rescan their parent for every file and path check.
+        names = self._names.get(path.parent)
+        if names is None:
+            names = {entry.name for entry in path.parent.iterdir()}
+            self._names[path.parent] = names
+        if path.name not in names:
+            raise ValueError(
+                "key must use exact file and directory spelling; use list to find it"
+            )
 
     @staticmethod
     def _regular(path: Path) -> None:

@@ -127,6 +127,116 @@ def test_complete_file_crud_and_exact_bytes(context, key, content):
     assert invoke(context, "get", key=key).output["error"] == "not_found"
 
 
+@pytest.mark.parametrize("operation", ["get", "update", "delete"])
+@pytest.mark.parametrize(
+    ("key", "alias"),
+    [
+        ("flows/research.too", "flows/RESEARCH.too"),
+        ("skills/review/assets/note.txt", "skills/REVIEW/assets/note.txt"),
+        ("skills/review/assets/notes/a.txt", "skills/review/assets/NOTES/a.txt"),
+    ],
+)
+def test_file_aliases_cannot_produce_receipts(context, operation, key, alias):
+    from dataclasses import replace
+
+    content = "flow:\n  pass\n" if key.startswith("flows/") else "A note.\n"
+    created = invoke(context, "create", key=key, content=content)
+    assert created.error is None, created.output
+    if not (context.home / alias).exists():
+        pytest.skip("requires a case-insensitive filesystem")
+    state = prepare_agent_state(context.layout)
+    arguments = {"key": alias}
+    if operation in {"update", "delete"}:
+        arguments["if_digest"] = created.output["digest"]
+    if operation == "update":
+        # Even an identical update must not return a receipt for the alias.
+        arguments["content"] = content
+    rejected = invoke(context, operation, **arguments)
+    assert rejected.output["error"] == "invalid_request"
+    assert rejected.output["key"] == alias
+    assert (context.home / key).read_text() == content
+    loaded_context = replace(context, state=state)
+    assert invoke(loaded_context, "loaded", receipts=[created.output]).output["loaded"]
+    deleted = invoke(context, "delete", key=key, if_digest=created.output["digest"])
+    assert deleted.error is None
+    assert not invoke(loaded_context, "loaded", receipts=[deleted.output]).output[
+        "loaded"
+    ]
+
+
+def test_create_rejects_an_alias_of_an_existing_parent(context):
+    from dataclasses import replace
+
+    definition = invoke(
+        context,
+        "create",
+        key="skills/review/SKILL.md",
+        content="---\ndescription: Review\n---\nReview carefully.\n",
+    )
+    assert definition.error is None
+    if not (context.home / "skills/REVIEW").exists():
+        pytest.skip("requires a case-insensitive filesystem")
+    key = "skills/review/assets/note.txt"
+    rejected = invoke(
+        context, "create", key="skills/REVIEW/assets/note.txt", content="A note.\n"
+    )
+    assert rejected.output["error"] == "invalid_request"
+    assert not (context.home / key).exists()
+    created = invoke(context, "create", key=key, content="A note.\n")
+    assert created.error is None
+    state = prepare_agent_state(context.layout)
+    assert invoke(
+        replace(context, state=state), "loaded", receipts=[created.output]
+    ).output["loaded"]
+
+
+def test_list_hashes_assets_without_reading_complete_files(context, monkeypatch):
+    content = bytes(range(256)) * 12_000
+    key = "skills/review/assets/data.bin"
+    path = context.home / key
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    original = context.layout.program.read_bytes()
+    original_open = Path.open
+    reads = []
+
+    class BoundedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.stream.close()
+
+        def read(self, size=-1):
+            assert 0 < size <= 1024 * 1024, "list must use bounded reads"
+            chunk = self.stream.read(size)
+            reads.append(len(chunk))
+            return chunk
+
+    def bounded_open(current, *args, **kwargs):
+        stream = original_open(current, *args, **kwargs)
+        return BoundedReader(stream) if current == path else stream
+
+    monkeypatch.setattr(Path, "open", bounded_open)
+    result = invoke(context, "list")
+    assert result.error is None, result.output
+    assert result.output == {
+        "files": [
+            {
+                "key": "agent.too",
+                "digest": sha256(original).hexdigest(),
+                "bytes": len(original),
+            },
+            {"key": key, "digest": sha256(content).hexdigest(), "bytes": len(content)},
+        ]
+    }
+    assert len(reads) > 1
+    assert sum(reads) == len(content)
+
+
 def test_reads_latest_main_source_and_does_not_publish(context):
     state = prepare_agent_state(context.layout)
     original_revision = state.revision

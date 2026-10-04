@@ -25,10 +25,7 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
         if request.operation == "list":
             with storage.lock():
                 return {
-                    "files": [
-                        _item(key, storage.read(classify(key)), include_content=False)
-                        for key in storage.keys()
-                    ]
+                    "files": [storage.metadata(classify(key)) for key in storage.keys()]
                 }
         assert request.key is not None
         try:
@@ -113,17 +110,16 @@ def _storage(context: MeToolContext) -> HomeFiles:
     return HomeFiles(context.layout)
 
 
-def _item(key: str, content: bytes, *, include_content: bool = True) -> dict[str, Any]:
+def _item(key: str, content: bytes) -> dict[str, Any]:
     result: dict[str, Any] = {
         "key": key,
         "digest": sha256(content).hexdigest(),
         "bytes": len(content),
     }
-    if include_content:
-        try:
-            result["content"] = content.decode("utf-8")
-            result["encoding"] = "utf-8"
-        except UnicodeDecodeError:
-            result["content"] = base64.b64encode(content).decode("ascii")
-            result["encoding"] = "base64"
+    try:
+        result["content"] = content.decode("utf-8")
+        result["encoding"] = "utf-8"
+    except UnicodeDecodeError:
+        result["content"] = base64.b64encode(content).decode("ascii")
+        result["encoding"] = "base64"
     return result

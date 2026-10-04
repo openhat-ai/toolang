@@ -34,6 +34,10 @@ Receipts can be compared with the immutable files captured by the calling State.
 - Access stays within the listed home paths. Reject directory operations and
   arbitrary symlinks. The canonical roaming `agent.too` link addresses its own
   source file and is preserved during edits.
+- Existing path components must use their exact filesystem spelling. Reject
+  aliases as `invalid_request`, including on case-insensitive filesystems, so
+  receipts and State manifests use the same keys. List hashes files in bounded
+  chunks without retaining complete assets in memory.
 
 ## Loaded files and errors
 
@@ -78,7 +82,10 @@ Receipts can be compared with the immutable files captured by the calling State.
 
 Verify all supported paths, exact Unicode/CRLF/binary round trips, raw-byte digests,
 full-file CRUD, required digest conflicts, cooperating writers, atomic-save
-failure, path boundaries, roaming links, and legal filesystem names. Confirm
+failure, path boundaries, roaming links, and legal filesystem names. Reject
+case aliases of files and parent directories before reading or mutating them;
+verify canonical deletion receipts do not match a State that still has the file.
+Confirm list hashes large binary assets with bounded reads. Confirm
 invalid content is saved unchanged, the State watcher rejects and recovers from
 bad source regardless of writer, and active Runs can read and repair newer files
 without replacing their bound revision. Verify flat successes/errors, loaded
