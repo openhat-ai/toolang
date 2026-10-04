@@ -24,7 +24,7 @@ from toolang.base.types.message import (
     message_text,
     part_from_data,
 )
-from toolang.common.template import render_text_template
+from toolang.common.template import render_text_template, stringify_template_value
 
 from .ast import AgicDecl, CapDecl, FlowDecl, Parameter, Program, StructDecl, to_data
 from .errors import ToolangOutputError
@@ -811,28 +811,18 @@ def _render_body(
 
     if not values:
         return body, ()
-    template = body
     context: dict[str, object] = {}
     slots: list[Part] = []
     for name, value in values.items():
         type_name = types.get(name)
-        if type_name == "Part":
-            part = _require_part(value)
-            marker = _slot_marker(slots, part)
-            template = _replace_direct_value(template, name, marker)
-            context[name] = marker
-            continue
-        if type_name == "Part[]":
-            parts = _require_parts(value)
-            markers = [_slot_marker(slots, part) for part in parts]
-            template = _replace_direct_value(template, name, "".join(markers))
-            context[name] = markers
-            continue
         if name.startswith("_") and name != "_":
             context[name] = value
         else:
-            context[name] = _template_value(value, type_name=type_name)
-    return render_text_template(template, context), tuple(slots)
+            context[name] = _template_value(value, type_name=type_name, slots=slots)
+    return (
+        render_text_template(body, context, stringify=_stringify_parts),
+        tuple(slots),
+    )
 
 
 def _resolve_prompt_call(
@@ -1022,22 +1012,45 @@ def _append_part(output: list[Part], part: Part) -> None:
     output.append(part)
 
 
-def _replace_direct_value(template: str, name: str, value: str) -> str:
-    pattern = re.compile(r"{{\s*" + re.escape(name) + r"\s*}}")
-    return pattern.sub(lambda _match: value, template)
-
-
 def _slot_marker(slots: list[Part], part: Part) -> str:
     marker = f"\ue000{len(slots)}\ue001"
     slots.append(part)
     return marker
 
 
-def _template_value(value: object, *, type_name: str | None) -> object:
+class _TemplatePart(dict[str, object]):
+    """Expose a Part as data while retaining its native interpolation slot."""
+
+    def __init__(self, part: Part, slots: list[Part]) -> None:
+        super().__init__(part.to_data())
+        self.marker = _slot_marker(slots, part)
+
+
+class _TemplateParts(list[_TemplatePart]):
+    """A Percept interpolates as Parts and otherwise behaves as an array."""
+
+
+def _stringify_parts(value: Any, text: bool) -> bytes:
+    if isinstance(value, _TemplatePart):
+        return value.marker.encode()
+    if isinstance(value, _TemplateParts):
+        return "".join(part.marker for part in value).encode()
+    return stringify_template_value(value, text)
+
+
+def _template_value(
+    value: object, *, type_name: str | None, slots: list[Part]
+) -> object:
     if value is None:
         return ""
-    if isinstance(value, Struct | Array | Mapping | list | tuple):
-        return _plain_value(value)
+    if type_name == "Part":
+        return _TemplatePart(_require_part(value), slots)
+    if type_name == "Part[]":
+        return _TemplateParts(
+            _TemplatePart(part, slots) for part in _require_parts(value)
+        )
+    if isinstance(value, Part | Struct | Array | Mapping | list | tuple):
+        return _template_data(value, slots=slots)
     if type_name == "Json" and isinstance(value, str):
         return json.dumps(
             value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
@@ -1045,13 +1058,21 @@ def _template_value(value: object, *, type_name: str | None) -> object:
     return value
 
 
-def _plain_value(value: object) -> object:
+def _template_data(value: object, *, slots: list[Part]) -> object:
+    if isinstance(value, Part):
+        return _TemplatePart(value, slots)
+    if isinstance(value, Array) and value.type == "Part[]":
+        return _TemplateParts(
+            _TemplatePart(part, slots) for part in _require_parts(value)
+        )
     if isinstance(value, Array):
-        return [_plain_value(item) for item in value]
+        return [_template_data(item, slots=slots) for item in value]
     if isinstance(value, Struct | Mapping):
-        return {str(name): _plain_value(item) for name, item in value.items()}
+        return {
+            str(name): _template_data(item, slots=slots) for name, item in value.items()
+        }
     if isinstance(value, tuple | list):
-        return [_plain_value(item) for item in value]
+        return [_template_data(item, slots=slots) for item in value]
     return value
 
 

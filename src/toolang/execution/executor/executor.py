@@ -126,7 +126,7 @@ from .common import (
     _StepFailed,
     control_text,
     initial_locals,
-    bind_inline_types,
+    bind_inline_inputs,
     statement_has_call,
     value_parts,
     value_text,
@@ -1805,7 +1805,7 @@ class _Execution:
         binding = self.prepare_resources(binding, target.executable)
         runnable = target.executable
         if isinstance(runnable, AgicDecl):
-            runnable = bind_inline_types(
+            runnable = bind_inline_inputs(
                 runnable,
                 target.ref,
                 {
@@ -2958,7 +2958,7 @@ def _bind_child_input(
     """Validate child arguments and retain compatible input references."""
 
     if isinstance(runnable, AgicDecl):
-        runnable = bind_inline_types(
+        runnable = bind_inline_inputs(
             runnable,
             reference,
             {name: _runtime_local_type(local) for name, local in locals.items()},

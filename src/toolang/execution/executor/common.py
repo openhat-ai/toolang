@@ -18,6 +18,7 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
+from toolang.common.template import template_root_names
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
     AgicDecl,
@@ -42,7 +43,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.contracts import FlowTransform, operation_transform
 from toolang.lang.input import CallInput, RunnableInput
-from toolang.lang.types import Array, Value, is_generated_ref
+from toolang.lang.types import Array, Value, authored_type, is_generated_ref
 from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
@@ -151,21 +152,41 @@ class Local:
     record: RecordLocal | None = None
 
 
-def bind_inline_types(
+def bind_inline_inputs(
     agic: AgicDecl, reference: str, types: Mapping[str, str | None]
 ) -> AgicDecl:
-    """Bind inferred inline captures to their recorded runtime value types."""
+    """Bind inline captures from available locals or recorded input types."""
     if not is_generated_ref(reference):
         return agic
 
+    parameters = {parameter.name: parameter for parameter in agic.params}
+    if agic.input is not None:
+        parameters["_"] = agic.input
+    # Section fields can fall back to outer locals. Capture only names that
+    # actually exist; item-only fields must not become required arguments.
+    for message in agic.messages:
+        for name in template_root_names(message.content):
+            if (
+                name not in parameters
+                and types.get(name) is not None
+                and (name == "_" or not name.startswith("_"))
+            ):
+                parameters[name] = Parameter(name=name, span=agic.span)
+
     def bind(parameter: Parameter) -> Parameter:
         type_name = types.get(parameter.name)
-        return replace(parameter, type_name=type_name) if type_name else parameter
+        return (
+            replace(parameter, type_name=authored_type(type_name))
+            if type_name
+            else parameter
+        )
+
+    primary = parameters.pop("_", None)
 
     return replace(
         agic,
-        input=bind(agic.input) if agic.input is not None else None,
-        params=tuple(bind(parameter) for parameter in agic.params),
+        input=bind(primary) if primary is not None else None,
+        params=tuple(bind(parameter) for parameter in parameters.values()),
     )
 
 

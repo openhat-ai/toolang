@@ -40,7 +40,7 @@ from ..assembly.history import HistorySelection
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
 from ..tokens import InputEstimate, TokenCounter, text_tokens
-from .common import BoundRun, bind_inline_types
+from .common import BoundRun, bind_inline_inputs
 from .resources import (
     available_workspaces,
     workspace_declarations,
@@ -108,7 +108,7 @@ def build_agic_frame(
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
-    agic = bind_inline_types(
+    agic = bind_inline_inputs(
         agic,
         run.bindings.runnable or "",
         {

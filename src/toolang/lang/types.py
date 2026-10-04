@@ -103,6 +103,14 @@ def is_builtin_type(type_name: str) -> bool:
     return type_name in _RESERVED_STRUCT_TYPES
 
 
+def authored_type(type_name: str) -> str:
+    """Express concrete runtime part types using the language's Part vocabulary."""
+    base = type_name.split("[", 1)[0]
+    if base in {part.__name__ for part in _PART_TYPES}:
+        return "Part" + type_name[len(base) :]
+    return type_name
+
+
 @dataclass(frozen=True, slots=True)
 class RunnableRef:
     """One parsed runnable reference, including optional module and kind."""

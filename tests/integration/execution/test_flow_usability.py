@@ -14,7 +14,7 @@ import pytest
 from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.execution.events import RunBegin
-from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.message import ImagePart, Message, Part, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import ThreadPrefix
 from toolang.lang import Program
@@ -464,6 +464,142 @@ flow main():
     assert run.status == "failed"
     assert "not Number" in str(error)
     assert len(harness.adapter.invocations) == 1
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("name", ["_", "attachment"])
+@pytest.mark.parametrize("part", [TextPart("hello"), ImagePart(file_id="image-1")])
+def test_inline_captures_concrete_parts(
+    tmp_path: Path, operation: str, name: str, part: Part
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+flow main({name}: Part):
+  context = none
+  instruct = none
+  recall = none
+  {operation}: Inspect {{{{{name}}}}}.
+""",
+        responses=["done"],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                    primary=(part,) if name == "_" else None,
+                    named={name: part} if name != "_" else None,
+                )
+            )
+            assert run.status == "succeeded", (
+                harness.store.resolve_error(run.error) if run.error else None
+            )
+            messages = without_runtime_snapshots(
+                harness.adapter.invocations[0].call.messages
+            )
+            assert len(messages) == 1
+            parts = messages[0].parts
+            assert isinstance(parts[0], TextPart)
+            if isinstance(part, TextPart):
+                assert len(parts) == 1
+                assert parts[0].text.endswith("Inspect hello.")
+            else:
+                assert parts[0].text.endswith("Inspect ")
+                assert parts[1:] == (part, TextPart("."))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+def test_inline_sections_capture_outer_locals_and_prefer_item_fields(
+    tmp_path: Path, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json:
+  Seed.
+flow main():
+  let prefix = outer
+  let rows = run seed
+  {operation}: {{{{#rows}}}}{{{{prefix}}}}:{{{{name}}}};{{{{/rows}}}}
+""",
+        responses=['[{"name":"A"},{"name":"B","prefix":"inner"}]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "outer:A;inner:B;" in _texts(harness)[-1]
+
+
+def test_optional_struct_fields_do_not_resolve_to_python_methods(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+struct Result:
+  items?: Text[]
+agic make() -> Result:
+  Make.
+agic describe(result: Result):
+  {{#result.items}}wrong{{/result.items}}{{^result.items}}empty{{/result.items}}
+flow main():
+  let result = run make
+  run describe
+""",
+        responses=["{}", "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "empty" in _texts(harness)[-1]
+
+
+def test_inline_map_captures_primary_referenced_only_inside_a_section(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic ready() -> Boolean:
+  Ready.
+agic seed() -> Text[]:
+  Seed.
+flow main() -> Text[]:
+  let enabled = run ready
+  scatter using seed
+  map in 1 lane using: {{#enabled}}Value={{_}}{{/enabled}}
+""",
+        responses=["true", '["a"]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == '["done"]'
+    assert "Value=a" in _texts(harness)[-1]
+
+
+def test_inline_section_primary_field_does_not_require_outer_primary(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic seed() -> Json:
+  Seed.
+flow main():
+  let rows = run seed
+  run: {{#rows}}{{_}}{{/rows}}
+""",
+        responses=['[{"_":"inside"}]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "inside" in _texts(harness)[-1]
 
 
 def test_repeat_history_stays_fixed_across_body_statements(tmp_path: Path) -> None:

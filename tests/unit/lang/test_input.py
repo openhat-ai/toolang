@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+import json
 import pytest
 from typing import Any, cast
 from pydantic import TypeAdapter, ValidationError
@@ -317,6 +317,49 @@ def test_include_resolver_inserts_one_typed_part() -> None:
         image,
         TextPart("\nAfter"),
     )
+
+
+def test_structured_templates_can_read_values_alongside_parts() -> None:
+    part = ImagePart(file_id="image-1")
+    value = Struct("Result", {"count": 0, "attachment": part})
+    assert resolve_input_parts(
+        "Count={{result.count}}; file={{result.attachment.file_id}}.",
+        values={"result": value},
+        types={"result": "Result"},
+    ) == (TextPart("Count=0; file=image-1."),)
+
+
+def test_structured_templates_preserve_nested_parts_and_part_arrays() -> None:
+    part = ImagePart(file_id="image-1")
+    value = Struct(
+        "Result",
+        {"attachment": part, "parts": Array("Part[]", (TextPart("caption"), part))},
+    )
+    assert resolve_input_parts(
+        "{{result.attachment}}|{{result.parts}}|{{#result.parts}}{{.}}{{/result.parts}}",
+        values={"result": value},
+        types={"result": "Result"},
+    ) == (part, TextPart("|caption"), part, TextPart("|caption"), part)
+    rendered = resolve_input_parts(
+        "{{result}}", values={"result": value}, types={"result": "Result"}
+    )
+    assert len(rendered) == 1 and isinstance(rendered[0], TextPart)
+    assert json.loads(rendered[0].text) == {
+        "attachment": part.to_data(),
+        "parts": [TextPart("caption").to_data(), part.to_data()],
+    }
+
+
+def test_empty_part_arrays_remain_distinct_from_json_arrays() -> None:
+    assert resolve_input_parts(
+        "{{parts}}|{{items}}|{{result.parts}}",
+        values={
+            "parts": (),
+            "items": [],
+            "result": Struct("Result", {"parts": Array("Part[]", ())}),
+        },
+        types={"parts": "Part[]", "items": "Json", "result": "Result"},
+    ) == (TextPart("|[]|"),)
 
 
 def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:

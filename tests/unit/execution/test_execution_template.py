@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import pytest
 
 from toolang.common.errors import ToolangError
@@ -86,3 +88,49 @@ def test_render_text_template_rejects_unsupported_mustache_features(
 def test_render_text_template_rejects_callable_context_values() -> None:
     with pytest.raises(ToolangError, match="does not support callables"):
         render_text_template("{{value}}", {"value": lambda: "nope"})
+
+
+def test_template_lookup_reads_data_without_python_attributes() -> None:
+    assert (
+        render_text_template(
+            "{{record.items}}|{{text.title}}|{{items.count}}|"
+            "{{#record.items}}wrong{{/record.items}}{{^record.items}}empty{{/record.items}}",
+            {"record": {}, "text": "hello world", "items": []},
+        )
+        == "|||empty"
+    )
+    assert (
+        render_text_template(
+            "{{record.items}}/{{record.keys}}/{{record.clear}}",
+            {"record": {"items": "items", "keys": "keys", "clear": "clear"}},
+        )
+        == "items/keys/clear"
+    )
+
+
+def test_template_lookup_preserves_scope_shadowing_and_dotted_paths() -> None:
+    assert (
+        render_text_template(
+            "{{#rows}}{{prefix}}:{{value}}/{{record.value}};{{/rows}}",
+            {
+                "prefix": "outer",
+                "record": {"value": "outer"},
+                "rows": [
+                    {"value": 0, "record": {"value": False}},
+                    {"value": None, "prefix": "inner"},
+                ],
+            },
+        )
+        == "outer:0/false;inner:/outer;"
+    )
+
+
+def test_template_serializes_immutable_containers_at_every_depth() -> None:
+    value = MappingProxyType({"items": (MappingProxyType({"passed": False}),)})
+    assert (
+        render_text_template(
+            "{{value}}|{{value.items}}|{{_1.value}}",
+            {"value": value, "_1": {"value": value}},
+        )
+        == '{"items":[{"passed":false}]}|[{"passed":false}]|{"items":[{"passed":false}]}'
+    )

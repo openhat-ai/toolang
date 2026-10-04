@@ -220,11 +220,14 @@ bind their complete result once.
   complete array suffix. Map/storm preserve array-valued child results as nested
   arrays. Gather/settle may return any value type.
 - Inline agics capture their own free template references, excluding runtime
-  variables and section-local fields. Captures retain the current local's value
-  type, including Boolean, structs, arrays, and Parts; recorded input types are
-  reused when rendering the call. Authored named parameters default to `Text`;
-  `_` defaults to `Part[]`. Map/keep/drop/sort/gather/settle require `_` in the
-  child's signature. Scatter/storm permit its omission.
+  variables. References inside sections also capture existing outer locals;
+  section fields take precedence. Item-only fields do not require outer inputs.
+  This also applies to `_` referenced only inside sections. Captures retain the
+  current local's value type, including Boolean, structs, arrays, and Parts;
+  recorded input types are reused when rendering the call. Authored named
+  parameters default to `Text`; `_` defaults to `Part[]`.
+  Map/keep/drop/sort/gather/settle require `_` in the child's signature or inline
+  body. Scatter/storm permit its omission.
 - `ask` evaluates its `Content` for the human owner and returns the owner's
   canonical `Percept`, represented in the language as `Part[]`.
 - A direct `let NAME = BODY` evaluates its `Content` as one `Percept` local

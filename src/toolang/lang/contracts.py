@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
+from toolang.common.template import template_root_names
+
 from .ast import AgicDecl, FlowDecl, Parameter, StructDecl
 from .errors import ToolangValidationError
+from .types import is_generated_ref
 
 FlowTransform = Literal["item", "list", "filter", "sort", "none"]
 
@@ -113,7 +116,11 @@ def validate_operation_contract(
 
     label = operation.capitalize()
     if operation in {"map", "keep", "drop", "sort", "gather", "settle"}:
-        if runnable.input is None:
+        if runnable.input is None and not (
+            isinstance(runnable, AgicDecl)
+            and is_generated_ref(name)
+            and any("_" in template_root_names(m.content) for m in runnable.messages)
+        ):
             raise ToolangValidationError(
                 f"{label} requires primary input '_' in {name!r}", line=line
             )
