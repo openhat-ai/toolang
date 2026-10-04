@@ -2,6 +2,7 @@
 
 This document owns shared program semantics: declarations, module visibility,
 signatures/defaults, documentation binding and inherited runnable settings.
+[Semantic AST](ast.md) owns node structure, lowering and serialization.
 Source syntax and CST fields belong
 to [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md).
 Use [Agic execution](agic.md) for model/tool loops and instruction assembly,

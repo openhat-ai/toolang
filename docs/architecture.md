@@ -34,7 +34,7 @@ manager. Hosting adds the HTTP application, scheduler, and watcher lifecycles.
 
 | Package | Owns | Start reading |
 | --- | --- | --- |
-| `lang` | Grammar-backed AST, validation, formatting, typed call input | [ast.py](../src/toolang/lang/ast.py), [input.py](../src/toolang/lang/input.py) |
+| `lang` | Grammar-backed AST, validation, formatting, typed call input | [AST and lowering](ast.md), [input.py](../src/toolang/lang/input.py) |
 | `base`, `common` | Plugin protocols/value contracts; shared paths, IDs, config and helpers | [protocols/](../src/toolang/base/protocols/), [layout.py](../src/toolang/common/layout.py) |
 | `catalog` | CRUD over authored agents, caps and job files | [manager.py](../src/toolang/catalog/manager.py) |
 | `setup` | Installed resources, model readiness/routes, captured environment and defaults | [types.py](../src/toolang/setup/types.py), [watcher.py](../src/toolang/setup/watcher.py) |
@@ -210,5 +210,5 @@ matching summary and baseline, then validate links and `git diff --check`.
 Expand the search only when those paths leave an unanswered question.
 
 Use [the documentation index](index.md) for detailed guides and design context.
-`docs/plans/` and dated evaluations are historical evidence;
+`docs/plans/` records historical design context;
 [CHANGELOG.md](../CHANGELOG.md) remains the user-facing change record.

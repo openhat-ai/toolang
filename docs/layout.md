@@ -157,7 +157,7 @@ revision directories. Layer source identities contain only logical paths,
 canonical byte sizes, and content digests, so the same revisions remain usable
 when root and home are mounted at different absolute paths. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest
-paths. See [agent-state.md](./agent-state.md) for the canonical documents,
+paths. See [state.md](./state.md) for the canonical documents,
 revision calculation, validation, and publication rules.
 
 
@@ -182,6 +182,6 @@ Neither is written into authored files.
 
 [Agent layout](../src/toolang/common/layout.py) derives paths;
 [hosting](../src/toolang/up/) owns runtime/control files. See
-[State](agent-state.md) and [execution records](records.md) for revision
+[State](state.md) and [execution records](records.md) for revision
 and store contracts. [Hosting tests](../tests/integration/up/) verify placement
 and sandbox ownership.

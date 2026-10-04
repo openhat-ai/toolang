@@ -245,7 +245,7 @@ read disk, select the latest publication, refresh, wait, or switch the Run's
 State. Matching proves inclusion in the source file list, including shadowed
 inputs; it does not prove that each declaration is effective or that Setup or a
 scheduled job adopted a change. Historical manifests without raw config hashes
-treat that config as untracked. See [Agent State](agent-state.md).
+treat that config as untracked. See [Agent State](state.md).
 
 Reading after a save observes the saved source. Running code remains governed by
 Run binding and publication: the accepted flow retains its code and caller contract, while each new named

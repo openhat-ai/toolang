@@ -162,7 +162,7 @@ Materialized caps live inside immutable State layer revisions:
 Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
 Home layers live under
 `${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
-[agent-state.md](./agent-state.md) for the complete layout and revision rules.
+[state.md](./state.md) for the complete layout and revision rules.
 
 
 ## Local Cap Frontmatter

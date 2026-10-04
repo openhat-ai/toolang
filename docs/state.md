@@ -1,7 +1,8 @@
 # Agent State
 
 Agent State is the immutable runtime input derived from an agent's Programs,
-configuration, and caps. A module is a term for one named, sourced
+configuration, and caps. [Semantic AST](ast.md) owns the Program representation,
+lowering and decoding used by State. A module is a term for one named, sourced
 Program in State; it is not a separate runtime type. Agent State holds the
 complete module-name-to-Program index rather than a separate primary Program.
 It combines one root layer with one home layer. Each accepted Run keeps one

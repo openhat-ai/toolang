@@ -24,6 +24,7 @@ schemas must not acquire runtime services, watchers or stores.
 | Change | Start here | Verification anchor |
 | --- | --- | --- |
 | Syntax/CST | Upstream grammar repository; Toolang's [lang](src/toolang/lang/) consumes it | Upstream corpus and [language tests](tests/unit/lang/) |
+| Semantic AST/lowering | [AST contracts](docs/ast.md), [ast.py](src/toolang/lang/ast.py), [lower.py](src/toolang/lang/lower.py) | [Program/codec tests](tests/unit/lang/test_program.py), [static validation](tests/unit/lang/test_static_validation.py) |
 | Binding/coercion | [lower.py](src/toolang/lang/lower.py), [input.py](src/toolang/lang/input.py) | [language tests](tests/unit/lang/), [flow scenarios](tests/integration/execution/test_flow_scenarios.py) |
 | Setup/State visibility | [setup](src/toolang/setup/), [state](src/toolang/state/) | [latest binding](tests/integration/execution/test_latest_state_binding.py) |
 | Acceptance and persistence | [executor](src/toolang/execution/executor/executor.py), [store](src/toolang/execution/store.py) | [control relations](tests/integration/execution/test_control_relations.py), [schema compatibility](tests/unit/execution/test_store_schema.py) |
@@ -73,7 +74,7 @@ Documentation-only changes require implementation/example/link checks and
 | Rule | Canonical owner |
 | --- | --- |
 | Legal source forms and public CST | [tree-sitter-toolang grammar](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md), verified by `grammar.js` and corpus tests |
-| Meaning, defaults, validation and runtime behavior | Toolang source/tests and the focused owners in [the index](docs/index.md) |
+| Semantic AST, lowering, meaning, validation and runtime behavior | Toolang source/tests and the focused owners in [the index](docs/index.md) |
 | Recommended source style | Website [Authoring Conventions](https://toolang.ai/docs/toolang-conventions) |
 | Mechanical formatting | [Source commands](docs/source-commands.md#format), verified by formatter tests |
 
@@ -98,7 +99,7 @@ destination files and completed verification before removing unique guidance.
 
 Apply these checks to every current guide touched by a documentation review.
 Record the reviewed revision, findings and verification in the pull request;
-keep historical plans and dated evaluations distinct from current contracts.
+keep historical plans distinct from current contracts.
 
 | Check | Passing condition |
 | --- | --- |
@@ -120,4 +121,4 @@ Compare revisions first, then recheck affected owners and consumers; expand the
 search only for unresolved claims. Keep each detailed rule in one guide and link
 from other readers' entry points. Validate complete examples, give fragments
 minimal context, and label intentionally invalid examples or schematic notation.
-Keep dated evaluations and historical plans separate from current contracts.
+Keep historical plans separate from current contracts.
