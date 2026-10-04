@@ -1193,7 +1193,7 @@ flow research(brief: Brief) -> Text:
             assert child_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert child_run_control.payload.runnable == "flows::research::agic:echo"
-            assert "Module-Local Input" in message_text(
+            assert "Module-local input" == message_text(
                 without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
                     0
                 ].parts

@@ -272,6 +272,36 @@ def test_structured_parts_are_canonical_data_not_source_syntax() -> None:
     assert resolve_input_parts(parts) is parts
 
 
+@pytest.mark.parametrize("name", ["result", "_"])
+@pytest.mark.parametrize("type_name", ["Json", "Result"])
+def test_structured_templates_preserve_fields_sections_and_json(
+    name: str, type_name: str
+) -> None:
+    value = {
+        "passed": False,
+        "receipts": [{"key": "agent.too", "digest": "abc"}],
+        "label": "<keep & raw>",
+    }
+    if type_name == "Result":
+        value = Struct("Result", value)
+    template = (
+        "{{VALUE}}|{{VALUE.passed}}|{{VALUE.receipts}}|{{VALUE.receipts.0.key}}|"
+        "{{#VALUE.passed}}wrong{{/VALUE.passed}}"
+        "{{^VALUE.passed}}failed{{/VALUE.passed}}|"
+        "{{#VALUE.receipts}}{{key}}={{digest}}{{/VALUE.receipts}}|{{VALUE.label}}"
+    ).replace("VALUE", name)
+
+    assert resolve_input_parts(
+        template, values={name: value}, types={name: type_name}
+    ) == (
+        TextPart(
+            '{"passed":false,"receipts":[{"key":"agent.too","digest":"abc"}],'
+            '"label":"<keep & raw>"}|false|[{"key":"agent.too","digest":"abc"}]|'
+            "agent.too|failed|agent.too=abc|<keep & raw>"
+        ),
+    )
+
+
 def test_include_resolver_inserts_one_typed_part() -> None:
     image = ImagePart(file_id="image-1")
 

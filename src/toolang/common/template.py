@@ -32,6 +32,7 @@ def render_text_template(template: str, context: Mapping[str, object]) -> str:
                 escape=_identity_escape,
                 resolver=_reject_partial,
                 getter=getter,
+                stringify=_stringify,
             )
         )
     except Exception as exc:
@@ -266,6 +267,15 @@ def _validate_context(value: object, *, path: str = "context") -> None:
 
 def _identity_escape(value: Any) -> Any:
     return value
+
+
+def _stringify(value: Any, text: bool) -> bytes:
+    """Serialize values only after Mustache has resolved fields and sections."""
+    if isinstance(value, Mapping | list | tuple | bool):
+        return json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        ).encode()
+    return mstache.default_stringify(value, text)
 
 
 def _reject_partial(name: str | bytes) -> str | bytes | None:

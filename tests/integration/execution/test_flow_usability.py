@@ -6,6 +6,7 @@ Authored clauses are parsed from source through the installed grammar.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -290,6 +291,179 @@ flow main -> Text:
     assert len(harness.adapter.invocations) == 4
     assert "now=c; previous=b; older=a; entry=seed" in _texts(harness)[-1]
     assert output == "c"
+
+
+def test_until_captures_boolean_results_without_text_coercion(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic check() -> Boolean:
+  Check.
+flow main():
+  repeat 3 times:
+    let ready = run check
+    until: Ready={{ready}}.
+  run: Finished.
+""",
+        responses=["false", "false", "true", "true", "done"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "Ready=false." in _texts(harness)[1]
+    assert "Ready=true." in _texts(harness)[3]
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+def test_inline_calls_capture_structs_and_preserve_field_access(
+    tmp_path: Path, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+struct Result:
+  passed: Boolean
+  receipts: Json
+agic make() -> Result:
+  Make.
+flow main():
+  let result = run make
+  {operation}: Passed={{{{result.passed}}}}; receipts={{{{result.receipts}}}}.
+""",
+        responses=[
+            '{"passed":false,"receipts":[{"key":"agent.too","digest":"abc"}]}',
+            "done",
+        ],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert (
+        'Passed=false; receipts=[{"key":"agent.too","digest":"abc"}].'
+        in (_texts(harness)[-1])
+    )
+
+
+def test_nested_wait_preserves_receipts_and_three_round_history(tmp_path: Path) -> None:
+    receipt = {"key": "agent.too", "digest": "abc"}
+    improvement = {"instruction": "Copy exactly.", "receipts": [receipt]}
+    harness = _create(
+        tmp_path,
+        source="""
+struct Improvement:
+  instruction: Text
+  receipts: Json
+agic evaluate() -> Boolean:
+  Evaluate.
+agic improve() -> Improvement:
+  Improve.
+agic check_loaded(_: Improvement) -> Boolean:
+  Check {{_.receipts}}.
+flow wait_until_loaded(_: Improvement) -> Improvement:
+  repeat:
+    let loaded = run check_loaded
+    until: Return {{loaded}}.
+flow main() -> Improvement:
+  repeat 5 times windowing 2:
+    let passed = run evaluate
+    run improve
+    run wait_until_loaded
+    let instruction = {{_.instruction}}
+    until:
+      {{passed}}/{{_1.passed}}/{{_2.passed}}
+      {{instruction}}/{{_1.instruction}}/{{_2.instruction}}
+""",
+        responses=["true", json.dumps(improvement), "true", "true"] * 3 + ["true"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert json.loads(output) == improvement
+    texts = _texts(harness)
+    assert len(texts) == 13
+    assert all(
+        'Check [{"key":"agent.too","digest":"abc"}].' in texts[i] for i in (2, 6, 10)
+    )
+    assert "true/true/true\nCopy exactly./Copy exactly./Copy exactly." in texts[-1]
+
+
+def test_retry_restores_typed_locals_for_inline_capture(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+struct Result:
+  count: Number
+agic make() -> Result:
+  Make.
+flow main():
+  let result = run make
+  run: Count={{result.count}}.
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant('{"count":0}')),
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:main")
+            )
+            assert run.status == "failed"
+            retried = await harness.executor.retry(
+                run.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded", retried.error
+            assert len(harness.adapter.invocations) == 3
+            assert all("Count=0." in text for text in _texts(harness)[1:])
+
+    asyncio.run(scenario())
+
+
+def test_inline_mapper_preserves_structured_primary_input(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> Text[]:
+  scatter using seed
+  map in 1 lane using: Value={{_.value}}.
+""",
+        responses=['[{"value":0},{"value":2}]', "zero", "two"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert json.loads(output) == ["zero", "two"]
+    assert "Value=0." in _texts(harness)[1]
+    assert "Value=2." in _texts(harness)[2]
+
+
+def test_named_calls_keep_their_declared_input_contract(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic check() -> Boolean:
+  Check.
+agic consume(ready: Number):
+  Consume {{ready}}.
+flow main():
+  let ready = run check
+  run consume
+""",
+        responses=["true"],
+    )
+    run, _output, error = _run(harness)
+
+    assert run.status == "failed"
+    assert "not Number" in str(error)
+    assert len(harness.adapter.invocations) == 1
 
 
 def test_repeat_history_stays_fixed_across_body_statements(tmp_path: Path) -> None:

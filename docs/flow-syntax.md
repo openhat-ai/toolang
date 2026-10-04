@@ -219,8 +219,10 @@ bind their complete result once.
 - Scatter requires an array output type, including an explicit annotation's
   complete array suffix. Map/storm preserve array-valued child results as nested
   arrays. Gather/settle may return any value type.
-- Inline agics infer parameters from their own free template references, excluding
-  runtime variables and section-local fields. Named parameters default to `Text`;
+- Inline agics capture their own free template references, excluding runtime
+  variables and section-local fields. Captures retain the current local's value
+  type, including Boolean, structs, arrays, and Parts; recorded input types are
+  reused when rendering the call. Authored named parameters default to `Text`;
   `_` defaults to `Part[]`. Map/keep/drop/sort/gather/settle require `_` in the
   child's signature. Scatter/storm permit its omission.
 - `ask` evaluates its `Content` for the human owner and returns the owner's

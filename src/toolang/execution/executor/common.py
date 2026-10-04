@@ -29,6 +29,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
+    Parameter,
     SortStmt,
     RepeatStmt,
     RunStmt,
@@ -41,7 +42,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.contracts import FlowTransform, operation_transform
 from toolang.lang.input import CallInput, RunnableInput
-from toolang.lang.types import Array, Value
+from toolang.lang.types import Array, Value, is_generated_ref
 from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
@@ -148,6 +149,24 @@ class Local:
     ref: FieldRef | None = None
     type_name: str | None = None
     record: RecordLocal | None = None
+
+
+def bind_inline_types(
+    agic: AgicDecl, reference: str, types: Mapping[str, str | None]
+) -> AgicDecl:
+    """Bind inferred inline captures to their recorded runtime value types."""
+    if not is_generated_ref(reference):
+        return agic
+
+    def bind(parameter: Parameter) -> Parameter:
+        type_name = types.get(parameter.name)
+        return replace(parameter, type_name=type_name) if type_name else parameter
+
+    return replace(
+        agic,
+        input=bind(agic.input) if agic.input is not None else None,
+        params=tuple(bind(parameter) for parameter in agic.params),
+    )
 
 
 class _ExecuteCommitted(Exception):

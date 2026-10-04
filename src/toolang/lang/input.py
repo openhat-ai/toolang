@@ -1036,26 +1036,11 @@ def _slot_marker(slots: list[Part], part: Part) -> str:
 def _template_value(value: object, *, type_name: str | None) -> object:
     if value is None:
         return ""
-    if type_name == "Boolean" or isinstance(value, bool):
-        return "true" if bool(value) else "false"
-    if type_name == "Number":
-        return str(value)
-    if type_name == "Json" or (
-        type_name is not None
-        and (type_name.endswith("[]") or type_name not in {"Text", "Number", "Boolean"})
-    ):
+    if isinstance(value, Struct | Array | Mapping | list | tuple):
+        return _plain_value(value)
+    if type_name == "Json" and isinstance(value, str):
         return json.dumps(
-            _plain_value(value),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
-    if isinstance(value, Mapping | list | tuple):
-        return json.dumps(
-            _plain_value(value),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
+            value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
         )
     return value
 

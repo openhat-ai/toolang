@@ -373,6 +373,11 @@ struct ReviewResult:
 `name: Type` is required and `name?: Type` is optional. Structs may be used by
 runnable parameters and outputs.
 
+Templates retain structured values until rendering. `{{result.passed}}` reads a
+field, `{{result.receipts.0.key}}` indexes an array, and `{{result.receipts}}`
+renders compact JSON. Sections can traverse arrays and test Boolean fields
+without turning `false` into a truthy string.
+
 
 ## Agics
 
