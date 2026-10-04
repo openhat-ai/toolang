@@ -81,9 +81,10 @@ contains only the value and dimension; the enclosing local map or output
 binding supplies its name. `binding=None` leaves a result unbound.
 
 This format replaces the old source compartments, resolved compartments, HTTP
-`args` sibling, and persisted local arrays. RunStore schema 43 rejects older
-stores without modifying them. HTTP clients must send the flat format; no
-compatibility adapter or migration is provided.
+`args` sibling, and persisted local arrays. Incompatible stores are rejected
+without modification; see the [current schema](run-step-records.md#persistence).
+HTTP clients must send the flat format; no compatibility adapter or migration
+is provided.
 
 ## Input Forms
 

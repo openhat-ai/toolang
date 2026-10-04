@@ -43,8 +43,8 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 36: both
-read-only and writable opens reject every other version unchanged. This build
+process exits. Both read-only and writable store opens reject incompatible schemas unchanged;
+see the [current schema](run-step-records.md#persistence). This build
 does not migrate older stores.
 
 
@@ -102,7 +102,8 @@ protocol has no replay cursor. Disconnecting the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
-Terminal Chat first resolves a CLI-owned `ExecutionRuntime`. It attaches to a
+Terminal Chat first acquires an AgentServer reference or selects host embedding
+through [CLI server acquisition](../src/toolang/cli/common/agent_server.py). It attaches to a
 compatible running AgentServer for any materialized layout, uses embedded host
 execution when no server is active and `host` is selected, or starts a
 command-owned temporary AgentServer for a non-host sandbox. Remote execution is

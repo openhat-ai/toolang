@@ -1,7 +1,9 @@
 # Developer Documentation
 
-This directory contains the developer-facing documentation for the current
-Toolang runtime.
+This directory contains the developer-facing documentation for Toolang.
+Start with the [knowledge base](knowledge-base.md) for the verified architecture,
+concepts, feature boundaries, and source/test lookup map. It records its code
+baseline so later reviews can inspect changes instead of rescanning the repository.
 
 User-facing quickstart and guide content belongs in the separate
 `toolang-docs` site. Generated implementation reference belongs under
@@ -19,12 +21,17 @@ Use this directory for:
 - plugin and integration boundaries
 
 
-## Document Map
+## Core Concepts
 
 | Document | Scope |
 | --- | --- |
 | [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
 | [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
+
+## Language and Script Projects
+
+| Document | Scope |
+| --- | --- |
 | [program.md](./program.md) | Program declarations, runnable signatures, agics, flows, directives, and surface rules |
 | [toolang-authoring-conventions.md](./toolang-authoring-conventions.md) | Source style, natural prose, type defaults, and documentation comments |
 | [source-commands.md](./source-commands.md) | Offline formatting, AST/CST inspection, and syntax highlighting |
@@ -32,10 +39,20 @@ Use this directory for:
 | [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
 | [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |
 | [script-projects.md](./script-projects.md) | Script project discovery, configuration ownership, temporary workspace options, and attachment origins |
+
+## Layout, State and Resources
+
+| Document | Scope |
+| --- | --- |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
 | [queries.md](./queries.md) | Native TQ resource queries, JSON fields, tags, and set semantics |
+
+## Work and Execution
+
+| Document | Scope |
+| --- | --- |
 | [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
 | [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
@@ -44,17 +61,28 @@ Use this directory for:
 | [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [execution-presentation.md](./execution-presentation.md) | Shared script and chat TUI presentation language for runs, steps, streaming, and scrollback |
+
+## Integrations and Control Surfaces
+
+| Document | Scope |
+| --- | --- |
 | [models.md](./models.md) | Model integrations, including queries, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
 | [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
 | [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |
 
 
-## Implementation Targets
+## Design History and Review Guides
+
+Plans in [plans/](plans/), drafts, and the refactor target describe decisions or
+proposals at a point in time. Their presence does not establish implementation
+status; check the knowledge base and linked code before treating them as current.
 
 | Document | Scope |
 | --- | --- |
-| [refactor-target.md](./refactor-target.md) | Target package structure, core classes, dependency direction, CLI split, and migration order |
+| [refactor-target.md](./refactor-target.md) | Historical target package structure and migration context |
+| [package-audit.md](./package-audit.md) | Package review workflow |
+| [package-testing.md](./package-testing.md) | Test organization and verification guidance |
 
 
 ## Generated Reference

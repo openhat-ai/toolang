@@ -1548,8 +1548,8 @@ the Part; signatures can also occur on normal text and tool-call Parts. Signatur
 fragments are not separate events. Deltas are live only; completed Parts are
 durable and available through existing output/inspection endpoints.
 
-The Part format requires execution-store schema **49**. Opening an incompatible
-store fails without modifying it; no migration or reset is performed. See the
+Opening a store incompatible with the [current schema](run-step-records.md#persistence)
+fails without modifying it; no migration or reset is performed. See the
 [model adapter contract](plugins.md#model-adapter) for the required indexed
 stream interface. Human output continues to omit reasoning and native fields.
 
@@ -1561,8 +1561,8 @@ events belonging to that thread.
 
 ## Hook Endpoints
 
-- `POST /hook/runs`
-- `GET|POST|PUT|PATCH|DELETE /hook/{binding_name}`
-
-Hook endpoints queue runs or channel deliveries. They do not execute work
-synchronously.
+The current application does not register `/hook/runs` or `/hook/{binding_name}`.
+Use the Run endpoints above for execution. Channel plugins are available as
+integrations, but the current server does not assemble a channel polling loop.
+See [application assembly](../src/toolang/api/app.py) and
+[server lifecycle](../src/toolang/up/server.py).

@@ -149,9 +149,9 @@ matching assistant history. Before propagating graceful failure/cancellation,
 flush buffered readable reasoning and clear native fields on incomplete units.
 Call-level continuation must not accumulate per-Part reasoning or signatures.
 
-This contract uses execution-store schema **49**. Incompatible stores are rejected
-before decoding or writing; there is no automatic migration or reset. External
-adapters must adopt the indexed stream contract alongside this data-format change.
+Incompatible execution stores are rejected before decoding or writing; there
+is no automatic migration or reset. See the [current schema](run-step-records.md#persistence).
+External adapters must implement the indexed stream contract described above.
 
 Adapters own one protocol shape and its optional default endpoint. They do not
 discover models, match providers, calculate availability, or own pricing.

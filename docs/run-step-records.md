@@ -47,15 +47,14 @@ Ref type and serialize to canonical text.
 id
 origin
 peer
-created_by
-head
 created_at
 updated_at
+horizon
 ```
 
-`created_by` identifies the successful create or fork Control at index zero.
-`head` identifies the latest successful thread Control and supports optimistic
-concurrency for rewind and fork operations.
+`horizon` references the thread's current compaction output. Caller-facing `ThreadInfo` adds
+`created_by` and `head` projections from thread controls; they are not fields of
+`ThreadRecord`. The projected head supports optimistic fork/rewind checks.
 
 ### ControlRecord
 
@@ -63,6 +62,7 @@ concurrency for rewind and fork operations.
 id
 kind
 payload
+triggered_by
 request
 status
 timing
@@ -79,7 +79,7 @@ for queries.
 Current kinds are:
 
 ```text
-run | rerun | retry | execute | steer | cancel
+run | cwd | recall | retry | compact | execute | steer | cancel
 create | fork | rewind
 ```
 
@@ -93,8 +93,8 @@ text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore schema 43 accepts only this format. Older stores are rejected before
-mutation and remain intact for their matching runtime. There is no migration.
+RunStore accepts only the [current format](#persistence). Older stores are rejected
+before mutation and remain intact for their matching runtime. There is no migration.
 Execution-time locals remain distinct from call input. Their names come from
 the enclosing local table. A durable `Local` contains `value` and `dim`; an
 `Output` contains that Local in `local` and a `binding: str | None`. `"_"` is
@@ -150,6 +150,8 @@ input
 given
 state
 output
+preceded_by
+aborted_by
 occur
 noted
 status
@@ -163,6 +165,8 @@ finished_at
 `state` identifies the immutable State Control used for the Step. `given`
 contains facts known at `StepBegin`; `noted` contains kind-specific facts
 committed at `StepEnd`. Neither repeats input, output, status, or error.
+`preceded_by` records adopted controls; `aborted_by` identifies an interruption
+control. A Control's `triggered_by` links it to the Step that caused it.
 
 Model `given` data contains normalized-call references. Large instructions,
 messages, and toolsets are content-addressed; provider request bodies and
@@ -231,6 +235,7 @@ scope, target, and index. Record selection still uses the canonical ID.
 All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-The current RunStore schema is version 36. Every older or newer version is
-rejected before reading or writing. There is no migration or legacy reference
+The current RunStore schema is version 50, defined in
+[execution/store.py](../src/toolang/execution/store.py). Every older or newer
+version is rejected before reading or writing. There is no migration or legacy reference
 parser at this boundary, and incompatible stores remain unchanged.

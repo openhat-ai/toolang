@@ -102,7 +102,8 @@ The materialized root and home remain authoritative in every environment.
 
 Both `serve` and `start` launch the same AgentServer entrypoint. `serve` waits for
 the hosted workload and releases it on exit; `start` returns after readiness.
-One-shot scripts and the chat TUI continue to use the execution core directly.
+Scripts and the chat TUI select embedded host execution or a compatible hosted
+runtime through the local/remote run-client boundary.
 
 
 ## Caps
@@ -133,7 +134,8 @@ for every agic by itself.
 
 ## Runnable
 
-A runnable is a named program entrypoint. Toolang has two runnable kinds:
+A runnable is a program entrypoint, named explicitly or bound by State from an
+unnamed declaration. Toolang has two runnable kinds:
 
 - `agic`: a dynamic model/tool loop
 - `flow`: an ordered set of static statements
@@ -244,6 +246,7 @@ A step is one execution unit inside one run.
 
 Current step kinds are:
 
+- `exec`
 - `run`
 - `agent`
 - `human`
@@ -258,16 +261,16 @@ Steps record execution truth. They do not define transport behavior.
 
 ## Local
 
-A local is one runtime value inside a run. It contains a value and one shape:
+A local is one value inside a run. The executor's internal `Local` carries a
+flow shape (`none | item | list`), type information, and optional provenance.
+The durable `execution.types.Local` instead contains a typed value or reference
+and a dimension: `dim=0` treats the complete value as one item; `dim=1` iterates
+an array as a collection. An array-valued item can therefore have `dim=0`.
 
-```text
-none | item | list
-```
-
-`_` is the primary local. Run input initializes it, ordinary flow statements
-replace it, and run output reads it. Named parameters and `let` bindings use
-other local names. Durable input and output refs are persistence metadata, not
-part of a local.
+`_` is the primary local. Run input initializes it, ordinary bound flow
+statements replace it, and run output reads it. Named parameters and `let`
+bindings use other local names. `Output` pairs a durable Local with its binding;
+`None` leaves the result unbound. See [run-step-records.md](run-step-records.md).
 
 
 ## Content Evaluation And Coercion
@@ -278,8 +281,8 @@ Toolang uses six operations at runnable boundaries:
 - runnable-input parsing produces `CallInput[str]`
 - setting and runnable resolution materialize one `RunRequest`, then one
   immutable `RunSpec` containing a resolved `RunnableInput`
-- content evaluation produces one ordered canonical `Percept`
-- input coercion converts that percept to the runnable's declared primary type
+- content evaluation produces ordered canonical `Part` values
+- input coercion converts those parts to the runnable's declared primary type
 - output coercion converts the runnable's final value to its declared output
   type
 
@@ -304,24 +307,21 @@ Each message has:
 - one role
 - ordered `parts`
 
-Toolang separates authored runnable content from message-only protocol parts:
+The canonical `Part` union includes:
 
 ```text
-PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
-Percept     = PerceptPart[]
-MessagePart = PerceptPart | ToolCallPart | ToolResultPart
-Message     = { role: MessageRole, parts: MessagePart[] }
+TextPart | ReasoningPart | ImagePart | AudioPart | DocumentPart
+         | ToolCallPart | ToolResultPart
+Message = { role: MessageRole, parts: Part[] }
 ```
 
-At the language boundary, `Part` maps to one `PerceptPart` and `Part[]` maps to
-one `Percept`. The `lang` AST keeps those concise source type names; other
-packages use `PerceptPart` and `Percept`. Messages use ordered `MessagePart`
-values so model and tool interaction can add tool calls and results. `Message`
-and `MessagePart` are not Toolang language value types.
-
-User messages contain only `PerceptPart` values. Assistant messages may
-additionally contain `ToolCallPart` values, and tool messages contain only
-`ToolResultPart` values.
+User messages accept text, image, audio, and document parts. Assistant messages
+also accept reasoning and tool calls. Tool messages require tool results.
+The language uses `Part` and typed arrays such as `Part[]`; `Message` is a model
+protocol container, not a language value type. Concrete parts, typed arrays and
+structs retain their types through runtime values and persistence. See
+[message types](../src/toolang/base/types/message.py) and
+[language values](../src/toolang/lang/types.py).
 
 
 ## Relationships

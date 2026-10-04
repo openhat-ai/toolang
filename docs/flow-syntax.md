@@ -94,6 +94,11 @@ Flow normally.
 
 ## Statements
 
+`seek` and `ask` are parsed and recorded as agent/human steps, but their current
+handlers fail with a missing execution-bridge error. They do not yet perform
+agent delegation or collect human input. See the [seek handler](../src/toolang/execution/executor/stmts/seek.py)
+and [ask handler](../src/toolang/execution/executor/stmts/ask.py).
+
 ```text
 # Produce one item
 run RUNNABLE
