@@ -6,6 +6,7 @@ Authored clauses are parsed from source through the installed grammar.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ import pytest
 from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.execution.events import RunBegin
-from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.message import ImagePart, Message, Part, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import ThreadPrefix
 from toolang.lang import Program
@@ -292,6 +293,315 @@ flow main -> Text:
     assert output == "c"
 
 
+def test_until_captures_boolean_results_without_text_coercion(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic check() -> Boolean:
+  Check.
+flow main():
+  repeat 3 times:
+    let ready = run check
+    until: Ready={{ready}}.
+  run: Finished.
+""",
+        responses=["false", "false", "true", "true", "done"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "Ready=false." in _texts(harness)[1]
+    assert "Ready=true." in _texts(harness)[3]
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+def test_inline_calls_capture_structs_and_preserve_field_access(
+    tmp_path: Path, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+struct Result:
+  passed: Boolean
+  receipts: Json
+agic make() -> Result:
+  Make.
+flow main():
+  let result = run make
+  {operation}: Passed={{{{result.passed}}}}; receipts={{{{result.receipts}}}}.
+""",
+        responses=[
+            '{"passed":false,"receipts":[{"key":"agent.too","digest":"abc"}]}',
+            "done",
+        ],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert (
+        'Passed=false; receipts=[{"key":"agent.too","digest":"abc"}].'
+        in (_texts(harness)[-1])
+    )
+
+
+def test_nested_wait_preserves_receipts_and_three_round_history(tmp_path: Path) -> None:
+    receipt = {"key": "agent.too", "digest": "abc"}
+    improvement = {"instruction": "Copy exactly.", "receipts": [receipt]}
+    harness = _create(
+        tmp_path,
+        source="""
+struct Improvement:
+  instruction: Text
+  receipts: Json
+agic evaluate() -> Boolean:
+  Evaluate.
+agic improve() -> Improvement:
+  Improve.
+agic check_loaded(_: Improvement) -> Boolean:
+  Check {{_.receipts}}.
+flow wait_until_loaded(_: Improvement) -> Improvement:
+  repeat:
+    let loaded = run check_loaded
+    until: Return {{loaded}}.
+flow main() -> Improvement:
+  repeat 5 times windowing 2:
+    let passed = run evaluate
+    run improve
+    run wait_until_loaded
+    let instruction = {{_.instruction}}
+    until:
+      {{passed}}/{{_1.passed}}/{{_2.passed}}
+      {{instruction}}/{{_1.instruction}}/{{_2.instruction}}
+""",
+        responses=["true", json.dumps(improvement), "true", "true"] * 3 + ["true"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert json.loads(output) == improvement
+    texts = _texts(harness)
+    assert len(texts) == 13
+    assert all(
+        'Check [{"key":"agent.too","digest":"abc"}].' in texts[i] for i in (2, 6, 10)
+    )
+    assert "true/true/true\nCopy exactly./Copy exactly./Copy exactly." in texts[-1]
+
+
+def test_retry_restores_typed_locals_for_inline_capture(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+struct Result:
+  count: Number
+agic make() -> Result:
+  Make.
+flow main():
+  let result = run make
+  run: Count={{result.count}}.
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant('{"count":0}')),
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:main")
+            )
+            assert run.status == "failed"
+            retried = await harness.executor.retry(
+                run.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded", retried.error
+            assert len(harness.adapter.invocations) == 3
+            assert all("Count=0." in text for text in _texts(harness)[1:])
+
+    asyncio.run(scenario())
+
+
+def test_inline_mapper_preserves_structured_primary_input(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> Text[]:
+  scatter using seed
+  map in 1 lane using: Value={{_.value}}.
+""",
+        responses=['[{"value":0},{"value":2}]', "zero", "two"],
+    )
+    run, output, error = _run(harness)
+
+    assert run.status == "succeeded", error
+    assert json.loads(output) == ["zero", "two"]
+    assert "Value=0." in _texts(harness)[1]
+    assert "Value=2." in _texts(harness)[2]
+
+
+def test_named_calls_keep_their_declared_input_contract(tmp_path: Path) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic check() -> Boolean:
+  Check.
+agic consume(ready: Number):
+  Consume {{ready}}.
+flow main():
+  let ready = run check
+  run consume
+""",
+        responses=["true"],
+    )
+    run, _output, error = _run(harness)
+
+    assert run.status == "failed"
+    assert "not Number" in str(error)
+    assert len(harness.adapter.invocations) == 1
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("name", ["_", "attachment"])
+@pytest.mark.parametrize("part", [TextPart("hello"), ImagePart(file_id="image-1")])
+def test_inline_captures_concrete_parts(
+    tmp_path: Path, operation: str, name: str, part: Part
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+flow main({name}: Part):
+  context = none
+  instruct = none
+  recall = none
+  {operation}: Inspect {{{{{name}}}}}.
+""",
+        responses=["done"],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                    primary=(part,) if name == "_" else None,
+                    named={name: part} if name != "_" else None,
+                )
+            )
+            assert run.status == "succeeded", (
+                harness.store.resolve_error(run.error) if run.error else None
+            )
+            messages = without_runtime_snapshots(
+                harness.adapter.invocations[0].call.messages
+            )
+            assert len(messages) == 1
+            parts = messages[0].parts
+            assert isinstance(parts[0], TextPart)
+            if isinstance(part, TextPart):
+                assert len(parts) == 1
+                assert parts[0].text.endswith("Inspect hello.")
+            else:
+                assert parts[0].text.endswith("Inspect ")
+                assert parts[1:] == (part, TextPart("."))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+def test_inline_sections_capture_outer_locals_and_prefer_item_fields(
+    tmp_path: Path, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json:
+  Seed.
+flow main():
+  let prefix = outer
+  let rows = run seed
+  {operation}: {{{{#rows}}}}{{{{prefix}}}}:{{{{name}}}};{{{{/rows}}}}
+""",
+        responses=['[{"name":"A"},{"name":"B","prefix":"inner"}]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "outer:A;inner:B;" in _texts(harness)[-1]
+
+
+def test_optional_struct_fields_do_not_resolve_to_python_methods(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+struct Result:
+  items?: Text[]
+agic make() -> Result:
+  Make.
+agic describe(result: Result):
+  {{#result.items}}wrong{{/result.items}}{{^result.items}}empty{{/result.items}}
+flow main():
+  let result = run make
+  run describe
+""",
+        responses=["{}", "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "empty" in _texts(harness)[-1]
+
+
+def test_inline_map_captures_primary_referenced_only_inside_a_section(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic ready() -> Boolean:
+  Ready.
+agic seed() -> Text[]:
+  Seed.
+flow main() -> Text[]:
+  let enabled = run ready
+  scatter using seed
+  map in 1 lane using: {{#enabled}}Value={{_}}{{/enabled}}
+""",
+        responses=["true", '["a"]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == '["done"]'
+    assert "Value=a" in _texts(harness)[-1]
+
+
+def test_inline_section_primary_field_does_not_require_outer_primary(
+    tmp_path: Path,
+) -> None:
+    harness = _create(
+        tmp_path,
+        source="""
+agic seed() -> Json:
+  Seed.
+flow main():
+  let rows = run seed
+  run: {{#rows}}{{_}}{{/rows}}
+""",
+        responses=['[{"_":"inside"}]', "done"],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "inside" in _texts(harness)[-1]
+
+
 def test_repeat_history_stays_fixed_across_body_statements(tmp_path: Path) -> None:
     harness = _create(
         tmp_path,
@@ -555,3 +865,148 @@ flow main():
     assert run.status == "succeeded", error
     assert output == "seed"
     assert len(harness.adapter.invocations) == 1
+
+
+@pytest.mark.parametrize("value", ["hello", "", "false", "null", "123"])
+@pytest.mark.parametrize(
+    "operation, output_type, response",
+    [
+        ("map in 1 lane using", "Text[]", "done"),
+        ("keep in 1 lane if", "Json[]", "true"),
+        ("drop in 1 lane if", "Json[]", "false"),
+        ("sort ascending by", "Json[]", "1"),
+    ],
+)
+def test_inline_collection_calls_preserve_json_strings(
+    tmp_path: Path, value: str, operation: str, output_type: str, response: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> {output_type}:
+  scatter using seed
+  {operation}: {{{{#_}}}}nonempty{{{{/_}}}}{{{{^_}}}}empty{{{{/_}}}}|{{{{_}}}}
+""",
+        responses=[json.dumps([value]), response],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert json.loads(output) == (["done"] if operation.startswith("map") else [value])
+    expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+    assert expected in _texts(harness)[-1]
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("value", ["hello", "", "false", "null", "123"])
+def test_named_calls_and_flow_outputs_preserve_json_strings(
+    tmp_path: Path, value: str, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json:
+  Seed.
+agic echo(value: Json) -> Json:
+  {{{{#value}}}}nonempty{{{{/value}}}}{{{{^value}}}}empty{{{{/value}}}}|{{{{value}}}}
+flow main() -> Json:
+  let value = run seed
+  {operation} echo
+""",
+        responses=[json.dumps(value), json.dumps(value)],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                )
+            )
+            assert run.status == "succeeded", run.error
+            assert run.output is not None
+            assert harness.store.resolve_output(run.output).local.value == value
+            expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+            assert expected in _texts(harness)[-1]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("declaration", ["", "struct Result:\n  label: Text\n"])
+def test_inline_capture_preserves_module_local_structs(
+    tmp_path: Path, operation: str, declaration: str
+) -> None:
+    from toolang.state.prepare import prepare_agent_state
+
+    harness = _create(tmp_path, source="", responses=['{"count":7}', "done"])
+    home = harness.setup.layout.home
+    (home / "flows").mkdir(parents=True, exist_ok=True)
+    (home / "agent.too").write_text(
+        f"""
+{declaration}
+flow main():
+  let result = run research
+  {operation}: Count={{{{result.count}}}}.
+""",
+        encoding="utf-8",
+    )
+    (home / "flows" / "research.too").write_text(
+        """
+struct Result:
+  count: Number
+agic seed() -> Result:
+  Seed.
+flow research() -> Result:
+  run seed
+""",
+        encoding="utf-8",
+    )
+    harness.state = prepare_agent_state(harness.setup.layout)
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "Count=7." in _texts(harness)[-1]
+
+
+@pytest.mark.parametrize("value", ["hello", "false", ""])
+def test_retry_restores_json_string_collection_captures(
+    tmp_path: Path, value: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> Text[]:
+  scatter using seed
+  map in 1 lane using: {{#_}}nonempty{{/_}}{{^_}}empty{{/_}}|{{_}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant(json.dumps([value]))),
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                )
+            )
+            assert run.status == "failed"
+            retried = await harness.executor.retry(
+                run.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded", retried.error
+            assert len(harness.adapter.invocations) == 3
+            expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+            assert all(expected in text for text in _texts(harness)[1:])
+            assert harness.store.run_output_text(run_id=retried.id) == '["done"]'
+
+    asyncio.run(scenario())

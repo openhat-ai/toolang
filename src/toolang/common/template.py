@@ -16,9 +16,15 @@ _TAG_NAME_RE = re.compile(rf"^(?:{_TAG_NAME_PATTERN})$")
 _REFERENCE_TAG_RE = re.compile(
     rf"{{{{\s*(?P<sigil>[#^/]?)\s*(?P<name>{_TAG_NAME_PATTERN})\s*}}}}"
 )
+_MISSING = object()
 
 
-def render_text_template(template: str, context: Mapping[str, object]) -> str:
+def render_text_template(
+    template: str,
+    context: Mapping[str, object],
+    *,
+    stringify: Callable[[Any, bool], bytes] | None = None,
+) -> str:
     """Render one restricted execution template."""
 
     validate_template(template)
@@ -32,6 +38,7 @@ def render_text_template(template: str, context: Mapping[str, object]) -> str:
                 escape=_identity_escape,
                 resolver=_reject_partial,
                 getter=getter,
+                stringify=stringify or stringify_template_value,
             )
         )
     except Exception as exc:
@@ -162,7 +169,14 @@ def _runtime_template(
     ) -> Any:
         alias = key.decode() if isinstance(key, bytes) else key
         if alias not in aliases:
-            return mstache.default_getter(scope, scopes, key, default)
+            if alias == ".":
+                return scope
+            fields = alias.split(".")
+            for candidate in (scope, *reversed(scopes)):
+                value = _lookup_data(candidate, fields)
+                if value is not _MISSING:
+                    return value
+            return default
         name, guard = aliases[alias]
         root, *path = name.split(".")
         value = context.get(root)
@@ -170,25 +184,31 @@ def _runtime_template(
             if guard:
                 return False
             raise ToolangError(f"iteration history frame is not available: {root}")
-        for field in path:
-            if isinstance(value, Mapping) and field in value:
-                value = cast(Mapping[str, object], value)[field]
-            elif (
-                isinstance(value, Sequence)
-                and not isinstance(value, str)
-                and field.isdigit()
-                and int(field) < len(value)
-            ):
-                value = value[int(field)]
-            else:
-                raise ToolangError(f"runtime field is missing: {name}")
+        value = _lookup_data(value, path)
+        if value is _MISSING:
+            raise ToolangError(f"runtime field is missing: {name}")
         if guard:
             return value if value else True
-        if isinstance(value, Mapping | list | tuple | bool):
-            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         return value
 
     return template, getter
+
+
+def _lookup_data(value: object, fields: Sequence[str]) -> object:
+    """Read data keys and array indexes without invoking Python attributes."""
+    for field in fields:
+        if isinstance(value, Mapping) and field in value:
+            value = cast(Mapping[str, object], value)[field]
+        elif (
+            isinstance(value, Sequence)
+            and not isinstance(value, str)
+            and field.isdigit()
+            and int(field) < len(value)
+        ):
+            value = value[int(field)]
+        else:
+            return _MISSING
+    return value
 
 
 def validate_template(template: str) -> None:
@@ -266,6 +286,27 @@ def _validate_context(value: object, *, path: str = "context") -> None:
 
 def _identity_escape(value: Any) -> Any:
     return value
+
+
+def stringify_template_value(value: Any, text: bool) -> bytes:
+    """Serialize values only after Mustache has resolved fields and sections."""
+    if isinstance(value, Mapping | Sequence | bool) and not isinstance(value, str):
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+            default=_json_container,
+        ).encode()
+    return mstache.default_stringify(value, text)
+
+
+def _json_container(value: object) -> object:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, Sequence):
+        return list(value)
+    raise TypeError(f"unsupported template JSON value: {type(value).__name__}")
 
 
 def _reject_partial(name: str | bytes) -> str | bytes | None:

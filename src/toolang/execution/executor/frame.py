@@ -40,7 +40,7 @@ from ..assembly.history import HistorySelection
 from ..assembly import prompting
 from ..recall import recall_sources, history_variables
 from ..tokens import InputEstimate, TokenCounter, text_tokens
-from .common import BoundRun
+from .common import BoundRun, bind_inline_inputs
 from .resources import (
     available_workspaces,
     workspace_declarations,
@@ -55,6 +55,7 @@ from ..runnables import (
     resolve_agic_routes,
 )
 from ..records import RecallControlPayload
+from ..types import TypedRef, value_type
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -107,6 +108,14 @@ def build_agic_frame(
 ) -> _AgicFrame:
     """Resolve the model-call resources and delegate prompt rendering."""
 
+    agic = bind_inline_inputs(
+        agic,
+        run.bindings.runnable or "",
+        {
+            name: value.type if isinstance(value, TypedRef) else value_type(value)
+            for name, value in run.control_input.items()
+        },
+    )
     name = agic.name
     if name is None:
         if run.bindings.runnable is None:

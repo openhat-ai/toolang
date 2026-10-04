@@ -44,9 +44,10 @@ from toolang.lang.input import (
     PromptInvocation,
     RunnableInput,
     CallInput,
+    bind_runnable_input,
     coerce_output,
     decode_runnable_input,
-    resolve_runnable_input,
+    validate_runnable_arguments,
     validate_value,
 )
 from toolang.lang.includes import resolve_file_include
@@ -83,6 +84,7 @@ from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ModelAccounting,
     value_for_type,
+    value_type,
     ControlTiming,
     AgentResources,
     ControlRef,
@@ -125,6 +127,7 @@ from .common import (
     _StepFailed,
     control_text,
     initial_locals,
+    bind_inline_inputs,
     statement_has_call,
     value_parts,
     value_text,
@@ -1598,6 +1601,7 @@ class _Execution:
         _bind_child_input(
             runnable if include_primary else replace(runnable, input=None),
             locals,
+            reference=name,
             structs={
                 item.name: item for item in state_program(state, target.module).structs
             },
@@ -1748,6 +1752,7 @@ class _Execution:
         input, provenance = _bind_child_input(
             target.executable,
             locals,
+            reference=target.ref,
             structs={
                 item.name: item for item in state_program(state, target.module).structs
             },
@@ -1799,7 +1804,19 @@ class _Execution:
             ),
         )
         binding = self.prepare_resources(binding, target.executable)
-        return binding, _execute_locals(input, target.executable, control_input)
+        runnable = target.executable
+        if isinstance(runnable, AgicDecl):
+            runnable = bind_inline_inputs(
+                runnable,
+                target.ref,
+                {
+                    name: value.type
+                    if isinstance(value, TypedRef)
+                    else value_type(value)
+                    for name, value in control_input.items()
+                },
+            )
+        return binding, _execute_locals(input, runnable, control_input)
 
     def commit_execute(
         self,
@@ -2526,10 +2543,16 @@ class _Execution:
             _bind_child_input(
                 replace(declaration, input=None) if select_source else declaration,
                 locals,
+                reference=runnable,
                 structs=structs,
             )
         for index, value in enumerate(inputs):
-            _bind_child_input(declaration, child_locals(index, value), structs=structs)
+            _bind_child_input(
+                declaration,
+                child_locals(index, value),
+                reference=runnable,
+                structs=structs,
+            )
 
         async def execute(index: int, value: Any) -> Local:
             lane = await available_lanes.get()
@@ -2897,7 +2920,9 @@ def _child_binding(
     state_ref: ControlRef,
 ) -> BoundRun:
     structs = {item.name: item for item in state_program(state, module).structs}
-    input, control_input = _bind_child_input(runnable, locals, structs=structs)
+    input, control_input = _bind_child_input(
+        runnable, locals, reference=effective_name, structs=structs
+    )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
@@ -2928,10 +2953,17 @@ def _bind_child_input(
     runnable: AgicDecl | FlowDecl,
     locals: Mapping[str, Local],
     *,
+    reference: str,
     structs: Mapping[str, StructDecl],
 ) -> tuple[RunnableInput, CallInput[Value | TypedRef]]:
     """Validate child arguments and retain compatible input references."""
 
+    if isinstance(runnable, AgicDecl):
+        runnable = bind_inline_inputs(
+            runnable,
+            reference,
+            {name: _runtime_local_type(local) for name, local in locals.items()},
+        )
     parameters = {"_": runnable.input} if runnable.input is not None else {}
     parameters.update((parameter.name, parameter) for parameter in runnable.params)
     source_locals = {
@@ -2939,14 +2971,22 @@ def _bind_child_input(
         for name in parameters
         if name in locals and locals[name].shape != "none"
     }
-    input = resolve_runnable_input(
-        runnable,
-        {
-            name: _argument_value(local, parameters[name])
-            for name, local in source_locals.items()
-        },
-        structs=structs,
-    )
+    if isinstance(runnable, AgicDecl) and is_generated_ref(reference):
+        # Captures already passed their producing boundary. Revalidating them
+        # against this module can reinterpret Json strings or foreign structs.
+        input = CallInput(
+            {name: cast(Value, local.value) for name, local in source_locals.items()}
+        )
+        validate_runnable_arguments(runnable, input)
+    else:
+        input = bind_runnable_input(
+            runnable,
+            {
+                name: _argument_value(local, parameters[name])
+                for name, local in source_locals.items()
+            },
+            structs=structs,
+        )
     control_input = CallInput(
         {
             name: _child_control_value(

@@ -373,6 +373,18 @@ struct ReviewResult:
 `name: Type` is required and `name?: Type` is optional. Structs may be used by
 runnable parameters and outputs.
 
+Templates retain structured values until rendering. `{{result.passed}}` reads a
+field, `{{result.receipts.0.key}}` indexes an array, and `{{result.receipts}}`
+renders compact JSON. Sections can traverse arrays and test Boolean fields
+without turning `false` into a truthy string. Lookup reads data keys and array
+indexes, never Python attributes or methods. Selected `Part` and `Part[]` values
+retain their native message parts, including when nested in a struct. Rendering
+a whole struct or ordinary array as JSON represents contained Parts as data.
+Sections test native values before output formatting, including empty `Json`
+strings. Direct interpolation of a `Json` string retains JSON quoting. Literal
+Unicode text remains text even when it resembles an internal Part marker,
+including across interpolations and prompt expansion.
+
 
 ## Agics
 
