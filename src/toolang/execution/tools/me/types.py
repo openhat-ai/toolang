@@ -9,3 +9,4 @@ from toolang.common.layout import AgentLayout
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MeToolContext(ToolContext):
     layout: AgentLayout
+    run_program_digest: str | None = None

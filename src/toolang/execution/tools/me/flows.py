@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import validate_home_programs
 from toolang.state.source import (
@@ -18,7 +18,7 @@ from toolang.state.source import (
 )
 from toolang.state.state import flow_module_name
 
-from .storage import UnsafeAuthoringPathError, require_regular_file
+from .storage import UnsafeAuthoringPathError, program_write_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +51,7 @@ class AuthoredFlows:
 
     @property
     def lock_path(self) -> Path:
-        return self.layout.home / ".authored-flows.lock"
+        return file_lock_path(self.directory)
 
     def list(self) -> tuple[AuthoredFlow, ...]:
         with self._lock():
@@ -201,50 +201,50 @@ class AuthoredFlows:
             )
 
     def _lock(self) -> AbstractContextManager[None]:
-        require_regular_file(self.lock_path, "flow lock")
-        return file_write_lock(self.lock_path)
+        return program_write_lock(self.layout.home)
 
     def _validate_candidate(self, key: str, encoded: bytes) -> None:
-        self._validate_source_storage()
-        snapshot = read_home_program_source(self.layout.root, self.layout.name)
-        relative = self.path(key).relative_to(self.layout.root).as_posix()
-        candidate = SourceFile(
-            path=self.path(key),
-            relative_path=relative,
-            category="program",
-            origin="agent",
-            content=encoded,
-            digest=sha256(encoded).hexdigest(),
-            size=len(encoded),
-        )
-        files = tuple(
-            sorted(
-                (
-                    *(
-                        item
-                        for item in snapshot.files
-                        if item.relative_path != relative
-                    ),
-                    candidate,
-                ),
-                key=lambda item: item.relative_path,
-            )
-        )
-        validate_home_programs(
-            SourceSnapshot(
-                toolang_root=snapshot.toolang_root,
-                agent_name=snapshot.agent_name,
-                files=files,
-            )
-        )
+        self.validate_source_storage()
+        validate_program_candidate(self.layout, self.path(key), encoded)
 
-    def _validate_source_storage(self) -> None:
+    def validate_source_storage(self) -> None:
         directory = self._checked_directory(create=False)
         if directory is None:
             return
         for path in directory.iterdir():
             if path.suffix == ".too":
                 self._require_regular(path)
+
+
+def validate_program_candidate(layout: AgentLayout, path: Path, encoded: bytes) -> None:
+    """Validate a source replacement against all current home program modules."""
+    snapshot = read_home_program_source(layout.root, layout.name)
+    relative = path.relative_to(layout.root).as_posix()
+    candidate = SourceFile(
+        path=path,
+        relative_path=relative,
+        category="program",
+        origin="agent",
+        content=encoded,
+        digest=sha256(encoded).hexdigest(),
+        size=len(encoded),
+    )
+    files = tuple(
+        sorted(
+            (
+                *(item for item in snapshot.files if item.relative_path != relative),
+                candidate,
+            ),
+            key=lambda item: item.relative_path,
+        )
+    )
+    validate_home_programs(
+        SourceSnapshot(
+            toolang_root=snapshot.toolang_root,
+            agent_name=snapshot.agent_name,
+            files=files,
+        )
+    )
 
 
 def _check_digest(

@@ -982,7 +982,7 @@ def test_runtime_compact_resolves_its_boundary_at_admission(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("recent,keep_middle", [("1%", False), ("50%", True)])
-@pytest.mark.parametrize("summary,target", [(400, 400), ("2%", 200)])
+@pytest.mark.parametrize("summary,target", [(400, 400), ("2%", 240)])
 def test_compact_config_controls_summary_and_recent_whole_roots(
     tmp_path, recent, keep_middle, summary, target
 ):
@@ -1000,7 +1000,7 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
         async with harness:
             thread, latest = await seed(harness)
             roots = harness.store.list_thread_runs_chronological(thread_id=thread)
-            constrain(harness, context=10000)
+            constrain(harness, context=12000)
             harness.setup = replace(
                 harness.setup,
                 compact=resolve_compact_config(
@@ -1561,7 +1561,7 @@ def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
     async def scenario():
         async with h:
             thread, latest = await seed(h)
-            constrain(h, context=10000)
+            constrain(h, context=12000)
             h.setup = replace(
                 h.setup,
                 compact=replace(h.setup.compact, recent=5000, summary=256),
@@ -1576,7 +1576,7 @@ def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
             caller = h.adapter.invocations[-1].call
             assert "latest " * 120 in str(caller.messages)
             assert "middle " * 850 not in str(caller.messages)
-            assert InputEstimate().count(caller, None) <= 8000
+            assert InputEstimate().count(caller, None) <= 9600
             assert len(h.adapter.invocations) == 5
 
     asyncio.run(scenario())

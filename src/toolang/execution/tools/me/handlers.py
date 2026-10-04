@@ -32,6 +32,10 @@ from toolang.work.authoring import (
 )
 from toolang.work.state import job_thread_id
 
+from toolang.lang.errors import ToolangSourceError
+from toolang.lang.source_edit import validate_declaration_key
+
+from .program import AuthoredProgram
 from .flows import AuthoredFlow, AuthoredFlows, DigestMismatchError
 from .schemas import (
     JOB_KINDS,
@@ -61,6 +65,22 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
     try:
         scope = _scope(context, request)
         _validate_resource_key(request)
+        if request.kind == "program":
+            assert isinstance(context, MeToolContext)
+            program = AuthoredProgram(scope.layout, context.run_program_digest)
+            if request.operation == "list":
+                return program.list()
+            if request.operation == "get":
+                return program.get(request.key)
+            assert request.if_digest is not None
+            return program.write(
+                request.operation,
+                request.key,
+                cast(str, _content(request)["source"])
+                if request.operation != "delete"
+                else None,
+                request.if_digest,
+            )
         if request.operation == "list":
             return _list(scope, request.kind)
         if request.operation == "get":
@@ -104,7 +124,24 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
             key=request.key,
         )
     except StatePreparationError as exc:
-        _fail_flow(request, exc)
+        _fail_program_source(request, exc)
+    except ToolangSourceError as exc:
+        fail(
+            "invalid_program",
+            "program source is invalid",
+            operation=request.operation,
+            kind=request.kind,
+            key=request.key,
+            issues=(
+                issue(
+                    "invalid-program",
+                    "content.source",
+                    exc.diagnostic.reason,
+                    line=exc.line,
+                    column=exc.column,
+                ),
+            ),
+        )
     except UnsafeAuthoringPathError as exc:
         path = "key" if request.key is not None else "kind"
         fail(
@@ -132,11 +169,18 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
             ),
         )
     except (TypeError, ValueError) as exc:
+        code = (
+            "invalid_program"
+            if request.kind == "program"
+            else "invalid_flow"
+            if request.kind == "flow"
+            else "invalid_content"
+        )
         if request.operation in {"create", "update"}:
-            code = "invalid_flow" if request.kind == "flow" else "invalid_content"
-            path = "content.source" if request.kind == "flow" else "content"
+            path = (
+                "content.source" if request.kind in {"flow", "program"} else "content"
+            )
         else:
-            code = "invalid_flow" if request.kind == "flow" else "invalid_content"
             path = "key" if request.key is not None else "kind"
         fail(
             code,
@@ -372,6 +416,19 @@ def _flows(scope: AgentStateScope) -> AuthoredFlows:
 
 
 def _validate_resource_key(request: ResourceRequest) -> None:
+    if request.kind == "program" and request.key is not None:
+        try:
+            validate_declaration_key(request.key)
+        except ValueError as exc:
+            fail(
+                "invalid_request",
+                str(exc),
+                operation=request.operation,
+                kind=request.kind,
+                key=request.key,
+                issues=(issue("invalid-key", "key", str(exc)),),
+            )
+        return
     if request.kind != "flow" or request.key is None:
         return
     try:
@@ -551,10 +608,12 @@ def _key(request: ResourceRequest) -> str:
     return request.key
 
 
-def _fail_flow(request: ResourceRequest, error: StatePreparationError) -> NoReturn:
+def _fail_program_source(
+    request: ResourceRequest, error: StatePreparationError
+) -> NoReturn:
     fail(
-        "invalid_flow",
-        "flow source is invalid",
+        "invalid_program" if request.kind == "program" else "invalid_flow",
+        f"{request.kind} source is invalid",
         operation=request.operation,
         kind=request.kind,
         key=request.key,

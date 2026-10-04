@@ -151,7 +151,7 @@ Missing targets and unresolved values fail as ordinary tool errors.
 `me` exposes structured operations for the current agent's authored data. It
 follows normal resource selection and can be denied by policy.
 
-The executor injects the current agent layout through `AgentStateToolContext`. `me`
+The executor injects the current agent layout through `MeToolContext`. `me`
 tools do not accept an agent name, home directory, root directory, or arbitrary
 path for choosing another target. They expose no layer selector and operate
 only on the current agent's home layer; `me` does not read or modify root-layer
@@ -161,15 +161,15 @@ It exposes five leaves for all supported resource kinds:
 
 ```text
 me__list(kind)
-me__get(kind, key)
-me__create(kind, key?, content)
-me__update(kind, key, content, if_digest?)
+me__get(kind, key?)
+me__create(kind, key?, content, if_digest?)
+me__update(kind, key?, content, if_digest?)
 me__delete(kind, key, if_digest?)
 ```
 
-`kind` is one of `task`, `chore`, `psyche`, `skill`, `service`, `prompt`, or
-`flow`. `key` is a task/chore id or an authored cap/flow name. Task and chore
-create allocates the key and addresses ready documents only. Their lifecycle
+`kind` is one of `task`, `chore`, `psyche`, `skill`, `service`, `prompt`,
+`flow`, or `program`. `key` is a task/chore id, authored cap/flow name, or program
+declaration address. Task and chore create allocates the key and addresses ready documents only. Their lifecycle
 does not support `me__delete`, and delete is never interpreted as archive.
 
 `content` is selected and validated from the operation and kind. Job writes
@@ -180,12 +180,80 @@ validation used by the CLI and cap API. Flow writes manage only direct
 atomic write. Invalid create and update requests do not change existing
 authored files.
 
-Get and list return home-relative paths and SHA-256 digests. Update and delete
-accept an optional `if_digest` precondition. Expected failures remain failed
+Get and list return home-relative paths and SHA-256 digests. Program writes
+require `if_digest`; other updates and deletes accept it as an optional
+precondition. Expected failures remain failed
 tool calls and include a structured `output.error` with a stable code,
 operation, kind, optional key, and bounded field diagnostics. Source mutation
 does not publish State directly; the watcher prepares and publishes valid
 updates. New Run acceptance and model catalogs read the published snapshot.
+
+
+### Main program authoring
+
+`kind=program` addresses the current main source (`agent.too`), including inline
+agics/flows and caps. It does not edit configured cap references, authored caps,
+or declarations inside separate flow modules. `kind=flow, key=research` instead
+addresses the complete `flows/research.too` module.
+
+| Operation | Program key | Meaning |
+| --- | --- | --- |
+| list | omitted | Declarations in source order, with line, bytes, and digest |
+| get | omitted | Complete source, even if syntactically invalid |
+| get | `kind:name` | One declaration including attached comments |
+| create | `kind:name` | Append one declaration; an existing key is a conflict |
+| update | `kind:name` | Replace one matching declaration |
+| update | omitted | Replace the complete main source |
+| delete | `kind:name` | Remove one declaration; validate remaining references |
+
+Declaration kinds are `agic`, `flow`, `instruct`, `context`, `struct`, `psyche`,
+`skill`, `service`, `prompt`, `task`, and `chore`. Unnamed entries use `agic:_` or
+`flow:_`; unnamed instruct/context declarations use `instruct:default` and
+`context:default`. Keys are case-sensitive. Inline flow-body statements are not
+separate program items. Imports (`with`) require whole-source editing.
+
+Create/update content is `{ "source": "..." }`. Keyed content must contain only
+one matching declaration and its attached comments. Immediately preceding plain
+`#` and item-doc `##` comments belong to a declaration; blank lines detach them.
+Shebangs and module docs (`##!`) always belong to the file. Unrelated bytes are
+preserved. Use a whole update for file comments, reordering, or coupled edits.
+
+All program writes, including create, **require `if_digest`** from get/list.
+Every item's digest covers the complete source file, not just that declaration.
+If another writer changes any part of the file, the write fails with
+`digest_mismatch`. Read again and reconcile with the new source before retrying.
+Other kinds retain their existing optional update/delete preconditions.
+
+Program responses include `version`:
+
+```json
+{
+  "run_digest": "<main-source SHA-256 bound to this Run>",
+  "authored_digest": "<main-source SHA-256 read or saved by this operation>",
+  "matches_run": false
+}
+```
+
+`run_digest`/`matches_run` are null when no bound Run snapshot was supplied.
+Reads always use latest authored disk content, even when the Run is older.
+After a successful write, `authored_digest` is the saved version; it does not
+claim publication or adoption. State revisions are separate identifiers, not
+source digests. The watcher publishes valid State; already accepted Runs and
+static flow calls retain their bound code. A new permitted named runtime call
+can select published State. A saved version is not automatically callable.
+
+Validation includes the complete main program and authored flow composition.
+All responses are prepared before atomic replacement. Whole updates can repair
+invalid source without first parsing it. Roaming scripts update their canonical
+original `.too` file and preserve the runtime's main-source symlink; arbitrary
+source symlinks are rejected.
+
+Main/flow writes acquire `.agent.too.lock` then `.flows.lock` to protect combined
+validation. Configured caps, workspace edits, and roaming config projection use
+`.config.toml.lock` (or `.toolang.toml.lock` for the source-local file). These
+follow the common `.<target name>.lock` convention; cap/job collections retain
+`.caps.lock` and `.jobs.lock`. Restart older running processes before upgrading
+writers from the former `.authored-flows.lock`/`.project.lock` names.
 
 
 ## Runtime Rule

@@ -271,6 +271,9 @@ async def _execute(
                 layout=state.layout,
                 tool=tool,
                 services=prepared.services,
+                run_program_digest=prepared.run.state.module_digests.get("agent")
+                if plugin_name == "me"
+                else None,
                 runtime=runtime,
                 history=_ToolHistory(state.execution.store.db_path, run.thread)
                 if plugin_name == "history" and state.execution is not None
@@ -768,6 +771,7 @@ def _tool_context(
     layout: AgentLayout,
     tool: Tool,
     services: tuple[ToolService, ...],
+    run_program_digest: str | None = None,
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
@@ -793,5 +797,7 @@ def _tool_context(
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":
-        return MeToolContext(*args, layout=layout)
+        return MeToolContext(
+            *args, layout=layout, run_program_digest=run_program_digest
+        )
     return ToolContext(*args)

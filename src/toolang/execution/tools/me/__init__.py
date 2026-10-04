@@ -17,25 +17,32 @@ from .errors import ResourceError
 _DESCRIPTIONS: dict[Operation, str] = {
     "list": (
         "List current-agent authored resources of one kind. Task and chore "
-        "results include ready documents only; large content is omitted."
+        "results include ready documents only; large content is omitted. Program lists "
+        "main-source declarations with whole-file digests and run/authored versions."
     ),
     "get": (
         "Get one current-agent authored resource by key, where key is a "
-        "task/chore id or a cap/flow name."
+        "task/chore id, cap/flow name, or program kind:name. For program, omit key "
+        "to read complete main source. Reads latest authored source, not bound Run code."
     ),
     "create": (
         "Create one current-agent authored resource. Task/chore keys are "
         "allocated; named cap/flow kinds require key. Content fields depend "
-        "on kind."
+        "on kind. Program create appends one matching declaration and requires "
+        "if_digest from a fresh get/list."
     ),
     "update": (
         "Update fields on one current-agent authored resource by key. Omitted "
         "content fields are preserved; if_digest is an optional concurrency "
-        "precondition."
+        "precondition. Program update requires if_digest; omit key for whole-source "
+        "replacement, or use kind:name for one declaration. Validated saving does "
+        "not switch the running program version."
     ),
     "delete": (
         "Delete one authored psyche, skill, service, prompt, or flow by key. "
-        "Task and chore lifecycle is not delete."
+        "Program delete removes one declaration and its attached comments, requires "
+        "key and if_digest, and validates the remaining program. Task and chore "
+        "lifecycle is not delete."
     ),
 }
 
@@ -77,7 +84,7 @@ class MeToolset:
     name: str = "me"
     description: str | None = (
         "List, get, create, update, and delete this agent's tasks, chores, "
-        "psyches, skills, services, prompts, and flows."
+        "psyches, skills, services, prompts, flows, and main program."
     )
     _tools: dict[str, Tool] = field(init=False, repr=False)
 

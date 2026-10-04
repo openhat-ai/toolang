@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from toolang.common.files import file_lock_path, file_write_lock
 
 from toolang.catalog.types import CAP_DIR_BY_KIND, CapKind
 
@@ -129,3 +133,14 @@ def _validate_tree(directory: Path) -> None:
                 raise UnsafeAuthoringPathError(
                     "skill contents must contain only regular files"
                 )
+
+
+@contextmanager
+def program_write_lock(home: Path) -> Iterator[None]:
+    """Serialize main/flow source composition with one consistent lock order."""
+    program_lock = file_lock_path(home / "agent.too")
+    flows_lock = file_lock_path(home / "flows")
+    require_regular_file(program_lock, "program lock")
+    require_regular_file(flows_lock, "flow lock")
+    with file_write_lock(program_lock), file_write_lock(flows_lock):
+        yield

@@ -18,6 +18,7 @@ ResourceKind = Literal[
     "service",
     "prompt",
     "flow",
+    "program",
 ]
 Operation = Literal["list", "get", "create", "update", "delete"]
 
@@ -29,6 +30,7 @@ RESOURCE_KINDS: tuple[ResourceKind, ...] = (
     "service",
     "prompt",
     "flow",
+    "program",
 )
 NAMED_KINDS: tuple[ResourceKind, ...] = (
     "psyche",
@@ -36,6 +38,7 @@ NAMED_KINDS: tuple[ResourceKind, ...] = (
     "service",
     "prompt",
     "flow",
+    "program",
 )
 JOB_KINDS = frozenset({"task", "chore"})
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -86,6 +89,7 @@ _CREATE_FIELDS: dict[ResourceKind, tuple[frozenset[str], frozenset[str]]] = {
     ),
     "prompt": (frozenset({"body"}), frozenset({"body"})),
     "flow": (frozenset({"source"}), frozenset({"source"})),
+    "program": (frozenset({"source"}), frozenset({"source"})),
 }
 _UPDATE_FIELDS: dict[ResourceKind, tuple[frozenset[str], frozenset[str]]] = {
     "task": (frozenset({"body", "title"}), frozenset()),
@@ -98,6 +102,7 @@ _UPDATE_FIELDS: dict[ResourceKind, tuple[frozenset[str], frozenset[str]]] = {
     ),
     "prompt": (frozenset({"body"}), frozenset({"body"})),
     "flow": (frozenset({"source"}), frozenset({"source"})),
+    "program": (frozenset({"source"}), frozenset({"source"})),
 }
 
 
@@ -123,9 +128,13 @@ def tool_parameters(operation: Operation) -> dict[str, Any]:
     if operation in {"get", "create", "update", "delete"}:
         properties["key"] = {
             "type": "string",
-            "description": "Task/chore id or authored cap/flow name.",
+            "description": (
+                "Task/chore id, authored cap/flow name, or program declaration "
+                "kind:name (agic:_/flow:_ for unnamed entries). Only program get/update "
+                "may omit key to address the complete main source."
+            ),
         }
-    if operation in {"get", "update", "delete"}:
+    if operation == "delete":
         required.append("key")
     if operation in {"create", "update"}:
         properties["content"] = {
@@ -134,11 +143,11 @@ def tool_parameters(operation: Operation) -> dict[str, Any]:
             "additionalProperties": False,
         }
         required.append("content")
-    if operation in {"update", "delete"}:
+    if operation in {"create", "update", "delete"}:
         properties["if_digest"] = {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
-            "description": "Optional current SHA-256 digest precondition.",
+            "description": "Required for all program writes: whole-file digest from me get/list. Optional for other updates/deletes.",
         }
     return {
         "type": "object",
@@ -157,7 +166,7 @@ def decode_request(
     allowed = {
         "list": frozenset({"kind"}),
         "get": frozenset({"kind", "key"}),
-        "create": frozenset({"kind", "key", "content"}),
+        "create": frozenset({"kind", "key", "content", "if_digest"}),
         "update": frozenset({"kind", "key", "content", "if_digest"}),
         "delete": frozenset({"kind", "key", "if_digest"}),
     }[operation]
@@ -203,9 +212,14 @@ def decode_request(
 
     raw_key = arguments.get("key")
     key: str | None = None
-    key_required = operation in {"get", "update", "delete"} or (
-        operation == "create" and kind in NAMED_KINDS
-    )
+    key_required = (
+        operation in {"get", "update", "delete"}
+        and not (
+            kind == "program"
+            and operation in {"get", "update"}
+            and "key" not in arguments
+        )
+    ) or (operation == "create" and kind in NAMED_KINDS)
     key_forbidden = operation == "create" and kind in JOB_KINDS
     if key_forbidden and "key" in arguments:
         fail(
@@ -270,6 +284,30 @@ def decode_request(
         )
 
     if_digest = arguments.get("if_digest")
+    if (
+        kind == "program"
+        and operation in {"create", "update", "delete"}
+        and if_digest is None
+    ):
+        fail(
+            "invalid_request",
+            "program writes require if_digest from a fresh me get/list",
+            operation=operation,
+            kind=kind,
+            key=key,
+            issues=(
+                issue("required-field", "if_digest", "whole-program digest required"),
+            ),
+        )
+    if kind != "program" and operation == "create" and "if_digest" in arguments:
+        fail(
+            "invalid_request",
+            "if_digest on create is only supported for program",
+            operation=operation,
+            kind=kind,
+            key=key,
+            issues=(issue("forbidden-field", "if_digest", "field must be omitted"),),
+        )
     if if_digest is not None and (
         not isinstance(if_digest, str) or _SHA256_RE.fullmatch(if_digest) is None
     ):

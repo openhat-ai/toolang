@@ -16,7 +16,7 @@ import tomlkit
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
 from toolang.common.config_sources import read_config
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 from toolang.common.policy import resolve_query_sentinels
 
 CAP_ALLOW_FIELDS = tuple(f"{kind}s" for kind in CAP_KINDS)
@@ -36,7 +36,7 @@ class ConfiguredWorkspaces:
 
     @property
     def lock_path(self) -> Path:
-        return self.config_path.with_name(f".{self.config_path.name}.lock")
+        return file_lock_path(self.config_path)
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the lock shared by agent config mutations."""

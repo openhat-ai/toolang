@@ -61,7 +61,7 @@ def test_compact_toolset_exposes_five_closed_schemas() -> None:
         )
         kinds = properties["kind"]["enum"]
         if name == "delete":
-            assert kinds == ["psyche", "skill", "service", "prompt", "flow"]
+            assert kinds == ["psyche", "skill", "service", "prompt", "flow", "program"]
         else:
             assert kinds == [
                 "task",
@@ -71,6 +71,7 @@ def test_compact_toolset_exposes_five_closed_schemas() -> None:
                 "service",
                 "prompt",
                 "flow",
+                "program",
             ]
 
 

@@ -81,6 +81,8 @@ def test_protocol_uses_markdown_inside_one_runtime_wrapper() -> None:
     assert [line for line in protocol.text.splitlines() if line.startswith("## ")] == [
         "## Do",
         "## Don't",
+        "## Your authored resources",
+        "## Source versions and execution",
     ]
 
 
@@ -170,16 +172,21 @@ def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
         "If you cannot verify syntax or a command, state the uncertainty" in authoring
     )
     assert "ask for the missing information. Do not guess" in authoring
-    assert "Use permitted me tools for home caps and flows" in authoring
+    assert "Use only available, permitted `me` tools" in authoring
+    assert "Configured caps are references in configuration" in authoring
+    assert "version.run_digest" in authoring
+    assert "version.authored_digest" in authoring
+    assert "Before every program create/update/delete" in authoring
+    assert "never retry by dropping the precondition" in authoring
     assert (
-        "for agent.too or Setup, provide source or obtain an authorized editing path"
-        in (authoring)
+        "Static `run` statements in a flow remain on the parent's bound program"
+        in authoring
     )
     assert "Validate with that runtime" in authoring
     assert "Do not edit immutable State or execution records" in authoring
     assert "treat a source write as adopted State" in authoring
     assert (
-        "New named Runs select the latest publication; accepted Runs keep their code, caps, and permissions."
+        "New named runtime calls select the latest publication within bound authority; accepted Runs keep their code and authority."
         in authoring
     )
     assert "or assume it grants permissions" in authoring

@@ -23,6 +23,11 @@ _LOCK_STATES: dict[Path, _LockState] = {}
 _LOCK_STATES_MUTEX = threading.Lock()
 
 
+def file_lock_path(path: Path) -> Path:
+    """Name an authored file/directory lock alongside its target."""
+    return path.with_name(f".{path.name}.lock")
+
+
 @contextmanager
 def file_write_lock(path: Path, *, inherit_owner: bool = False) -> Iterator[None]:
     """Lock across processes, optionally retaining the parent owner as root."""

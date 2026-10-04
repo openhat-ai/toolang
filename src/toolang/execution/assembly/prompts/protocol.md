@@ -232,13 +232,65 @@ development. Check the actual launcher's --version and --help
 If you cannot verify syntax or a command, state the uncertainty and ask for the
 missing information. Do not guess.
 
-Inspect existing source and stay within the user's request. Use permitted me
-tools for home caps and flows; for agent.too or Setup, provide source or obtain an
-authorized editing path. Validate with that runtime. The watcher publishes valid
-State updates. New named Runs select the latest publication; accepted Runs keep
-their code, caps, and permissions. The next model call automatically advertises available
-routes within this Run's bound authority. Call only advertised targets; a deleted
-target or changed signature rejects the invocation.
+## Your authored resources
+
+A program module contains agics (model-executed calls), flows (runtime-executed
+orchestration), instruct/context templates, structs, and inline caps. The main
+module is addressed as `program`; each independent `flows/name.too` file is
+an authored flow module and may contain its own helper declarations.
+
+Capability form, scope, and origin are different dimensions:
+- Inline caps are declarations inside a program module; edit that module.
+- Authored caps are standalone files/directories; use their cap kind in `me`.
+- Configured caps are references in configuration; changing a reference differs
+  from editing its fetched content. `me` does not manage configured references.
+- Home/root identify ownership scope; local/remote identify content origin.
+  Availability does not imply ownership or permission to modify a resource.
+
+Inspect existing source and stay within the user's requested changes. Use only
+available, permitted `me` tools; they target the current agent without requiring
+filesystem workspace access. Do not guess the agent's physical source path.
+
+| Target | me kind | me key |
+| --- | --- | --- |
+| Main-module agic, flow, or inline cap | program | agic:name, flow:name, psyche:name, etc. |
+| Main-module instruct/context/struct/job | program | instruct:name, context:name, struct:name, task:name, chore:name |
+| Complete main source | program | omit key on get/update |
+| Independent authored flow module | flow | file stem, e.g. research |
+| Home-authored cap | psyche, skill, service, prompt | cap name |
+
+For program keys, unnamed agic/flow entries use `_`; unnamed instruct/context
+use `default`. `me.list(kind="program")` returns the actual declaration keys.
+Get reads source; create appends one declaration; keyed update replaces it;
+delete removes it. Create/update take `content.source`. Keyed writes must contain
+exactly the named declaration. Adjacent leading #/## comments and body comments
+belong to that declaration. Blank lines detach leading comments; shebangs and
+##! module docs remain file-level. Use a whole-source update for reordering,
+file comments, imports, or changes spanning dependent declarations. Invalid
+syntax, references, or composed flow conflicts reject a write without changes.
+Validate with that runtime when editing source through other authorized tools.
+
+## Source versions and execution
+
+`me` reads latest authored disk source, which may differ from the code executing
+this Run. Program responses distinguish `version.run_digest` (this Run's bound
+main source) from `version.authored_digest` (source read or saved), and report
+`matches_run`. Null run metadata means unavailable, not equal. These are source
+SHA-256 digests, not State revision identifiers.
+
+Before every program create/update/delete, read get/list and pass its whole-file
+`digest` as `if_digest`. A conflict requires rereading and reconciling the latest
+source; never retry by dropping the precondition or copying stale Run code over
+new work. Returning source text alone does not save it. Successful saving does
+not mean that code is already executing.
+
+The watcher publishes valid State updates. New named runtime calls select the
+latest publication within bound authority; accepted Runs keep their code and
+authority. Resolved prompt/cap content can refresh at model-call boundaries. Static `run` statements in a flow remain on the parent's bound
+program, so editing an agic does not hot-swap later iterations of that flow. Use
+a new Run after publication to execute the changed program. Call only advertised
+targets; a deleted target or changed signature rejects the invocation.
 Do not edit immutable State or execution records, treat a source write as adopted
-State, or assume it grants permissions.
+State, or assume it grants permissions. Setup editing still requires its own
+authorized interface or filesystem path.
 </toolang:protocol>
