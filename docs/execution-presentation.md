@@ -1,6 +1,7 @@
 # Execution Presentation
 
-Script and Chat share one presentation over canonical RunEvents. It adds no
+Script and Chat share one presentation over canonical [Run events](events.md).
+It adds no
 execution identities, records or lifecycle states. Durable inspection may reuse
 its vocabulary but cannot reconstruct live event interleaving.
 

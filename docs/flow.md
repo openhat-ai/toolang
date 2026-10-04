@@ -1,29 +1,26 @@
 # Flow Evaluation
 
-This document owns flow evaluation, binding, result shapes and iteration
-contracts. The upstream [grammar reference](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md)
+A flow evaluates an ordered tree of statements. This document owns local
+binding, child invocation, result shapes and iteration contracts. The upstream [grammar reference](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md)
 owns productions, legal clauses and CST fields. [Program semantics](program.md)
-owns runnable signatures; [call input](call-input.md) owns Content evaluation.
-The forms below are schematic notation, not complete executable programs.
+owns shared runnable settings; [Agic execution](agic.md) owns the model/tool
+loops invoked by flow statements; [call input](call-input.md) owns Content
+evaluation. These examples illustrate evaluation rather than define syntax.
 
 ## Flow And Binding
 
-```text
-flow [NAME] [(PARAMS)] [-> T]:
-  STMTS
-
-VALUE_STMT                    update `_`
-let NAME = VALUE_STMT         update `NAME`
-let VALUE_STMT                discard the result
-
-repeat ...                    update locals through its body
-
-let NAME = BODY         evaluate Content and assign one `Part[]` value to `NAME`
-```
+| Form | Effect on flow locals |
+| --- | --- |
+| Unbound value statement | Replace primary local `_` with the complete result. |
+| `let NAME = VALUE_STMT` | Bind the complete result to `NAME`, retaining `_`. |
+| `let VALUE_STMT` | Discard the result, retaining all locals. |
+| `let NAME = BODY` | Evaluate Content into one `Part[]` value and bind it to `NAME`. |
+| `repeat` | Update current locals through its body; produce no separate result. |
 
 Flow signatures use the runnable parameter rules in
 [program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
-named parameters.
+named parameters. Resource selectors, recall and routing defaults follow the
+same [inheritance rules](program.md#directives) as agics.
 
 Initial input and arguments share one flat local namespace: `_` holds input
 and each parameter name holds its argument. See
@@ -50,8 +47,8 @@ their containing code. The Run keeps its
 identity, resource ceiling, accounting, and original output contract.
 
 Named and inline targets use the same forms and input binding as `run`.
-Exec has no result binding, argument list, or modifiers. Named targets must
-exist in the accepted caller's definitions and keep compatible contracts.
+Exec has no result binding. Named targets must exist in the accepted caller's
+definitions and keep compatible contracts.
 Current and ancestor targets are rejected on each branch; earlier handoffs may
 be called again. Failed validation leaves the binding unchanged and fails the
 Flow normally.
@@ -86,29 +83,22 @@ executor coordinate multiple child runs. All five remain value statements and
 bind their complete result once.
 
 
-## Rules
+## Evaluation contracts
 
-### Blocks And Text
+### Lowered text and inline agics
 
-- A body's first substantive entry must indent deeper than its header.
-  Structural siblings use the same indentation; a dedent closes the matching
-  blocks. Empty required bodies are invalid, including comment-only loops.
-- Blank lines and structural comments do not establish a body baseline.
-  An implicit run may continue across one blank line; two blank lines or a
-  structural comment end it.
-- The first complete token of every implicit prose line is checked for
-  lowercase keywords, including continuations. `sort these items` is invalid
-  syntax; `Sort these items.` is prose. `sorter` is not the keyword `sort`.
-- Explicit bodies such as `run:`, `map using:`, and `until:` preserve literal
-  keywords, Markdown, and relative text indentation until the body dedents.
-  Text margins use the same eight-column tab stops as parsing. Lowering removes
-  the shared margin and represents relative indentation with spaces; formatting
-  width changes only structural indentation. Interior blank lines are retained.
-  Completed bodies do not require a final newline.
-- `until` is optional when a repeat has a count. It must follow at least one
-  executable statement, use the repeat body's sibling indentation, and be its
-  final substantive entry. A repeat without a count requires `until`.
+The grammar owns indentation, reserved words, implicit-prose boundaries and
+clause placement. See its [block layout](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md#block-layout)
+and [flow productions](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md#flow).
+Toolang lowers a parsed text body by removing the common margin using
+eight-column tab stops, preserving relative indentation as spaces and keeping
+interior blank lines. The [formatter](source-commands.md#format) preserves those
+text boundaries when structural indentation changes.
 
+Inline runnable bodies lower to unnamed `AgicDecl` values that retain the
+statement's source line. The internal `agic:<adhoc:LINE>` sentinel addresses
+them; they never appear in a module's named runnable index. Their code stays
+with the accepted containing plan.
 
 ### Results
 
@@ -158,11 +148,8 @@ bind their complete result once.
   the output length.
 - `storm` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `sort` start one child run per item.
-- Settle accepts an optional trailing `from:` initializer, evaluated once in the
-  outer frame before entering its own iteration scope. The initializer introduces
-  no local. In an adhoc multiline body, only baseline `from:` ends reducer text;
-  deeper occurrences remain literal. A named reducer's colon block contains only
-  the `from:` clause. Settle retains one prior frame and has no window clause.
+- Settle's optional `from:` Content supplies an initial accumulator. Settle
+  retains one prior frame, independently of repeat windows.
 - Settle without an initializer uses the first element as the cumulative seed
   and invokes the reducer N-1 times. Each call receives the current element as
   `_` and the previous result as `_1._`; output must match the source element
@@ -175,13 +162,12 @@ bind their complete result once.
 - Positional `keep/drop` do not start child runs.
 
 
-### Clauses
+### Concurrency, selection and iteration
 
 - `in P lanes` limits independent child work without changing result order.
   The fallback is the enclosing runnable's inherited lane setting, initially 4.
   A statement override does not change its children's default.
-  It is supported by storm, map, predicate keep/drop, and sort. Use `in 1 lane`
-  for numeric value 1, including `01`; other positive values require `lanes`.
+  It applies to storm, map, predicate keep/drop, and sort.
 - `keep/drop first|last N` select directly by current list position.
 - `sort ascending` orders scores from lowest to highest; `sort descending`
   orders highest to lowest. Equal scores preserve input order in both directions.
@@ -191,13 +177,12 @@ bind their complete result once.
   selects from it. Selection starts no child runs, and retry reuses a committed
   sort result. Cancellation between them can leave the complete sorted list
   committed. Inspection shows a `par` Step followed by a `value` Step.
-- Counts are non-negative integer literals. Use `repeat 1 time`, including
-  numeric value `01`; other values require `times`.
 - Repeat retains 3 prior frames by default. `windowing P` overrides that positive
   capacity independently of the iteration count.
-- Every `repeat` has `N`, `until`, or both. When both are present, the first
-  stopping condition reached ends the loop. `until` is always final, reads the
-  latest locals after the iteration, and does not bind its Boolean result. A
+- A counted repeat stops after `N` iterations; an `until` repeat stops when its
+  evaluator returns true. When both are present, the first stopping condition
+  reached ends the loop. `until` reads the latest locals after the iteration
+  and does not bind its Boolean result. A
   failed evaluator run or failed Boolean coercion fails the repeat and its
   enclosing flow; failure is never interpreted as `false`.
 - `_k.name` reads the kth prior iteration's exit local; `_k._name` reads its
@@ -212,13 +197,6 @@ bind their complete result once.
   false with no rendering or child call; the completed round is still saved.
 - Parameter/local names cannot start or end with `_`, except primary `_`.
   Data fields remain unrestricted. Thread variables are `_far`, `_near`, `_past`.
-
-The common form is:
-
-```text
-verb -> count/direction -> lanes -> using/if/by -> runnable or inline body
-```
-
 
 ## Complete example
 

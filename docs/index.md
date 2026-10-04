@@ -2,8 +2,8 @@
 
 These docs serve Toolang maintainers and contributors, with API and plugin
 implementers as secondary readers. Start with [architecture](architecture.md)
-for the system model and [development](development.md) for contribution and
-verification. User installation, guides and examples belong on
+for the system model and [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution
+and verification. User installation, guides and examples belong on
 [toolang.ai](https://toolang.ai).
 
 ## Repository responsibilities
@@ -16,8 +16,8 @@ verification. User installation, guides and examples belong on
 
 ## Reading paths
 
-- **Change language behavior:** [program semantics](program.md) →
-  [flow evaluation](flow-syntax.md) / [call input](call-input.md) →
+- **Change language behavior:** [shared program semantics](program.md) →
+  [Agic execution](agic.md) / [Flow evaluation](flow.md) / [call input](call-input.md) →
   [source tooling](source-commands.md) and their linked tests.
 - **Change binding or state:** [layout](layout.md) →
   [State publication](agent-state.md) → [run acceptance](execution.md).
@@ -27,21 +27,21 @@ verification. User installation, guides and examples belong on
   [program declarations](program.md#job-declarations) → [scheduling and recovery](work.md).
 - **Change history or compaction:** [threads](execution.md#threads) →
   [recall and compaction](execution.md#history-recall-and-compaction) →
-  [durable records](run-step-records.md).
+  [durable records](records.md).
 - **Change a caller or integration:** [CLI](cli.md) / [HTTP](api.md) →
-  [execution](execution.md) → [durable records](run-step-records.md).
+  [execution](execution.md) → [events](events.md) / [durable records](records.md).
 
 ## Document map
 
 | Area | Focused owners |
 | --- | --- |
-| Orientation | [Architecture](architecture.md), [development](development.md) |
-| Language | [Program semantics](program.md), [flow evaluation](flow-syntax.md), [call input](call-input.md), [source commands](source-commands.md) |
+| Orientation | [Architecture](architecture.md), [contributing](../CONTRIBUTING.md) |
+| Language | [Program declarations and shared semantics](program.md), [Agic model/tool loop](agic.md), [Flow evaluation](flow.md), [call input](call-input.md), [source commands](source-commands.md) |
 | Configuration and State | [Script projects](script-projects.md), [layout/storage](layout.md), [prepared State](agent-state.md) |
-| Resources | [Caps](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
+| Resources | [Composable agent primitives (caps)](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
 | Work | [Markdown tasks/chores](tasks.md), [program declarations](program.md#job-declarations), [scheduling/recovery](work.md) |
-| Execution | [Lifecycle and policy](execution.md), [records/references](run-step-records.md), [presentation](execution-presentation.md) |
-| Callers | [CLI orchestration](cli.md), [Chat](chat.md), [HTTP API](api.md) |
+| Execution | [Lifecycle and policy](execution.md), [records/references](records.md), [events/tracing](events.md), [presentation](execution-presentation.md) |
+| Callers | [CLI](cli.md), [Chat](chat.md), [HTTP API](api.md) |
 
 ## History and generated reference
 

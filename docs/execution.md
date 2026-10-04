@@ -1,8 +1,9 @@
-# Execution Model
+# Execution
 
 This document defines the ownership and lifecycle boundaries of
-`toolang.execution`. Detailed record shapes live in
-[run-step-records.md](run-step-records.md); caller protocols belong to
+`toolang.execution`. Runnable evaluation belongs to [Agics](agic.md) and
+[Flows](flow.md); detailed record shapes live in [records](records.md), and
+observation contracts live in [events](events.md). Caller protocols belong to
 [CLI](cli.md), [Chat](chat.md) and [HTTP](api.md).
 
 
@@ -44,7 +45,7 @@ records and observes only new live events.
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
 process exits. Both read-only and writable store opens reject incompatible schemas unchanged;
-see the [current schema](run-step-records.md#persistence). This build
+see the [current schema](records.md#persistence). This build
 does not migrate older stores.
 
 
@@ -191,8 +192,8 @@ Neither operation implies automatic resumption after owner-process loss.
 
 Assembly consumes prepared data and records without running tools or querying
 the store. The model Step constructs a normalized `ModelCall`; adapters never
-receive the private frame. [Program instruction layers](program.md#instruction-layers)
-own model-facing composition and [records](run-step-records.md) own durable
+receive the private frame. [Agic instruction layers](agic.md#instruction-layers)
+own model-facing composition and [records](records.md) own durable
 call reconstruction. There is no loop plugin or public execution-frame protocol.
 
 Top-level runs have no synthetic containing Step. A flow call emits a Run Step
@@ -210,58 +211,15 @@ There is no child Run or second `RunBegin`: the Run retains root authority,
 accounting and its original output contract while the target gets a fresh
 continuation and agic call counters. Failed validation creates no execute
 Control. Authored flow `exec` uses the same replacement semantics with an exec
-Step; see [flow evaluation](flow-syntax.md#exec).
+Step; see [flow evaluation](flow.md#exec).
 
-## Mandatory Persistence And Tracing
+## Events and persistence
 
-`RunExecutor` constructs one private event projector from its `RunStore`.
-Persistence cannot be replaced or disabled by callers.
-
-For every `RunEvent`, ordering is:
-
-```text
-runtime produces event
-  -> one transaction projects RunRecord or StepRecord
-     and updates referenced ControlRecord statuses
-  -> optional RunTracer observes the event
-```
-
-The private projector never creates or updates run controls. Tracer failures
-are logged and isolated from execution. One tracer observes the complete run
-tree started by its `run()` call, including child runs, steps, parts, and
-terminal events. Each event already contains its complete durable references
-and output edge; the private projector does not reconstruct runtime locals or
-infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
-serializes tracer calls and awaits each one on the owner event loop, so tracers
-never need to infer which worker thread emitted an event.
-
-
-## Run Events
-
-The canonical run trace is intentionally small:
-
-```text
-RunBegin
-StepBegin
-PartBegin
-PartDelta
-PartEnd
-StepEnd
-RunEnd
-```
-
-There are no waiting, starting, steering, or stopping events. Control
-acceptance is durable record truth. Control application is represented by data
-edges:
-
-- `RunBegin.control` references the run control;
-- `StepBegin.input` references every run control or prior step output consumed by
-  the step;
-- `RunEnd.control` references the cancel control that canceled the run.
-
-Providers stream deltas when supported. A tracer may ignore `PartDelta` and
-observe only higher-level events.
-
+`RunExecutor` projects Run/Step changes into durable records before notifying
+its optional tracer. Event projection cannot be disabled. Thread mutations
+commit before their listener is notified. [Events](events.md) owns event kinds,
+ordering, control relationships, serialization and observation contracts;
+[records](records.md) owns stored facts and references.
 
 ## Run Controls
 
@@ -323,16 +281,8 @@ child runs are never thread anchors. An empty thread has no implicit anchor and
 cannot be forked or rewound. Every selected anchor must be terminal.
 
 Every successful mutation has a durable `ControlRecord` and produces one
-success event:
-
-```text
-ThreadCreated
-ThreadForked
-ThreadRewound
-```
-
-Failures are returned or raised by the synchronous operation and do not
-produce failure events.
+[thread event](events.md#thread-events). Failures are returned or raised by the
+synchronous operation and do not produce failure events.
 
 A fork stores its source thread and anchor run but does not copy run, step, or
 run-control rows. Its inherited history includes the anchor. It may select an

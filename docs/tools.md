@@ -1,4 +1,4 @@
-# Tool Runtime
+# Tools
 
 Toolang exposes tools through the toolset plugin family.
 
@@ -134,7 +134,7 @@ paging stable history within an active Run.
 Step outputs and control inputs are resolved typed values; structural and saved
 ModelCall references remain intact. `read_output` returns `{run, status, output}`,
 where output is `{local: {type, value, dim}, binding}` or null, including partial
-output. This is the protocol projection described in [records](run-step-records.md).
+output. This is the protocol projection described in [records](records.md).
 Missing targets and unresolved values fail as ordinary tool errors.
 
 

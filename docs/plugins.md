@@ -1,4 +1,4 @@
-# Plugin Model
+# Plugins
 
 Toolang uses small entry-point contracts for runtime integrations. Shared
 protocols and canonical value types live in `toolang.base`. Plugins should
@@ -152,7 +152,7 @@ flush buffered readable reasoning and clear native fields on incomplete units.
 Call-level continuation must not accumulate per-Part reasoning or signatures.
 
 Incompatible execution stores are rejected before decoding or writing; there
-is no automatic migration or reset. See the [current schema](run-step-records.md#persistence).
+is no automatic migration or reset. See the [current schema](records.md#persistence).
 External adapters must implement the indexed stream contract described above.
 
 Adapters own one protocol shape and its optional default endpoint. They do not

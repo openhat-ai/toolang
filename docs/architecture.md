@@ -59,8 +59,8 @@ some package-wide rules are still explicitly pending review.
 | Placement | `resident`: managed agent home; `visiting`: remote source in a stable temporary root; `roaming`: local `.too` source using sibling `.toolang/`. |
 | Sandbox | Where the server process runs: built-in `host` or `docker`. Independent of source placement. |
 | Program / module | A parsed `Program`; State names and sources it as a module. `agent.too` is `agent`; direct `flows/<name>.too` files contribute separate modules. |
-| Runnable | An `agic` model/tool loop or a `flow` of authored statements. Both share signature rules and public-name uniqueness. Unnamed entries are bound by State without rewriting AST names. |
-| Cap | Reusable `psyche`, `skill`, `service` or `prompt` definition. Scopes overlay `root < home < here`; `here` belongs to one module. Forms are `authored`, `configured`, `inline`, `referenced`. |
+| Runnable | An [agic](agic.md) model/tool loop or a [flow](flow.md) of authored statements. Both share signature rules and public-name uniqueness. Unnamed entries are bound by State without rewriting AST names. |
+| Cap | Composable agent primitive: a reusable `psyche`, `skill`, `service` or `prompt` definition. Scopes overlay `root < home < here`; `here` belongs to one module. Forms are `authored`, `configured`, `inline`, `referenced`. |
 | AgentSetup | One immutable setup generation with independently lazy, memoized model/provider/tool views and plugin families. |
 | AgentState | One immutable composition of root/home revisions, programs, effective caps, workspaces and source provenance. Independent Markdown jobs are outside State. |
 | Job | Authored `task` or RRULE `chore`. One stable job ID yields one thread, `<kind>_<id>`, across attempts. |
@@ -75,7 +75,7 @@ For durable Locals, `dim=0` means one complete value, including an array-valued
 item; `dim=1` means a collection to iterate. Internal execution shape is
 `none | item | list`. Array type and flow collection dimension are separate.
 `_` is the primary local; `let name = ...` binds a named result; an unbound
-result does not replace `_`. See [record shapes](run-step-records.md) and
+result does not replace `_`. See [record shapes](records.md) and
 [value contract tests](../tests/unit/execution/test_values.py).
 
 ## Acceptance, execution and change visibility

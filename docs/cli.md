@@ -1,9 +1,9 @@
-# CLI Orchestration
+# CLI
 
 The CLI resolves selectors, filesystem/environment defaults and execution
 transport before calling package-owned services. It does not implement language
 evaluation or durable execution rules. `too` aliases `toolang`; the separate
-`caps` entry point reuses capability commands. Use command help and the website
+`caps` entry point reuses cap commands. Use command help and the website
 for the complete public flag reference.
 
 Implementation starts at [main.py](../src/toolang/cli/toolang/main.py),
@@ -163,7 +163,7 @@ authorize readiness or cleanup. Detailed implementation is in
 ## Inspection and control
 
 Historical `inspect` is read-only and does not load a runnable or start a server.
-It navigates [record references](run-step-records.md), outputs, calls and trees.
+It navigates [record references](records.md), outputs, calls and trees.
 Direct selected values can resolve typed references; JSON field inspection keeps
 canonical stored values. Human field tables show direct children and bounded
 previews, without dereferencing every row. Tree projection is a consistent

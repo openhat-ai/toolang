@@ -1,4 +1,4 @@
-# Chat Orchestration
+# Chat
 
 Chat is a caller over durable Threads/Runs and canonical events. It owns input
 classification, mutable session defaults, queued submissions, terminal interaction

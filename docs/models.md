@@ -1,4 +1,4 @@
-# Model Catalog and Runtime Integration
+# Models
 
 Toolang separates model knowledge, runtime readiness, and protocol execution.
 The catalog describes what exists; adapters describe how to call one protocol;
@@ -470,15 +470,13 @@ Call totals settle to six fractional USD digits, rounding half up after all
 components are calculated. Accumulation and budget comparison use integer
 micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
 Accounting uses numeric fields; rates and intermediate lines are not rounded
-before final settlement. See [execution records](run-step-records.md#persistence) for storage compatibility.
+before final settlement. See [execution records](records.md#persistence) for storage compatibility.
 
 ## Model Response Recovery
 
-Each Agic run allows at most two automatic attempts to recover response errors,
-shared across all its model turns, including turns used for typed-output repair.
-The separate output-contract repair does not replenish this allowance. Every
-attempt also counts toward the run's model-call limit. Output and reasoning
-budgets remain unchanged.
+The [Agic cycle](agic.md#output-and-recovery) owns automatic recovery attempts,
+output-contract repair and the shared model-call allowance. Model adapters
+classify provider responses for that runtime policy:
 
 - Built-in adapters reject truncated responses, streams that end before a
   terminal event, malformed or non-object tool arguments, and missing

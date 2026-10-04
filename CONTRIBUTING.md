@@ -1,8 +1,8 @@
-# Development
+# Contributing to Toolang
 
 This guide connects contributor workflows to the packages and contracts they
-exercise. [AGENTS.md](../AGENTS.md) owns repository policy and required checks;
-[architecture](architecture.md) explains package responsibilities.
+exercise. [AGENTS.md](AGENTS.md) owns repository policy and required checks;
+[architecture](docs/architecture.md) explains package responsibilities.
 
 ## Working environment
 
@@ -23,17 +23,17 @@ schemas must not acquire runtime services, watchers or stores.
 
 | Change | Start here | Verification anchor |
 | --- | --- | --- |
-| Syntax/CST | Upstream grammar repository; Toolang's [lang](../src/toolang/lang/) consumes it | Upstream corpus and [language tests](../tests/unit/lang/) |
-| Binding/coercion | [lower.py](../src/toolang/lang/lower.py), [input.py](../src/toolang/lang/input.py) | [language tests](../tests/unit/lang/), [flow scenarios](../tests/integration/execution/test_flow_scenarios.py) |
-| Setup/State visibility | [setup](../src/toolang/setup/), [state](../src/toolang/state/) | [latest binding](../tests/integration/execution/test_latest_state_binding.py) |
-| Acceptance and persistence | [executor](../src/toolang/execution/executor/executor.py), [store](../src/toolang/execution/store.py) | [control relations](../tests/integration/execution/test_control_relations.py), [schema compatibility](../tests/unit/execution/test_store_schema.py) |
-| Scheduling | [work](../src/toolang/work/) | [scheduler](../tests/unit/work/test_scheduler.py), [checkpoints](../tests/unit/work/test_store.py) |
-| CLI/API integration | [CLI routing](../src/toolang/cli/toolang/routing.py), [API routers](../src/toolang/api/routers/) | [CLI integration](../tests/integration/cli/), [remote runs](../tests/integration/api/test_remote_runs.py) |
+| Syntax/CST | Upstream grammar repository; Toolang's [lang](src/toolang/lang/) consumes it | Upstream corpus and [language tests](tests/unit/lang/) |
+| Binding/coercion | [lower.py](src/toolang/lang/lower.py), [input.py](src/toolang/lang/input.py) | [language tests](tests/unit/lang/), [flow scenarios](tests/integration/execution/test_flow_scenarios.py) |
+| Setup/State visibility | [setup](src/toolang/setup/), [state](src/toolang/state/) | [latest binding](tests/integration/execution/test_latest_state_binding.py) |
+| Acceptance and persistence | [executor](src/toolang/execution/executor/executor.py), [store](src/toolang/execution/store.py) | [control relations](tests/integration/execution/test_control_relations.py), [schema compatibility](tests/unit/execution/test_store_schema.py) |
+| Scheduling | [work](src/toolang/work/) | [scheduler](tests/unit/work/test_scheduler.py), [checkpoints](tests/unit/work/test_store.py) |
+| CLI/API integration | [CLI routing](src/toolang/cli/toolang/routing.py), [API routers](src/toolang/api/routers/) | [CLI integration](tests/integration/cli/), [remote runs](tests/integration/api/test_remote_runs.py) |
 
-Use [package-boundary tests](../tests/architecture/test_package_boundaries.py)
+Use [package-boundary tests](tests/architecture/test_package_boundaries.py)
 for enforced import rules. Some additional package restrictions remain explicitly
 pending review; do not describe them as enforced. Plugin factory and entry-point
-contracts are in [plugins](plugins.md), not in package facades.
+contracts are in [plugins](docs/plugins.md), not in package facades.
 
 ## Review and test by behavior
 
@@ -64,7 +64,7 @@ uv run pytest -n auto
 The full suite uses one worker per physical CPU core. Focused tests run serially;
 use `--durations=20` to investigate slow tests. Live-provider and Docker cases are
 opt-in through `--live-model` and `--live-docker`; see
-[test configuration](../tests/conftest.py). The default suite stays offline.
+[test configuration](tests/conftest.py). The default suite stays offline.
 Documentation-only changes require implementation/example/link checks and
 `git diff --check`, not the full suite.
 
@@ -73,9 +73,9 @@ Documentation-only changes require implementation/example/link checks and
 | Rule | Canonical owner |
 | --- | --- |
 | Legal source forms and public CST | [tree-sitter-toolang grammar](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md), verified by `grammar.js` and corpus tests |
-| Meaning, defaults, validation and runtime behavior | Toolang source/tests and the focused owners in [the index](index.md) |
+| Meaning, defaults, validation and runtime behavior | Toolang source/tests and the focused owners in [the index](docs/index.md) |
 | Recommended source style | Website [Authoring Conventions](https://toolang.ai/docs/toolang-conventions) |
-| Mechanical formatting | [Source commands](source-commands.md#format), verified by formatter tests |
+| Mechanical formatting | [Source commands](docs/source-commands.md#format), verified by formatter tests |
 
 Bundled templates/examples follow the website conventions. Parser fixtures also
 cover valid but discouraged source. Style recommendations do not silently change

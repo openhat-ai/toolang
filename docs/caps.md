@@ -1,6 +1,7 @@
-# Capability Model
+# Composable Agent Primitives
 
-Caps are reusable definitions made available through State. A cap's kind
+Caps are **composable agent primitives**: reusable psyche, skill, service and
+prompt definitions made available through State. A cap's kind
 determines how execution consumes it; availability alone does not invoke it.
 
 
@@ -13,14 +14,14 @@ determines how execution consumes it; availability alone does not invoke it.
 | `service` | MCP connection metadata and optional guidance, also advertised by a trigger. Loading guidance neither connects the service nor grants its tools. |
 | `prompt` | Content template expanded with explicit input and arguments; it is not a runnable. |
 
-[Instruction layers](program.md#instruction-layers),
+[Instruction layers](agic.md#instruction-layers),
 [guidance loading](tools.md#pick-guidance), and
 [prompt expansion](call-input.md#prompt-expansion) own the corresponding contracts.
 
 
 ## Runtime Scope
 
-State capabilities use runtime scope:
+State caps use runtime scope:
 
 - `root`: provided by the current Toolang root
 - `home`: available to one agent home
@@ -40,7 +41,7 @@ CLI query records expose scope through `tags`; HTTP read payloads retain the
 
 `too caps` and untargeted kind-specific lists show root-shared resources
 filtered by root cap-kind allow policy. `too alice caps` combines root resources
-with Alice's home and program capabilities using the precedence above, then
+with Alice's home and program caps using the precedence above, then
 reads the main agent module's published effective allow selection. Other agents'
 private resources, including an implicit `default` agent, are outside that view.
 Root inspection prepares or reuses the shared root State layer, including resolved
@@ -54,8 +55,8 @@ or unresolvable definitions fail instead of becoming unavailable rows.
 Per-module and run declarations can further narrow execution resources.
 
 HTTP write payloads use `root` and `home` directly. CLI write commands expose
-placement as command shape: without `AGENT`, they write root capabilities;
-with `AGENT`, they write that agent's home capabilities.
+placement as command shape: without `AGENT`, they write root caps;
+with `AGENT`, they write that agent's home caps.
 
 
 ## Form, Scope, And Origin
@@ -67,7 +68,7 @@ Form tells how a cap is attached:
 
 | Form | Meaning |
 | --- | --- |
-| `authored` | Backed by files or folders in capability directories |
+| `authored` | Backed by files or folders in cap directories |
 | `inline` | Defined directly in a program module |
 | `configured` | Configured by a ref in `config.toml` |
 | `referenced` | Attached by a program module `with` declaration |
@@ -91,7 +92,7 @@ Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
 HTTP write payloads default to `home` scope. CLI write commands default to root
-capabilities when `AGENT` is omitted. Only `authored` and `configured` forms
+caps when `AGENT` is omitted. Only `authored` and `configured` forms
 can have root or home scope. `referenced` and `inline` forms belong to one
 program module and have `here` scope.
 
@@ -117,8 +118,8 @@ use `kind/name` as `ref` and expose the content address as `location`, without a
 | Ref | Meaning |
 | --- | --- |
 | `inline://prompts/reviewer` | Embedded inline cap definition |
-| `home://services/github` | Local capability in the agent home |
-| `root://skills/reviewer` | Local capability under the Toolang root |
+| `home://services/github` | Local cap in the agent home |
+| `root://skills/reviewer` | Local cap under the Toolang root |
 | `github://user/repo/path/name.md@rev` | Remote cap target |
 
 GitHub cap refs must include `@rev`. Shorthand refs such as `owner/name`
@@ -149,14 +150,14 @@ GitHub URLs are exact refs, not shorthand; a URL ending in
 
 ## Local Cap Paths
 
-Root local capabilities:
+Root local caps:
 
 - `${TOOLANG_ROOT}/psyches/`
 - `${TOOLANG_ROOT}/skills/`
 - `${TOOLANG_ROOT}/services/`
 - `${TOOLANG_ROOT}/prompts/`
 
-Home local capabilities:
+Home local caps:
 
 - `${TOOLANG_ROOT}/agents/<agent>/psyches/`
 - `${TOOLANG_ROOT}/agents/<agent>/skills/`
@@ -164,14 +165,14 @@ Home local capabilities:
 - `${TOOLANG_ROOT}/agents/<agent>/prompts/`
 
 
-## State Capability Paths
+## State Cap Paths
 
-Materialized capabilities live inside immutable State layer revisions:
+Materialized caps live inside immutable State layer revisions:
 
-- authored capabilities are copied under `files/caps/authored`
-- configured capabilities are materialized under `files/caps/configured`
-- inline module capabilities use `files/caps/inline/<module>`
-- referenced module capabilities use `files/caps/referenced/<module>`
+- authored caps are copied under `files/caps/authored`
+- configured caps are materialized under `files/caps/configured`
+- inline module caps use `files/caps/inline/<module>`
+- referenced module caps use `files/caps/referenced/<module>`
 
 Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
 Home layers live under
@@ -206,7 +207,7 @@ Service frontmatter:
 | `headers` | no | String map for HTTP headers |
 | `env` | no | Comma-separated environment variable names |
 
-Service bodies are optional and can document exposed capabilities, auth notes,
+Service bodies are optional and can document exposed service operations, auth notes,
 and when optional `headers` or `env` values are expected. Header values like
 `$API_TOKEN` declare required host environment variables. For `stdio`, `target`
 is written as one shell-like command line, and `env` can list required variables
@@ -215,7 +216,7 @@ as `env: API_TOKEN, ANOTHER_ENV_VAR`.
 
 ## Effective Cap Set
 
-`AgentState` captures the complete durable capability set. State
+`AgentState` captures the complete durable cap set. State
 preparation:
 
 1. collects root and home definitions
@@ -234,7 +235,7 @@ published resources.
 
 ## Integration and verification
 
-[HTTP contracts](api.md#capability-publication) own writes, publication
+[HTTP contracts](api.md#cap-publication) own writes, publication
 receipts and effective reads. [Resource Queries](queries.md) owns the public
 inspection shape; lists expose content locations, while API records also retain
 source definition metadata.

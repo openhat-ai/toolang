@@ -1,7 +1,8 @@
-# Execution Records And References
+# Records and References
 
-Execution records are the durable source of truth. Run events are their
-transient projection input.
+Execution records are the durable source of truth. [Run events](events.md) are
+their transient projection input; [execution](execution.md) owns acceptance,
+controls and lifecycle transitions.
 
 ## References
 

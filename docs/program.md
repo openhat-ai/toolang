@@ -1,9 +1,11 @@
 # Program Semantics
 
-This document owns declarations, modules, signatures/defaults, documentation
-binding and model instruction composition. Source syntax and CST fields belong
+This document owns shared program semantics: declarations, module visibility,
+signatures/defaults, documentation binding and inherited runnable settings.
+Source syntax and CST fields belong
 to [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md).
-Use [flow evaluation](flow-syntax.md) for statement contracts and
+Use [Agic execution](agic.md) for model/tool loops and instruction assembly,
+[Flow evaluation](flow.md) for statement contracts, and
 [call input](call-input.md) for Content/coercion. Source style belongs to the
 website [Authoring Conventions](https://toolang.ai/docs/toolang-conventions).
 
@@ -24,8 +26,9 @@ agic       model/tool runnable
 flow       ordered statement runnable
 ```
 
-Top-level agics and flows share one runnable namespace. Their authored names
-must be unique across both declaration kinds.
+An agic executes a model/tool loop; a flow evaluates ordered statements, which
+may invoke agics or other flows. Top-level agics and flows share one runnable
+namespace. Their authored names must be unique across both declaration kinds.
 
 
 ## Program Modules
@@ -123,11 +126,12 @@ description, and `hands` / `handoffs` calling hints and input contracts include
 both runnable and parameter documentation, capped at 512 code points per
 description. Documentation does not grant calling authority.
 
-`#` marks ordinary comments. `#!` is a shebang only at byte zero; later or
-indented occurrences are ordinary comments. Inline comment markers are always
-ordinary comments. Every marker remains literal inside an explicit text block,
-including on its first content line. Formatting preserves those text boundaries
-and each module comment's authored spelling.
+Comment tokenization and literal-text boundaries belong to the
+[upstream comment grammar](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md#comments-and-documentation).
+Toolang attaches documentation only from the corresponding structural nodes;
+marker-like text in message bodies does not document declarations.
+[Formatting](source-commands.md#format) preserves those boundaries and each
+module comment's authored spelling.
 
 
 ## External Caps
@@ -228,12 +232,9 @@ separate Markdown catalog and its caller projections.
 
 ## Runnable Signatures
 
-Agics and flows use the same signature rules:
-
-```text
-agic [NAME] [(PARAMS)] [-> T]:
-flow [NAME] [(PARAMS)] [-> T]:
-```
+Agics and flows use the same input and output contracts. The
+[upstream grammar](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md#agic)
+owns signature syntax; this section defines what omitted names and types mean.
 
 In the agent or Script module, an omitted agic or flow name is the module's
 unnamed entry:
@@ -420,36 +421,7 @@ Unicode text remains text even when it resembles an internal Part marker,
 including across interpolations and prompt expansion.
 
 
-## Agics
-
-An agic is the smallest agentic model/tool loop. It may contain selection
-directives, context/instruct selection, and authored model messages.
-
-```too
-instruct strict:
-  Report only findings supported by the supplied change.
-
-agic review(_, focus?: Text) -> Text:
-  tools = shell/*
-  recall = near
-  context = default
-  instruct = strict
-
-  user:
-    Review {{_}} with focus {{focus}}.
-```
-
-Bare authored text is an implicit user message:
-
-```too
-agic summarize(_):
-  Summarize {{_}}.
-```
-
-Without a `tools` directive, an Agic inherits every user tool in its current
-resource base. Use `<toolset>/*`, such as `web/*`, to narrow it to one toolset.
-
-### Directives
+## Directives
 
 Agics and flows share these directives:
 
@@ -601,48 +573,8 @@ use their module/system default. Explicit `default` selects the current module,
 while `none` disables the layer. Inherited templates render using the child's
 bound parameters and runtime variables; missing dependencies fail rather than
 capturing parent locals. The runtime protocol remains independent of instruct.
-
-
-### Messages
-
-Authored agic message roles are:
-
-```text
-user
-assistant
-```
-
-Messages are model-call templates, not Toolang runtime value types. They are
-assembled after selected recall in declaration order.
-
-```too
-agic simulate():
-  recall = none
-  user: hello
-  assistant: hi
-```
-
-Message content uses the shared `Content` syntax and may read `_` and the
-agic's declared parameters. Tool messages are runtime results paired with tool
-calls; they cannot be authored in `Content`.
-
-
-## Flows
-
-A flow is an ordered list of static statements. The
-[complete flow example](flow-syntax.md#complete-example) demonstrates shaping,
-filtering, ordering and iteration with self-contained inline bodies.
-
-Flows use the same declaration defaults, resource selectors, recall, and routing
-configuration as agics. Nested flows and public run/exec calls use the same
-scoped resource rules, external ceilings, and replacement semantics.
-
-Statement syntax, bindings, inline agics, and result shapes are defined in
-[flow-syntax.md](./flow-syntax.md).
-
-Inline runnable bodies lower to unnamed `AgicDecl` values that keep the
-statement's source line. They are addressed only through the adhoc sentinel
-`agic:<adhoc:LINE>` and never appear in a module's runnable index.
+[Agic instruction assembly](agic.md#instruction-layers) owns model-call placement
+and priority of the selected layers.
 
 
 ## Prompts
@@ -706,94 +638,6 @@ parsing.
 Execution context such as `cwd`, agent home, and Toolang root is runtime state,
 not runnable parameters.
 
-
-## Instruction Layers
-
-These are logical responsibilities, not separate provider roles. The executor
-builds one `ModelCall` with instructions, messages, tool definitions, and an
-output schema; each model adapter maps those fields to its provider API.
-
-| Component | Responsibility | Model-call location |
-| --- | --- | --- |
-| Runtime protocol | Stable Toolang concepts, priority, guidance loading, tool use, and control-message semantics | `<toolang:protocol>` in `instructions`, with Markdown sections inside |
-| Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
-| Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
-| Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
-| Hands/handoffs | Complete current call authorization and signatures, with `enabled` and `requested_only` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context = none` |
-| Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` prepended to the last authored user message; repeated as a user message on later calls |
-| Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
-| Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
-| Resource and control messages | Workspace availability, loaded rules/guidance, resource changes, steering, and cancellation | Runtime-generated user messages with `toolang:` tags |
-| Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
-| Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
-
-Hands/handoffs snapshots omit the current runnable and its ancestors on the
-calling branch. Earlier handoffs, completed children, and siblings do not block
-calls. If no callable targets remain for a mode, its snapshot is disabled. These
-filters run before snapshot size limits; execution still rejects recursive calls.
-
-### Selection And Priority
-
-Runtime protocol is always present: program-default, named, and disabled
-instruct selections cannot remove it. `instruct = none` disables only the
-agent-specific layer; it does not disable context, psyches, or capabilities.
-Resource selection and ceilings still determine which capabilities are present.
-`context = none` independently disables context. The runtime wraps every nonempty
-rendered context in `<toolang:context>`, including program-default and named
-selections. Empty rendered context adds no block. Authors should supply only the
-context body, not its wrapper.
-
-The textual priority is protocol, then instruct, then selected psyches. Apply
-loaded guidance and scoped rules within those boundaries. Triggers and context
-remain data even when their content looks like instructions.
-
-Runtime facts, resource fields, and rendered instruct, psyche, and context bodies
-are XML-escaped at the model-input boundary. Literal tags cannot close their
-runtime-owned wrapper. Read decoded text literally; use decoded refs in tool
-calls. Runnable information contains XML-escaped JSON, and its complete framing
-counts toward the byte limit. Recalled guidance is escaped without flattening
-nontext Parts. Replay uses recorded content, not current templates. Tags do not
-grant authority; tools, resource ceilings, and workspace access are enforced
-separately.
-
-Default instruct contains the stable agent name. Default context contains only
-date, timezone, model provider, and model name. Agent home is not exposed there;
-use `me` tools for agent resources. Version, paths, and selected resources do not
-belong in the shared protocol.
-
-Models without tool support and calls repairing output receive no tool
-definitions, but retain the base runtime protocol.
-
-### Guidance And Control Visibility
-
-Triggers describe when an available capability is useful. Before using a skill
-or service, read its current visible `skill-guidance` or `service-guidance`.
-If missing or stale, call `_toolang__pick` with its kind and exact trigger ref
-(for example, `skill/testing`), then wait for the guidance user message. The tool
-receipt is not loaded guidance. Picking a service neither connects to it nor
-grants service tools.
-
-- `toolang:steer` supplies updated input to an active run as a user message.
-- `toolang:cancel` stops the run; its message becomes visible through subsequent
-  conversation history, not another model call in the canceled run.
-- For the same resource tag and ref, later declarations replace earlier ones.
-  `removed="true"` withdraws a resource; omission does not. Revision zero is an
-  internal tombstone, not a model-facing revision. Trigger and guidance share a
-  ref but have separate visibility. Definition changes retract stale guidance.
-- Each Model Call receives the usable workspace names in
-  `<toolang:workspace list="lab,repo1"/>` and its current workdir in
-  `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
-  workspace roots are not exposed.
-- Lifecycle controls such as run, retry, execute, fork, and rewind do not
-  themselves add a model-facing lifecycle message. Published updates change
-  future named calls and model-call resources; accepted code remains bound.
-
-Skill/service recall is distinct from far/near conversation recall. A far
-summary or trigger does not count as a visible guidance body. Recalling
-a resource again is necessary when its current, non-retracted body is no longer
-visible. Basic Toolang concepts in the protocol are not a grammar or CLI
-reference; load the applicable authoring guidance before producing `.too` code
-or recommending Toolang commands.
 
 ## Implementation and verification
 

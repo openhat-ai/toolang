@@ -81,7 +81,7 @@ contains only the value and dimension; the enclosing local map or output
 binding supplies its name. `binding=None` leaves a result unbound.
 
 HTTP clients use this flat format. Incompatible stores are rejected unchanged;
-see [record compatibility](run-step-records.md#persistence).
+see [record compatibility](records.md#persistence).
 
 ## Input Forms
 

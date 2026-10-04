@@ -22,7 +22,7 @@ also accompany `--json`.
 
 The AST is the lowered, validated Toolang `Program`. It includes declarations,
 flow statements, signatures, and module/runnable/parameter documentation.
-Validation checks source semantics without resolving installed capabilities or
+Validation checks source semantics without resolving installed caps or
 preparing execution. Invalid input produces an error and no partial AST.
 
 `--check` accepts multiple files/directories, recursively discovers `.too` files,
@@ -141,7 +141,7 @@ must be idempotent and preserve semantic content and documentation bindings.
 The formatter works on syntax-valid source even when semantic validation fails.
 
 Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
-capability directives, hoisting `context`/`instruct`, and omitting a sole `user:`
+resource directives, hoisting `context`/`instruct`, and omitting a sole `user:`
 role remain authoring decisions. The formatter does not make those rewrites.
 Recommended source style belongs to the website
 [Authoring Conventions](https://toolang.ai/docs/toolang-conventions).

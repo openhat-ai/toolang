@@ -181,6 +181,6 @@ Neither is written into authored files.
 
 [Agent layout](../src/toolang/common/layout.py) derives paths;
 [hosting](../src/toolang/up/) owns runtime/control files. See
-[State](agent-state.md) and [execution records](run-step-records.md) for revision
+[State](agent-state.md) and [execution records](records.md) for revision
 and store contracts. [Hosting tests](../tests/integration/up/) verify placement
 and sandbox ownership.

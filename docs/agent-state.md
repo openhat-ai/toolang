@@ -1,7 +1,7 @@
 # Agent State
 
 Agent State is the immutable runtime input derived from an agent's Programs,
-configuration, and capabilities. A module is a term for one named, sourced
+configuration, and caps. A module is a term for one named, sourced
 Program in State; it is not a separate runtime type. Agent State holds the
 complete module-name-to-Program index rather than a separate primary Program.
 It combines one root layer with one home layer. Each accepted Run keeps one
@@ -22,31 +22,31 @@ file.
 
 State has two persistent layers and one composition:
 
-- the `root` layer contains root config and root capabilities;
+- the `root` layer contains root config and root caps;
 - the `home` layer contains agent config, the agent and flow modules, home
-  capabilities, and module-local capabilities; and
+  caps, and module-local caps; and
 - the `agent` composition identifies one exact root/home revision pair.
 
 The in-memory composition exposes aggregate indexes. `modules` resolves stable
 module names to Programs, while matching source, digest, and module-local cap
-indexes retain their runtime context. `caps` indexes effective capabilities by
+indexes retain their runtime context. `caps` indexes effective caps by
 `kind:name`; `skills`, `psyches`, `services`, and `prompts` are its name-keyed
 classifications. `agics` and `flows` classify the public `runnables` index. A
 module-local runnable index resolves private and exported `AgicDecl` and
 `FlowDecl` values. These indexes are immutable views of prepared State terms
 and are not separate persisted definitions.
 
-Capability scope is `root`, `home`, or `here`, with precedence
-`root < home < here`. Capability form is exactly `authored`, `inline`,
+Cap scope is `root`, `home`, or `here`, with precedence
+`root < home < here`. Cap form is exactly `authored`, `inline`,
 `configured`, or `referenced`:
 
-- `authored` capabilities come from capability files;
-- `configured` capabilities come from refs in `config.toml`;
-- `inline` capabilities are declared inside one program module; and
-- `referenced` capabilities are attached by a module `with` declaration.
+- `authored` caps come from cap files;
+- `configured` caps come from refs in `config.toml`;
+- `inline` caps are declared inside one program module; and
+- `referenced` caps are attached by a module `with` declaration.
 
-Root and home layers contain authored and configured capabilities. Inline and
-referenced capabilities have `here` scope and belong to one module.
+Root and home layers contain authored and configured caps. Inline and
+referenced caps have `here` scope and belong to one module.
 
 ## Persistent Layout
 
@@ -96,8 +96,8 @@ Locks and temporary paths are writer implementation details. Old
   SHA-256 digests, plus each raw authored file's SHA-256 digest;
 - parsed config;
 - configured and referenced resolutions;
-- State capabilities;
-- home program modules and their module-local capabilities; and
+- State caps;
+- home program modules and their module-local caps; and
 - a sorted manifest of every file below `files/`, including path, size, and
   SHA-256.
 
@@ -145,7 +145,7 @@ identities and are not exposed as tracked files.
 Normal loading trusts a revision to be complete and reads its persisted
 documents directly. It does not hash document or materialized file content.
 Explicit validation separately requires canonical document bytes, matching
-revision digests, an exact recursive `files/` manifest, and valid capability,
+revision digests, an exact recursive `files/` manifest, and valid cap,
 module, and resolution references. No normal runtime path implicitly requests
 that validation. Loading a revision never reads current authored source, falls
 back to `current`, reparses a program source file, or contacts a remote
@@ -163,7 +163,7 @@ A flow module exports the unnamed flow or the flow whose name matches the file
 stem. Renaming an unnamed-flow file therefore renames its public runnable
 without editing its source.
 
-Module-local capability files include the module name in their path:
+Module-local cap files include the module name in their path:
 
 ```text
 files/caps/<inline|referenced>/<module>/<kind>/<name>/...
@@ -185,7 +185,7 @@ headers are rejected. Missing optional source is represented by empty text.
 
 Normal preparation hashes the selected source bytes and compares the portable
 manifest with the published layer. An unchanged current layer is loaded without
-parsing Programs, materializing capabilities, or polling remote refs. Current
+parsing Programs, materializing caps, or polling remote refs. Current
 layers with an older schema are rebuilt; exact historical loads retain their
 recorded Programs and run references.
 These rules also apply when the root and home are mounted at different absolute
@@ -195,7 +195,7 @@ When rebuilding a layer, a writer:
 
 1. acquires the layer writer lock and checks the source manifest again;
 2. captures authored files and parses config and modules;
-3. resolves and materializes configured and referenced capabilities;
+3. resolves and materializes configured and referenced caps;
 4. verifies the process-local source observation did not change during
    preparation;
 5. writes a complete temporary revision directory;
@@ -261,7 +261,7 @@ inputs. See [binding and resource rules](program.md#directives).
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. The runs
 database rejects unsupported schema versions at open.
-See [execution records](run-step-records.md#persistence) for compatibility rules.
+See [execution records](records.md#persistence) for compatibility rules.
 
 ## Implementation and verification
 

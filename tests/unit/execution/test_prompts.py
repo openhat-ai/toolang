@@ -197,11 +197,10 @@ def test_protocol_authoring_references_exist() -> None:
     paths = re.findall(
         r"https://github.com/openhat-ai/toolang/blob/main/(docs/[^)]+)", authoring
     )
-    assert paths == [
-        "docs/program.md",
-        "docs/caps.md",
-        "docs/toolang-authoring-conventions.md",
-    ]
+    assert paths == ["docs/program.md", "docs/caps.md"]
+    assert (
+        "[coding conventions](https://toolang.ai/docs/toolang-conventions)" in authoring
+    )
     root = Path(__file__).resolve().parents[3]
     assert all((root / path).is_file() for path in paths)
 

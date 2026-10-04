@@ -32,7 +32,7 @@ parameter documentation, and formatter attachment fixes. Do not duplicate its
 grammar/cache migration.
 
 Convention inputs: the repository's
-[authoring conventions](../toolang-authoring-conventions.md), the
+[authoring conventions](https://github.com/openhat-ai/toolang/blob/961b2d38226ed298536b753a391134acc26f5ff8/docs/toolang-authoring-conventions.md), the
 [Toolang coding conventions skill](https://github.com/briceyan/agents/blob/main/skills/toolang-coding-conventions/SKILL.md),
 and [PR #528](https://github.com/openhat-ai/toolang/pull/528), commit `70a2c29c`.
 PR #528 was closed without merging; its selected mechanical rules are explicit

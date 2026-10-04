@@ -1,4 +1,4 @@
-# Authored Jobs
+# Tasks and Chores
 
 This guide owns Markdown task and chore files, their identity and stage
 transitions. [Program job declarations](program.md#job-declarations) are another

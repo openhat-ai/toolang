@@ -4,7 +4,7 @@ This guide owns server lifecycle, request boundaries, publication and streaming
 contracts. Exact fields and endpoints come from [schemas](../src/toolang/api/schemas.py),
 [routers](../src/toolang/api/routers/) and generated OpenAPI. Language meaning and
 durable lifecycle belong to [program](program.md), [call input](call-input.md),
-[execution](execution.md) and [records](run-step-records.md).
+[execution](execution.md) and [records](records.md).
 
 ## Application ownership
 
@@ -19,7 +19,7 @@ See [app assembly](../src/toolang/api/app.py) and [server](../src/toolang/up/ser
 | --- | --- |
 | `/healthz`, `/api/v1/profile` | Readiness and process/runtime identity |
 | `/api/v1/models`, `/tools`, `/workspaces`, `/agics`, `/flows` | Current resource, workspace and runnable inspection, all under `/api/v1` |
-| `/api/v1/caps`, `/psyches`, `/skills`, `/services`, `/prompts` | Capability inspection and authored/configured mutations |
+| `/api/v1/caps`, `/psyches`, `/skills`, `/services`, `/prompts` | Cap inspection and authored/configured mutations |
 | `/api/v1/jobs`, `/tasks`, `/chores` | Job projections and kind-specific mutations |
 | `/api/v1/runs`, `/threads` | Acceptance, control, live streams and durable inspection |
 
@@ -47,7 +47,7 @@ preventing the listing. Optional requested workdir is independently validated;
 invalid/unavailable locations return 400. Inspection creates no directories.
 Guest availability requires a captured mount and an existing guest directory.
 
-## Capability publication
+## Cap publication
 
 Each concrete kind supports collection/detail/template reads and authored or
 configured PUT/DELETE operations. Reads use published State. Lists include form,
@@ -102,7 +102,7 @@ and structured values follow [typed input](call-input.md), not ad hoc JSON parsi
 Run collections return `RunInfo` arrays; detail returns `RunDetail`. A detail's
 output is resolved canonical Parts, null before an output edge exists, and may
 be an empty array for an empty result. Record references and persistence types
-remain owned by [records](run-step-records.md).
+remain owned by [records](records.md).
 
 Steer/cancel require an active pending/running Run and return accepted control
 projections. Steer defaults to `next_step`; cancel defaults to `immediate`.
@@ -137,10 +137,9 @@ not begin with `run_begin`. Disconnecting removes the subscriber without canceli
 the Run. A child stream request returns 409 and identifies its root.
 
 SSE `event` is the canonical event name and `data` is its payload, retaining the
-`type` discriminator. Run events are `run_begin`, `step_begin`, `part_begin`,
-`part_delta`, `part_end`, `step_end`, `run_end`; thread streams can also include
-`thread_created`, `thread_forked`, `thread_rewound`. No second transport event
-wrapper or synthetic control-acceptance event is added.
+`type` discriminator. [Events](events.md) owns the Run and Thread event families
+and their fields. Thread streams can carry both families. No second transport
+event wrapper or synthetic control-acceptance event is added.
 
 Part events retain the call-local ordinal. `part_begin.part_type` identifies the
 Part kind without colliding with the event discriminator. Reasoning uses the

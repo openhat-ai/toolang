@@ -224,7 +224,7 @@ coding-convention, and CLI guidance rather than relying on remembered syntax.
 If unavailable, consult
 [toolang-syntax](https://github.com/openhat-ai/toolang/blob/main/docs/program.md),
 [caps files](https://github.com/openhat-ai/toolang/blob/main/docs/caps.md), and
-[coding conventions](https://github.com/openhat-ai/toolang/blob/main/docs/toolang-authoring-conventions.md).
+[coding conventions](https://toolang.ai/docs/toolang-conventions).
 
 Apply the following checks only to these authoring requests. These links track
 development. Check the actual launcher's --version and --help
