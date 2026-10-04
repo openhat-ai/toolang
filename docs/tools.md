@@ -149,9 +149,9 @@ Missing targets and unresolved values fail as ordinary tool errors.
 ## Current Agent
 
 `me` reads and manages the current agent's latest home files, subject to normal
-tool permissions. The executor supplies `MeToolContext`; callers cannot select
-another agent, root directory, or State revision. File reads do not inspect the
-Run's captured State, and writes do not publish State or replace captured Setup.
+tool permissions. The executor supplies `MeToolContext` for that home. Reads
+return the files' current disk content; writes use the existing loading and
+runtime adoption rules.
 
 ```text
 me__list()
@@ -175,7 +175,7 @@ List returns sorted `items` containing `key`, `digest`, and `bytes`.
 Get returns an `item` with complete `content` and `encoding` as well. Text is
 UTF-8; non-UTF-8 files are returned as base64. Create/update accept a complete
 content string; `encoding="base64"` supplies exact binary bytes.
-There is no kind selector, parsed-field update, declaration edit, or inspect tool.
+Each operation addresses a complete file.
 
 All digests are lowercase SHA-256 of exact file bytes, including comments, front
 matter, whitespace, and original line endings. Update/delete require `if_digest`
@@ -203,6 +203,8 @@ Main operations use `.agent.too.lock`; flows use `.flows.lock`. Config writers,
 including configured caps, workspaces, and roaming projection, share
 `.config.toml.lock`; caps/assets use `.caps.lock`, and jobs use `.jobs.lock`.
 Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
+Locks coordinate participating writers; filesystem edits that bypass these locks
+can still race a save.
 
 Reading after a save observes the saved source. Running code remains governed by
 Run binding and publication: static calls in an accepted flow use its bound
