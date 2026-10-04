@@ -5,7 +5,7 @@ This document defines the current local filesystem layout.
 
 ## Toolang Root
 
-Toolang stores all local state under one root directory.
+Resident agents share one Toolang root directory.
 
 Default root:
 
@@ -38,6 +38,7 @@ ${TOOLANG_ROOT}/
       prompts/
       tasks/
       chores/
+      drafts/
       archive/
       .state/
       .runtime/
@@ -107,7 +108,7 @@ memory when their lazy accessors are first used. Model/catalog data is not store
 or shared through a `.setup/` cache directory.
 
 
-## Runtime Room
+## Runtime Storage
 
 Runtime data shared by every local agent process lives under:
 
@@ -123,7 +124,7 @@ Key paths:
 | -------------- | ------------------------------------------------------------ |
 | `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
-| `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
+| `logs/<runnable-label>/<run_id>.log` | Per-run script logs when `PY_LOG` is set; the label is sanitized, or `default` when no runnable name is supplied |
 | `jobs.db` | Ready-job checkpoints, RRULE cursors, and active claims       |
 | `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
 | `ids.json`     | Local id allocator state                                     |

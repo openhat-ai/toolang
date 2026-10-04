@@ -75,10 +75,10 @@ kind are immutable. Moving between stages, renaming a source file, editing the
 body, and changing a chore schedule preserve the id. Copying a job or changing
 its kind requires a new id.
 
-The CLI, API, and agent tools allocate an id before catalog creation. A
-manually added ready file may omit it; `toolang.work` allocates and writes the
-id under the authored-job lock before publishing the next ready snapshot.
-Duplicate ids make the authored state invalid.
+CLI/API catalog creation allocates an id before saving. Direct file writes,
+including [me tools](tools.md#current-agent), may omit it; `toolang.work` allocates
+and writes missing ready-file ids under the authored-job lock before publishing
+the next ready snapshot. Duplicate ids make the authored state invalid.
 
 Runtime fields such as status, run ids, errors, and schedule cursors are never
 written into authored Markdown.

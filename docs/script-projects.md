@@ -1,5 +1,8 @@
 # Script Projects
 
+This guide owns project configuration, path resolution and workspace grants for
+local `.too` invocations.
+
 `too init DIR` creates an executable `aide.too` and a comment-only `toolang.toml`.
 Both belong in version control. Initialization refuses to overwrite either file,
 including directories and symlinks. A failure during creation may leave partial
@@ -45,7 +48,9 @@ or settings from the resident `~/.toolang` root.
 
 Script calls automatically add srcdir as a workspace and select it as workdir.
 Chat and hosting commands do not add it automatically, including for roaming
-agents. `-w` and `-d` are available in all three placements:
+agents. `-w` and `-d` are available in all three placements. The examples below
+assume an initialized project; referenced directories must exist, and `repo://src`
+requires a configured `repo` workspace containing `src/`:
 
 ```sh
 ./aide.too whats_for
@@ -84,10 +89,11 @@ visiting agents accept temporary grants only.
 
 ## File inputs
 
-Chat and script `@file` inputs use procdir even when workdir changes. Task/chore
-attachments remain relative to their authored files. Attachments supply content,
-not workspace access. Hosted calls send client-read content; they never reopen
-the same filename on the server. Prompt expansion, escaping, and fenced text keep
+Chat and script `@file` inputs use procdir even when workdir changes. Attachments
+in [Markdown tasks/chores](tasks.md#body) resolve relative to the defining file;
+[program job declarations](program.md#job-declarations) use the agent home.
+Attachments supply content, not workspace access. Hosted calls send client-read
+content; they never reopen the same filename on the server. Prompt expansion, escaping, and fenced text keep
 their existing [Content syntax](call-input.md#content).
 
 ## Implementation and verification

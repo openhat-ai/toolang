@@ -88,11 +88,14 @@ existing response fields and envelopes; their queries match these CLI records.
 
 ## Native TQ semantics
 
+The targeted cap example assumes an existing agent named `alice`; an untargeted
+`too caps` query has root scope and cannot match home caps.
+
 ```sh
 too models -q 'openai/*[tool_call;limit.context>=200000]' --json
 too models -q '*[modalities.input has image]' --human
 too tools -q '*[parameters has path]' --json
-too caps -q 'skill/*[tags has all (home,remote)]' --json
+too alice caps -q 'skill/*[tags has all (home,remote)]' --json
 ```
 
 A comma or repeated option forms a union; semicolons combine predicates.

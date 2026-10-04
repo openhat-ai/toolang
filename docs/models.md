@@ -464,7 +464,9 @@ controls. Historical costs are read from recorded amounts, never current prices.
 Cost selection is `reported`, `estimated`, `zero`, or `unknown`. `zero` requires
 an explicitly free, complete estimate; a positive rate rounded to zero remains
 `estimated`. Partial estimates retain `complete: false`. Unknown costs are not
-free. Provider reports remain `reported`, including zero and non-USD amounts.
+free. Selection prefers a USD provider report (including zero), then a USD
+catalog estimate. A non-USD provider report remains recorded but is selected
+only when no USD estimate is available; run cost limits do not convert currencies.
 
 Call totals settle to six fractional USD digits, rounding half up after all
 components are calculated. Accumulation and budget comparison use integer

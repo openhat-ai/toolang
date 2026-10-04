@@ -21,20 +21,15 @@ determines how execution consumes it; availability alone does not invoke it.
 
 ## Runtime Scope
 
-State caps use runtime scope:
+Scope determines where a cap is available. Precedence is `root < home < here`:
 
-- `root`: provided by the current Toolang root
-- `home`: available to one agent home
-- `here`: declared or referenced in the current source and travels with it
+| Scope | Meaning |
+| --- | --- |
+| `root` | Provided by the current Toolang root |
+| `home` | Provided by the current agent home |
+| `here` | Declared or referenced in one program module |
 
-Precedence is:
-
-1. `here`
-2. `home`
-3. `root`
-
-One effective cap set is built by applying this precedence to all visible cap
-definitions.
+For each kind and name, the highest-precedence visible definition wins.
 
 CLI query records expose scope through `tags`; HTTP read payloads retain the
 `scope` field.
@@ -56,7 +51,7 @@ Per-module and run declarations can further narrow execution resources.
 
 HTTP write payloads use `root` and `home` directly. CLI write commands expose
 placement as command shape: without `AGENT`, they write root caps;
-with `AGENT`, they write that agent's home caps.
+with `AGENT`, they write that agent's home caps. HTTP writes default to `home`.
 
 
 ## Form, Scope, And Origin
@@ -73,14 +68,6 @@ Form tells how a cap is attached:
 | `configured` | Configured by a ref in `config.toml` |
 | `referenced` | Attached by a program module `with` declaration |
 
-Scope tells where a cap is available:
-
-| Scope | Meaning |
-| --- | --- |
-| `root` | Provided by the current Toolang root |
-| `home` | Provided by the current agent home |
-| `here` | Declared or referenced in the current source and travels with it |
-
 `origin` describes where the cap content is authored:
 
 | Origin | Meaning |
@@ -91,10 +78,8 @@ Scope tells where a cap is available:
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
-HTTP write payloads default to `home` scope. CLI write commands default to root
-caps when `AGENT` is omitted. Only `authored` and `configured` forms
-can have root or home scope. `referenced` and `inline` forms belong to one
-program module and have `here` scope.
+Only `authored` and `configured` forms can have root or home scope. `referenced`
+and `inline` forms belong to one program module and have `here` scope.
 
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
 exposed separately as `definition_file`. When known, APIs may also include

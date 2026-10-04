@@ -74,8 +74,9 @@ some package-wide rules are still explicitly pending review.
 For durable Locals, `dim=0` means one complete value, including an array-valued
 item; `dim=1` means a collection to iterate. Internal execution shape is
 `none | item | list`. Array type and flow collection dimension are separate.
-`_` is the primary local; `let name = ...` binds a named result; an unbound
-result does not replace `_`. See [record shapes](records.md) and
+`_` is the primary local; `let name = ...` binds a named result;
+`let VALUE_STMT` discards its result and preserves `_`. See
+[record shapes](records.md) and
 [value contract tests](../tests/unit/execution/test_values.py).
 
 ## Acceptance, execution and change visibility

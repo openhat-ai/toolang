@@ -61,8 +61,9 @@ The two optional methods default to `None`:
   targets. This is not a sandbox for arbitrary shell commands.
 
 `ToolContext` exposes `home`, `room` (the plugin's private storage directory),
-and an immutable workspace map. It belongs to one invocation, not a whole Run;
-subsequent calls receive newly captured grants. Do not retain it on shared tools.
+and an immutable workspace map. Each invocation receives a fresh context over
+the Run's captured workspace grants; later State publications do not add grants
+to an accepted Run. Do not retain the context on shared tools.
 Only the corresponding built-in tools receive specialized contexts: runtime
 operations, history access, effective service credentials, or agent management.
 Ordinary tools receive none of those dependencies.
@@ -116,13 +117,17 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 ### Model Catalog
 
-Model catalog plugins return immutable provider/model snapshots. Static and
-local discovery use the same `Provider` and `Model` runtime types. The bundled
-and user-selected static file uses Toolang's flat `{providers: [...], models: [...]}`
-format; convert upstream models.dev data externally before selection. Only
-models.dev-derived records carry an `npm` package; every other source
-declares its protocol through `ProviderToolang.adapter`. Catalog plugins do not
-execute model calls or install packages named by catalog metadata.
+Model catalog plugins return immutable snapshots. Setup translates neutral
+`CatalogSnapshot` declarations into runtime `Provider` and `Model` records;
+plugins can also return `ModelCatalogSnapshot` directly. The bundled and
+user-selected static file uses Toolang's flat `{providers: [...], models: [...]}`
+format; convert upstream models.dev data externally before selection.
+
+For provider defaults, an explicit `ProviderToolang.adapter` takes precedence
+over the core mapping for known `npm` packages. Neutral `CatalogProvider`
+declarations expose `adapter` directly. Catalog plugins do not execute model
+calls or install packages named by metadata. [Models](models.md#one-time-route-resolution)
+owns effective model routes and connection overrides.
 
 ### Model Adapter
 
@@ -313,7 +318,7 @@ only routing/bootstrap values such as `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, an
 `TOOLANG_SANDBOX`.
 
 Sandbox ownership stays in the host-only control directory described in
-[layout](layout.md#runtime-room). Cleanup preserves the reference if it fails,
+[layout](layout.md#runtime-storage). Cleanup preserves the reference if it fails,
 so a later operation can retry. Background Docker startup records bootstrap/server
 output in a mode-0600 agent log and preserves bounded early diagnostics before
 release. Foreground output begins after the readiness handoff. Legacy

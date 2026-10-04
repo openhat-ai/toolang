@@ -11,7 +11,7 @@ evaluation. These examples illustrate evaluation rather than define syntax.
 
 | Form | Effect on flow locals |
 | --- | --- |
-| Unbound value statement | Replace primary local `_` with the complete result. |
+| Value statement without `let` | Replace primary local `_` with the complete result. |
 | `let NAME = VALUE_STMT` | Bind the complete result to `NAME`, retaining `_`. |
 | `let VALUE_STMT` | Discard the result, retaining all locals. |
 | `let NAME = BODY` | Evaluate Content into one `Part[]` value and bind it to `NAME`. |

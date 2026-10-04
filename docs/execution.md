@@ -118,14 +118,24 @@ client fallbacks on the server.
 | `cost` | Unlimited | Complete recursive root tree, USD |
 | `time` | Unlimited | Complete recursive root tree, wall-clock seconds |
 
-Zero prohibits the corresponding use; `None` disables a limit. Model/tool call
-counts are checked before invocation. Completed model results charge token/cost
-usage, so a model Step can succeed before the enclosing Run fails on a total.
-Token limits require usage; cost limits additionally require captured prices.
+`None` disables a limit. Model/tool call counts are checked before invocation;
+zero blocks the corresponding call. Token/cost limits are checked after model
+results, so zero rejects recorded positive usage rather than preventing dispatch.
+A model Step can succeed before the enclosing Run fails on a total.
+
+Token limits require provider usage. Cost limits accumulate the selected USD
+amounts, including partial estimates. A cost limit alone does not require
+usage or pricing: unknown amounts and selected non-USD amounts do not block a
+call and contribute no known USD cost. Missing usage or rates can leave coverage
+incomplete, so the limit bounds recorded costs, not necessarily actual spending.
+See [accounting](models.md#runtime-calls-and-accounting) for cost selection and
+coverage. The cost limit serializes as decimal text; recorded accounting amounts
+use numeric fields.
+
 Time expiry interrupts work and records failure rather than user cancellation.
-Decimal cost persists as text to preserve precision. Preparation controls retain
-effective limits. Retry restores token/cost totals from retained succeeded Steps;
-deleted attempts are excluded, and reexecuted agics restart local call counts.
+Preparation controls retain effective limits. Retry restores token/cost totals
+from retained succeeded Steps; deleted attempts are excluded, and reexecuted
+agics restart local call counts.
 
 ## Run acceptance and ownership
 

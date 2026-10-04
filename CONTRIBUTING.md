@@ -94,6 +94,25 @@ website's `scripts/toolang-source.txt` alongside its grammar reference instead o
 assuming both describe the same release. Migration PRs record source sections,
 destination files and completed verification before removing unique guidance.
 
+## Documentation quality checklist
+
+Apply these checks to every current guide touched by a documentation review.
+Record the reviewed revision, findings and verification in the pull request;
+keep historical plans and dated evaluations distinct from current contracts.
+
+| Check | Passing condition |
+| --- | --- |
+| Reader and ownership | The title and opening identify the topic and intended reader. Detailed rules have one owner across the three repositories; other entry points link to it. |
+| Accuracy | Claims match current implementation and tests, including defaults, precedence, lifecycle, errors and compatibility. Implemented behavior is distinguished from registered, reserved or planned functionality. |
+| Completeness | The reader can understand the main concepts and normal path, with prerequisites and relevant limits or failure behavior stated explicitly. |
+| Clarity and terminology | Concepts are defined before use, names match code and related guides, and the order supports a concrete reading task. Remove obsolete terms, ambiguous claims and repeated explanations. |
+| Examples | Commands, source and configuration match current interfaces. State required context; distinguish complete examples from fragments, placeholders and intentionally invalid cases. Validate offline where possible. |
+| Navigation and maintenance | Index entries, links and anchors resolve to the correct owners. Source/test evidence supports important claims; avoid duplicating volatile inventories or keeping empty pointer documents. |
+
+A guide may pass without an edit. Fix substantive findings, then validate affected
+examples, links and `git diff --check`; expand source inspection when evidence is
+missing or contradictory.
+
 ## Maintain evidence incrementally
 
 Record the source revision reviewed, topic owner and focused code/test anchors.

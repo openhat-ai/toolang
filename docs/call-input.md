@@ -3,6 +3,7 @@
 `CallInput[T]` is the complete input supplied to a prompt, script invocation,
 or runnable. It uses one immutable flat mapping throughout parsing, execution,
 HTTP, and persistence. `_` holds primary input; other keys hold arguments.
+This type sketch omits imports:
 
 ```python
 CallInput[str]({"_": "Review this change.", "count": "2"})
@@ -77,8 +78,9 @@ the self-describing value codec, without an input-only `Local` wrapper. Input
 references use `payload/input/_` or `payload/input/argumentName`. Nested paths
 follow the value codec: a boxed array item uses `payload/input/items/!/0`.
 Outputs use `Output(local=Local(value=..., dim=0), binding="_")`. `Local`
-contains only the value and dimension; the enclosing local map or output
-binding supplies its name. `binding=None` leaves a result unbound.
+stores a typed value/reference and dimension; its `type` property is derived
+from that value and exposed in the HTTP/event projection. The enclosing local
+map or output binding supplies its name. `binding=None` leaves a result unbound.
 
 HTTP clients use this flat format. Incompatible stores are rejected unchanged;
 see [record compatibility](records.md#persistence).
@@ -290,15 +292,17 @@ $$review         -> $review
 
 ### Includes
 
-```text
-IncludeRef  = "@" ResourceRef
-ResourceRef = Path | QuotedPath | UploadRef
-```
+An include occupies its complete line and resolves to one `Part`. Its `@`
+prefix is followed by one reference, with shell-style quoting for spaces:
+`@README.md` or `@"path with spaces/image.png"`. Leading whitespace makes it text.
 
-Examples: `@README.md`, `@"path with spaces/image.png"`, and
-`@upload:abc123`. An include occupies its complete line and resolves to one
-`Part`. Leading whitespace makes it text. Each caller defines allowed
-resources; a UI file picker inserts the same syntax.
+The Content evaluator delegates the reference to a caller-supplied resolver.
+Built-in Chat, script and job callers resolve filesystem paths, with bases
+described in [file inputs](script-projects.md#file-inputs). They support UTF-8
+text, images, MP3/WAV audio and recognized document formats; missing files,
+invalid UTF-8 text and unsupported formats fail during input preparation.
+Hosted calls use client-read attachment content, not server-side path resolution.
+There is no built-in upload-ID resolver or file-picker integration.
 
 Prompt calls and their capture boundaries are defined above. On Content
 surfaces a slash is ordinary text; Chat's command classification is a separate
