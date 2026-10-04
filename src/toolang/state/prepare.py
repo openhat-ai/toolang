@@ -31,7 +31,7 @@ from .config import (
     parse_config,
     resolve_cap_allows,
 )
-from .types import EntryKind
+from .types import EntryKind, StateFile
 from .state import (
     materialize_program_caps,
     materialize_scope,
@@ -43,6 +43,7 @@ from .source import (
     SourceManifest,
     SourceObservation,
     SourceSnapshot,
+    SourceRecord,
     ProgramSource,
     observe_home_source,
     observe_root_source,
@@ -161,7 +162,26 @@ def compose_layer_state(
         module_sources=home.module_sources,
         module_digests=home.module_digests,
         module_caps=home.module_caps,
+        files=(
+            *_source_files("root", root.source),
+            *_source_files("home", home.source),
+        ),
         revision_dir=revision_dir,
+    )
+
+
+def _source_files(scope: LayerScope, source: SourceRecord) -> tuple[StateFile, ...]:
+    if not isinstance(source, SourceManifest):
+        return ()
+    return tuple(
+        StateFile(scope, item.path, digest)
+        for item in source.files
+        # Older config digests may identify rebased bytes, never the authored file.
+        if (
+            digest := item.raw_digest
+            or (item.digest if item.path != "config.toml" else None)
+        )
+        is not None
     )
 
 

@@ -18,7 +18,13 @@ from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
-from .source import SOURCE_SCHEMA, LegacySourceTree, SourceManifest, SourceRecord
+from .source import (
+    SOURCE_SCHEMA,
+    CANONICAL_SOURCE_SCHEMA,
+    LegacySourceTree,
+    SourceManifest,
+    SourceRecord,
+)
 from .state import (
     AGENT_STATE_SCHEMA,
     agent_layers_document,
@@ -30,7 +36,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 12
+LAYER_SCHEMA = 13
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -53,7 +59,10 @@ class RootLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("root State layer directory does not match its revision")
-        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+        if self.schema == LAYER_SCHEMA and (
+            not isinstance(self.source, SourceManifest)
+            or self.source.schema != SOURCE_SCHEMA
+        ):
             raise ValueError("current root State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
@@ -78,7 +87,10 @@ class HomeLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("home State layer directory does not match its revision")
-        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+        if self.schema == LAYER_SCHEMA and (
+            not isinstance(self.source, SourceManifest)
+            or self.source.schema != SOURCE_SCHEMA
+        ):
             raise ValueError("current home State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
         object.__setattr__(self, "modules", freeze_mapping(self.modules))
@@ -478,7 +490,7 @@ def _validate_layer_dir(
             f"State layer scope mismatch: expected {scope!r}, found {document['scope']!r}"
         )
     source = _source_record(document)
-    if not isinstance(source, SourceManifest):
+    if not isinstance(source, SourceManifest) or source.schema != SOURCE_SCHEMA:
         raise ValueError("current State layer requires a source manifest")
     _config(document)
     manifest = _validate_file_manifest(revision_dir, document)
@@ -860,7 +872,7 @@ def _source_record(document: Mapping[str, object]) -> SourceRecord:
     schema = data.get("schema")
     if not isinstance(schema, int) or isinstance(schema, bool):
         raise TypeError("State layer source schema must be an integer")
-    if schema == SOURCE_SCHEMA:
+    if schema in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
         return SourceManifest.from_data(data)
     return LegacySourceTree.from_data(data)
 

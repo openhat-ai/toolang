@@ -148,10 +148,10 @@ Missing targets and unresolved values fail as ordinary tool errors.
 
 ## Current Agent
 
-`me` reads and manages the current agent's latest home files, subject to normal
-tool permissions. The executor supplies `MeToolContext` for that home. Reads
-return the files' current disk content; writes use the existing loading and
-runtime adoption rules.
+`me` manages the current agent's latest home files and compares saved file
+versions with the State loaded by the calling Run, subject to normal tool
+permissions. The executor supplies that home and captured State. File operations
+read current disk content; `loaded` reads only the captured State's file list.
 
 ```text
 me__list()
@@ -159,6 +159,7 @@ me__get(key)
 me__create(key, content, encoding="utf-8")
 me__update(key, content, if_digest, encoding="utf-8")
 me__delete(key, if_digest)
+me__loaded(receipts)
 ```
 
 Keys are canonical paths relative to the current home:
@@ -171,26 +172,48 @@ Keys are canonical paths relative to the current home:
 | `skills/<name>/SKILL.md`, `skills/<name>/assets/**` | Full-file CRUD |
 | `tasks/<name>.md`, `chores/<name>.md` | Full-file CRUD on ready job files |
 
-List returns sorted `items` containing `key`, `digest`, and `bytes`.
-Get returns an `item` with complete `content` and `encoding` as well. Text is
-UTF-8; non-UTF-8 files are returned as base64. Create/update accept a complete
-content string; `encoding="base64"` supplies exact binary bytes.
-Each operation addresses a complete file.
+Successful results are flat objects:
+
+| Operation | Result |
+| --- | --- |
+| `list` | `{files: [{key, digest, bytes}]}`, sorted by key |
+| `get` | `{key, digest, bytes, content, encoding}` |
+| `create`, `update` | `{key, digest}` |
+| `delete` | `{key, digest: null}` |
+| `loaded` | `{loaded, revision, mismatches: [{key, digest}]}` |
+
+Text is UTF-8; non-UTF-8 files are returned as base64. Create/update accept a
+complete content string; `encoding="base64"` supplies exact binary bytes.
+Each file operation addresses a complete file. The write result itself is a
+receipt; identical updates return the same receipt without rewriting the file.
 
 All digests are lowercase SHA-256 of exact file bytes, including comments, front
 matter, whitespace, and original line endings. Update/delete require `if_digest`
 from a read or successful write and check it under the owning lock. On
 `digest_mismatch`, get the latest file and reconcile before retrying. Create fails
-if a target already exists. Successful create/update returns `item` and
-`created=true` or `changed`; delete returns `key` and `deleted=true`.
+if a target already exists. The receipt identifies the resulting bytes; a null
+digest identifies the requested absence of a file.
 
 Me does not parse or validate file content. A successful save only confirms that
 the bytes were written. Existing loaders/watchers handle syntax, metadata, and
 composition errors identically for me writes and direct filesystem edits. The
 State watcher retains its last valid publication and reports diagnostics for
 rejected candidates; repairing the files allows a later refresh to publish.
-Reads never allocate job ids. Path, encoding, digest, and I/O failures carry
-`output.error` with code, operation, key when known, and bounded diagnostics.
+Reads never allocate job ids. Failures return `{error, message, key?}`, where
+`error` is a stable code and `key` is included when known. Successful results
+never contain `error`.
+
+| Error | Meaning |
+| --- | --- |
+| `invalid_request` | Invalid arguments, path, or content encoding |
+| `not_found` | Get/update/delete target does not exist |
+| `already_exists` | Create target already exists |
+| `digest_mismatch` | Update/delete observed different file bytes |
+| `io_error` | A filesystem or safe-path access operation failed |
+
+Digest conflicts also return `expected_digest` and `actual_digest`. No failure
+returns a successful receipt. A list failure returns an error rather than a
+partial file list.
 
 Delete removes exactly one file. Deleting SKILL.md leaves assets in place; deleting
 a task/chore does not archive it or cancel an existing Run. Draft/archive job
@@ -205,6 +228,29 @@ including configured caps, workspaces, and roaming projection, share
 Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
+
+`loaded` accepts an array of `{key, digest}` receipts with unique home-relative
+keys. It compares all receipts with the same State bound to the current call and
+returns that State's `revision`. Only mismatches are returned, in input order;
+their `digest` is the loaded value, not the expected value from the input.
+Empty input matches. Missing or untracked keys have digest `null`, including
+independent task/chore files. A null receipt matches a missing entry even if a
+same-named root file exists. For example:
+
+```json
+{
+  "loaded": false,
+  "revision": "<loaded-state-sha256>",
+  "mismatches": [{"key": "tasks/example.md", "digest": null}]
+}
+```
+
+`loaded: false` is a successful comparison, not an error. The operation does not
+read disk, select the latest publication, refresh, wait, or switch the Run's
+State. Matching proves inclusion in the source file list, including shadowed
+inputs; it does not prove that each declaration is effective or that Setup or a
+scheduled job adopted a change. Historical manifests without raw config hashes
+treat that config as untracked. See [Agent State](agent-state.md).
 
 Reading after a save observes the saved source. Running code remains governed by
 Run binding and publication: static calls in an accepted flow use its bound

@@ -34,12 +34,12 @@ def invoke(context: ToolContext, operation: str, **arguments):
 def read(context, key):
     result = invoke(context, "get", key=key)
     assert result.error is None, result.output
-    return result.output["item"]
+    return result.output
 
 
-def test_five_closed_file_schemas():
+def test_six_closed_me_schemas():
     tools = create_toolset({}).tools()
-    assert tuple(tools) == ("list", "get", "create", "update", "delete")
+    assert tuple(tools) == ("list", "get", "create", "update", "delete", "loaded")
     for name, tool in tools.items():
         schema = tool.definition().parameters
         assert schema["additionalProperties"] is False
@@ -77,7 +77,10 @@ def test_five_closed_file_schemas():
 def test_complete_file_crud_and_exact_bytes(context, key, content):
     created = invoke(context, "create", key=key, content=content)
     assert created.error is None, created.output
-    assert created.output["created"] is True
+    assert created.output == {
+        "key": key,
+        "digest": sha256(content.encode()).hexdigest(),
+    }
     item = read(context, key)
     encoded = content.encode("utf-8")
     assert item == {
@@ -89,7 +92,7 @@ def test_complete_file_crud_and_exact_bytes(context, key, content):
     }
     path = context.home / key
     assert path.read_bytes() == encoded
-    listed = invoke(context, "list").output["items"]
+    listed = invoke(context, "list").output["files"]
     assert [entry["key"] for entry in listed] == sorted(
         entry["key"] for entry in listed
     )
@@ -99,27 +102,29 @@ def test_complete_file_crud_and_exact_bytes(context, key, content):
     )
     assert all("content" not in entry for entry in listed)
     duplicate = invoke(context, "create", key=key, content=content)
-    assert duplicate.output["error"]["code"] == "conflict"
+    assert duplicate.output["error"] == "already_exists"
     identical = invoke(
         context, "update", key=key, content=content, if_digest=item["digest"]
     )
-    assert identical.output["changed"] is False
+    assert identical.output == created.output
     updated_text = content + "\n"
     updated = invoke(
         context, "update", key=key, content=updated_text, if_digest=item["digest"]
     )
     assert updated.error is None, updated.output
-    assert updated.output["changed"] is True
-    assert read(context, key) == updated.output["item"]
+    assert updated.output == {
+        "key": key,
+        "digest": sha256(updated_text.encode()).hexdigest(),
+    }
+    assert read(context, key)["digest"] == updated.output["digest"]
     stale = invoke(context, "delete", key=key, if_digest=item["digest"])
-    assert stale.output["error"]["code"] == "digest_mismatch"
+    assert stale.output["error"] == "digest_mismatch"
     assert path.read_bytes() == updated_text.encode()
-    deleted = invoke(
-        context, "delete", key=key, if_digest=updated.output["item"]["digest"]
-    )
+    deleted = invoke(context, "delete", key=key, if_digest=updated.output["digest"])
     assert deleted.error is None
+    assert deleted.output == {"key": key, "digest": None}
     assert not path.exists()
-    assert invoke(context, "get", key=key).output["error"]["code"] == "not_found"
+    assert invoke(context, "get", key=key).output["error"] == "not_found"
 
 
 def test_reads_latest_main_source_and_does_not_publish(context):
@@ -139,7 +144,7 @@ def test_reads_latest_main_source_and_does_not_publish(context):
         if_digest=item["digest"],
     )
     assert saved.error is None, saved.output
-    assert read(context, "agent.too") == saved.output["item"]
+    assert read(context, "agent.too")["digest"] == saved.output["digest"]
     assert context.layout.program.stat().st_mode & 0o777 == 0o751
     assert state.revision == original_revision
     from toolang.state.cache import load_current_agent_revision
@@ -162,6 +167,7 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
     broken = "agic ("
     repaired = "agic inspect():\n  tools = me/*\n  Repaired.\n"
     gate = AsyncGate()
+    loaded_gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -190,6 +196,27 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
                     ),
                 )
             ),
+            ScriptedModelTurn(
+                gate=loaded_gate,
+                result=ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            "loaded",
+                            "loaded",
+                            "me__loaded",
+                            {
+                                "receipts": [
+                                    {
+                                        "key": "agent.too",
+                                        "digest": sha256(repaired.encode()).hexdigest(),
+                                    }
+                                ]
+                            },
+                        ),
+                    )
+                ),
+            ),
+            ModelCallResult(tool_calls=(ToolCall("list", "list", "me__list", {}),)),
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
@@ -203,6 +230,10 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
             await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
             harness.setup.layout.program.write_text(broken)
             gate.release()
+            await asyncio.wait_for(loaded_gate.wait_until_entered(), timeout=5)
+            published = prepare_agent_state(harness.setup.layout)
+            assert published.revision != harness.state.revision
+            loaded_gate.release()
             run = await asyncio.wait_for(running, timeout=5)
             assert run.status == "succeeded", run.error
             assert (
@@ -215,10 +246,36 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
                 for part in message.parts
                 if isinstance(part, ToolResultPart)
             ]
-            assert len(returned) == 2
+            assert len(returned) == 4
             assert all(part.error is None for part in returned)
-            assert returned[0].output["item"]["content"] == broken
-            assert returned[1].output["item"]["content"] == repaired
+            assert isinstance(returned[0].output, dict)
+            assert isinstance(returned[1].output, dict)
+            assert returned[0].output["content"] == broken
+            assert returned[1].output == {
+                "key": "agent.too",
+                "digest": sha256(repaired.encode()).hexdigest(),
+            }
+            assert returned[2].output == {
+                "loaded": False,
+                "revision": harness.state.revision,
+                "mismatches": [
+                    {"key": "agent.too", "digest": sha256(source.encode()).hexdigest()}
+                ],
+            }
+            assert returned[3].output["files"] == [
+                {
+                    "key": "agent.too",
+                    "digest": sha256(repaired.encode()).hexdigest(),
+                    "bytes": len(repaired.encode()),
+                }
+            ]
+            persisted = [
+                step.output.local.value
+                for step in harness.store.list_steps(run_id=run.id)
+                if step.output is not None
+                and isinstance(step.output.local.value, ToolResultPart)
+            ]
+            assert persisted == returned
             assert harness.setup.layout.program.read_text() == repaired
 
     asyncio.run(scenario())
@@ -240,7 +297,7 @@ def test_failed_atomic_save_preserves_original_file_and_digest(context, monkeypa
         content="replacement",
         if_digest=item["digest"],
     )
-    assert result.output["error"]["code"] == "storage_error"
+    assert result.output["error"] == "io_error"
     assert read(context, "agent.too") == item
     assert sorted(path.name for path in context.home.iterdir()) == [
         ".agent.too.lock",
@@ -279,7 +336,7 @@ def test_assets_round_trip_binary_and_do_not_get_deleted_with_skill(context):
     )
     assert deleted.error is None
     assert (context.home / key).read_bytes() == encoded
-    assert key in [item["key"] for item in invoke(context, "list").output["items"]]
+    assert key in [item["key"] for item in invoke(context, "list").output["files"]]
 
 
 @pytest.mark.parametrize(
@@ -299,7 +356,7 @@ def test_assets_round_trip_binary_and_do_not_get_deleted_with_skill(context):
         (
             "create",
             {"key": "prompts/a.md", "content": {"body": "hello"}},
-            "invalid_content",
+            "invalid_request",
         ),
         (
             "create",
@@ -309,7 +366,7 @@ def test_assets_round_trip_binary_and_do_not_get_deleted_with_skill(context):
         (
             "create",
             {"key": "skills/a/assets/x.bin", "content": "!!", "encoding": "base64"},
-            "invalid_content",
+            "invalid_request",
         ),
     ],
 )
@@ -317,7 +374,7 @@ def test_bad_requests_do_not_mutate(context, operation, arguments, code):
     before = context.layout.program.read_bytes()
     result = invoke(context, operation, **arguments)
     assert result.error is not None, result.output
-    assert result.output["error"]["code"] == code, result.output
+    assert result.output["error"] == code, result.output
     assert context.layout.program.read_bytes() == before
     assert not (context.home / "prompts/a.md").exists()
 
@@ -348,7 +405,7 @@ def test_bad_requests_do_not_mutate(context, operation, arguments, code):
 def test_keys_cannot_escape_or_expand_whitelist(context, key):
     result = invoke(context, "create", key=key, content="unwanted")
     assert result.error is not None
-    assert result.output["error"]["code"] == "invalid_request"
+    assert result.output["error"] == "invalid_request"
 
 
 def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
@@ -362,7 +419,7 @@ def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
         path.write_text("Excluded.")
     result = invoke(context, "list")
     assert result.error is None, result.output
-    assert [item["key"] for item in result.output["items"]] == ["agent.too"]
+    assert [item["key"] for item in result.output["files"]] == ["agent.too"]
 
 
 def test_context_cannot_select_another_home(context):
@@ -371,9 +428,9 @@ def test_context_cannot_select_another_home(context):
     other = context.layout.root / "agents/bob"
     other.mkdir()
     result = invoke(replace(context, home=other), "list")
-    assert result.output["error"]["code"] == "storage_error"
+    assert result.output["error"] == "io_error"
     generic = ToolContext(home=context.home, room=context.room)
-    assert invoke(generic, "list").output["error"]["code"] == "invalid_request"
+    assert invoke(generic, "list").output["error"] == "invalid_request"
 
 
 @pytest.mark.parametrize("writer", ["me", "filesystem"])
@@ -547,7 +604,7 @@ def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
             "update",
             key="tasks/manual.md",
             content=replacement,
-            if_digest=created.output["item"]["digest"],
+            if_digest=created.output["digest"],
         ).error
         is None
     )
@@ -591,7 +648,7 @@ def test_symlinks_cannot_escape(context, tmp_path, target):
         (context.home / ".caps.lock").symlink_to(external)
         key = "prompts/new.md"
     result = invoke(context, "create", key=key, content="changed")
-    assert result.output["error"]["code"] == "storage_error"
+    assert result.output["error"] == "io_error"
     assert external.read_text() == "untouched"
     assert not (outside / "new.md").exists()
 
@@ -613,7 +670,7 @@ def test_two_writers_cannot_overwrite_observed_snapshot(context):
         results = [future.result() for future in futures]
     assert sum(result.error is None for result in results) == 1
     assert (
-        next(result for result in results if result.error).output["error"]["code"]
+        next(result for result in results if result.error).output["error"]
         == "digest_mismatch"
     )
 
@@ -663,7 +720,7 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     )
     assert result.error is None, result.output
     assert layout.program.is_symlink()
-    assert source.read_text() == result.output["item"]["content"]
+    assert sha256(source.read_bytes()).hexdigest() == result.output["digest"]
     assert source.stat().st_mode & 0o777 == 0o755
     assert (layout.home / ".config.toml.lock").exists()
     assert not (layout.home / ".project.lock").exists()
@@ -683,7 +740,7 @@ def test_valid_long_asset_filename_can_be_created_and_replaced(context, exists):
     result = invoke(context, operation, **arguments)
     assert result.error is None, result.output
     assert path.read_bytes() == b"\xff\0"
-    assert read(context, key) == result.output["item"]
+    assert read(context, key)["digest"] == result.output["digest"]
     assert tuple(path.parent.iterdir()) == (path,)
 
 
@@ -705,7 +762,7 @@ def test_roaming_link_loop_returns_a_structured_error(tmp_path, operation):
     if operation == "update":
         arguments["content"] = "replacement"
     result = invoke(context, operation, **arguments)
-    assert result.output["error"]["code"] == "storage_error"
+    assert result.output["error"] == "io_error"
     assert source.read_text() == "agic:\n  Original.\n"
     assert layout.program.is_symlink()
 
@@ -732,5 +789,242 @@ def test_roaming_program_cannot_edit_another_home_source(tmp_path, relative):
         content="replacement",
         if_digest=sha256(other.read_bytes()).hexdigest(),
     )
-    assert result.output["error"]["code"] == "storage_error"
+    assert result.output["error"] == "io_error"
     assert other.read_text() == "agic:\n  Untouched.\n"
+
+
+def test_loaded_receipts_follow_captured_state_not_disk_or_publication(
+    context, monkeypatch
+):
+    from dataclasses import replace
+
+    from toolang.execution.tools.me.storage import HomeFiles
+    from toolang.state.prepare import load_agent_state
+
+    before = prepare_agent_state(context.layout)
+    original = read(context, "agent.too")
+    updated = invoke(
+        context,
+        "update",
+        key="agent.too",
+        if_digest=original["digest"],
+        content="agic alice():\n  Changed.\n",
+    )
+    created = invoke(
+        context, "create", key="flows/research.too", content="flow:\n  pass\n"
+    )
+    receipts = [updated.output, created.output]
+    assert updated.error is created.error is None
+    after = prepare_agent_state(context.layout)
+    old_context = replace(context, state=before)
+    new_context = replace(context, state=after)
+    assert invoke(old_context, "loaded", receipts=receipts).output == {
+        "loaded": False,
+        "revision": before.revision,
+        "mismatches": [
+            {"key": "agent.too", "digest": original["digest"]},
+            {"key": "flows/research.too", "digest": None},
+        ],
+    }
+    assert invoke(new_context, "loaded", receipts=receipts).output == {
+        "loaded": True,
+        "revision": after.revision,
+        "mismatches": [],
+    }
+    deleted = invoke(
+        context, "delete", key="flows/research.too", if_digest=created.output["digest"]
+    )
+    assert deleted.output == {"key": "flows/research.too", "digest": None}
+    assert invoke(new_context, "loaded", receipts=[deleted.output]).output == {
+        "loaded": False,
+        "revision": after.revision,
+        "mismatches": [created.output],
+    }
+    final = prepare_agent_state(context.layout)
+    assert invoke(
+        replace(context, state=final),
+        "loaded",
+        receipts=[updated.output, deleted.output],
+    ).output == {
+        "loaded": True,
+        "revision": final.revision,
+        "mismatches": [],
+    }
+
+    # Neither reloading an old revision nor comparing it consults current files.
+    context.layout.program.write_text("agic (")
+    restored = load_agent_state(context.layout, after.revision)
+    assert restored.files == after.files
+
+    def no_disk(*_args, **_kwargs):
+        pytest.fail("loaded must not access home files")
+
+    monkeypatch.setattr(HomeFiles, "read", no_disk)
+    monkeypatch.setattr(HomeFiles, "lock", no_disk)
+    monkeypatch.setattr(Path, "read_bytes", no_disk)
+    assert (
+        invoke(replace(context, state=restored), "loaded", receipts=receipts).output[
+            "loaded"
+        ]
+        is True
+    )
+
+
+def test_loaded_uses_home_raw_config_and_keeps_shadowed_inputs(context):
+    from dataclasses import replace
+
+    from toolang.state.prepare import load_agent_state
+
+    root_prompt = context.layout.root / "prompts/same.md"
+    root_prompt.parent.mkdir()
+    root_prompt.write_text("Root prompt.")
+    (root_prompt.parent / "root-only.md").write_text("Only in root.")
+    root_config = b'# Root comment\r\n[workspaces]\r\nignored = "."\r\n'
+    context.layout.root_config.write_bytes(root_config)
+    content = b'# Keep comment\r\n[workspaces]\r\nrepo = "."\r\n'
+    config_receipt = invoke(
+        context, "create", key="config.toml", content=content.decode()
+    ).output
+    prompt_receipt = invoke(
+        context, "create", key="prompts/same.md", content="Home prompt."
+    ).output
+    context.layout.program.write_text(
+        "prompt same:\n  Inline prompt.\n\nagic alice():\n  Hello.\n"
+    )
+    asset = invoke(
+        context,
+        "create",
+        key="skills/review/assets/image.bin",
+        content="/wA=",
+        encoding="base64",
+    ).output
+    invoke(
+        context,
+        "create",
+        key="skills/review/SKILL.md",
+        content="---\ndescription: Review\n---\nReview.",
+    )
+    state = prepare_agent_state(context.layout)
+    assert state.prompts["same"].scope == "here"
+    assert invoke(
+        replace(context, state=state),
+        "loaded",
+        receipts=[config_receipt, prompt_receipt, asset],
+    ).output == {
+        "loaded": True,
+        "revision": state.revision,
+        "mismatches": [],
+    }
+    assert state.workspaces["repo"] == str(context.home.resolve())
+    files = state.to_snapshot()["files"]
+    assert isinstance(files, list)
+    assert {
+        "scope": "root",
+        "key": "config.toml",
+        "digest": sha256(root_config).hexdigest(),
+    } in files
+    assert {
+        "scope": "root",
+        "key": "prompts/same.md",
+        "digest": sha256(root_prompt.read_bytes()).hexdigest(),
+    } in files
+    assert {"scope": "home", **config_receipt} in files
+    # A root-only definition must not satisfy a home receipt with the same key.
+    assert invoke(
+        replace(context, state=state),
+        "loaded",
+        receipts=[
+            {
+                "key": "prompts/root-only.md",
+                "digest": sha256(b"Only in root.").hexdigest(),
+            }
+        ],
+    ).output["mismatches"] == [{"key": "prompts/root-only.md", "digest": None}]
+    assert load_agent_state(context.layout, state.revision).files == state.files
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["tasks/example.md", "chores/example.md", "prompts/missing.md", "untracked.txt"],
+)
+def test_loaded_untracked_or_absent_keys_use_null(context, key):
+    from dataclasses import replace
+
+    if key.startswith(("tasks/", "chores/")):
+        assert (
+            invoke(context, "create", key=key, content="Untracked job.").error is None
+        )
+    state = prepare_agent_state(context.layout)
+    bound = replace(context, state=state)
+    assert invoke(
+        bound, "loaded", receipts=[{"key": key, "digest": "0" * 64}]
+    ).output == {
+        "loaded": False,
+        "revision": state.revision,
+        "mismatches": [{"key": key, "digest": None}],
+    }
+    for receipts in ([], [{"key": key, "digest": None}]):
+        assert invoke(bound, "loaded", receipts=receipts).output == {
+            "loaded": True,
+            "revision": state.revision,
+            "mismatches": [],
+        }
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"receipts": None},
+        {"receipts": {}},
+        {"receipts": [None]},
+        {"receipts": [{"key": "agent.too"}]},
+        {"receipts": [{"key": "agent.too", "digest": "BAD"}]},
+        {"receipts": [{"key": "../agent.too", "digest": None}]},
+        {"receipts": [{"key": "agent.too", "digest": None, "scope": "root"}]},
+        {"receipts": [{"key": "agent.too", "digest": None}] * 2},
+        {"receipts": [], "revision": "0" * 64},
+    ],
+)
+def test_loaded_rejects_invalid_receipts(context, arguments):
+    result = invoke(context, "loaded", **arguments)
+    assert result.error is not None
+    assert result.output["error"] == "invalid_request"
+    assert set(result.output) <= {"error", "message", "key"}
+
+
+def test_loaded_requires_bound_state_without_preparing_one(context):
+    result = invoke(context, "loaded", receipts=[])
+    assert result.error is not None
+    assert result.output["error"] == "invalid_request"
+    assert not context.layout.agent_state.exists()
+
+
+def test_flat_file_errors_and_digest_conflicts(context):
+    original = read(context, "agent.too")
+    stale = invoke(
+        context, "update", key="agent.too", content="unused", if_digest="0" * 64
+    )
+    assert stale.error is not None
+    assert stale.output == {
+        "error": "digest_mismatch",
+        "message": "file changed since it was read; get it again before editing",
+        "key": "agent.too",
+        "expected_digest": "0" * 64,
+        "actual_digest": original["digest"],
+    }
+    for operation, arguments, code in (
+        ("get", {"key": "flows/missing.too"}, "not_found"),
+        (
+            "update",
+            {"key": "flows/missing.too", "content": "", "if_digest": "0" * 64},
+            "not_found",
+        ),
+        ("delete", {"key": "flows/missing.too", "if_digest": "0" * 64}, "not_found"),
+        ("create", {"key": "agent.too", "content": ""}, "already_exists"),
+    ):
+        result = invoke(context, operation, **arguments)
+        assert result.error is not None
+        assert set(result.output) == {"error", "message", "key"}
+        assert result.output["error"] == code
+        assert result.output["key"] == arguments["key"]

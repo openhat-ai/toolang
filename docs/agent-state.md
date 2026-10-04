@@ -92,8 +92,8 @@ Locks and temporary paths are writer implementation details. Old
 `layer.json` is a complete root or home layer identity document. It contains:
 
 - schema and scope;
-- a portable source manifest of sorted logical paths, canonical byte sizes, and
-  SHA-256 digests;
+- a portable source manifest of sorted logical paths, captured byte sizes and
+  SHA-256 digests, plus each raw authored file's SHA-256 digest;
 - parsed config;
 - configured and referenced resolutions;
 - State capabilities;
@@ -101,11 +101,11 @@ Locks and temporary paths are writer implementation details. Old
 - a sorted manifest of every file below `files/`, including path, size, and
   SHA-256.
 
-`layers.json` contains exactly one schema number and the selected root and home
-revisions:
+`layers.json` records the composition schema, selected root and home revisions,
+agent name, frozen cap overrides, and workspace additions when present:
 
 ```json
-{"home_revision":"<sha256>","root_revision":"<sha256>","schema":1}
+{"allow_overrides":{},"home_revision":"<sha256>","name":"alice","root_revision":"<sha256>","schema":2}
 ```
 
 Both documents use canonical UTF-8 JSON: keys are sorted, separators contain
@@ -119,8 +119,28 @@ State revision = sha256(layers.json bytes)
 
 Revision values are lowercase 64-character SHA-256 hex strings. State does not
 persist an absolute source path, filesystem identity, Toolang version, or
-observation timestamp as identity metadata. State-owned config is canonicalized
-before hashing, so Setup-only config changes do not alter the source manifest.
+observation timestamp as identity metadata. Captured config resolves known relative
+paths before use. The source manifest also retains raw-byte digests, so comments,
+line endings, and Setup-only config changes affect identity even when prepared
+State terms do not change. Raw config content is not copied into State storage.
+
+Every newly prepared AgentState exposes a sorted `files` list of
+`{scope, key, digest}` entries. Scope is `home` or `root`; keys are relative to that
+scope, and digests identify raw authored bytes. Entries come from the persisted
+layer manifests, including shadowed inputs and skill assets. The list is immutable
+for a revision and is also included in `to_snapshot()`. It is not reconstructed
+from live files or limited to effective caps.
+
+The `me` file tools return `{key, digest}` receipts for home files; deletion uses
+`digest: null`. `me.loaded(receipts)` compares those receipts with the calling
+State's home entries. Missing or untracked keys have digest null. Independent
+job files remain outside State, and matching config bytes does not refresh Setup.
+See [the me interface](tools.md#current-agent).
+
+New layers use schema 13 and source manifest schema 4. Preparation rebuilds older
+current layers without rewriting history. Explicit historical loads retain known
+file identities; schema-3 config and schema-2 source trees lack reliable raw
+identities and are not exposed as tracked files.
 
 Normal loading trusts a revision to be complete and reads its persisted
 documents directly. It does not hash document or materialized file content.

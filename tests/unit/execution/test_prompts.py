@@ -176,6 +176,10 @@ def test_protocol_authoring_requires_verification_and_state_adoption() -> None:
     )
     assert "Update/delete require its whole-file SHA-256 as if_digest" in authoring
     assert "On conflict, get again and reconcile" in authoring
+    assert "me.loaded(receipts)" in authoring
+    assert "mismatch digests are loaded values" in authoring
+    assert "loaded=false is a successful comparison" in authoring
+    assert "Failures return {error, message, key?}" in authoring
     assert "Configured cap references live in config.toml" in authoring
     assert "Static flow calls retain their parent's bound program" in authoring
     assert "Validate with that runtime" in authoring

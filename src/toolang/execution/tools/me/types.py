@@ -5,11 +5,13 @@ from typing import Literal
 
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
+from toolang.state.state import AgentState
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MeToolContext(ToolContext):
     layout: AgentLayout
+    state: AgentState | None = None
 
 
 @dataclass(frozen=True, slots=True)
