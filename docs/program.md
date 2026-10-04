@@ -380,6 +380,10 @@ without turning `false` into a truthy string. Lookup reads data keys and array
 indexes, never Python attributes or methods. Selected `Part` and `Part[]` values
 retain their native message parts, including when nested in a struct. Rendering
 a whole struct or ordinary array as JSON represents contained Parts as data.
+Sections test native values before output formatting, including empty `Json`
+strings. Direct interpolation of a `Json` string retains JSON quoting. Literal
+Unicode text remains text even when it resembles an internal Part marker,
+including across interpolations and prompt expansion.
 
 
 ## Agics

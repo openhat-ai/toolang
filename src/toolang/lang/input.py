@@ -35,6 +35,7 @@ _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _PROMPT_CALL_RE = re.compile(r"^\$([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
+_SLOT_DELIMITER_RE = re.compile(r"[\ue000\ue001]")
 _MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _JSON_OUTPUT_FENCE_RE = re.compile(
     r"```[ \t]*json[ \t]*\r?\n(?P<value>.*?)\r?\n?```",
@@ -256,7 +257,29 @@ def resolve_runnable_input(
     *,
     structs: Mapping[str, StructDecl] | None = None,
 ) -> RunnableInput:
-    """Resolve caller values once against one runnable signature."""
+    """Decode source inputs against one runnable signature."""
+
+    parameters = {parameter.name: parameter for parameter in runnable.params}
+    if runnable.input is not None:
+        parameters["_"] = runnable.input
+    return bind_runnable_input(
+        runnable,
+        {
+            name: (TextPart(value),)
+            if isinstance(value, str)
+            and name in parameters
+            and parameters[name].type_name == "Json"
+            else value
+            for name, value in input.items()
+        },
+        structs=structs,
+    )
+
+
+def validate_runnable_arguments(
+    runnable: AgicDecl | FlowDecl, input: Mapping[str, object]
+) -> None:
+    """Check argument names and presence independently of value conversion."""
 
     name = runnable.name or f"unnamed {runnable.kind}"
     validate_runnable_input_names(input)
@@ -277,7 +300,21 @@ def resolve_runnable_input(
         parameters["_"] = runnable.input
         if not runnable.input.optional and "_" not in input:
             raise ValueError(f"{name} requires primary input")
-    supplied = CallInput(input)
+    CallInput(input)
+
+
+def bind_runnable_input(
+    runnable: AgicDecl | FlowDecl,
+    input: Mapping[str, object],
+    *,
+    structs: Mapping[str, StructDecl] | None = None,
+) -> RunnableInput:
+    """Bind decoded values without interpreting native Json strings as source."""
+
+    validate_runnable_arguments(runnable, input)
+    parameters = {parameter.name: parameter for parameter in runnable.params}
+    if runnable.input is not None:
+        parameters["_"] = runnable.input
     return CallInput(
         {
             name: coerce_input(
@@ -285,7 +322,7 @@ def resolve_runnable_input(
                 parameters[name].type_name or "Part[]",
                 structs=structs or {},
             )
-            for name, value in supplied.items()
+            for name, value in input.items()
         }
     )
 
@@ -303,7 +340,7 @@ def decode_runnable_input(
     if runnable.input is not None:
         parameters["_"] = runnable.input
     supplied = CallInput(input)
-    return resolve_runnable_input(
+    return bind_runnable_input(
         runnable,
         {
             name: decode_json_input(
@@ -593,7 +630,8 @@ def _resolve_parts_body(
     prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
     invocations: list[PromptInvocation],
 ) -> tuple[Part, ...]:
-    rendered, slots = _render_body(body, values=values, types=types)
+    slots: list[Part] = []
+    rendered = _render_body(body, values=values, types=types, slots=slots)
     expanded = _expand_prompt_text(
         rendered,
         slots=slots,
@@ -607,7 +645,7 @@ def _resolve_parts_body(
 def _expand_prompt_text(
     body: str,
     *,
-    slots: Sequence[Part],
+    slots: list[Part],
     program: Program | None,
     prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
     invocations: list[PromptInvocation],
@@ -695,12 +733,16 @@ def _expand_prompt_text(
             label=f"input for prompt ${prompt_name}",
         )
 
-        rendered_prompt = render_text_template(
+        rendered_prompt = _render_body(
             prompt.body,
-            CallInput({"_": prompt_text, **prompt_bindings}),
+            values=CallInput({"_": prompt_text, **prompt_bindings}),
+            types={},
+            slots=slots,
         ).strip()
         _reject_nested_prompt_call(
-            rendered_prompt,
+            _prompt_text(
+                rendered_prompt, slots, label=f"Result of prompt ${prompt_name}"
+            ),
             label=f"result of prompt ${prompt_name}",
         )
         output.append(rendered_prompt)
@@ -805,23 +847,26 @@ def _render_body(
     *,
     values: Mapping[str, object],
     types: Mapping[str, str],
-) -> tuple[str, tuple[Part, ...]]:
-    if "\ue000" in body or "\ue001" in body:
-        raise ToolangError("ContentBody contains a reserved marker.")
+    slots: list[Part],
+) -> str:
+    # Escape each delimiter so adjacent interpolations cannot assemble a marker.
+    body = _SLOT_DELIMITER_RE.sub(
+        lambda match: _slot_marker(slots, TextPart(match[0])), body
+    )
 
     if not values:
-        return body, ()
+        return body
     context: dict[str, object] = {}
-    slots: list[Part] = []
     for name, value in values.items():
         type_name = types.get(name)
         if name.startswith("_") and name != "_":
             context[name] = value
         else:
             context[name] = _template_value(value, type_name=type_name, slots=slots)
-    return (
-        render_text_template(body, context, stringify=_stringify_parts),
-        tuple(slots),
+    return render_text_template(
+        body,
+        context,
+        stringify=lambda value, text: _stringify_parts(value, text, slots=slots),
     )
 
 
@@ -1030,12 +1075,23 @@ class _TemplateParts(list[_TemplatePart]):
     """A Percept interpolates as Parts and otherwise behaves as an array."""
 
 
-def _stringify_parts(value: Any, text: bool) -> bytes:
+class _TemplateJsonText(str):
+    """Keep string truthiness while retaining direct Json interpolation."""
+
+
+def _stringify_parts(value: Any, text: bool, *, slots: list[Part]) -> bytes:
     if isinstance(value, _TemplatePart):
         return value.marker.encode()
     if isinstance(value, _TemplateParts):
         return "".join(part.marker for part in value).encode()
-    return stringify_template_value(value, text)
+    if isinstance(value, _TemplateJsonText):
+        value = json.dumps(value, ensure_ascii=False)
+    rendered = stringify_template_value(value, text)
+    # Slot expansion is deliberately one pass: the literal TextPart inserted
+    # here is never scanned for markers again, even after prompt expansion.
+    if _SLOT_DELIMITER_RE.search(literal := rendered.decode()):
+        return _slot_marker(slots, TextPart(literal)).encode()
+    return rendered
 
 
 def _template_value(
@@ -1052,9 +1108,7 @@ def _template_value(
     if isinstance(value, Part | Struct | Array | Mapping | list | tuple):
         return _template_data(value, slots=slots)
     if type_name == "Json" and isinstance(value, str):
-        return json.dumps(
-            value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
-        )
+        return _TemplateJsonText(value)
     return value
 
 
@@ -1262,6 +1316,8 @@ def _structured_value(
     type_name: str,
     boundary: str,
 ) -> object:
+    if type_name == "Json" and isinstance(value, str):
+        return value
     if (
         isinstance(value, (str, Message))
         or (isinstance(value, Array) and value.type == "Part[]")

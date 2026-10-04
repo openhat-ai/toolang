@@ -224,8 +224,11 @@ bind their complete result once.
   section fields take precedence. Item-only fields do not require outer inputs.
   This also applies to `_` referenced only inside sections. Captures retain the
   current local's value type, including Boolean, structs, arrays, and Parts;
-  recorded input types are reused when rendering the call. Authored named
-  parameters default to `Text`; `_` defaults to `Part[]`.
+  recorded input types are reused when rendering the call. Captured values have
+  already passed their producing boundary, so a struct returned by another
+  module does not require a matching declaration in the caller. Named calls
+  still validate arguments against their declared parameter contracts. Authored
+  named parameters default to `Text`; `_` defaults to `Part[]`.
   Map/keep/drop/sort/gather/settle require `_` in the child's signature or inline
   body. Scatter/storm permit its omission.
 - `ask` evaluates its `Content` for the human owner and returns the owner's

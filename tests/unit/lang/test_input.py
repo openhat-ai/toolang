@@ -949,3 +949,99 @@ def test_duplicate_arguments_are_rejected_before_collecting_a_mapping() -> None:
 
     with pytest.raises(ValueError, match="duplicate named input: focus"):
         parse_call(":agic review focus=one focus=two -- text")
+
+
+@pytest.mark.parametrize("value", ["", "hello", "false", "null", "123"])
+def test_json_input_decoding_and_output_keep_native_strings(value: str) -> None:
+    from toolang.lang.input import decode_runnable_input
+
+    runnable = AgicDecl(
+        name="check",
+        params=(Parameter(name="value", type_name="Json", span=Span(1)),),
+        span=Span(1),
+    )
+    assert decode_runnable_input(runnable, {"value": value})["value"] == value
+    assert coerce_output(value, "Json") == value
+    assert coerce_output(Message.assistant(json.dumps(value)), "Json") == value
+    assert (
+        resolve_runnable_input(runnable, {"value": json.dumps(value)})["value"] == value
+    )
+
+
+def test_json_text_sections_use_native_truthiness_before_serialization() -> None:
+    assert resolve_input_parts(
+        "{{#value}}wrong{{/value}}{{^value}}empty{{/value}}|{{value}}",
+        values={"value": ""},
+        types={"value": "Json"},
+    ) == (TextPart('empty|""'),)
+
+
+@pytest.mark.parametrize(
+    "template", ["{{text}}", "{{data.text}}", "{{#rows}}{{text}}{{/rows}}"]
+)
+def test_interpolated_text_cannot_reference_part_slots(template: str) -> None:
+    text = "literal \ue0000\ue001 and \ue000999\ue001"
+    part = ImagePart(file_id="unrelated")
+    assert resolve_input_parts(
+        template + "|{{part}}",
+        values={
+            "text": text,
+            "data": {"text": text},
+            "rows": [{"text": text}],
+            "part": part,
+        },
+        types={"text": "Text", "data": "Json", "rows": "Json", "part": "Part"},
+    ) == (TextPart(text + "|"), part)
+
+
+def test_json_rendering_does_not_expand_text_as_part_slots() -> None:
+    text = "\ue0000\ue001"
+    parts = resolve_input_parts(
+        "{{data}}",
+        values={"data": {"text": text}, "part": ImagePart(file_id="unrelated")},
+        types={"data": "Json", "part": "Part"},
+    )
+    assert len(parts) == 1 and isinstance(parts[0], TextPart)
+    assert json.loads(parts[0].text) == {"text": text}
+
+
+def test_prompt_expansion_keeps_literal_part_markers() -> None:
+    from toolang.lang.ast import Program
+
+    program = Program.from_source("prompt echo:\n  {{_}}\n")
+    text = "\ue0000\ue001"
+    part = ImagePart(file_id="unrelated")
+    assert resolve_input_parts(
+        "$echo -- {{text}}\n{{part}}",
+        program=program,
+        values={"text": text, "part": part},
+        types={"text": "Text", "part": "Part"},
+    ) == (TextPart(text + "\n"), part)
+
+
+@pytest.mark.parametrize(
+    "template, values",
+    [
+        ("\ue0000\ue001", {}),
+        ("\ue000{{index}}\ue001", {"index": 0}),
+        ("{{start}}{{end}}", {"start": "\ue000", "end": "0\ue001"}),
+    ],
+)
+def test_literal_delimiters_cannot_assemble_a_part_marker(
+    template: str, values: dict[str, object]
+) -> None:
+    part = ImagePart(file_id="unrelated")
+    assert resolve_input_parts(
+        template + "|{{part}}",
+        values={**values, "part": part},
+        types={"part": "Part"},
+    ) == (TextPart("\ue0000\ue001|"), part)
+
+
+def test_authored_text_and_prompt_bodies_keep_marker_delimiters() -> None:
+    from toolang.lang.ast import Program
+
+    text = "\ue0000\ue001"
+    assert resolve_input_parts(text) == (TextPart(text),)
+    program = Program.from_source(f"prompt literal:\n  {text}\n")
+    assert resolve_input_parts("$literal", program=program) == (TextPart(text),)

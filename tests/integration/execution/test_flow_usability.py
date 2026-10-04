@@ -865,3 +865,148 @@ flow main():
     assert run.status == "succeeded", error
     assert output == "seed"
     assert len(harness.adapter.invocations) == 1
+
+
+@pytest.mark.parametrize("value", ["hello", "", "false", "null", "123"])
+@pytest.mark.parametrize(
+    "operation, output_type, response",
+    [
+        ("map in 1 lane using", "Text[]", "done"),
+        ("keep in 1 lane if", "Json[]", "true"),
+        ("drop in 1 lane if", "Json[]", "false"),
+        ("sort ascending by", "Json[]", "1"),
+    ],
+)
+def test_inline_collection_calls_preserve_json_strings(
+    tmp_path: Path, value: str, operation: str, output_type: str, response: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> {output_type}:
+  scatter using seed
+  {operation}: {{{{#_}}}}nonempty{{{{/_}}}}{{{{^_}}}}empty{{{{/_}}}}|{{{{_}}}}
+""",
+        responses=[json.dumps([value]), response],
+    )
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert json.loads(output) == (["done"] if operation.startswith("map") else [value])
+    expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+    assert expected in _texts(harness)[-1]
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("value", ["hello", "", "false", "null", "123"])
+def test_named_calls_and_flow_outputs_preserve_json_strings(
+    tmp_path: Path, value: str, operation: str
+) -> None:
+    harness = _create(
+        tmp_path,
+        source=f"""
+agic seed() -> Json:
+  Seed.
+agic echo(value: Json) -> Json:
+  {{{{#value}}}}nonempty{{{{/value}}}}{{{{^value}}}}empty{{{{/value}}}}|{{{{value}}}}
+flow main() -> Json:
+  let value = run seed
+  {operation} echo
+""",
+        responses=[json.dumps(value), json.dumps(value)],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                )
+            )
+            assert run.status == "succeeded", run.error
+            assert run.output is not None
+            assert harness.store.resolve_output(run.output).local.value == value
+            expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+            assert expected in _texts(harness)[-1]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "exec"])
+@pytest.mark.parametrize("declaration", ["", "struct Result:\n  label: Text\n"])
+def test_inline_capture_preserves_module_local_structs(
+    tmp_path: Path, operation: str, declaration: str
+) -> None:
+    from toolang.state.prepare import prepare_agent_state
+
+    harness = _create(tmp_path, source="", responses=['{"count":7}', "done"])
+    home = harness.setup.layout.home
+    (home / "flows").mkdir(parents=True, exist_ok=True)
+    (home / "agent.too").write_text(
+        f"""
+{declaration}
+flow main():
+  let result = run research
+  {operation}: Count={{{{result.count}}}}.
+""",
+        encoding="utf-8",
+    )
+    (home / "flows" / "research.too").write_text(
+        """
+struct Result:
+  count: Number
+agic seed() -> Result:
+  Seed.
+flow research() -> Result:
+  run seed
+""",
+        encoding="utf-8",
+    )
+    harness.state = prepare_agent_state(harness.setup.layout)
+    run, output, error = _run(harness)
+    assert run.status == "succeeded", error
+    assert output == "done"
+    assert "Count=7." in _texts(harness)[-1]
+
+
+@pytest.mark.parametrize("value", ["hello", "false", ""])
+def test_retry_restores_json_string_collection_captures(
+    tmp_path: Path, value: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic seed() -> Json[]:
+  Seed.
+flow main() -> Text[]:
+  scatter using seed
+  map in 1 lane using: {{#_}}nonempty{{/_}}{{^_}}empty{{/_}}|{{_}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant(json.dumps([value]))),
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:main",
+                )
+            )
+            assert run.status == "failed"
+            retried = await harness.executor.retry(
+                run.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded", retried.error
+            assert len(harness.adapter.invocations) == 3
+            expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
+            assert all(expected in text for text in _texts(harness)[1:])
+            assert harness.store.run_output_text(run_id=retried.id) == '["done"]'
+
+    asyncio.run(scenario())

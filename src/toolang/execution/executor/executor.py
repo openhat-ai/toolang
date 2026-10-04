@@ -44,9 +44,10 @@ from toolang.lang.input import (
     PromptInvocation,
     RunnableInput,
     CallInput,
+    bind_runnable_input,
     coerce_output,
     decode_runnable_input,
-    resolve_runnable_input,
+    validate_runnable_arguments,
     validate_value,
 )
 from toolang.lang.includes import resolve_file_include
@@ -2970,14 +2971,22 @@ def _bind_child_input(
         for name in parameters
         if name in locals and locals[name].shape != "none"
     }
-    input = resolve_runnable_input(
-        runnable,
-        {
-            name: _argument_value(local, parameters[name])
-            for name, local in source_locals.items()
-        },
-        structs=structs,
-    )
+    if isinstance(runnable, AgicDecl) and is_generated_ref(reference):
+        # Captures already passed their producing boundary. Revalidating them
+        # against this module can reinterpret Json strings or foreign structs.
+        input = CallInput(
+            {name: cast(Value, local.value) for name, local in source_locals.items()}
+        )
+        validate_runnable_arguments(runnable, input)
+    else:
+        input = bind_runnable_input(
+            runnable,
+            {
+                name: _argument_value(local, parameters[name])
+                for name, local in source_locals.items()
+            },
+            structs=structs,
+        )
     control_input = CallInput(
         {
             name: _child_control_value(

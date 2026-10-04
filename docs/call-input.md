@@ -16,6 +16,11 @@ is only an alias for evaluated values, with no separate class or serialization.
 Direct-value calls never interpret strings as Content. Prompt expansion binds
 textual placeholders using the same flat input shape.
 
+Source input and model content are decoded at their boundaries. A native string
+supplied to a `Json` parameter or returned by a flow remains a string: `"false"`
+does not become Boolean, and `"null"` does not become null. Internal calls bind
+existing values without parsing these strings again.
+
 ## Terminology
 
 Use these short names in documentation, authored prose, and CLI help:
