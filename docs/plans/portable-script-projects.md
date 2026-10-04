@@ -1,7 +1,7 @@
 # Portable Script Projects
 
 Status: Approved in #640 and subsequent CLI design review; implemented in #641.
-This document records the final design. [Script Projects](../script-projects.md)
+This document records the final design. [Scripts](../scripts.md)
 is the user guide; [Compact entry labels](chat-entry-label.md) specifies runnable
 identity and display in more detail.
 

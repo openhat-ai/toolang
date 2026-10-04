@@ -12,7 +12,7 @@ Default root:
 - `~/.toolang`
 
 Override with `TOOLANG_ROOT` or the CLI `--root` option. Roaming scripts derive
-their own root from the source directory; see [script projects](script-projects.md).
+their own root from the source directory; see [scripts](scripts.md).
 
 Current root layout:
 

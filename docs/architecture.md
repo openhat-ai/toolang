@@ -173,7 +173,7 @@ Resident homes are `${TOOLANG_ROOT}/agents/<agent>`; the default root is
 Roaming generated data stays under the source directory's `.toolang/`.
 Project configuration discovery is bounded by the nearest Git worktree;
 workspace grants come from source-local TOML. See [layout](layout.md) and
-[script projects](script-projects.md).
+[scripts](scripts.md).
 
 The scheduler watches ready `tasks/` and `chores/`, merges program jobs by ID,
 and uses a dedicated scheduler thread/event loop. It submits Runs onto the

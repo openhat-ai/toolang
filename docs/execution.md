@@ -106,7 +106,7 @@ client fallbacks on the server.
 - Workdir is resolved at the caller/server boundary against authorized workspace
   grants. Relative overrides use the supplied session/base context; a canonical
   workspace URI or absolute location starts its own resolution. See
-  [script projects](script-projects.md) for path and attachment boundaries.
+  [scripts](scripts.md) for path and attachment boundaries.
 
 ## Run limits
 

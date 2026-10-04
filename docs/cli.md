@@ -17,7 +17,7 @@ Top-level routing uses these command shapes:
 
 - Script commands use `init DIR` and `run FILE [RUNNABLE]`; they appear in the
   Script Commands help panel. `init` creates the executable `aide.too` and
-  comment-only `toolang.toml`; [script projects](script-projects.md) owns creation
+  comment-only `toolang.toml`; [scripts](scripts.md) owns creation
   and placement. `run` accepts local `.too` files; foreground agents use `serve`.
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`
@@ -92,7 +92,7 @@ Common options work at file and runnable levels. The exact help renderer is
 covered by [CLI tests](../tests/unit/cli/) instead of duplicated flag tables here.
 
 [Call input](call-input.md#script-runnable-calls) owns token capture and required
-input behavior. [Script projects](script-projects.md) owns source-local layout,
+input behavior. [Scripts](scripts.md) owns source-local layout,
 configuration discovery, workspace grants and file inputs. [Presentation](execution-presentation.md)
 owns stdout/stderr, quiet mode and output projection.
 

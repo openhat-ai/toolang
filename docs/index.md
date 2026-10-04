@@ -38,7 +38,7 @@ and verification. User installation, guides and examples belong on
 | --- | --- |
 | Orientation | [Architecture](architecture.md), [contributing](../CONTRIBUTING.md) |
 | Language | [Semantic AST and lowering](ast.md), [Program declarations and shared semantics](program.md), [Agic model/tool loop](agic.md), [Flow evaluation](flow.md), [call input](call-input.md), [source commands](source-commands.md) |
-| Configuration and State | [Script projects](script-projects.md), [layout/storage](layout.md), [prepared State](state.md) |
+| Configuration and State | [Scripts](scripts.md), [layout/storage](layout.md), [prepared State](state.md) |
 | Resources | [Composable agent primitives (caps)](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
 | Work | [Markdown tasks/chores](tasks.md), [program declarations](program.md#job-declarations), [scheduling/recovery](work.md) |
 | Execution | [Lifecycle and policy](execution.md), [records/references](records.md), [events/tracing](events.md), [presentation](execution-presentation.md) |

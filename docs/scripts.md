@@ -1,7 +1,7 @@
-# Script Projects
+# Scripts
 
-This guide owns project configuration, path resolution and workspace grants for
-local `.too` invocations.
+This guide describes configuration discovery, path resolution, workspace grants
+and file inputs for local `.too` scripts.
 
 `too init DIR` creates an executable `aide.too` and a comment-only `toolang.toml`.
 Both belong in version control. Initialization refuses to overwrite either file,
@@ -49,8 +49,8 @@ or settings from the resident `~/.toolang` root.
 Script calls automatically add srcdir as a workspace and select it as workdir.
 Chat and hosting commands do not add it automatically, including for roaming
 agents. `-w` and `-d` are available in all three placements. The examples below
-assume an initialized project; referenced directories must exist, and `repo://src`
-requires a configured `repo` workspace containing `src/`:
+assume `too init .` has created `aide.too`. Referenced directories must exist, and
+`repo://src` requires a configured `repo` workspace containing `src/`:
 
 ```sh
 ./aide.too whats_for

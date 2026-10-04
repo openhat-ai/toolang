@@ -228,7 +228,7 @@ and exit 2; explicit help exits 0. Neither prepares or starts a run.
 Common options can occur before or after RUNNABLE, before input. Scalar
 runnable-level values override root values, repeated workspace/allow/limit
 options accumulate, and workdir may be specified only once. See
-[CLI routing](cli.md) and [script projects](script-projects.md) for the owning
+[CLI routing](cli.md) and [scripts](scripts.md) for the owning
 command and filesystem contracts.
 
 ## Prompt Expansion
@@ -298,7 +298,7 @@ prefix is followed by one reference, with shell-style quoting for spaces:
 
 The Content evaluator delegates the reference to a caller-supplied resolver.
 Built-in Chat, script and job callers resolve filesystem paths, with bases
-described in [file inputs](script-projects.md#file-inputs). They support UTF-8
+described in [file inputs](scripts.md#file-inputs). They support UTF-8
 text, images, MP3/WAV audio and recognized document formats; missing files,
 invalid UTF-8 text and unsupported formats fail during input preparation.
 Hosted calls use client-read attachment content, not server-side path resolution.
