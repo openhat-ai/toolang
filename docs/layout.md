@@ -11,9 +11,8 @@ Default root:
 
 - `~/.toolang`
 
-CLI override:
-
-- `TOOLANG_ROOT`
+Override with `TOOLANG_ROOT` or the CLI `--root` option. Roaming scripts derive
+their own root from the source directory; see [script projects](script-projects.md).
 
 Current root layout:
 
@@ -51,7 +50,7 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by `toolang serve <remote>` are materialized under a
+Visiting agents fetched by `too serve <remote>` are materialized under a
 stable system temporary root derived from the canonical remote ref:
 
 - `/tmp/toolang-<agent>-<hash:8>/`
@@ -62,7 +61,8 @@ runs of the same remote agent ref, independent of the local `TOOLANG_ROOT`,
 while remaining disposable across machine restarts or normal
 temporary-directory cleanup. The cached remote `agent.too` is refetched after
 one hour. Roaming `.too` file invocation uses the source file's sibling
-`.toolang` directory and does not start a long-lived HTTP runtime.
+`.toolang` directory. Placement determines storage; the command determines
+whether execution is local or hosted.
 
 Key paths:
 
@@ -174,5 +174,13 @@ Durable authored state lives in:
 - agent `drafts/`
 - agent `archive/`
 
-Durable execution state does not live in authored files. It lives in
-`jobs.db` and `runs.db`.
+Scheduler checkpoints live in `jobs.db`; execution history lives in `runs.db`.
+Neither is written into authored files.
+
+## Implementation and verification
+
+[Agent layout](../src/toolang/common/layout.py) derives paths;
+[hosting](../src/toolang/up/) owns runtime/control files. See
+[State](agent-state.md) and [execution records](run-step-records.md) for revision
+and store contracts. [Hosting tests](../tests/integration/up/) verify placement
+and sandbox ownership.

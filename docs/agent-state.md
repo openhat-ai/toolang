@@ -185,10 +185,9 @@ headers are rejected. Missing optional source is represented by empty text.
 
 Normal preparation hashes the selected source bytes and compares the portable
 manifest with the published layer. An unchanged current layer is loaded without
-parsing Programs, materializing capabilities, or polling remote refs. Layer
-schema 8 rebuilds older caches with structured module and parameter documentation
-from grammar 0.3.2, in addition to strict source parsing and unnamed declaration
-binding. Exact historical loads retain their recorded Programs and run references.
+parsing Programs, materializing capabilities, or polling remote refs. Current
+layers with an older schema are rebuilt; exact historical loads retain their
+recorded Programs and run references.
 These rules also apply when the root and home are mounted at different absolute
 paths. An explicit refresh resolves remote refs again.
 
@@ -254,9 +253,23 @@ entry reference.
 
 The executor retains immutable State for active bindings and loads historical
 revisions from durable snapshots. Watcher publication affects future named
-acceptance and model catalogs, without changing accepted code or caps.
+acceptance and the resource view used at model-call boundaries. Accepted code, types and directives remain bound;
+resource selectors filter the latest State under existing authority ceilings.
+Setup model catalogs and accepted workspace grants remain separate, captured
+inputs. See [binding and resource rules](program.md#directives).
 
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. The runs
 database rejects unsupported schema versions at open.
 See [execution records](run-step-records.md#persistence) for compatibility rules.
+
+## Implementation and verification
+
+[State composition](../src/toolang/state/state.py),
+[layer cache](../src/toolang/state/cache.py),
+[source manifests](../src/toolang/state/source.py), and
+[watcher](../src/toolang/state/watcher.py) own preparation and publication.
+[State tests](../tests/unit/state/) verify identity and invalid-candidate handling;
+[latest-binding scenarios](../tests/integration/execution/test_latest_state_binding.py)
+and [resource visibility](../tests/integration/execution/test_resource_visibility.py)
+verify when execution adopts published changes.

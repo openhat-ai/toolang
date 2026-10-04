@@ -1,50 +1,10 @@
-# Flow Statement Syntax
+# Flow Evaluation
 
-This document defines the flow surface syntax in one place. It covers authored
-statements and their observable semantics; executor, trace, and lowering
-details remain in their owning documents.
-
-
-## Notation
-
-```text
-NAME       local name
-T          Toolang type
-N          non-negative count or selection size
-P          positive concurrency limit
-VALUE_STMT a result-producing statement (excludes repeat and exec)
-RUNNABLE   named agic or flow
-AGENT      agent selector
-EXPANDER   one-run runnable returning a list
-MERGER     one-run runnable merging a list into one item
-MAPPER     per-input runnable returning one item
-REDUCER    per-item runnable updating an accumulator
-FILTER     per-item runnable returning Boolean
-SCORER     per-item runnable returning Number
-LINE       text on the same line as `:`
-TEXT       indented text block
-BODY       LINE or an indented TEXT block
-STMTS      indented flow statements
-```
-
-Uppercase words are placeholders, not keywords. `[X]` marks optional syntax,
-and `A | B` marks alternatives. Counts and sort direction immediately follow
-the verb. Named runnable and lane clauses may exchange order; an inline
-runnable always comes last.
-
-`BODY` never includes its introducing colon:
-
-```too
-KEYWORD ...: LINE
-
-KEYWORD ...:
-  TEXT
-```
-
-When a statement consumes authored content, its `BODY` is `Content` and
-follows [input-syntax.md](./input-syntax.md). A statement block uses `STMTS`
-instead.
-
+This document owns flow evaluation, binding, result shapes and iteration
+contracts. The upstream [grammar reference](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md)
+owns productions, legal clauses and CST fields. [Program semantics](program.md)
+owns runnable signatures; [call input](call-input.md) owns Content evaluation.
+The forms below are schematic notation, not complete executable programs.
 
 ## Flow And Binding
 
@@ -58,7 +18,7 @@ let VALUE_STMT                discard the result
 
 repeat ...                    update locals through its body
 
-let NAME = BODY         evaluate Content and assign one `Percept` to `NAME`
+let NAME = BODY         evaluate Content and assign one `Part[]` value to `NAME`
 ```
 
 Flow signatures use the runnable parameter rules in
@@ -92,89 +52,22 @@ Current and ancestor targets are rejected on each branch; earlier handoffs may
 be called again. Failed validation leaves the binding unchanged and fails the
 Flow normally.
 
-## Statements
+## Statement behavior
 
-`seek` and `ask` are parsed and recorded as agent/human steps, but their current
-handlers fail with a missing execution-bridge error. They do not yet perform
-agent delegation or collect human input. See the [seek handler](../src/toolang/execution/executor/stmts/seek.py)
-and [ask handler](../src/toolang/execution/executor/stmts/ask.py).
+| Operation | Runtime behavior |
+| --- | --- |
+| `run` / implicit prose | Invoke a named runnable or inline agic as a child Run. |
+| `exec` | Replace the current runnable within the same Run. |
+| `scatter` / `gather` | One child expands an item into a list / reduces a list into an item. |
+| `storm` / `map` | Independent calls from one input / one call per list item; preserve result order. |
+| `settle` | Sequential reduction with accumulator history. |
+| `keep` / `drop` | Positional selection or one Boolean child per item. |
+| `sort` | Score each item, then order stably in the required direction. |
+| `repeat` | Execute a block while updating its working locals. |
+| `ask` / `seek` | Parse and record steps, then fail because their human/agent bridges are not connected. |
 
-```text
-# Produce one item
-run RUNNABLE
-run [-> T]: BODY
-TEXT                                      shorthand for inline `run`
-seek AGENT RUNNABLE
-seek AGENT [-> T]: BODY
-ask: BODY
-
-# Replace the current runnable within the same Run
-exec RUNNABLE
-exec [-> T]: BODY
-
-# Expand one item into a list
-scatter using EXPANDER
-scatter [using] [-> T]: BODY
-storm N [in P lanes] using MAPPER
-storm N [in P lanes] using [-> T]: BODY
-
-# Reduce a list into one item
-gather using MERGER
-gather using [-> T]: BODY
-settle using REDUCER
-settle [using] [-> T]: BODY
-
-settle using REDUCER:
-  from: BODY
-
-settle [using] [-> T]:
-  TEXT
-  [from: BODY]
-
-# Transform every list item
-map [in P lanes] using MAPPER
-map [in P lanes] using [-> T]: BODY
-
-# Select or sort list items
-keep first N
-keep last N
-keep [in P lanes] if FILTER
-keep [in P lanes] if [-> Boolean]: BODY
-drop first N
-drop last N
-drop [in P lanes] if FILTER
-drop [in P lanes] if [-> Boolean]: BODY
-sort ascending|descending [in P lanes] by SCORER
-sort ascending|descending [in P lanes] by [-> Number]: BODY
-
-# Repeat statements
-repeat N times [windowing P]:
-  STMTS
-  [until: BODY]
-
-repeat [windowing P]:
-  STMTS
-  until: BODY
-```
-
-
-## Natural Reading
-
-```text
-run      run a named agic or flow, or an inline agic
-exec     replace the current runnable with a named or inline runnable; never return
-seek     seek another agent's help with a named runnable or inline request
-ask      ask the human owner for input, judgment, or confirmation
-scatter  scatter the current item into a list in one run
-storm    storm N independent results from the current item
-gather   gather the current list into one item in one run
-settle   settle the current list into one item through sequential runs
-map      map each current item to a new item while preserving order
-keep     keep positional items or items accepted by a filter
-drop     drop positional items or items accepted by a filter
-sort     sort all items by score in the required ascending or descending order
-repeat   repeat a statement block, bounded by N or until
-```
+Evidence for the bridge boundary: [ask](../src/toolang/execution/executor/stmts/ask.py)
+and [seek](../src/toolang/execution/executor/stmts/seek.py).
 
 The reshape statements form two execution families:
 
@@ -195,9 +88,6 @@ bind their complete result once.
 - A body's first substantive entry must indent deeper than its header.
   Structural siblings use the same indentation; a dedent closes the matching
   blocks. Empty required bodies are invalid, including comment-only loops.
-- Use two spaces when authoring. Other widths and tabs are supported, but a
-  structural indentation prefix cannot mix tabs and spaces or change spelling
-  at an existing level. Tabs use eight-column stops for parsing.
 - Blank lines and structural comments do not establish a body baseline.
   An implicit run may continue across one blank line; two blank lines or a
   structural comment end it.
@@ -236,9 +126,9 @@ bind their complete result once.
   named parameters default to `Text`; `_` defaults to `Part[]`.
   Map/keep/drop/sort/gather/settle require `_` in the child's signature or inline
   body. Scatter/storm permit its omission.
-- `ask` evaluates its `Content` for the human owner and returns the owner's
-  canonical `Percept`, represented in the language as `Part[]`.
-- A direct `let NAME = BODY` evaluates its `Content` as one `Percept` local
+- `ask` has a `Part[]` result contract but cannot return human input until its
+  bridge is implemented.
+- A direct `let NAME = BODY` evaluates its `Content` as one `Part[]` value local
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies default to `Boolean`; inline
   `sort` defaults to `Number`. An explicit incompatible return type is rejected.
@@ -256,8 +146,6 @@ bind their complete result once.
 - `run RUNNABLE` resolves in the current program. Inline `run` creates an
   inline agic.
 - Bare `TEXT` is shorthand for inline `run` and starts the same child run.
-- `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
-  sends its body to the target agent.
 - `scatter` and `gather` each start one child run, then reshape its result.
 - Scatter has no count; its child must return an array, whose length determines
   the output length.
@@ -325,53 +213,36 @@ verb -> count/direction -> lanes -> using/if/by -> runnable or inline body
 ```
 
 
-## Example
+## Complete example
+
+The inline bodies explicitly consume the current value. This program can be
+parsed offline; execution requires a model compatible with its result types.
 
 ```too
-flow research(_, topic) -> Report:
-  scatter using -> Text[]:
-    Generate distinct research directions for {{_}}.
-
+flow research(_, topic) -> Text:
+  scatter using:
+    Generate distinct research directions for {{_}} about {{topic}}.
   keep in 4 lanes if:
-    Keep {{_}} only if it is specific and verifiable.
-
+    Return true if {{_}} is specific and verifiable.
   sort descending in 3 lanes by:
     Score {{_}} by relevance to {{topic}}.
-
   keep first 3
-
-  gather using -> Report:
+  gather using:
     Synthesize {{_}} into one report.
-
   repeat 2 times:
-    run: Improve the report's evidence and structure.
-    until: Return true when another revision would not materially help.
-
-  run publish
+    run: Improve the evidence and structure of {{_}}.
+    until: Return true if another revision would not materially improve {{_}}.
 ```
 
+## Implementation and verification
 
-## Reserved Words
+Lowering and validation: [lang](../src/toolang/lang/).
+Evaluation: [flow runner](../src/toolang/execution/executor/runs/flow.py) and
+[statement handlers](../src/toolang/execution/executor/stmts/).
+Contracts: [flow scenarios](../tests/integration/execution/test_flow_scenarios.py),
+[typed values](../tests/unit/execution/test_values.py),
+[typed templates](../tests/unit/execution/test_execution_template.py).
 
-- `think` is reserved for a statically defined model step.
-- `use` is reserved for a statically defined tool step.
-- `thunk` is reserved.
-- Removed `rank`, `par`, `top`, and `bottom` forms are rejected at Flow
-  statement boundaries; they are not compatibility aliases.
-
-The syntax of `think`, `use`, and `thunk` remains undefined. Future `think` and `use`
-statements must emit the same model and tool steps as calls requested
-dynamically by model output.
-
-
-## Migration From Rank
-
-Replace unbound `rank score top N` with `sort descending by score` followed
-by `keep first N`. Replace unbound `rank score bottom N` with the same
-descending sort followed by `keep last N` to preserve the final item order.
-
-Named or discarded legacy rank-with-selection has no general equivalent
-rewrite: an unbound sort updates `_`, while the old bound or discarded rank
-left `_` unchanged. Re-author those flows with explicit binding boundaries.
-Wrapping the two statements in a helper flow does not preserve collection
-shape across the current item-based runnable boundary.
+Reserved or removed spellings are described in the upstream grammar, not as
+implemented operations here. Historical migration guidance remains in Git
+history and the [changelog](../CHANGELOG.md).

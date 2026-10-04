@@ -20,10 +20,6 @@ JSON instead of the default indented S-expression. The representation does not
 change between a terminal and a pipe. `--compact` implies compact JSON and can
 also accompany `--json`.
 
-**Migration:** `parse` previously emitted AST JSON by default. Add `--json` to
-existing scripts; `--compact` retains its previous behavior and AST JSON fields
-remain unchanged.
-
 The AST is the lowered, validated Toolang `Program`. It includes declarations,
 flow statements, signatures, and module/runnable/parameter documentation.
 Validation checks source semantics without resolving installed capabilities or
@@ -59,8 +55,7 @@ anchors; previous declarations or conflicting properties appear on separate
 Excerpts come from the original source, are escaped and bounded to 100 characters
 plus a truncation marker, and include block context for recovery errors. Error
 messages do not contain repair advice. Source order takes precedence over
-specificity. See the [diagnostic examples](source-diagnostics-examples.md) for
-verified outputs and differences between AST and raw CST inspection.
+specificity. See [diagnostic examples](#diagnostic-examples) for representative AST/CST differences.
 
 Library source exceptions expose their structured diagnostic separately from
 `str(error)`, which includes known locations but no source excerpt.
@@ -120,14 +115,37 @@ valid. Both reject directories, multiple files, and `--check`. Formatting runs
 before highlighting, so capture positions refer to the formatted source.
 Output modes emit only code/HTML, without status messages.
 
-`--tab-size N` sets structural indentation (positive integer, default 2).
-Formatting preserves omitted types, compacts adjacent imports of the same cap
-kind and resource directives of the same key, and keeps adjacent inline role
-messages compact. Different import kinds/directive keys are separated by one
-blank line. Source order, authored explicit types, literal text, and documentation
-bindings are preserved. See the
-[formatter conventions](./toolang-authoring-conventions.md#automatic-formatting)
-for the boundary between mechanical rules and authoring decisions.
+
+`too fmt` applies mechanical conventions consistently to file writes, `--check`,
+`--stdout`, and `--highlight`:
+
+- Use two spaces for structural indentation by default (`--tab-size` overrides).
+- Preserve omitted signature types: `agic rewrite(_, instruction):` remains
+  concise. Keep explicit types, return annotations, `()`, and optional `?`.
+- Keep adjacent `with` clauses of the same cap kind together, with one blank
+  line between different kinds. Preserve source order; do not alphabetize.
+- Group each contiguous resource-directive section by key, ordering key groups
+  by first appearance and preserving each key's operator/value order. Keep all
+  groups compact without blank lines. Never move directives across comments or
+  other syntax, so documentation ownership remains unchanged.
+- Keep adjacent inline `user:`/`assistant:`/`tool:` messages compact. Keep block
+  messages as blocks and preserve role names.
+- Separate prose and explicit flow statements with a structural blank line,
+  while preserving whitespace inside each literal text body.
+- Normalize comment/tag spacing using the installed grammar. Preserve documentation
+  attachment and deliberate detachment, exact parameter names, legacy marker
+  spellings, module boundaries, and the executable shebang.
+
+Comments and text ownership take precedence over compact grouping. Formatting
+must be idempotent and preserve semantic content and documentation bindings.
+The formatter works on syntax-valid source even when semantic validation fails.
+
+Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
+capability directives, hoisting `context`/`instruct`, and omitting a sole `user:`
+role remain authoring decisions. The formatter does not make those rewrites.
+Recommended source style belongs to the website
+[Authoring Conventions](https://toolang.ai/docs/toolang-conventions).
+
 
 ## Highlight
 
@@ -182,3 +200,27 @@ on stderr; invalid option combinations return 2. Existing in-place formatter
 messages and legacy option error statuses are retained. JSON/S-expressions
 end with LF and contain no generated ANSI; source output retains its own ending
 except for formatter normalization.
+
+## Diagnostic examples
+
+These inputs intentionally fail `too parse --check - --stdin-filepath case.too`
+with exit 1 and no stdout. Escaped newlines show exact source boundaries.
+
+| Input | Expected diagnostic |
+| --- | --- |
+| `flow work(value: Text:\n  pass\n` | `case.too:1:22: Expected ')' in parameter list` |
+| `struct X:\n  field:\n` | `case.too:2:9: Expected a field type` |
+| `flow work:\n  sort these items\n` | `case.too:2:3: Malformed flow statement 'sort'` |
+
+Actual stderr appends the bounded source excerpt. AST/check reports the first
+error; raw CST retains every native error, including overlapping recovery
+regions. Missing final newlines can change raw CST recovery; AST/fmt normalize
+the source boundary. `highlight` renders these invalid sources without syntax
+validation. Duplicate declarations/properties report the current location and a
+separate note pointing to the previous one.
+
+Implementation: [language tooling](../src/toolang/lang/),
+[CLI source commands](../src/toolang/cli/toolang/commands/program.py).
+Verification: [diagnostics](../tests/unit/lang/test_diagnostics.py),
+[format contracts](../tests/unit/lang/test_format_contract.py),
+[CLI diagnostic contract](../tests/integration/cli/test_diagnostic_contract.py).

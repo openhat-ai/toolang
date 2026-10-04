@@ -55,20 +55,20 @@ Shared frontmatter fields are:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `id` | before publication | Globally unique stable job identity |
+| `id` | before publication | Stable identity unique within the agent home |
 | `title` | no | Human-readable display label |
 
 Chores add:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `schedule` | yes | RFC 5545 RRULE |
+| `schedule` | no | RFC 5545 RRULE; defaults to `FREQ=HOURLY;INTERVAL=1` |
 
 There is no separate job `name`. The id is the machine selector, title is the
 optional label, and path is the current source location. New catalog-created
 jobs use `<id>.md`; renaming that file does not change identity.
 
-Job ids are unique across task and chore kinds and every stage. Both id and
+Within one agent home, job IDs are unique across task/chore kinds and every stage. Both id and
 kind are immutable. Moving between stages, renaming a source file, editing the
 body, and changing a chore schedule preserve the id. Copying a job or changing
 its kind requires a new id.
@@ -84,13 +84,13 @@ written into authored Markdown.
 
 ## Body
 
-The body is run-only input defined by [input-syntax.md](./input-syntax.md): a
+The body is run-only input defined by [Call Input](call-input.md): a
 `RunOverride` prefix and one `CallInput[str]`. It has no ambient template
 variables. Includes resolve relative to the Markdown file, and prompt templates
 receive only explicit arguments and input.
 
 The scheduler retains the body as source and parses it only when dispatching.
-The surface default is `task` or `chore`, falling back to `default` when that
+The surface default is `task` or `chore`, falling back to the single unnamed entry when that
 runnable is absent. Resolution evaluates the input source into
 `RunSpec.input["_"]` and binds arguments under their names in the same map.
 
@@ -109,22 +109,9 @@ title: Review API changes
 Review the API changes and summarize risks.
 ```
 
-A new ready task is pending immediately. Editing its authored body creates a
-new revision; title or path edits do not. Pending edits coalesce to the latest
-body. An edit during a run does not mutate that run and requests the latest
-revision afterward. An unchanged terminal task stays terminal until explicitly
-reopened.
-
-Task statuses are:
-
-| Status | Meaning |
-| --- | --- |
-| `pending` | A revision is ready to dispatch |
-| `running` | One captured revision has an active run |
-| `done` | The current revision finished successfully |
-| `failed` | The current revision failed |
-| `canceled` | The current revision was canceled |
-
+Publication and body revisions activate tasks. Titles and paths do not change
+body identity. [Task scheduling](work.md#task-semantics) owns coalescing, terminal
+status, cancellation and reopen behavior.
 
 ## Chore Document
 
@@ -138,27 +125,9 @@ schedule: "FREQ=HOURLY;INTERVAL=6"
 Check stale PRs and report actionable items.
 ```
 
-The scheduler persists a stable anchor and the earliest RRULE occurrence not
-yet claimed. Body edits affect later runs without triggering an immediate run.
-Schedule edits establish a new cursor. Missed scheduled occurrences coalesce
-to the latest due occurrence, so downtime and long runs do not create an
-unbounded backlog or shift the recurrence.
-
-`chore run <id>` requests one manual occurrence without changing the schedule.
-Repeated pending manual requests coalesce. Scheduled and manual occurrences
-remain distinct and execute serially in the same thread.
-
-Chore statuses are:
-
-| Status | Meaning |
-| --- | --- |
-| `pending` | Waiting for a schedule or manual activation |
-| `running` | One occurrence has an active run |
-| `done` | A finite schedule is exhausted with no manual request |
-
-A failed or canceled run remains execution history and does not disable later
-chore occurrences.
-
+[Chore scheduling](work.md#chore-semantics) owns RRULE anchoring, missed-occurrence
+coalescing, manual requests and failure recovery. A body edit changes later
+occurrences without triggering an immediate Run.
 
 ## Threads And Runs
 
@@ -186,7 +155,7 @@ changing run context:
 ```
 
 Revision, schedule cursors, and trigger details remain exclusively in
-`jobs.db`. A future root-run context change requires separate execution review.
+`jobs.db`. Runs refer to this attribution through their thread.
 
 
 ## Caller Projection
@@ -222,13 +191,10 @@ failures. When present, `last_run` includes its own `error` field for execution
 failure details. Neither value is written back to the authored Markdown.
 
 
-## API Shape
+## Implementation and verification
 
-Unified `/jobs` routes are read-only. Writes use `/tasks` and `/chores` so kind
-semantics remain explicit.
-
-Read operations cover ready and archived job lists and details. Write
-operations cover creation, title/body/schedule edits, stage moves, task reopen
-and cancel, chore manual run, and archived deletion. Stage operations mutate
-catalog placement. Execution controls act on scheduler or run state and never
-rewrite job output into the authored document.
+[Authored jobs](../src/toolang/catalog/job.py) owns file formats and stage moves.
+[Catalog tests](../tests/unit/catalog/test_authored_jobs.py) and
+[job integration tests](../tests/integration/catalog/test_jobs.py) verify identity,
+validation and transitions. [HTTP jobs](api.md#jobs-and-consumer-projections) owns the
+consumer contract; [scheduling](work.md) owns checkpoint status and dispatch.

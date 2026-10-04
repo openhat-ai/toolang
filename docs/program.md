@@ -1,11 +1,11 @@
-# Program Syntax
+# Program Semantics
 
-This document defines the source-level program model for `.too` files. Flow
-statements are specified in [flow-syntax.md](./flow-syntax.md), and content
-parsing is specified in [input-syntax.md](./input-syntax.md). Follow the
-[authoring conventions](./toolang-authoring-conventions.md) for source style,
-type annotations, and documentation comments.
-
+This document owns declarations, modules, signatures/defaults, documentation
+binding and model instruction composition. Source syntax and CST fields belong
+to [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md).
+Use [flow evaluation](flow-syntax.md) for statement contracts and
+[call input](call-input.md) for Content/coercion. Source style belongs to the
+website [Authoring Conventions](https://toolang.ai/docs/toolang-conventions).
 
 ## Program Constructs
 
@@ -30,8 +30,7 @@ must be unique across both declaration kinds.
 
 ## Program Modules
 
-Resident agents may contain complete program modules at either of these home
-paths:
+Agent homes may contain complete program modules at either of these paths:
 
 ```text
 agent.too
@@ -150,9 +149,6 @@ agic pay:
   Help with the requested wallet funding task.
 ```
 
-The old top-level `use` spelling is not part of this syntax. `use` is reserved
-for a future static tool-call statement.
-
 
 ## Inline Caps
 
@@ -188,8 +184,9 @@ requires the `description` property and a body. `service` requires
 alias; its body is optional. Service transport is `http` or `stdio`. Optional
 `headers` is HTTP-only, while optional `env` is a comma-separated list of
 unique environment variable names. All properties are single-use and
-nonempty.
-
+nonempty. Both transport spellings lower to canonical `transport` metadata.
+For HTTP, `target` is a URL; for stdio it stays opaque command text at the language
+boundary. Markdown cap frontmatter belongs to [caps](caps.md#local-cap-frontmatter).
 
 ## Runnable Signatures
 
@@ -206,7 +203,11 @@ unnamed entry:
 ```too
 agic:
   Reply directly.
+```
 
+A flow entry is an alternative declaration, not a second entry in that module:
+
+```too
 flow:
   pass
 ```
@@ -301,17 +302,12 @@ declared struct type; neither `T` nor `S` is a literal type name that can be
 written in source. `Pack` is not built in and may be declared as an ordinary
 user struct.
 
-The language names map to package-level protocol values:
-
-```text
-Part    = one PerceptPart
-Part[]  = one Percept
-```
-
-The `lang` AST deliberately preserves the concise `Part` and `Part[]` names.
-Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
-runtime values. `Message` is a model-call and chat-projection type, not a
-Toolang language value.
+`Part` is the canonical union of `TextPart`, `ReasoningPart`, `ImagePart`,
+`AudioPart`, `DocumentPart`, `ToolCallPart` and `ToolResultPart`; `Part[]` is a typed
+array of those values. `Message` is a model protocol container with a role and
+ordered Parts, not a language value type. User messages accept text/image/audio/
+document Parts; assistant messages additionally accept reasoning and tool calls;
+tool messages require tool results. See [message types](../src/toolang/base/types/message.py).
 
 Value type and runtime shape are independent. A `Part[]`, `Text[]`, or other
 array value normally occupies one local with `shape=item`. Only flow operations
@@ -326,8 +322,8 @@ The optional `-> T` declaration is the runnable's output contract:
 agic summarize(_) -> Text:
   Summarize {{_}}.
 
-flow research(_: Text) -> Report:
-  ...
+flow research(_: Text) -> Text:
+  run summarize
 ```
 
 An omitted output type defaults to `Text`. For an agic:
@@ -392,9 +388,10 @@ An agic is the smallest agentic model/tool loop. It may contain selection
 directives, context/instruct selection, and authored model messages.
 
 ```too
-agic review(_, focus?: Text) -> ReviewResult:
-  models = */gpt-5
-  skills += skill/review
+instruct strict:
+  Report only findings supported by the supplied change.
+
+agic review(_, focus?: Text) -> Text:
   tools = shell/*
   recall = near
   context = default
@@ -458,7 +455,7 @@ selects all visible runnables. They do not accept queries. An explicit
 selection replaces inherited routes independently of resource restrictions:
 
 ```too
-agic coordinate(_: Text) -> Report:
+agic coordinate(_: Text) -> Text:
   hands = agic:research, flow:verify
   handoffs = flow:deliver
 
@@ -518,15 +515,7 @@ instruct:
   Use tools only when they materially help.
 ```
 
-Named declarations are reusable:
-
-```too
-context report:
-  Include the report constraints.
-
-instruct strict:
-  Run the {{runnable.name}} runnable in strict mode.
-```
+Named declarations can be selected by a runnable, as in the complete example below.
 
 The executor supplies `date` and `timezone` as flat runtime variables to both
 context and instruct templates:
@@ -544,10 +533,16 @@ child runs and later model calls observe the same temporal context.
 An agic or flow may select one of each:
 
 ```too
+context report:
+  Include the report constraints.
+
+instruct strict:
+  Use only supplied evidence.
+
 agic report(_):
   context = report
   instruct = strict
-  Write the report.
+  Write the report from {{_}}.
 ```
 
 Selection values are:
@@ -596,16 +591,9 @@ calls; they cannot be authored in `Content`.
 
 ## Flows
 
-A flow is an ordered list of static statements:
-
-```too
-flow research(_: Text) -> Report:
-  scatter using expand
-  keep if relevant in 4 lanes
-  sort descending by score in 3 lanes
-  keep first 3
-  gather using synthesize
-```
+A flow is an ordered list of static statements. The
+[complete flow example](flow-syntax.md#complete-example) demonstrates shaping,
+filtering, ordering and iteration with self-contained inline bodies.
 
 Flows use the same declaration defaults, resource selectors, recall, and routing
 configuration as agics. Nested flows and public run/exec calls use the same
@@ -642,31 +630,10 @@ $review path=src/app.py focus="only errors"
 ```
 
 Prompt Call Input, include references, and escaping are defined in
-[call-input.md](./call-input.md) and [input-syntax.md](./input-syntax.md). A
+[call-input.md](./call-input.md). A
 dollar prompt call invokes one reusable prompt template during content
 evaluation. Slash is reserved for terminal Chat commands and does not invoke
 prompts.
-
-
-## Service Caps
-
-Inline `service` caps declare properties directly. Required properties are
-`description`, exactly one of `transport` or `protocol`, and `target`;
-optional properties are `headers` and `env`.
-
-```too
-service github:
-  description = Use this service for GitHub access.
-  transport = http
-  target = https://mcp.github.com/mcp
-  headers = Authorization: Bearer $GITHUB_TOKEN
-  env = GITHUB_TOKEN
-```
-
-Both accepted transport spellings lower to the canonical `transport` metadata
-key. For `http`, `target` is the endpoint URL. For `stdio`, it remains opaque
-command text at the language boundary. Markdown cap files keep their
-catalog-owned frontmatter format.
 
 
 ## Surface Rules
@@ -692,9 +659,8 @@ derives its CLI from the selected
 signature; chat, task, and chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.
 
-Content evaluation turns interactive or authored `Content` into a
-protocol-level `Percept` before execution. That value corresponds to language
-`Part[]`. After resolving the runnable's signature, `RunExecutor` uses
+Content evaluation turns interactive or authored `Content` into `Part[]`
+before execution. After resolving the runnable's signature, `RunExecutor` uses
 language-owned input coercion to decode and validate another declared primary
 type before accepting the run. The caller does not duplicate signature
 parsing.
@@ -790,3 +756,12 @@ a resource again is necessary when its current, non-retracted body is no longer
 visible. Basic Toolang concepts in the protocol are not a grammar or CLI
 reference; load the applicable authoring guidance before producing `.too` code
 or recommending Toolang commands.
+
+## Implementation and verification
+
+[Program](../src/toolang/lang/ast.py) exposes the validated AST;
+[lowering](../src/toolang/lang/lower.py) applies language defaults and doc binding;
+[validation](../src/toolang/lang/validate.py) checks declarations and flow shapes.
+[State composition](../src/toolang/state/state.py) resolves module exports and
+prepared resources. [Language tests](../tests/unit/lang/) cover source contracts;
+[State tests](../tests/unit/state/) cover cross-module binding.

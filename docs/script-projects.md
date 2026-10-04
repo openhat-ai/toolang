@@ -5,15 +5,8 @@ Both belong in version control. Initialization refuses to overwrite either file,
 including directories and symlinks. A failure during creation may leave partial
 output; remove or complete it before retrying. Add `.toolang/` to Git ignore rules.
 
-For a script with an unnamed entry, omit the runnable or select `_` explicitly:
-`too file.too` and `too file.too _` select the same entry. `agic:_` and `flow:_`
-also check its kind. `<entry:5>` in help identifies the source line. Input `-`
-reads stdin, so `too file.too _ -` selects the entry and reads from stdin.
-
-Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
-command. Otherwise, `run` can be omitted: `too aide.too whats_for`.
-Add `--help` after the file or runnable for details. File help lists the unnamed
-entry first, then named agics and flows in their source order within each kind.
+[CLI routing](cli.md) owns runnable selection, unnamed entries and script help.
+[Call input](call-input.md#script-runnable-calls) owns arguments and stdin.
 
 ## Directories and configuration
 
@@ -95,4 +88,12 @@ Chat and script `@file` inputs use procdir even when workdir changes. Task/chore
 attachments remain relative to their authored files. Attachments supply content,
 not workspace access. Hosted calls send client-read content; they never reopen
 the same filename on the server. Prompt expansion, escaping, and fenced text keep
-their existing [Content syntax](input-syntax.md).
+their existing [Content syntax](call-input.md#content).
+
+## Implementation and verification
+
+[Script orchestration](../src/toolang/cli/toolang/commands/script.py),
+[configuration sources](../src/toolang/common/config_sources.py), and
+[CLI tests](../tests/unit/cli/) cover discovery, projection and invocation.
+[Configuration source tests](../tests/unit/common/test_config_sources.py) verify
+layering and relative paths.

@@ -1,8 +1,7 @@
-# Toolang Knowledge Base
+# Architecture
 
-Verified against `origin/main` at `4e110da0` on 2026-10-04 (package version
-0.3.5). This is the starting map for understanding and changing the current
-implementation. Follow the source and test links for details; consult a plan
+Verified against `origin/main` at `961b2d38` on 2026-10-04 (package version
+0.3.6). This is the system model for Toolang maintainers and contributors. Follow the source and test links for details; consult a plan
 for design history only after checking whether its behavior was implemented.
 
 ## Architecture at a glance
@@ -95,8 +94,9 @@ result does not replace `_`. See [record shapes](run-step-records.md) and
 5. `RunHistory` supports inspection without a running server. Thread fork and
    rewind change logical history; acceptance order determines boundaries.
 
-Accepted code and caps stay bound to their State revision. A later **named**
-invocation resolves against the latest valid State, provided its identity and
+Accepted code, types and directives stay bound to their State revision. Resource
+selectors evaluate the latest State at model-call boundaries, within the active
+authority ceilings. A later **named** invocation resolves against the latest valid State, provided its identity and
 signature remain compatible with the accepted caller. Inline/generated bodies
 retain their containing code. Setup remains captured for the root execution;
 workspace grants survive child acceptance and same-Run replacement. Watchers
@@ -106,7 +106,7 @@ keep the last valid publication when a candidate fails.
 identity and accepted entry; `rerun` starts a new root from the invocation.
 Neither means automatic resumption after process death. A live stream has no
 event replay cursor; reconnecting readers inspect durable state. See
-[executor](executor.md), [execution](execution.md), and
+[execution](execution.md), and
 [binding scenarios](../tests/integration/execution/test_latest_state_binding.py).
 
 ## Resource selection and model/tool boundaries
@@ -139,26 +139,22 @@ Details: [queries](queries.md), [models](models.md), [tools](tools.md),
 [policy](../src/toolang/execution/policy.py),
 [runtime tools](../src/toolang/execution/tools/_toolang.py).
 
-## Functional map
+## Entry points and implementation boundaries
 
-| Surface | Implemented behavior and boundary | Focused guide |
-| --- | --- | --- |
-| Source development | Parse/check, format and highlight `.too`; typed signatures, structs, inline/reference caps and source diagnostics | [program](program.md), [source commands](source-commands.md) |
-| Scripts | `too init DIR`; `too run FILE [RUNNABLE]`; shorthand file dispatch; flat arguments, file inputs and result saving | [script projects](script-projects.md), [call input](call-input.md) |
-| Flow orchestration | `run`, `exec`, scatter/storm, gather/settle, map, keep/drop, sort, repeat, named/discarded bindings | [flow syntax](flow-syntax.md) |
-| Agent and human calls | `seek` and `ask` parse and produce execution steps, but currently fail because their execution bridges are not connected | [seek handler](../src/toolang/execution/executor/stmts/seek.py), [ask handler](../src/toolang/execution/executor/stmts/ask.py) |
-| Terminal Chat | Local or hosted execution, thread history, queued input, slash controls, streaming and shared execution presentation | [chat](chat.md), [presentation](execution-presentation.md) |
-| Execution control | Inspect records/results/trees; steer/cancel; retry/rerun; thread fork/rewind; automatic model-budget compaction | [execution](execution.md), [API/CLI](api.md) |
-| Tasks and chores | Ready files plus program jobs; task body revisions, RRULE/manual chore activation, checkpoints and stable threads | [work](work.md), [tasks](tasks.md) |
-| Hosting / HTTP | Foreground `serve`, background `start`, `stop`; FastAPI inspection, mutations, run streams and thread controls | [API](api.md), [server](../src/toolang/up/server.py) |
-| Channels | Telegram polling/delivery plugin is registered. Current server assembly does not start channel polling; no `/hook/*` routes are registered | [Telegram plugin](../src/toolang/plugin/channels/telegram.py), [router](../src/toolang/api/router.py) |
+CLI, HTTP, Chat and scheduled jobs converge on the execution contracts above.
+CLI/server acquisition chooses a compatible hosted runtime, embedded host
+execution, or a command-owned temporary server. `RunClient` separates local
+and remote run transport; closing a client releases its resources without
+stopping an independently hosted server.
 
-Chat/script callers can attach to a compatible hosted runtime, run embedded on
-host, or own a temporary server for a non-host sandbox. `RunClient` provides
-the local/remote run boundary. Closing a client releases its own resources;
-it does not stop an independently hosted server. See
-[CLI runtime selection](../src/toolang/cli/common/agent_server.py) and
-[remote client](../src/toolang/execution/remote.py).
+`ask` and `seek` parse and create execution steps, but their bridges currently
+raise an error. The registered Telegram channel plugin is not started by server
+assembly, and the HTTP router registers no `/hook/*` routes. Syntax and plugin
+availability alone do not imply a connected execution path.
+
+Evidence: [ask](../src/toolang/execution/executor/stmts/ask.py),
+[seek](../src/toolang/execution/executor/stmts/seek.py),
+[server](../src/toolang/up/server.py), [router](../src/toolang/api/router.py).
 
 ## Storage and scheduling
 
@@ -204,12 +200,12 @@ are navigation anchors, not a claim that every test was run for this document.
 | Local/remote CLI or HTTP behavior | [CLI integration](../tests/integration/cli/), [remote runs](../tests/integration/api/test_remote_runs.py) |
 | Plugins or hosting | [plugin tests](../tests/unit/plugin/), [sandbox lifecycle](../tests/integration/up/test_sandbox_lifecycle.py) |
 
-When updating this knowledge base, compare the recorded baseline to the desired
-revision first (`git diff --name-only 4e110da0..HEAD -- src/toolang tests docs
+When updating this architecture guide, compare the recorded baseline to the desired
+revision first (`git diff --name-only 961b2d38..HEAD -- src/toolang tests docs
 pyproject.toml`). Recheck only affected owners and their consumers, update the
 matching summary and baseline, then validate links and `git diff --check`.
 Expand the search only when those paths leave an unanswered question.
 
 Use [the documentation index](index.md) for detailed guides and design context.
-`docs/plans/`, drafts and `refactor-target.md` are not proof of current behavior;
+`docs/plans/` and dated evaluations are historical evidence;
 [CHANGELOG.md](../CHANGELOG.md) remains the user-facing change record.

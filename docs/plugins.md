@@ -67,7 +67,7 @@ Only the corresponding built-in tools receive specialized contexts: runtime
 operations, history access, effective service credentials, or agent management.
 Ordinary tools receive none of those dependencies.
 
-The used function adapter remains available: annotate a sync/async function with
+The function adapter is supported: annotate a sync/async function with
 `@tool(summary=..., paths=...)`, then `create_function_tool(function)`.
 Hooks have exactly the Tool signatures and see the original arguments (including
 omitted defaults). An explicit `context` function parameter is injected. Return
@@ -83,7 +83,9 @@ the worker closes its connection when the read finishes or fails.
 
 ### Channel
 
-Channel plugins ingest or deliver external messages.
+Channel plugins define ingestion/delivery integrations. The Telegram plugin is
+registered, but the current host does not start a channel polling loop or expose
+hook routes. Registration alone does not make a channel active.
 
 ### Sandbox
 
@@ -202,43 +204,9 @@ Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
 configuration, or catalog files. No factory is invoked, so an installed plugin
 can be listed even if its runtime dependencies are unavailable.
 
-Resource commands have scope-specific semantics:
-
-| Command | No agent | Selected agent |
-| --- | --- | --- |
-| `too [AGENT] caps` | Root-shared, allowed caps | Root-shared plus agent-owned caps under effective allow and scope precedence |
-| `too [AGENT] tools` | Root-configured, allow-filtered tools | Tools after root/agent configuration and allow resolution |
-| `too [AGENT] models` / `providers` | Root-configured ready, allowed model resources | Ready, allowed resources under agent configuration and catalog precedence |
-
-No-agent inspection never reads an implicit default agent. Tools and model
-resources consume their published setup views; caps use capability state.
-See [tools](tools.md), [models](models.md), and [caps](caps.md) for their policies.
-
-`too tools` and `too toolsets` hide internal toolsets such as `_toolang` by
-default. Use `--all` to include them. `me` is not internally hidden, but tool
-allow policy can exclude it from the default view. Resource `--all` shows the
-complete diagnostic view: caps include allow-excluded resources, tools include
-internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
-providers. It preserves the selected scope and configuration and never grants
-execution permissions. Queries use the selected view; provider counts always cover all owned models. An
-internal-only tool query needs `--all`. Tool-call inspection shows the
-recorded plugin identity, independently of its Python module location.
-
-Resource lists uppercase record keys for human headers. Models, tools, and caps
-expose `tags` for availability and blockers. Models/caps also carry origin;
-caps carry scope and form. Caps show actual content `LOCATION`; tools omit
-plugin/package provenance. Providers format setup's stored counts as `MODELS`
-and show their default route, without tags or nested model records.
-`--json` emits inspection arrays without summaries; `--human` explicitly selects
-the default tables. Plugin inventories instead use only default `NAME`, `PACKAGE`
-tables, without output-mode or query flags. Human summaries include zero counts
-and add group counts only when more than one row is displayed.
-See [Resource Queries](queries.md) for records, columns, and tag meanings.
-
-Models, tools, and caps accept native TQ queries. Providers support external TQ
-through JSON only. Plugin inventories have no query interface or agent allow
-policy. Every resource `--all` accepts
-`-a`.
+Effective resource inspection is separate from installed entry-point discovery.
+See [CLI routing](cli.md) and [Resource Queries](queries.md) for scope, `--all`,
+output records and policy filtering.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
 and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.
@@ -329,3 +297,34 @@ catalogs are always loaded. After snapshots are merged, the resolver maps raw
 npm metadata to installed adapters, resolves provider and model routes,
 interprets environment availability, and stores only non-secret runtime facts.
 See [models.md](models.md) for the complete boundary.
+
+## Docker environment transport
+
+Docker captures root dotenv, then agent dotenv, then allowed host-process values.
+Dotenv values are literal; interpolation is disabled. Every explicitly authored
+dotenv name is eligible. Process-only names must fully match
+`environment_allow_pattern`; an authored pattern replaces the built-in pattern.
+
+The host stages a mode-0600 dotenv outside the guest-writable runtime directories
+and mounts it read-only at the guest agent's `.env`. Root `.env` is not mounted.
+The guest bootstrap reads it before package installation; credentials are not
+expanded into Docker CLI arguments. Explicit Docker environment arguments carry
+only routing/bootstrap values such as `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and
+`TOOLANG_SANDBOX`.
+
+Sandbox ownership stays in the host-only control directory described in
+[layout](layout.md#runtime-room). Cleanup preserves the reference if it fails,
+so a later operation can retry. Background Docker startup records bootstrap/server
+output in a mode-0600 agent log and preserves bounded early diagnostics before
+release. Foreground output begins after the readiness handoff. Legacy
+guest-writable ownership state and orphaned
+staging block launch instead of being silently adopted or deleted.
+
+## Implementation and verification
+
+[Base protocols](../src/toolang/base/protocols/),
+[plugin loading](../src/toolang/plugin/loading.py), and
+[entry-point registration](../pyproject.toml) define public contracts.
+[Plugin tests](../tests/unit/plugin/) cover factories, identities and adapters;
+[Docker lifecycle tests](../tests/integration/up/test_docker_sandbox_lifecycle.py)
+cover host/guest transport and cleanup. Built-ins use these same contracts.

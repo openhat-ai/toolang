@@ -1,91 +1,47 @@
 # Developer Documentation
 
-This directory contains the developer-facing documentation for Toolang.
-Start with the [knowledge base](knowledge-base.md) for the verified architecture,
-concepts, feature boundaries, and source/test lookup map. It records its code
-baseline so later reviews can inspect changes instead of rescanning the repository.
+These docs serve Toolang maintainers and contributors, with API and plugin
+implementers as secondary readers. Start with [architecture](architecture.md)
+for the system model and [development](development.md) for contribution and
+verification. User installation, guides and examples belong on
+[toolang.ai](https://toolang.ai).
 
-User-facing quickstart and guide content belongs in the separate
-`toolang-docs` site. Generated implementation reference belongs under
-`reference/`.
+## Repository responsibilities
 
-
-## Scope
-
-Use this directory for:
-
-- runtime concepts and terminology
-- filesystem layout and durable state
-- capability, job, and execution models
-- CLI and local agent API surfaces
-- plugin and integration boundaries
-
-
-## Core Concepts
-
-| Document | Scope |
+| Repository | Owns |
 | --- | --- |
-| [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
-| [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
+| [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) | Source syntax, public CST nodes/fields and parser queries; see its [grammar reference](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md). |
+| Toolang | Language semantics, architecture, runtime and integration contracts, verified against code and tests. |
+| `toolang-docs` | User guides, published reference and [authoring conventions](https://toolang.ai/docs/toolang-conventions). |
 
-## Language and Script Projects
+## Reading paths
 
-| Document | Scope |
+- **Change language behavior:** [program semantics](program.md) →
+  [flow evaluation](flow-syntax.md) / [call input](call-input.md) →
+  [source tooling](source-commands.md) and their linked tests.
+- **Change binding or state:** [layout](layout.md) →
+  [State publication](agent-state.md) → [run acceptance](execution.md).
+- **Change a caller or integration:** [CLI](cli.md) / [HTTP](api.md) →
+  [execution](execution.md) → [durable records](run-step-records.md).
+
+## Document map
+
+| Area | Focused owners |
 | --- | --- |
-| [program.md](./program.md) | Program declarations, runnable signatures, agics, flows, directives, and surface rules |
-| [toolang-authoring-conventions.md](./toolang-authoring-conventions.md) | Source style, natural prose, type defaults, and documentation comments |
-| [source-commands.md](./source-commands.md) | Offline formatting, AST/CST inspection, and syntax highlighting |
-| [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
-| [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
-| [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |
-| [script-projects.md](./script-projects.md) | Script project discovery, configuration ownership, temporary workspace options, and attachment origins |
+| Orientation | [Architecture](architecture.md), [development](development.md) |
+| Language | [Program semantics](program.md), [flow evaluation](flow-syntax.md), [call input](call-input.md), [source commands](source-commands.md) |
+| Source placement | [Script projects](script-projects.md), [layout/storage](layout.md), [prepared State](agent-state.md) |
+| Resources | [Caps](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
+| Work | [Authored tasks/chores](tasks.md), [scheduling/recovery](work.md) |
+| Execution | [Lifecycle and policy](execution.md), [records/references](run-step-records.md), [presentation](execution-presentation.md) |
+| Callers | [CLI orchestration](cli.md), [Chat](chat.md), [HTTP API](api.md) |
 
-## Layout, State and Resources
+## History and generated reference
 
-| Document | Scope |
-| --- | --- |
-| [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
-| [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
-| [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [queries.md](./queries.md) | Native TQ resource queries, JSON fields, tags, and set semantics |
+[Plans](plans/) record feature definitions and past decisions; they are not
+proof of implemented behavior. [Dated evaluations](evaluations/) retain measured
+results for their recorded revisions. Use [CHANGELOG.md](../CHANGELOG.md) for
+user-facing changes and migration guidance.
 
-## Work and Execution
-
-| Document | Scope |
-| --- | --- |
-| [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
-| [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
-| [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
-| [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |
-| [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |
-| [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
-| [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
-| [execution-presentation.md](./execution-presentation.md) | Shared script and chat TUI presentation language for runs, steps, streaming, and scrollback |
-
-## Integrations and Control Surfaces
-
-| Document | Scope |
-| --- | --- |
-| [models.md](./models.md) | Model integrations, including queries, providers, routes, and built-in model providers |
-| [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
-| [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
-| [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |
-
-
-## Design History and Review Guides
-
-Plans in [plans/](plans/), drafts, and the refactor target describe decisions or
-proposals at a point in time. Their presence does not establish implementation
-status; check the knowledge base and linked code before treating them as current.
-
-| Document | Scope |
-| --- | --- |
-| [refactor-target.md](./refactor-target.md) | Historical target package structure and migration context |
-| [package-audit.md](./package-audit.md) | Package review workflow |
-| [package-testing.md](./package-testing.md) | Test organization and verification guidance |
-
-
-## Generated Reference
-
-Use `reference/` for generated package and module reference derived directly
-from code.
+[Generated code reference](../reference/) complements these contract guides.
+Follow each guide's source/test links for exact types and current behavior.

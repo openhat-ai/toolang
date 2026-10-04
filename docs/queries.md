@@ -168,3 +168,11 @@ ranking. Tools/caps retain base order. Overlapping matches are deduplicated.
 Resource `=`, `+=`, and `-=` operations respectively intersect, include, and
 exclude within the inherited base, always preserving base order. Includes
 cannot exceed that inherited ceiling. Required-match checks remain in place.
+
+## Implementation and verification
+
+[Resource records](../src/toolang/plugin/models/records.py) and
+[policy queries](../src/toolang/common/policy.py) define projections and
+selection. [Record tests](../tests/unit/plugin/test_resource_records.py) and
+[CLI query tests](../tests/integration/cli/test_resource_queries.py) verify native
+TQ matching, output columns and default/full views.

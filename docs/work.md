@@ -38,54 +38,16 @@ Tasks use every `JobStatus`. Chores normally use `pending`, `running`, and
 `done`; a failed or canceled chore run does not disable later occurrences.
 
 
-## Identity And Definition
+## Definition and identity
 
-A job id is globally unique across task and chore kinds and every authored
-stage. It is the sole scheduler key. Both `id` and `kind` are immutable:
+[Authored jobs](tasks.md) owns stable identity and stage transitions. The scheduler
+normalizes each effective source into an immutable `Job` with `id`, `kind`,
+`title`, `body`, `schedule`, `revision`, `source` and optional `path`.
 
-```text
-id       durable identity
-kind     immutable behavior
-stage    authored lifecycle placement
-revision current authored body version
-```
-
-Moving a job between draft, ready, and archived stages, renaming its source
-file, editing its body, or changing its schedule preserves its id. Copying a
-job or changing between task and chore creates a new id. A duplicate id is an
-invalid authored state.
-
-The runtime normalizes ready authored sources and program declarations into:
-
-```python
-@dataclass(frozen=True, slots=True)
-class Job:
-    id: str
-    kind: JobKind
-    title: str | None
-    body: str
-    schedule: str | None
-    revision: str
-    source: str
-    path: Path | None
-```
-
-`revision` hashes the normalized authored body. Title, file name, path, and
-schedule do not affect it. The schedule is compared separately so an RRULE
-change can reset its cursor without pretending that the body changed.
-
-`id` is the machine-readable selector and `title` is the only optional
-human-readable label. There is no additional job `name`. A display title falls
-back to the first meaningful body line and then the id.
-
-The thread id is a projection rather than persisted scheduler state:
-
-```python
-thread_id = f"{job.kind}_{job.id}"
-```
-
-All runs for one job share that thread.
-
+`revision` hashes the normalized body. Title, filename and path do not affect it;
+schedule changes are compared separately. Display title falls back to the first
+meaningful body line, then the ID. The thread is derived as `<kind>_<id>` and
+shared by all revisions/occurrences of that job.
 
 ## Ready Snapshot
 
@@ -240,12 +202,11 @@ The scheduler wakes for a ready snapshot, state snapshot, run completion,
 manual control, the nearest heap timer, or the safety refresh. It captures the
 latest setup and state snapshots when constructing a dispatch. The job body is
 parsed into a policy-command prefix and `CallInput[str]`; the default runnable
-is the job kind and falls back to `default`.
+is the job kind and falls back to the single unnamed entry; absence of both
+fails before acceptance.
 
 One job is always serial. Different jobs may run concurrently. `JobScheduler`
-adds no separate bandwidth pool or limit. Any future process-wide admission
-policy belongs at the execution boundary so API, chat, task, and chore traffic
-share the same policy.
+adds no separate bandwidth pool or limit. Execution owns Run limits shared with API and Chat callers.
 
 
 ## Execution Attribution
@@ -265,8 +226,7 @@ attribution already accepted by the execution API:
 
 Runs are associated with the job through that thread. Trigger, revision,
 RRULE, scheduled timestamps, next timestamps, and scheduler status remain
-exclusively in `jobs.db`. Adding root-run job context would change the execution
-contract and requires a separately reviewed execution design.
+exclusively in `jobs.db`. No separate root-run job context is added.
 
 
 ## Dispatch And Recovery
@@ -327,3 +287,10 @@ abstraction.
 `toolang.work` owns `Job`, `JobRecord`, `JobWatcher`, `JobStore`, job inspection,
 and `JobScheduler`. `toolang.execution` owns threads, runs, execution, and run
 controls and does not depend on `toolang.work`.
+
+[Scheduler](../src/toolang/work/scheduler.py),
+[watcher](../src/toolang/work/watcher.py), and
+[store](../src/toolang/work/store.py) implement these boundaries.
+[Scheduler tests](../tests/unit/work/test_scheduler.py) and
+[scheduled-run scenarios](../tests/integration/execution/test_scheduled_runs.py)
+verify claims, loop isolation, recurrence and recovery.

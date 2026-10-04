@@ -10,33 +10,14 @@ so blocking tool implementations do not stall the run event loop.
 
 ## Inspection
 
-`too [AGENT] tools [--all] [--query QUERY]` lists the effective tools published
-by setup. With no agent it uses root configuration only, never the implicit
-`default` agent. With an agent it overlays that agent's plugin configuration
-and allow settings on root inputs. The agent need not be running, and its
-program is not parsed for this command. This describes setup-level availability;
-individual run resource declarations may narrow it further.
+Tool inspection uses the root or selected-agent Setup without parsing its program
+or requiring a running server. Setup lazily publishes an allow-filtered tool view;
+Run directives may narrow it. Tools have no separate readiness protocol: only
+leaves from successfully loaded toolsets exist. Internal `_toolang/*` tools are
+hidden by default; `me/*` follows normal allow policy.
 
-The default list hides internal tools such as `_toolang/*`. `--all` reveals
-those tools and all allow-excluded tools from the same setup version, matching
-the diagnostic meaning of model/provider `--all`. `setup.tools()` remains the
-allow-filtered runtime collection; `setup.tools(all=True)` exposes the complete
-pre-allow set for inspection without changing run grants. Tool and toolset data
-are loaded on first accessor use and memoized within that setup revision.
-`me/*` follows normal allow policy in the default view and appears with `--all`.
-Queries and footer counts use the displayed dataset. Tools have no separate
-readiness protocol: the full view includes leaves supplied by loaded toolsets,
-not guessed tools from an unloadable plugin. Both views show `REF`, `DESCRIPTION`, and `TAGS`, taken directly from the
-record fields `ref`, `description`, and `tags`. Tags are `ready` or `not_allowed`; internal tools retain
-copyable `_toolang/name` refs. `--json` emits the same public records used for
-native TQ matching. `--human` explicitly selects the default table; the flags
-cannot combine. See [Resource Queries](queries.md) for fields and syntax.
-Human summaries use `N tools, M toolsets`, omitting the toolset count for zero
-or one tool. Empty human results print `0 tools`; empty JSON is `[]`.
-`-a` is an alias for `--all`.
-`too toolsets [--all]` instead lists locally installed toolset plugins, without
-agent configuration, policy, or factory loading.
-
+See [query projections](queries.md) for records and `--all`, and [CLI inventories](cli.md)
+for the distinction between effective tools and installed toolset entry points.
 
 ## Built-In Tool Families
 
@@ -142,7 +123,8 @@ paging stable history within an active Run.
 
 Step outputs and control inputs are resolved typed values; structural and saved
 ModelCall references remain intact. `read_output` returns `{run, status, output}`,
-where output is `{type, value, name, dim}` or null, including partial output.
+where output is `{local: {type, value, dim}, binding}` or null, including partial
+output. This is the protocol projection described in [records](run-step-records.md).
 Missing targets and unresolved values fail as ordinary tool errors.
 
 
@@ -229,7 +211,6 @@ Linked config files are not writable through me.
 Main operations use `.agent.too.lock`; flows use `.flows.lock`. Config writers,
 including configured caps, workspaces, and roaming projection, share
 `.config.toml.lock`; caps/assets use `.caps.lock`, and jobs use `.jobs.lock`.
-Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
 
@@ -257,37 +238,24 @@ scheduled job adopted a change. Historical manifests without raw config hashes
 treat that config as untracked. See [Agent State](agent-state.md).
 
 Reading after a save observes the saved source. Running code remains governed by
-Run binding and publication: static calls in an accepted flow use its bound
-program; a later permitted named Run can use the latest published State. Editing
-config does not install new tools, refresh captured Setup, or grant authority to
-the active Run.
+Run binding and publication: the accepted flow retains its code and caller contract, while each new named
+call binds the latest compatible publication. Resource selectors evaluate current
+State at model-call boundaries, within existing authority ceilings; Setup and
+workspace grants remain captured. See [program binding](program.md#directives).
 
 
 ## Runtime Rule
 
 Tools do not own the model loop.
 
-For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__exec`, `_toolang__pick`,
-`_toolang__honor`, `_toolang__compact`, and `_toolang__chdir` tools. `hands` and
-`handoffs` authorize runnable targets but do not select these definitions.
-Statement-generated Flow evaluators, output-repair
-calls, and tool-disabled models receive no runtime tools.
+For ordinary tool-capable Agic calls, the executor advertises `_toolang/run`,
+`_toolang/exec`, `_toolang/pick`, and `_toolang/chdir`. Honor and compact are
+registered runtime-only helpers. Statement-generated evaluators, output-repair
+calls and tool-disabled models receive no runtime tools.
 
-In chat, a named invocation without further requested work uses exec; a
-request to call a target and then summarize or process its result uses run.
-Both tools accept `runnable` and optional `input`, whose `_` field is primary
-input and other fields are declared parameters. The model reads the latest
-hands/handoffs signatures and asks for missing required values before calling.
-Questions about parameters alone do not execute the target.
-
-Omitted hands/handoffs settings inherit within the same module. Without an
-inherited value, all module-visible targets are available for named user requests.
-Their snapshots have `requested_only="true"`, directing the model not to delegate autonomously.
-Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
-remain runtime-enforced limits, independently for run and exec. On a conflict,
-the model reports the restriction without switching operation or target. Snapshot
-limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
+[Program directives](program.md#directives) own hands/handoffs authorization and
+model guidance. Runnable snapshots are bounded to 64 unique targets and 32 KiB;
+narrow hands/handoffs if that bound is exceeded.
 
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
@@ -305,43 +273,15 @@ and does not change the default runnable for future chat turns.
 progress events; only model-triggered calls contribute their own ToolResult messages.
 Failures use `ToolResultPart.error`, with additional diagnostics in the output.
 
-Toolang runtime owns:
+The executor owns availability, invocation, history and tool-result delivery.
+Leaf [summary hooks](plugins.md#toolset) supply wording; it records running text in
+`ToolStepGiven.summary` and terminal text in `ToolStepNoted.summary`, including
+safe fallback wording. [Presentation](execution-presentation.md) reads those
+saved summaries and owns markers, timing, truncation and hierarchy. It never
+calls a plugin while rendering.
 
-- when tools are available
-- when a tool is executed
-- how tool output re-enters the run
-- how tool calls are recorded and exposed
-- the default human-readable summary for each tool-call lifecycle state
-
-Leaf tools may provide `summary(arguments, result=None) -> str | None`
-through the [plugin contract](plugins.md). The executor supplies isolated
-call/result data with sensitive arguments masked. Missing, empty, or failed
-summaries fall back to generic wording. No result means running; `ToolResult.error`
-distinguishes failure from success. Cancellation uses executor wording.
-The running summary is stored in
-`ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
-
-The fallback combines the leaf name and first supplied argument in the tool
-definition's parameter order; it does not display the family. Its
-running form is `Executing NAME ARG ...`; its succeeded and failed forms are
-`Executed NAME ARG` and `Failed NAME ARG`. The canceled form is
-`Canceled NAME ARG`. Argument previews are single-line and bounded.
-
-Fs, shell, and runtime helpers supply wording through the same hook. Progress
-owns markers, color, timing, and layout; it reads saved summaries without calling
-plugins. Tool summaries and markers are dim: `✧` for runtime helpers
-and `›` for ordinary tools. Model and Flow markers remain unstyled `•`.
-Compact elapsed time refreshes once per second in TTY/Chat; non-TTY prints
-start/end only.
-Tool traces show one summary line, plus
-an indented error line on failure, and no result blocks. Long lines are truncated.
-Run/exec retain their child and handoff hierarchy.
-
-Workspace paths in tool summaries use the canonical `name://path` syntax,
-for example `repo://src/file.py`. Honor says `Loading rules...` /
-`Loaded rules: repo://AGENTS.md`.
-Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
-capability identity rather than its source location.
+Workspace summary paths use `name://path`. Guidance summaries use the effective
+cap identity, such as `skill/testing`, rather than its source location.
 
 ### Pick guidance
 
@@ -394,3 +334,12 @@ and shell cwd, including reads; paths hidden in shell commands are not inspected
 Compact likewise stays out of model messages. Its result is
 `{controls: [{ref, horizon}]}`, referencing the compact Run output; the compact
 control changes the horizon used by subsequent ModelCalls.
+
+## Implementation and verification
+
+[Built-in toolsets](../src/toolang/plugin/toolsets/),
+[runtime tools](../src/toolang/execution/tools/), and
+[history binding](../src/toolang/execution/executor/tool_history.py) own execution.
+[Plugin tests](../tests/unit/plugin/) and
+[execution integration tests](../tests/integration/execution/) cover ordinary
+calls, rules/guidance visibility and current-agent writes.

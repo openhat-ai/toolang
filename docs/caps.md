@@ -43,18 +43,9 @@ remote metadata, before applying allow and query filters. It never prepares an
 agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
-`--all` includes resources excluded by allow in the same scope. Both views
-show `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
-`not_allowed`, alongside origin, scope, and form tags. The full view does not restore
-shadowed definitions or grant runtime access. This applies to aggregate and
-kind-specific lists through both CLIs, for example `too alice caps --all`,
-`too alice skill list --all`, and `caps alice list --all`. Queries filter the
-chosen default/full view. Caps have no separate readiness protocol; an invalid
-or unresolvable definition remains an error, not an invented unavailable row.
-`-a` aliases `--all`. Aggregate summaries use `N caps, M kinds`; omit the kind
-count for zero or one cap. Kind-specific summaries use their own noun, such as
-`N skills`. Empty human results print `0 caps` or `0 skills`; JSON output is `[]`.
-Counts describe displayed rows after filtering.
+`--all` includes allow-excluded resources without restoring shadowed definitions
+or granting runtime access. Caps have no separate readiness protocol: invalid
+or unresolvable definitions fail instead of becoming unavailable rows.
 Per-module and run declarations can further narrow execution resources.
 
 HTTP write payloads use `root` and `home` directly. CLI write commands expose
@@ -104,27 +95,12 @@ exposed separately as `definition_file`. When known, APIs may also include
 `line`.
 
 
-## CLI List Projection
+## Inspection locations
 
-The `too caps`, `caps list`, and kind-specific list commands share these columns
-in this order:
-
-| Column | Meaning |
-| --- | --- |
-| `REF` | Qualified query identity, such as `skill/reviewer` |
-| `DESCRIPTION` | Cap description, or `-` when absent |
-| `LOCATION` | Absolute content path, inline `file:line`, or configured/referenced GitHub HTTPS URL |
-| `TAGS` | Availability, access, origin, scope, and form tags |
-
-Use repeatable `--query/-q` with native TQ. Both combined and kind-specific
-lists match complete singular identities such as `skill/reviewer`; use
-`*/reviewer` across kinds. For example, `skill/*[tags has all (home,remote)]`
-selects remote skills in home scope. `--json` exposes the exact records used by
-queries. JSON and query keys are lowercase; `--human` uppercases them for table
-headers. Locations remain complete for copying; authored skills point to
-`SKILL.md`, and only inline locations include a line number. See
-[Resource Queries](queries.md).
-
+[Resource Queries](queries.md) owns cap columns, tags and selectors. A location
+addresses actual content: authored skills point to `SKILL.md`, inline caps use
+`file:line`, and remote configured/referenced caps use their GitHub HTTPS URL.
+Definition metadata remains separate from the displayed content address.
 
 ## Source Refs
 
@@ -251,53 +227,15 @@ directives may narrow the result further, but cannot restore caps outside the
 published resources.
 
 
-## HTTP API
+## Integration and verification
 
-Read endpoints:
+[HTTP contracts](api.md#capability-publication) own writes, publication
+receipts and effective reads. [Resource Queries](queries.md) owns the public
+inspection shape; lists expose content locations, while API records also retain
+source definition metadata.
 
-- `GET /api/v1/caps`
-- `GET /api/v1/psyches`
-- `GET /api/v1/skills`
-- `GET /api/v1/services`
-- `GET /api/v1/prompts`
-- `GET /api/v1/psyches/{name}`
-- `GET /api/v1/skills/{name}`
-- `GET /api/v1/services/{name}`
-- `GET /api/v1/prompts/{name}`
-- `GET /api/v1/psyches/templates`
-- `GET /api/v1/skills/templates`
-- `GET /api/v1/services/templates`
-- `GET /api/v1/prompts/templates`
-- `GET /api/v1/psyches/templates/{template_name}`
-- `GET /api/v1/skills/templates/{template_name}`
-- `GET /api/v1/services/templates/{template_name}`
-- `GET /api/v1/prompts/templates/{template_name}`
-
-Write endpoints:
-
-- `PUT /api/v1/psyches/{name}/authored`
-- `PUT /api/v1/skills/{name}/authored`
-- `PUT /api/v1/services/{name}/authored`
-- `PUT /api/v1/prompts/{name}/authored`
-- `DELETE /api/v1/psyches/{name}/authored`
-- `DELETE /api/v1/skills/{name}/authored`
-- `DELETE /api/v1/services/{name}/authored`
-- `DELETE /api/v1/prompts/{name}/authored`
-- `PUT /api/v1/psyches/{name}/configured`
-- `PUT /api/v1/skills/{name}/configured`
-- `PUT /api/v1/services/{name}/configured`
-- `PUT /api/v1/prompts/{name}/configured`
-- `DELETE /api/v1/psyches/{name}/configured`
-- `DELETE /api/v1/skills/{name}/configured`
-- `DELETE /api/v1/services/{name}/configured`
-- `DELETE /api/v1/prompts/{name}/configured`
-
-Authored write requests carry `scope` and `content`. Configured write requests
-carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
-`root` or `home` and defaults to `home`.
-
-Template detail responses include template metadata and raw content. Cap read
-requests return the effective runtime view with `scope`, `origin`, `form`,
-`ref`, `definition_file`, and optional `line`. CLI lists use `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
-actual content; only inline caps use `file:line`. Form, origin, scope, and allow
-status are tags. See [Resource Queries](queries.md) for the complete record shape.
+[Catalog caps](../src/toolang/catalog/cap.py) own authored/configured changes;
+[State](../src/toolang/state/) owns prepared effective caps.
+[Catalog tests](../tests/unit/catalog/test_caps.py) and
+[API publication tests](../tests/unit/api/test_cap_publication.py) verify those
+boundaries.

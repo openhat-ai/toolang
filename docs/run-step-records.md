@@ -34,6 +34,27 @@ text. Field tokens use RFC 6901 escaping. `:` is reserved for the TypedRef
 suffix; durable record field names are assumed not to contain it. Legacy forms
 are rejected.
 
+## Allocated IDs
+
+Toolang's per-agent allocator stores separate `local` and `run` sequences in
+`.runtime/ids.json`. Each encoded payload is eight lowercase Crockford-style
+base32 characters. Allocation uses a monotonic time bucket and sequence under
+one POSIX file lock; malformed allocator state fails instead of resetting and
+reusing IDs. The encoding is reversible obfuscation, not cryptographic secrecy
+or lexicographic allocation order.
+
+Runs use `run_<id>`; locally allocated Chat/script threads use `term_<id>`,
+`web_<id>` or `script_<id>`. Each direct script invocation has a fresh thread.
+Job threads use `task_<id>` or `chore_<id>` with the stable authored identity from
+[jobs](tasks.md). Transport identities such as `tg_<external_id>` retain their
+opaque external payload. Reference validation and local allocation are distinct:
+the schematic short IDs above illustrate reference syntax, not allocator output.
+
+[ID implementation](../src/toolang/common/ids.py) owns widths, epoch, bucket
+encoding and optional collision checks; [ID tests](../tests/unit/common/test_ids.py)
+verify concurrent allocation and round trips. [Authored jobs](tasks.md#layout-and-stage)
+owns catalog placement.
+
 ## Canonical Records
 
 Canonical JSON contains the record itself, without an inspection envelope,
@@ -172,6 +193,21 @@ Model `given` data contains normalized-call references. Large instructions,
 messages, and toolsets are content-addressed; provider request bodies and
 credentials are not stored. Model `noted` records continuation and accounting.
 
+## Recorded model calls
+
+Durable calls have a call-level `version` and `messages: {head, delta}`. The head
+is the first Model Step of the sequence. Reconstruction concatenates raw deltas
+from that head through the requested call in numeric Step order. Compaction or
+changed history selection starts a new self-headed baseline. Other call fields
+are complete per-call snapshots; far/near selection policy is not stored there.
+
+Message segments become content hashes at commit. Imported history retains its
+owning Run as `source`, so repeated history does not become new conversation.
+Reconstruction uses recorded deltas without loading historical State or controls;
+it reconstructs a normalized call, not a provider response or automatic replay.
+[Record codecs](../src/toolang/execution/records.py) own serialization;
+[RunStore](../src/toolang/execution/store.py) owns reconstruction.
+
 ## Content And Errors
 
 The `contents` table stores `(id, value)` only. `id` is the complete
@@ -181,7 +217,7 @@ the text, JSON, or file codec.
 
 Run and Step errors use exactly one of:
 
-```json
+```text
 null
 {"type": "message", "message": "model request timed out"}
 {"type": "ref", "ref": "run_ab12.0/error"}
@@ -198,7 +234,7 @@ stored as data unless the caller explicitly requests value or error resolution.
 Missing records, missing members, invalid array indexes, scalar traversal, and
 explicit `null` remain distinct outcomes.
 
-`toolang AGENT inspect POINTER` opens the store read-only. Human output shows
+`too AGENT inspect POINTER` opens the store read-only. Human output shows
 one structural level; `--json` returns canonical JSON without following stored
 Refs. Physical Runs and Steps remain inspectable after Thread rewind; only
 Thread-selected collections apply logical history membership. Retry physically
@@ -239,3 +275,9 @@ The current RunStore schema is version 50, defined in
 [execution/store.py](../src/toolang/execution/store.py). Every older or newer
 version is rejected before reading or writing. There is no migration or legacy reference
 parser at this boundary, and incompatible stores remain unchanged.
+
+[Record contract tests](../tests/unit/execution/test_model_record_contract.py),
+[value projection tests](../tests/unit/execution/test_values.py), and
+[schema tests](../tests/unit/execution/test_store_schema.py) verify persistence.
+[Inspection tests](../tests/unit/execution/test_record_inspection.py) cover
+canonical references and record-versus-projection boundaries.

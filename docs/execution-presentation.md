@@ -1,825 +1,259 @@
 # Execution Presentation
 
-This document defines the execution progress language shared by script mode and
-the Chat TUI. It is a presentation contract only: it does not add execution
-events, records, identities, or lifecycle states.
+Script and Chat share one presentation over canonical RunEvents. It adds no
+execution identities, records or lifecycle states. Durable inspection may reuse
+its vocabulary but cannot reconstruct live event interleaving.
 
-Inspection reads durable state and may reuse the same vocabulary, but it does
-not reconstruct live progress from stored records.
-
-## Operational Progress
-
-Preparation, setup discovery, and AgentServer runtime work use `ProgressEvent`,
-not `RunEvent`. One `CliProgress` segment owns each uninterrupted interval
-before terminal control passes to Run output, foreground logs, a prompt UI, or
-a command result. Cleanup after that handoff opens a new segment.
-
-Producers supply complete verb-first sentences. Running work ends in `...` and
-successful work uses simple past without terminal punctuation:
+## Projection and ownership
 
 ```text
-Fetching skill browser...
-Fetched skill browser
-Installing Toolang from the package index...
-Installed Toolang from the package index
+ordered RunEvents -> shared projector -> committed fragments + live snapshot
+                                           |                    |
+                                      append once          replace in place
 ```
 
-A TTY uses one dim, transient row with no spinner. It delays the row for 150
-milliseconds and adds per-activity elapsed time only after one second.
-Successful closure clears the row without a summary. Non-TTY output writes
-each material action, checkpoint, and outcome immediately as append-only,
-ANSI-free stderr and never includes elapsed time.
+`ProgressUpdate.committed` contains stable fragments in event order; `live` is
+the complete replaceable tail. A Step may commit its header and stable Markdown
+while retaining an unfinished block. Part closure commits the remaining tail;
+Step closure never repeats output. Presenters own terminal mechanics, not another
+semantic projection. Script uses Rich Live; prompt_toolkit owns Chat's live area.
 
-Operational rows use the width and display-cell wrapping rules below. They do
-not display agent identity; the stable command result owns it, for example
-`Agent eve started: http://localhost:7001`. Failures leave one verb-first block
-with the qualified stage and reason, plus a fix and log path when applicable.
-Run projection remains a separate event and presentation contract.
+A root has Steps and one footer. Child Runs show their Steps without synthetic
+Run headers, except for the enclosing dynamic-call boundary described below.
+Parallel children are summarized by their owning operation rather than appended
+in completion order. Chat clips only the live viewport; committed scrollback
+retains complete content. Restored history comes from records, not fabricated
+events. [Chat](chat.md) owns submission, queue and recovery state transitions.
 
-## Projection Model
+## Operational progress
 
-Ordered native events pass through one terminal-independent pipeline:
+Preparation/discovery/server work uses `ProgressEvent`, separate from RunEvents.
+One `CliProgress` segment ends when control passes to run output, logs, a prompt
+or a result. Cleanup opens another segment. Producers supply complete verb-first
+sentences; active work ends in `...`, success uses simple past.
 
-```text
-RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
-```
+A TTY delays a dim transient row by 150 ms, adds elapsed time after one second,
+and clears successful work without a summary. Non-TTY writes material stages and
+outcomes immediately as plain append-only stderr, without elapsed time. Failures
+retain the qualified stage/reason and relevant fix/log information. Progress is
+presentation-only; it cannot decide readiness or lifecycle ownership.
 
-`ProgressUpdate.committed` contains stable, append-only fragments in event
-order. `ProgressUpdate.live` is the complete replaceable snapshot. A Step can
-progressively commit a header and output while retaining only its unfinished
-tail in live state.
+## Geometry and styles
 
-Script and Chat use the same projected ownership, content, aggregates, facts,
-and errors. Their presenters own terminal mechanics such as wrapping, lane
-truncation, scrollback, and live-area replacement.
+Both surfaces default to at most 120 display cells, bounded by TTY width.
+`TOOLANG_PROGRESS_MAX_WIDTH` accepts a positive integer; non-TTY uses that width.
+Markers start at column zero and continuations align after the marker. Wrapping
+uses display cells, including wide characters. Escape terminal controls in
+untrusted captions. Consecutive structural gaps coalesce rather than doubling.
 
-The shared projector emits no standalone Run header. Script adds the root
-context header described below; Chat retains its existing run control bar.
-A root Run contains projected Steps followed by one footer. Child Runs are represented through the Steps they
-execute rather than separate Run headers or closure rows. A model-produced
-dynamic Run Step owns its own opening and closing divider around that child
-content.
-
-## Script Run Context
-
-Script prints one persistent context header to stderr when the root Run begins:
-
-```text
-‣ agic:review                  deepseek/deepseek-chat · auto
-```
-
-The entire header is dim on the terminal's default background. `‣` marks the
-start, with the runnable at the left edge and model/reasoning at the right edge
-of the configured progress width, separated by at least two spaces. Narrow
-layouts put model/reasoning below the runnable, with two-cell indentation;
-long fields wrap without truncation. A one- or two-cell viewport drops the
-marker and indentation. Terminal controls are escaped as literal text.
-
-The runnable uses the resolved root identity, displaying an unnamed entry as
-`agic:_` or `flow:_`. The model is the resolved initial run-level setting;
-Flow steps and child Runs may select other models. Reasoning shows an explicit
-effort or token budget, or `auto` when unspecified. A missing model request
-shows `model unspecified` with no reasoning field.
-
-The header appears once, before Step output, separated by one blank line. It
-remains in scrollback after success, failure, or cancellation. Preparation and
-submission failures before `RunBegin` produce no header. Nested Runs do not
-repeat it. Non-TTY output retains the layout without ANSI; `-q` suppresses it.
-Result saving, stdout, and the existing root footer are unchanged. Chat TUI
-does not display this Script header.
-
-## Width and Alignment
-
-Progress is at most 120 terminal cells wide by default and never wider than an
-attached TTY. Set `TOOLANG_PROGRESS_MAX_WIDTH` to a positive integer to change
-the maximum for both surfaces. Non-TTY script output uses that configured
-maximum as its available width, equivalent to a TTY with no narrower physical
-width.
-
-Execution markers start in column zero. Wrapped content and unmarked
-continuations align with the text after the marker:
-
-```text
-• Alpha beta gamma delta epsilon
-  zeta eta theta
-```
-
-## Chat Input and Queue Controls
-
-The Chat input area distinguishes sending, steering, and multiline editing.
-Enter submits when idle and queues runnable input while a run is starting or
-active. Meta+Enter sends literal steer text to the active run. Ctrl+J inserts a
-newline, with Shift+Enter registered when the terminal can report it
-distinctly.
-
-A non-empty Queue is expanded above Input without taking focus. Tab and
-Shift+Tab move focus between these two areas, except while an Input completion
-menu is active. Space expands or collapses focused Queue without moving focus;
-Tab never changes expansion. Input spaces and draft steering remain unchanged.
-
-Esc Esc, Ctrl+C, and Ctrl+D are Input-only controls; Queue focus cannot use
-them to cancel a run, clear a draft, or exit. Esc dismisses transient status
-without moving focus. Ctrl+L keeps its global idle clear-display behavior and
-Ctrl+Q remains a global explicit exit. `/keys` groups these scopes separately.
-
-Queue occupies the full terminal width in both modes and directly adjoins Input
-without a separator row. Queue and Input retain distinct backgrounds. Adaptive
-footer-stabilizing space belongs above Queue, never between Queue and Input.
-
-Expanded Queue has a left-aligned summary at the top, a blank gap row, up to
-eight single-line previews, and a trailing blank row before Input; collapsed
-Queue keeps only its summary. There is no omitted-count row or special header
-fill. Available height may reduce the entry count to leave room for Input,
-status, and the summary frame. Entry icons (`↳`) align with Input text and
-remain dim in every state; body text stays normal. While focused, the selected
-entry uses Input's background, starting one cell after the accent and reaching
-Queue's right edge. It has no selection marker or bold text; only the background
-indicates selection. Slightly brighter dim action hints occupy the right side on
-that same background, separated from the body by at least two cells. Entry hints
-end two cells from Queue's edge; truncation preserves their padding. Losing
-focus hides the highlight and entry hints while preserving selection. The
-summary counts all items.
-
-Hidden entries cannot be selected or mutated. In both modes the summary keeps
-normal text; selection is the only focus cue. Key hints stay dim. Queue's
-leading cell carries its accent bar, independent of focus and expansion.
-Input's accent always stays cyan. Its cursor hides on Queue focus and returns
-to its preserved position on Input focus.
-
-Unfocused Queue shows only `(tab to focus)`. Focused, expanded Queue shows
-`(space to collapse)`; focused, collapsed Queue shows `(space to expand)`. The
-selected entry also shows `m-enter steer · e edit · d delete`. These hints are
-dim. On narrow terminals entry previews truncate first, then the summary drops
-its state hint, keeping the count. Previews and summaries truncate by display
-cells. ↑/↓ or Ctrl+P/Ctrl+N select without wrapping; e edits, Meta+Enter steers,
-and d or Del removes. `/keys` documents these Queue-focused bindings. Mutations
-preserve the expansion choice and clamp selection; an empty queue disappears,
-restores Input focus, and resets the next non-empty queue to expanded.
-
-Inline hints use dim lowercase text with no brackets and ` · ` between actions.
-The summary states its action as `key to action` (`space to collapse`), entry
-hints keep the short `key action` form (`e edit`), and `m-enter` abbreviates
-Meta+Enter. Chords retain `+`. Only the primary key appears inline; `/keys`
-retains standard labels and aliases such as `d (Del)`.
-
-Flow headers also start in column zero and are followed by one blank line.
-Iteration and condition headers create the same kind of stable boundary.
-
-Automatic compaction emits a normal `_:compact` child Run beneath the runtime
-`_toolang.compact` Tool Step. The projector tracks its Steps, errors, and usage,
-but the default view shows only the outer operation's elapsed time and outcome.
-Internal summary text is available through execution inspection and does not
-appear as an assistant reply. Child success does not finish the outer item until
-publication and adoption complete.
-
-## Markers and Style
-
-`•` marks Model and Flow Steps; `›` marks ordinary tools; `✧` marks the `pick`,
-`compact` and `honor` runtime helpers. `---  ` opens and closes a
-dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is only
-an inline facts separator.
-
-- Model activity and output use `•` and normal text.
-- Ordinary and runtime Tool markers and summaries use normal intensity while
-  running and dim intensity when finished, with a separate red error line on
-  failure.
-- Flow activity and terminal output use `•` and normal text.
-- Model and Flow failures use red; cancellation uses yellow.
-- Parallel lanes place the Step marker after the lane columns. The lane number
-  and both `|` separators are dim; the item identity `#N` has normal intensity.
-  These styles remain independent of the activity's dim or error styling.
-- Headers and facts are dim.
-
-Model and Flow markers remain unstyled, independently of their following content.
-Successful Model and Flow outputs use the terminal's default foreground.
-Green is not a terminal status color.
-
-Step paths appear only at the right edge of facts-bearing Flow Step footers. A
-dynamic Run Step footer instead identifies its direct child Run. Binding
-effects, result pointers, and control decisions are not displayed. Model and
-Tool Steps also omit model name, exit code, usage, cost, and other per-Step
-facts. Compact alone shows elapsed time while running and its duration when
-done.
-
-## Agic Dynamic Run Steps
-
-A Run Step owned by an Agic Run uses a flat divider scope. Ownership is
-identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
-provides the target label. Its header begins in column zero and uses the
-canonical resolved runnable ref:
-
-For a scheduled `_toolang/run`, retain the receipt's child Run identity after the
-Tool Step ends. Open the divider at the child's `RunBegin` and close it at
-`RunEnd`, using the child's status and metrics. This presentation scope does not
-extend the Tool Step's lifetime. Cancellation before dispatch closes the scheduled
-target without a `RunBegin`.
-
-```text
-┌ Run agic:summarize ───────────────────────────────────────────────────
-
-• Summary text from the child.
-
-└ 2s · 1 run 1 model ────────────────────────────── succeeded run_abc123
-```
-
-Run boundaries pair `┌` and `└`, each followed by one space. Captions, facts,
-elastic `─` rules, child Run IDs, and successful statuses are dim. Failed and
-canceled statuses use normal-intensity red and yellow without affecting the
-surrounding fields.
-
-The header contains no Run ID. It displays the resolved `agic:NAME` or
-`flow:NAME`; a failure before resolution displays bounded terminal-safe request
-text, or `request` when no text is available. The footer's right field is
-`STATUS CHILD_RUN_ID`, using the complete direct child identity rather than the
-owning StepPath. Its facts aggregate that child's complete Run tree in the
-normal order. A failure before child acceptance has no facts or invented
-identity:
-
-```text
-• Runnable not found: missing
-
-└ ────────────────────────────────────────────────────────────── failed
-```
-
-Every structural marker remains in column zero; nested dynamic calls do not
-introduce indentation. An agic child retains normal Model and Tool traces. A
-flow child retains its numbered Flow headers and StepPath footers, so the
-caller-owned dynamic boundary and callee-owned grammar stay distinct. Dynamic
-calls inside compact parallel lanes remain one physical lane row.
-
-At narrow widths the renderer shortens the leader first. Facts then wrap at
-fact boundaries under a two-cell hanging indent, followed by a final leader
-and complete status-plus-ID field. Long captions and identities fold by display
-cells without truncation. Exactly one blank row follows the header, precedes the
-footer, and follows the footer; adjacent child-owned gaps coalesce.
-
-A confirmed `execute` transfer displays one dim boundary before the target's
-first Step:
-
-```text
-- Execute agic:delegate ────────────────────────────────────────────────
-```
-
-Execute boundaries use a short `-` followed by one space. Run and Execute
-captions start in the third column, use sentence case, and extend with thin
-rules to the same right edge. Long target names wrap under a two-cell indent
-without truncation. Script and Chat share the projector and renderer.
-
-## Flow Headers
-
-A Flow Step uses its non-empty authored doc comment as the header. Without a
-doc comment, the presenter generates a short sentence from the typed AST. Named
-and inline runnables use the same templates and preserve their names exactly,
-including the inline adhoc identity `agic:<adhoc:32>` (the inline
-declaration's source line). For example, an inline map displays
-`Map each item with agic:<adhoc:32>`.
-
-| Statement | Automatic description |
+| Marker | Meaning |
 | --- | --- |
-| content `let NAME = BODY` | `Set value to NAME` |
-| `run` | `Run R` |
-| `seek` | `Ask agent AGENT to run R` |
-| `ask` | `Ask for human input` |
-| `scatter` | `Scatter into items with R` |
-| `storm` | `Storm into N items with R independently` |
-| `gather` | `Gather all items into one with R` |
-| `settle` | `Settle all items into one with R sequentially` |
-| `map` | `Map each item with R` |
-| positional `keep` or `drop` | `Keep/Drop the first/last N items` |
-| predicate `keep` or `drop` | `Keep/Drop items where P is true` |
-| `sort` | `Sort items by R in ascending/descending order` |
-| fixed `repeat` | `Repeat N times` |
-| bounded conditional `repeat` | `Repeat up to N times, until P is true` |
-| condition-only `repeat` | `Repeat until P is true` |
+| `•` | Model and flow activity/output |
+| `›` | Ordinary tool |
+| `✧` | Runtime pick/compact/honor helper |
+| `┌` / `└` | Dynamic child-call opening/closing boundary |
+| `-` | Confirmed execute transfer |
+| `∎` | Complete root Run footer |
+| `·` | Separator within facts, never a Step marker |
 
-Explicit lane limits append `, one at a time` for one lane or `, up to N at once`
-for larger limits. A named statement binding (`let NAME = STMT`) then appends
-`, save result to NAME`; an unbound `let STMT` appends `, discard result`.
-These describe Flow locals, not persistence. Plain statements have no binding
-suffix, and content `let` does not repeat its assignment as a suffix.
+Model/flow output uses normal foreground; headers/facts are dim. Active tool
+summaries are normal, completed ones dim. Failure is red, cancellation yellow;
+success is not green. Binding effects and control decisions are not extra
+progress rows. Model/tool Steps do not display per-Step usage or IDs; compact
+alone shows its elapsed time and duration.
 
-Counts of one use singular `item` or `time`; positional selection omits the
-number for one item. Scatter has no authored count; its description is
-`Scatter into items with R`. Completion summaries report actual results.
+## Run and flow boundaries
 
-A direct single-Run Flow Step preserves that Run's leaf trace and emits no
-synthetic success row. Absence of an error means success. Direct values are
-displayed as values; output shapes such as `1 item` or `6-item list` are not
-displayed.
+Script emits one persistent dim context header at root RunBegin, with `‣`, the
+resolved runnable and initial model/reasoning. Missing model reads `model
+unspecified`. Narrow layouts wrap without losing identity. Pre-acceptance failure
+has no Run header; child Runs never repeat it. Chat uses its root input bar instead.
 
-Headers describe intent, live rows report current activity, and final rows
-report actual results. Authored headers can explain the domain-specific purpose
-without changing the operation's result vocabulary:
+A flow header uses its authored doc comment, otherwise a sentence generated from
+the typed AST. Names and inline `<adhoc:LINE>` identities remain exact. Lane and
+binding suffixes describe concurrency, named save or discard. Direct values show
+the value; single-child Steps preserve the child's leaf trace without a synthetic
+success row. Headers describe intent; terminal summaries describe actual results.
 
-| Statement | Live content | Final content |
-| --- | --- | --- |
-| content `let` | No synthetic activity | Actual value |
-| `run`, `scatter`, `gather` | Child Model or Tool activity | Child output, without a duplicate wrapper summary |
-| `seek`, `ask` | No synthetic activity | Currently fail with a missing execution/input bridge error |
-| `map` | Item counts and lane activity | `Mapped 6 items` |
-| `storm` | Item counts and lane activity | `Generated 6 items` |
-| predicate `keep` | Item counts and lane activity | `Kept all 6 items` or `Kept 4 of 6 items` |
-| predicate `drop` | Item counts and lane activity | `Dropped all 6 items` or `Dropped 2 of 6 items; 4 remaining` |
-| positional `keep`, `drop` | No synthetic activity | Actual selection, for example `Kept the first 4 items out of 6` |
-| `sort` | Item counts and lane activity | `Sorted 6 items descending` |
-| `repeat` | Iteration/condition boundaries and child activity | Completed iterations and the termination cause |
-| `settle` | Iteration boundaries and child activity | `Settled all 6 items in 6 iterations` |
+Dynamic model calls use flat `┌ Run KIND:NAME` / `└ FACTS STATUS CHILD_RUN_ID`
+boundaries. For scheduled `_toolang/run`, retain the receipt's child identity
+past Tool Step closure and open at child RunBegin. Parent references express
+causality, not overlapping lifetimes. Failure before acceptance invents no child
+ID or metrics; cancellation before dispatch does not invent RunBegin.
 
-For example, `Search the web for each query` ends with `Mapped 6 items`,
-`Keep evidence bundles that answer the research task` with `Kept all 6 items`,
-and `Prioritize the strongest evidence` with `Sorted 6 items descending`.
-`Keep the first 8 items` may also end with `Kept all 6 items` when only six
-items exist. Result summaries do not claim parallel execution: the same
-operations can run with the header suffix `one at a time`.
+The closing identity is the complete direct child Run, not a StepPath. Nested
+calls do not add indentation. Rules shorten before fields wrap; identities never
+truncate. A confirmed execute transfer prints `- Execute KIND:NAME` before the
+target's first Step without inventing a child Run. Parallel lanes reduce these
+boundaries to their single physical lane row.
 
-## Model and Tool Trace
+## Leaf output and errors
 
-Outside parallel work, every leaf Step leaves a complete trace. Model text is
-incrementally projected as Markdown. The initial live row:
+A model starts with `• Thinking`; its text replaces that live row and progressively
+commits as Markdown. Tool-call Parts themselves are hidden: the following Tool
+Step owns activity. Tool-call-only model output commits no terminal row, while
+retaining execution status and metrics. Reasoning/native metadata is not ordinary
+human output. Tool results, stdout/stderr and JSON remain inspectable records,
+not progress blocks.
 
-```text
-• Thinking
-```
-
-is replaced once text arrives, while stable Markdown progressively enters
-scrollback:
-
-```text
-• # Deep Research Brief
-  ## Executive summary
-
-  The evidence supports explicit ownership
-```
-
-Complete Markdown blocks move to scrollback as soon as later input makes them
-stable. Only the unfinished block remains live. The transition does not visibly
-change already-rendered text. At Part closure the remaining tail is committed,
-and Step closure does not repeat the final output.
-
-Markdown blocks fill the lesser of the available width and
-`TOOLANG_PROGRESS_MAX_WIDTH`. Tables stretch to that width and fold cell
-overflow, list markers start at the row prefix, and quoted content keeps the
-two cells its `▌ ` bar does not use. Fenced code already fills the width as
-one rectangular Code surface.
-
-Tool activity uses the persisted running description, replaced at completion.
-Built-in tool summaries and the default fallback do not append progress dots;
-argument punctuation and width-driven truncation ellipses remain intact:
+Tools use persisted begin/end summaries. The optional plugin summary hook receives
+isolated data with sensitive arguments masked; it performs no I/O or styling.
+Missing/empty/failed hooks use generic wording. Presenters never call a plugin to
+reconstruct past summaries. Running/succeeded/canceled tools take one physical
+line; failed tools add an indented diagnostic. Long tool lines truncate; model
+Markdown wraps, including tables, lists and fenced code.
 
 ```text
 › Searching for “Toolang plugin protocol”
 › Searched for “Toolang plugin protocol”
+✧ Loaded rules: repo://src/AGENTS.md
 ```
 
-Active tool markers and their full summaries use normal intensity, matching
-`• Thinking`. Completed tool markers and summaries are dim; error diagnostics
-retain their error styling. Completed traces contain the terminal description
-only. Tool-owned descriptions can provide clearer wording and logical workspace
-labels:
+These illustrate alternative live/final states, not duplicate committed rows.
+A streamed text delta sequence must be an exact prefix of Part closure, and a
+successful Step must contain that completed Part. Started Parts/children must
+close before their owner. Violations become presentation contract errors rather
+than silently repaired text.
+
+Display each causal error once at its owning Step/lane. Parallel Steps may add a
+distinct boundary failure; parent pointer errors remain silent. A concrete Run
+error outside a Step gets one root row. Malformed streams clear live state and
+report one root-owned error.
+
+## Parallel and loop work
+
+Parallel work keeps one aggregate and one physical row per observed lane. A lane
+retains its latest activity until reuse/closure; it truncates rather than wraps.
+Running counts are failed, active, succeeded; terminal counts are failed,
+canceled, not started, succeeded. Only succeeded includes the known total.
+Unstarted work is never labeled canceled, and totals are not invented before
+known. A canceling child still counts as active until terminal.
 
 ```text
-› Listed workspaces
-✧ Loaded rules: repo://src/AGENTS.md
-✧ Loaded guidance: skill/python-testing
-› Wrote repo://src/example.py
-› Read steps from run_abc
-› Read more steps
-› Failed to read repo://missing.txt
-  File not found
+• Running · 1 failed · 2 active · 2/6 succeeded
+  0 | #4 | • Thinking
+  1 | #5 | › Searching
 ```
 
-History summaries name the requested threads, runs, steps, or output and any
-explicit thread/run reference. Cursor-only requests say `more threads`, `more
-runs`, or `more steps`; summaries neither decode nor display the cursor.
+On success, remove lanes and retain the operation result (`Mapped 6 items`,
+`Kept 5 of 7 items`, `Sorted 6 items descending`). On failure retain causal failed
+lanes and the distinct boundary error, not successful/canceled lane details.
 
-Every Step begins after one unpainted blank line, including model output that
-follows a Tool Step. A preceding statement, iteration, or condition header can
-own that same separator through its trailing blank row; the following Step
-does not add a second one. Continuation rows from the same Step do not add
-another separator. Running, successful, and canceled tools occupy one physical
-line. Failed tools occupy two: the summary and a two-cell-indented error, without
-an intervening blank row or background surface. Long lines are truncated to the
-available width, bounded by `TOOLANG_PROGRESS_MAX_WIDTH`. Script and Chat use
-the same layout; non-TTY output omits ANSI sequences and live replacement.
+Repeat/settle iterations use centered count dividers, with a left-aligned wrapped
+fallback on narrow terminals. Unknown totals show only the current count.
+Conditions remain real child Runs; generated names display `<?> Check whether
+to break`. Terminal summaries distinguish count exhaustion, condition success,
+failure/interruption and cancellation without repeating causal errors.
+Automatic compaction hides its internal summary text/children in default progress
+while retaining their usage and errors; outer completion waits for publication
+and adoption, not merely child success.
 
-The executor records a human-readable `summary` when the Tool Step begins and
-another when it ends. A leaf tool may supply
-`summary(arguments, result=None) -> str | None`, including through
-`@tool(summary=...)`. No result means running; `ToolResult.error` distinguishes
-failure from success, while cancellation uses executor wording.
-The hook receives isolated call/result data with sensitive
-arguments masked. It performs no I/O and supplies no markers, styling, or timing.
-The executor uses generic wording when the hook is absent, empty, or raises.
-Progress reads the saved summaries; it never invokes plugins during replay.
+## Facts and root completion
 
-The default summary uses the leaf `name` and first supplied argument in
-tool-schema declaration order; it does not repeat the tool family.
-The default running form is `Executing NAME ARG`; the succeeded and failed
-forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
-`Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
-sensitive fields. Only failure adds a diagnostic continuation; cancellation
-remains one line. Honor's running description is generic; its terminal
-description identifies the workspace and rules files available in its result.
-
-Historical Steps without summaries retain the compatibility forms `executing
-TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
-
-Tool results, including JSON, stdout, and stderr, are not displayed as progress
-blocks. They remain in records and model messages. Dynamic run and handoff
-calls retain their hierarchy. Model `ToolCallPart` values are not displayed;
-the following Tool Step owns the visible call activity. Mixed Model
-output retains its text and other displayable Parts. A successful Model Step
-containing only tool-call Parts commits no terminal row and leaves its live
-position to the following Tool Step. This presentation suppression does not
-change execution status, records, metrics, or footer facts.
-
-For a streamed Model Text Part, concatenated deltas must be an exact prefix of
-the authoritative Part closure. A successful Step result must contain that
-same completed Part. Started Parts, child Steps, and child Runs must close
-before their owning Step closes. Violations are reported as execution contract
-errors rather than repaired by the presenter.
-
-## Flow Step Footer
-
-A Flow Step that owns child execution may append one dim footer:
+Child-owning flow Steps may display a dim footer: duration, counts, usage and
+complete StepPath. Facts wrap at group boundaries; the path moves to a separate
+right-aligned line rather than truncating. Undefined facts and path-only footers
+are omitted. Counts omit zero categories. Direct values and model/tool Steps
+have no such footer.
 
 ```text
 [2] Search the web for each query
 
 • Mapped 6 items
-  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01        run_root.2
+  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01    run_root.2
+
+∎ run_root succeeded    1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
 ```
 
-Facts retain their two-cell indentation at the left, and the complete canonical
-StepPath is right-aligned to the available progress width. At least two cells
-separate the fields. When they do not fit together, facts wrap under the same
-indent and the untruncated StepPath follows on a right-aligned continuation
-line. Undefined facts are omitted, and a StepPath is not displayed by itself.
-Duration, execution counts, and usage are separate facts. Tokens and cost form
-one usage group, separated by a space. Counts form one
-`RUNS runs MODELS models TOOLS tools` group and omit zero categories.
-All CLI duration displays use one compact format: `250ms`, `1s`, `1m8s`,
-`1m0s`, or `1h1m1s`. This includes run/step facts, the Chat run status bar,
-operational progress, and agent uptime (prefixed with `up `). Positive durations
-below one second retain milliseconds; other durations round to whole seconds.
-Units have no spaces or zero padding, and lower zero units remain visible.
-Zero or negative durations render as `0s`. Chat's live timer and agent uptime
-continue to floor their clock values before formatting. Stored timestamps
-retain their original precision.
-Token usage is `↑INPUT(CACHE%) ↓OUTPUT(REASONING)`: the input parenthetical is
-the complete cache-read ratio, while the output parenthetical is the reasoning
-token count. Output is inclusive and already contains reasoning. Explicit zero
-reasoning renders `(0)`, partial known reasoning adds `+`, and unknown
-reasoning omits the parenthetical. Exact zero cost is omitted. Positive cost
-uses two decimal places when nonzero, then four; smaller exact and estimated
-amounts render as `<$0.0001` and `≲$0.0001`. `≈$` marks an ordinary estimated
-cost. Model, Tool, and direct-value Steps define no footer facts. Run facts
-appear only in the root footer and aggregate the complete Run tree.
+This is schematic output; IDs and metrics are illustrative. Root facts aggregate
+the complete tree and appear once. Retry/rerun identify their operation in the
+same root footer, without another result line. Duration formatting is shared:
+`250ms`, `1s`, `1m0s`, `1h1m1s`; nonpositive values are `0s`. Positive subsecond
+values keep milliseconds; other durations round, while live clocks floor first.
 
-The footer immediately follows the owning Step's last visible output. A direct
-single-Run Flow Step therefore places its footer directly after its child Model
-output without opening another visual section. The normal trailing blank row
-still separates the completed Flow Step from the next Step or root footer.
+Usage is `↑INPUT(CACHE%) ↓OUTPUT(REASONING)`. Output already includes reasoning;
+never add it again. Complete cache ratios show a percentage; explicit zero
+reasoning shows `(0)`, partial known reasoning adds `+`, unknown reasoning omits
+it. Exact zero cost is hidden. Cost uses two decimals, then four when needed;
+smaller exact/estimated values use `<$0.0001` / `≲$0.0001`, ordinary estimates `≈$`.
 
-## Parallel Work
+## Surface output and palette
 
-Parallel work keeps one aggregate live row and one physical row per observed
-lane. A lane retains its latest activity until reuse or Step closure. Lane rows
-are truncated rather than wrapped:
+Script progress goes to stderr for TTY and non-TTY. It does not copy root output
+to stdout by default. `--out -` emits the result there; `--out PATH` atomically
+writes a file. Failure/cancellation writes neither destination. `-q` suppresses
+operational/execution progress but leaves actionable errors. Non-TTY is stable
+newline-delimited output with no ANSI, cursor motion or partial delta rows.
 
-```text
-• Running · 3 active · 4/18 succeeded
-  0 | #4 | • Thinking
-  1 | #5 | › Searching for “agent runtimes”
-  2 | #6 | • Source summary prepared
-```
+Chat and Script preserve normal terminal foreground and named ANSI semantic
+colors. Code blocks form rectangular Code surfaces; inline code uses a derived
+background. Chat retains ANSI identity in both live and committed rendering.
+The palette is resolved before keyboard reading/output, never during a live run.
 
-Counts describe items across all lane reuse. Running summaries contain only
-`failed`, `active`, and `succeeded`, in that order. Active children include those
-still canceling; their individual lane activity can say `canceling`. Queued and
-canceled counts do not appear in the running summary. For example:
+`TOOLANG_COLOR_SCHEME` accepts case-insensitive `dark`/`light` or three explicit
+`#RRGGBB` colors in Input, Queue, Code order. Explicit colors bypass discovery;
+the third also fills inline code. Otherwise bounded OSC 10/11 queries run only
+on the same input/output TTY with no pending input; incomplete/failed queries
+fall back to dark. Quiet/non-TTY Script and noninteractive Chat never probe.
+`COLORFGBG` is not used. RGB fills do not preserve terminal transparency.
 
-```text
-• Running · 1 failed · 2 active · 2/6 succeeded
-```
-
-Terminal summaries contain `failed`, `canceled`, `not started`, and `succeeded`,
-in that order. Only the success count includes the known total, and it always
-appears last. Zero-valued counts are omitted except for `succeeded`. Before any
-child starts, the summary is `Running · 0 succeeded`, without an invented total.
-A terminal summary never labels unstarted items as canceled.
-
-On success, the live lanes are cleared and one natural-language result remains:
-
-```text
-• Mapped 7 items
-• Generated 7 items
-• Kept 5 of 7 items
-• Dropped 2 of 7 items; 5 remaining
-• Sorted 10 items descending
-```
-
-On failure, successful, active, and canceled lanes are cleared. Each failed
-lane retains its causal error, followed by the parallel Step's distinct
-boundary error:
-
-```text
-• Stopped · 1 failed · 2 canceled · 11 not started · 4/18 succeeded
-  1 | #5 | › failed fetch_page
-             provider returned status 429
-
-• parallel step stopped because lane 1 (#5) failed
-  31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01
-```
-
-Cancellation uses the same counts without inventing a failure:
-
-```text
-• Canceled · 3 canceled · 11 not started · 4/18 succeeded
-```
-
-## Repeat and Settle
-
-Repeat and Settle use the same loop presentation. Each iteration follows the
-normal trace-or-lane rule for its child statement:
-
-```text
-───────────────────────────────── 1/3 ──────────────────────────────────
-
-<?> Run completion_check to check whether to break
-
-• Thinking
-• true
-```
-
-Iteration captions show only the count, such as `1/10`, dim and centered
-between thin rules. Odd remaining widths add one cell to the right rule. If
-there is insufficient room for three rule cells on each side, use the
-left-aligned `- 1/10` layout with wrapping. When the total is unknown, show
-only the current count: `1`.
-
-The condition is a child Run, not a synthetic `executed completion_check`
-Step. Generated condition names use `<?> Check whether to break` instead of
-exposing an internal name. Terminal loop output identifies the actual cause:
-
-```text
-• Completed all 3 iterations
-• Condition met after 2 of 3 iterations
-• Completed all 3 iterations without meeting the condition
-• Interrupted after completing 2 of 3 iterations
-• Canceled after completing 2 of 3 iterations
-• Settled all 6 items in 6 iterations
-```
-
-The causal child error remains at the child Step or lane. The loop row describes
-termination without repeating it.
-
-## Error Ownership
-
-Each causal error is displayed once, as close as possible to its owner:
-
-- a Step error occupies that Step's normal output position;
-- a failed lane preserves its concrete error;
-- a parallel Step adds only its distinct local-failure boundary error;
-- parent Step and Run pointer errors remain silent; and
-- a concrete Run error without a Step owner becomes a final `• MESSAGE` row.
-
-A malformed presentation stream also clears live state and emits one
-root-owned error row. There is no separate diagnostic marker.
-
-## Root Run Footer
-
-Script and Chat end a root Run with the same footer:
-
-```text
-∎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
-∎ run_nrqpt0mf failed           1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
-∎ run_nrqpt0mf canceled         1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
-```
-
-A CLI retry or rerun identifies the operation in the same footer instead of
-appending a separate result line:
-
-```text
-∎ run_zvczap2h: retry succeeded        2s · 1 model
-```
-
-The U+220E END OF PROOF character marks the complete root Run; square brackets
-do not frame the footer. The Run caption stays at the left while facts align to
-the available width's right edge, separated by at least two spaces and no
-centered dot before the first fact. When both fields do not fit, the caption is
-followed by facts wrapped on two-cell-indented continuation lines.
-
-The marker, Run identity, operation, and status use normal intensity. A
-successful caption uses the terminal's default color; failed and canceled
-captions use red and yellow respectively. Facts always use dim intensity and
-the terminal's default color, independent of status.
-
-The footer owns total duration and whole-tree Run facts. Script does not append
-a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
-execution progress; later terminal errors belong to progress and its footer.
-
-## Reopened Chat Output Divider
-
-The Chat TUI `/output` command introduces durable run output with a quiet
-divider. `/show` is a compatibility alias:
-
-```text
-• run_ma8hccd9 output ────────────────────
-
-• Result body rendered as Markdown.
-```
-
-The `•` marker, caption, and rule are dim, while the result body retains
-normal intensity. The divider uses a fixed 42-cell width and shortens only when
-the available width requires caption truncation. Exactly one blank line
-separates the divider from the result body.
-
-## Surface Behavior
-
-Script writes progress to stderr. It does not copy the durable root result to
-stdout by default. `--out -` writes the result to stdout and `--out PATH`
-atomically writes it to a file. Failed and canceled Runs do not write the
-selected destination. Progress is enabled by default for both TTY and non-TTY
-stderr; `-q` or `--quiet` suppresses prepare and execution progress, including
-the root Run footer. Actionable errors remain visible in quiet mode. Non-TTY
-output contains stable newline-delimited content without color, cursor
-movement, or partial delta lines. Its semantic rows and block geometry match
-TTY output; only live replacement, ANSI emission, and width-dependent wrapping
-differ.
-
-TTY script output uses one event-driven Rich `Live` area per root Run. Chat
-does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses
-the same Rich Markdown renderables while moving committed fragments into
-scrollback and retaining only replaceable fragments in its live container.
-
-Model and result Markdown leaves ordinary text on the terminal's default
-foreground and background. Semantic styles use named ANSI colors, so the
-terminal theme owns their actual RGB values. Inline code retains Rich's
-Markdown text style (bold ANSI cyan by default) with an explicit background.
-Both Chat and Script derive a stronger inline background from the terminal
-background. Inline spans add no padding. In both modes, fenced-code base text
-inherits the terminal foreground and its background uses Code. Both retain
-Rich's `ansi_dark` named ANSI syntax-token colors. Top and bottom padding,
-trailing background cells, and authored blank lines remain one rectangular
-surface.
-
-Chat preserves terminal-default and 16-color ANSI identities through both its
-live prompt_toolkit path and stable scrollback path. Script uses the same ANSI
-identities and truecolor background fills on a TTY and continues to emit no
-color for non-TTY output.
-
-Interactive Chat resolves one concrete palette before prompt_toolkit begins
-reading keyboard input. Script resolves the same palette before starting run
-output, including remote execution and retry/rerun. The public backgrounds are
-Input, Queue, and Code, in that order. Input fills the input box and the non-
-accent cells of Run, Steer, and Quick Command bars. Queue fills the adjacent
-queue area; a focused queue selection uses Input. Code fills fenced-code
-rectangles; inline code has a separate derived background. These surfaces
-assign no ordinary foreground: normal text inherits the terminal foreground,
-dim text adds only the dim attribute, and the input cursor uses reverse video.
-
-`TOOLANG_COLOR_SCHEME` accepts case-insensitive `dark` or `light`, or exactly
-three comma-separated `#RRGGBB` values in `input,queue,code` order. An explicit
-value is final and bypasses terminal discovery. With three explicit colors, the
-third color fills both fenced and inline code. Without one, both modes request
-the terminal's default foreground and background through bounded OSC 10 and 11
-queries when stdin and the output stream (stdout for Chat, stderr for Script)
-are the same TTY and no input is pending. A complete response derives subtle
-surfaces from those defaults; unsupported, incomplete, or failed queries always
-use the dark palette. `COLORFGBG` is not consulted. Quiet Script execution and
-non-TTY output never probe; non-interactive Chat does not probe either.
-
-The fixed palettes are:
-
-| Scheme | Input | Queue | Code | Inline code |
+| Scheme | Input | Queue | Code | Inline |
 | --- | --- | --- | --- | --- |
 | Dark | `#1f1f1f` | `#121212` | `#0b0b0b` | `#151515` |
 | Light | `#e3e3e3` | `#f2f2f2` | `#f9f9f9` | `#efefef` |
 
-Detected code backgrounds mix the terminal background toward black or white
-(whichever offers greater contrast) in linear RGB. The block contrast target
-is 1.05, or 1.07 for near-black backgrounds with luminance at most 0.005; the
-inline target is 1.15. These targets describe contrast against the terminal
-background, not text readability. Neither code background depends on default
-foreground color. Input and Queue retain their foreground-based contrast cap.
+Detected block backgrounds target contrast 1.05 (1.07 near black); inline uses
+1.15 against the terminal background in linear RGB. These are surface contrast
+values, not text readability claims. Input/Queue use a foreground-based cap.
 
-OSC reports RGB colors but not terminal opacity. All resolved surfaces paint
-RGB cells; they do not infer or preserve terminal transparency. A light
-terminal where OSC is unavailable must set `TOOLANG_COLOR_SCHEME=light` or an
-explicit three-color palette.
+## Chat layout
 
-Chat submission and steer controls preserve their complete authored message
-between one top and one bottom padding row. Body text starts two cells from
-the left and leaves two cells at the right. Input uses the same insets. Padding
-never collapses into body rows as messages wrap. The bottom padding can hold a
-dim, single-line annotation ending two cells before the bar edge. Root inputs
-show `runnable · model · reasoning` from the submitted request: explicit effort
-or token budget, otherwise `auto` for no reasoning override. An absent model
-reads `model unspecified`. This snapshot needs no catalog or persistence lookup,
-and later session defaults do not change it. The root RunBegin updates its
-runnable before the bar is committed. Display `kind:name` without the `module$`
-prefix, retaining the complete reference in the snapshot. Long annotations
-shorten the runnable first, then the model, preserving explicit reasoning
-where space permits. Their left background-filled accent cells distinguish
-start from steer without displaying Run IDs. The start accent uses the same ANSI
-bright cyan as the banner logo and wordmark. Quick-command bars use the same
-background-cell treatment with their own accent, and the prompt uses the start
-accent. Control bars and the input box share Input background. Control-bar
-messages use the terminal's default foreground and explicitly clear dim styling
-in both stable and live output. An empty prompt shows the muted
-placeholder `Ask or describe a task`; the
-placeholder disappears as soon as the buffer contains text and is never part of
-the submitted message. A submitted input that starts a root Run paints its
-control bar through the full terminal width. Steer and quick-command control
-bars instead use the same output width as execution and command output: the
-lesser of the available width and `TOOLANG_PROGRESS_MAX_WIDTH`. On wider
-terminals, the terminal background visible to their right distinguishes these
-interactions from a new root Run. Quick-command result, help, table, and
-reopened-output content align to the same output boundary.
+Run/Steer/Quick Command bars preserve complete authored text, with one padding
+row above/below and two cells at either side. Root inputs fill terminal width;
+Steer and Quick Command bars use bounded output width. Input background covers
+controls; cyan marks start/Input and magenta marks Steer/Queue. Root annotations
+show submitted runnable/model/reasoning, updated with resolved RunBegin runnable;
+later session changes cannot rewrite the snapshot.
 
-Steer bars keep their original purple accent regardless of adoption. Pending
-bars have one aggregate dim row below them, including its marker:
-`• 1 steer pending` or `• 3 steers pending`. The count combines locally submitted
-requests awaiting receipts and accepted controls awaiting consumption. Receipt
-acceptance alone does not change the count. The wording is the same during and
-between steps, with no separate sending label. Continuations align after the
-marker, and live clipping reserves this feedback while preserving Input and Queue
-focus. A blank row above and below separates the explanation from surrounding
-areas. Very short
-viewports omit this spacing before clipping the explanation.
-Only matching `StepBegin.preceded_by` control references or durable applied
-status commit an adopted bar. Receipt/event reordering does not imply adoption.
-The aggregate disappears when no steers remain, with no applied message.
-At Run end, only confirmed unapplied steers show `not applied` in bottom-right
-padding; pending and adopted bars have no corner label during execution.
-Incomplete transport evidence keeps corners empty and uses existing recovery
-or error diagnostics. Late callbacks cannot change a completed transcript.
+Queue adjoins Input with no separator. Expanded Queue shows a summary, gap, up
+to eight one-line previews and a trailing gap; collapsed Queue shows only its
+summary. Viewport pressure reduces previews. Focus uses selection background
+only; entry action hints stay dim and right-aligned. Input cursor hides while
+Queue owns focus. Narrow layouts truncate previews before losing the count.
+Interaction/state rules belong in [Chat](chat.md#queue-and-controls).
 
-The session status bar below Input does not paint a base background and
-therefore inherits the terminal background. Its left corner always shows the
-current session runnable as `agic:name` or `flow:name`, without the `module$`
-prefix. The active root runnable is never shown there. A session runnable
-change updates only this left corner; it never adds a runnable beside the
-model.
+Pending steers retain magenta bars plus one aggregate `• N steer(s) pending`
+row. A receipt alone is not adoption: matched Step `preceded_by` or durable
+applied status commits it. At termination only confirmed unapplied steers show
+`not applied`; uncertain evidence stays unlabeled and uses recovery diagnostics.
+Late callbacks cannot alter completed scrollback.
 
-The absolute center anchor is the Chat agent and current workspace in
-`agent@workspace` form. The agent stays constant for the session. The
-workspace is the session workspace while idle and the active root run's
-effective workspace while running. Successful `_toolang.chdir` calls in the
-root run update this workspace; child run changes do not. `/cd` updates the
-session setting for subsequent runs without changing the active run's
-workspace. When the run ends, the center returns to the latest session
-workspace. Directory paths within a workspace are not shown.
+The session status line shows session runnable left, model/effort right and
+`agent@workspace` at absolute center. While running, center uses the active root
+workspace; root chdir updates it, child chdir does not. `/cd` changes later-session
+workdir. Edge labels elide toward the fixed center and disappear before center
+truncation. Model effort shows explicit level/budget or applicable `auto`.
 
-A separate run status bar directly precedes the Queue panel, or Input when the
-queue is empty. It has a blank first row separating live output and a second
-row showing dim elapsed time at column two. It inherits the terminal background.
-The label is `Working` below one elapsed second, then `Working for` followed
-by whole-second time, such as `Working for 1m3s` or `Working for 1h1m1s`.
-`0s` is never shown. The timer resets for each queued run and clears when the active run settles; requesting cancellation alone does
-not clear it. Both rows remain blank while idle. An idle Ctrl+L collapses both
-rows until the next run starts. Run settlement keeps the restored blank rows
-so Input does not move. The right side, inset two cells,
-is reserved for future context information and renders no value or placeholder.
-On very short terminals, the separator and then the information row yield to
-minimum Input, Queue, and steer-feedback space.
+A separate two-row run bar above Queue/Input shows elapsed `Working` text; it
+clears only on settlement, not a cancel request. Idle rows stay blank to stabilize
+Input; idle Ctrl+L collapses them until the next run. Short viewports yield these
+rows before Input or steer feedback. Status/error state never enters execution
+scrollback.
 
-The session bar never renders elapsed or the `Working` label. Agent/workspace
-text uses normal intensity; the structural `@` is dim. If the full line overflows, the
-complete center stays fixed with a one-cell margin on each side; session edge
-labels elide inward with one `…`. If the center plus margins cannot fit, both
-edge labels are hidden, and the center is truncated only when it cannot fit alone.
+Slash results use two-space indentation and one final separation row. Resource
+tables retain columns, elide flexible cells and protect current-model ` *`.
+Reopened `/output` uses a quiet dim divider and recorded result, without replay.
 
-The right corner contains only the current session model and its existing
-effort suffix. It is never replaced by an active model step. An empty effective
-model collection appears as `[no models available]`; an explicit effort or
-token budget appears as `MODEL · VALUE`; a model that advertises effort-level
-or token-budget control but has no explicit session value appears as
-`MODEL · auto`. Models without applicable reasoning control omit the suffix.
-The model remains right-aligned against the terminal edge. At narrow widths,
-the model ref is elided before an applicable effort suffix if the session
-corners alone need more space. Runnable, model, and center labels
-inherit the terminal's default foreground; only the `@` separator is dim.
-Setting commands remain available while running and update the session
-corners immediately without changing the active run's center context. Hotkey
-hints are omitted.
-The status bars redraw when a visible value, run state, error, or elapsed
-second changes. Session errors do not suppress run elapsed updates. Run
-completion returns immediately to the idle form, and status state is never
-committed to execution scrollback.
+## Implementation and verification
 
-Submitted `/models`, `/caps`, and `/tools` results retain structured columns
-through scrollback rendering. Their headers use normal terminal text and a dim
-`─` separator row. Each table derives widths from only that result, uses two
-spaces between columns and a two-space output indent, measures Unicode display
-cells, and keeps every header and data row on one physical line. Flexible cells
-are elided with `…` in command-specific order rather than wrapped. `-a` results
-add an `ALLOWED` column. The current model marker is the protected suffix ` *`.
-
-Every submitted slash control bar, help page, focused help result, resource
-table, and reopened run output uses the lesser of the terminal width and the
-configured progress maximum width. Prose wraps while table rows elide. Slash
-content owns no trailing blank rows; Chat adds exactly one scrollback separation
-row after the complete interaction. Scripted Chat applies the same maximum-width
-policy to its plain-text projection.
+[Shared projection/rendering](../src/toolang/cli/common/execution_progress/),
+[script presenter](../src/toolang/cli/common/script_progress/) and
+[Chat presenter](../src/toolang/cli/toolang/commands/chat/presenter.py) own the paths.
+[Projector](../tests/unit/cli/test_execution_progress_projector.py),
+[dynamic calls](../tests/unit/cli/test_agic_run_progress.py),
+[facts](../tests/unit/cli/test_execution_progress_facts.py),
+[Markdown](../tests/unit/cli/test_markdown_rendering.py),
+[tool rendering](../tests/unit/cli/test_tool_progress_rendering.py) and
+[TUI tests](../tests/unit/cli/test_chat_tui.py) are the detailed scenario matrix.
+[Deterministic terminal tests](../tests/system/cli/test_chat_tui_e2e.py) verify the
+real terminal boundary; live-provider cases remain separately opt-in.
