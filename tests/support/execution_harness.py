@@ -50,6 +50,8 @@ from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
 from toolang.state.prepare import prepare_agent_state
+from toolang.state.watcher import StateWatcher
+from toolang.state.types import StateSyncResult
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentEnvironment, AgentSetup
@@ -424,6 +426,15 @@ class ExecutionHarness:
         )
 
         harness.executor._state = lambda: harness.published or harness.state
+        if prepare_state:
+            watcher = StateWatcher(layout, initial_state=state)
+
+            async def sync_state() -> StateSyncResult:
+                result = await watcher.sync()
+                harness.published = watcher.current()
+                return result
+
+            harness.executor._sync_state = sync_state
         return harness
 
     def run_spec(

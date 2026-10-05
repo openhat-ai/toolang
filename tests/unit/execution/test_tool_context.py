@@ -21,6 +21,7 @@ from toolang.plugin.toolsets.loading import load_tools
         ("history__read_runs", "history"),
         ("_toolang__pick", "runtime"),
         ("me__get", "layout"),
+        ("me__sync", "layout"),
     ],
 )
 def test_only_the_selected_toolset_receives_special_dependencies(tmp_path, name, extra):
@@ -28,10 +29,16 @@ def test_only_the_selected_toolset_receives_special_dependencies(tmp_path, name,
     runtime = cast(ToolRuntime, object())
     history = cast(ToolHistory, object())
     services = (ToolService("api", {}, {"TOKEN": "private"}),)
+    from toolang.state.types import StateSyncResult
+
+    async def sync_state():
+        return StateSyncResult("test-revision", ())
+
     context = _tool_context(
         layout=layout,
         tool=load_tools()[name],
         services=services,
+        sync_state=sync_state,
         runtime=runtime,
         history=history,
         workspaces={"repo": tmp_path / "repo"},
@@ -46,6 +53,10 @@ def test_only_the_selected_toolset_receives_special_dependencies(tmp_path, name,
             assert getattr(context, field) is value
         else:
             assert not hasattr(context, field)
+    if extra == "layout":
+        assert getattr(context, "sync_state") is sync_state
+    else:
+        assert not hasattr(context, "sync_state")
     assert context.home == layout.home
     assert context.room == layout.tool_room(name.split("__")[0])
     assert context.workspaces == {"repo": tmp_path / "repo"}

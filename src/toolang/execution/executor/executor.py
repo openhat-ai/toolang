@@ -57,6 +57,7 @@ from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
 from toolang.state.state import AgentState, state_program
+from toolang.state.types import StateSync
 from toolang.setup import AgentSetup
 
 from ..accounting import build_model_accounting, selected_usd_cost
@@ -277,6 +278,7 @@ class RunExecutor:
         setup: SetupSource | None = None,
         state: StateSource | None = None,
         load_state: StateLoad | None = None,
+        sync_state: StateSync | None = None,
         include: IncludeSource | None = None,
         default_workdir: str | None = None,
     ) -> None:
@@ -291,6 +293,7 @@ class RunExecutor:
         self._setup = setup
         self._state = state
         self._load_state = load_state
+        self._sync_state = sync_state
         self._include = include
         self._default_workdir_override = default_workdir
         self._persist = _PersistSink(self.store)
@@ -1692,10 +1695,22 @@ class _Execution:
     def require_inactive_runnable(
         self, parent: BoundRun, target: ResolvedRunnable, *, action: str
     ) -> None:
+        if action in {"exec", "_toolang/exec"} and self.can_self_exec(parent, target):
+            return
         if target.identity in self.active_runnable_identities(parent):
             raise ToolangError(
                 f"{action} cannot call the current or an ancestor runnable: {target.ref}"
             )
+
+    def can_self_exec(self, caller: BoundRun, target: ResolvedRunnable) -> bool:
+        """Only a root without active descendants may replace its own binding."""
+
+        return (
+            caller.parent is None
+            and caller.run_id == caller.root_run_id
+            and target.identity == _qualified_identity(caller)
+            and all(run_id == caller.run_id for run_id in self._active_bindings)
+        )
 
     def resolve_invocation(
         self,
@@ -1714,16 +1729,23 @@ class _Execution:
             authorize(baseline)
         if is_generated_ref(baseline.ref):
             return baseline_state, baseline
+        contract_state = baseline_state
+        contract_runnable = baseline.executable
+        if action in {"exec", "_toolang/exec"} and self.can_self_exec(parent, baseline):
+            contract_state = parent.state
+            contract_runnable = resolve_bound_runnable(
+                parent.state, parent.module, _bound_runnable(parent)
+            )
         state = self.latest_state()
         try:
             target = resolve_call_target(state, parent.module, reference)
             if target.identity != baseline.identity:
                 raise ToolangError("runnable module changed")
             expected = RunnableContract.resolve(
-                baseline.executable,
+                contract_runnable,
                 structs={
                     item.name: item
-                    for item in state_program(baseline_state, baseline.module).structs
+                    for item in state_program(contract_state, baseline.module).structs
                 },
             )
             actual = RunnableContract.resolve(
@@ -1737,7 +1759,7 @@ class _Execution:
                 raise ToolangError("runnable signature changed")
         except (ToolangError, KeyError, ValueError) as exc:
             raise ToolangError(
-                f"Cannot bind {baseline.qualified}: baseline {baseline_state.revision}, "
+                f"Cannot bind {baseline.qualified}: baseline {contract_state.revision}, "
                 f"candidate {state.revision}: {exc}"
             ) from exc
         return state, target

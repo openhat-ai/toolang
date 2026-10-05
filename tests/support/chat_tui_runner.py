@@ -13,6 +13,7 @@ from toolang.plugin.models.query import resolve_model
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 from tests.support.setup import replace_materialized_setup
+from toolang.state.types import StateSyncResult
 from toolang.state.watcher import StateRefresh
 
 
@@ -62,6 +63,9 @@ def run_chat_tui(
         async def refresh_result(self, *, force: bool = False) -> StateRefresh:
             del force
             return StateRefresh(state)
+
+        async def sync(self):
+            return StateSyncResult(state.revision, state.files)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()

@@ -347,7 +347,7 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
         ) + (
             "\n\nagic chat() -> Text:\n  hands = "
             + ", ".join(f"agic:action_{i:02d}" for i in range(64))
-            + "\n  context = none\n  Complete the task.\n"
+            + "\n  handoffs = none\n  context = none\n  Complete the task.\n"
         )
 
     harness, _ = capability_harness(

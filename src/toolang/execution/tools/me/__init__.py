@@ -10,7 +10,7 @@ from typing import Any
 from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 
-from .handlers import execute
+from .handlers import execute, synchronize
 from .schemas import Operation, decode_request, tool_parameters
 from .errors import ResourceError
 
@@ -19,7 +19,18 @@ _DESCRIPTIONS: dict[Operation, str] = {
     "get": "Read complete current home file content and its SHA-256 digest by relative path. Returns {key, digest, bytes, content, encoding}, with utf-8 text or base64 for non-UTF-8 bytes. Reads latest authored files, not bound Run code.",
     "create": "Create one complete home file, failing if it already exists. Returns {key, digest}. Allowed: agent.too, config.toml, flows/*.too, psyches/services/prompts/*.md, skills/*/SKILL.md, skills/*/assets/**, tasks/*.md, chores/*.md. Saving does not validate content, publish State, or switch running code.",
     "update": "Replace one complete current home file and return {key, digest}. Requires if_digest from get/list or a successful write; reread and reconcile on conflict. Preserves exact content bytes; saving does not validate content or switch running code or Setup.",
-    "loaded": "Compare {key, digest} receipts with the AgentState already loaded for this call, not latest disk files or publication. Returns {loaded, revision, mismatches: [{key, digest}]}; mismatch digests are loaded values. Missing or untracked files have null digest. Does not refresh or switch State.",
+    "sync": (
+        "Wait for one check and publication of the current agent's tracked root/home sources. "
+        "Finish writes first and ensure no program modifies those sources until this call returns. "
+        "Returns {revision, files: [{scope, key, digest}]} sorted by scope/key, including shadowed inputs and assets. "
+        "Deleted/untracked files are absent; tasks/chores are outside State. "
+        "Errors return {error, message, revision, files, differences, diagnostics}; "
+        "codes are state_rejected, io_error, or sync_unavailable. "
+        "Revision/files identify that check's last-valid State, or null/[] if unavailable. "
+        "Differences list unequal {scope, key, disk_digest, state_digest}; "
+        "null digest means absence; differences=null means the complete disk manifest could not be read. "
+        "Diagnostics preserve preparation errors. Does not replace running code or refresh Setup."
+    ),
     "delete": "Delete exactly one current home file using required if_digest. Returns {key, digest: null}. Never recursively removes skill assets, archives jobs, or cancels Runs.",
 }
 
@@ -48,6 +59,8 @@ class MeTool(Tool):
     ) -> ToolResult:
         try:
             request = decode_request(self.operation, arguments)
+            if request.operation == "sync":
+                return ToolResult(await synchronize(context))
             return ToolResult(await asyncio.to_thread(execute, request, context))
         except ResourceError as exc:
             return exc.result
@@ -60,7 +73,7 @@ class MeToolset:
     config: dict[str, Any]
     name: str = "me"
     description: str | None = (
-        "Manage current home files and compare receipts with the calling State."
+        "Manage current home files and synchronize authored sources with Agent State."
     )
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
@@ -71,7 +84,7 @@ class MeToolset:
             "create",
             "update",
             "delete",
-            "loaded",
+            "sync",
         )
         self._tools = {operation: MeTool(operation) for operation in operations}
 

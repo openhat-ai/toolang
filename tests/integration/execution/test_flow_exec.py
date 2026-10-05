@@ -302,10 +302,10 @@ agic successor(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_rejected_self_exec_leaves_no_handoff(tmp_path):
+def test_rejected_child_self_exec_leaves_no_handoff(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,
-        source="flow grow():\n  repeat 2 times:\n    exec grow\n",
+        source="flow parent():\n  run grow\nflow grow():\n  repeat 2 times:\n    exec grow\n",
         responses=[],
     )
 
@@ -314,7 +314,7 @@ def test_rejected_self_exec_leaves_no_handoff(tmp_path):
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
-                    runnable="grow",
+                    runnable="parent",
                 )
             )
             assert root.status == "failed"
@@ -323,7 +323,11 @@ def test_rejected_self_exec_leaves_no_handoff(tmp_path):
                 harness.store.resolve_error(root.error)
             )
             assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
-            steps = harness.store.list_steps(run_id=root.id)
+            child = next(
+                r for r in harness.store.list_run_tree(root_run_id=root.id) if r.parent
+            )
+            assert not harness.store.list_run_controls(run_id=child.id, kind="execute")
+            steps = harness.store.list_steps(run_id=child.id)
             assert [step.status for step in steps] == ["failed", "failed"]
             assert all(step.aborted_by is None for step in steps)
             assert not harness.adapter.invocations
@@ -494,7 +498,8 @@ flow final():
     asyncio.run(scenario())
 
 
-def test_flow_exec_preserves_original_output_contract(tmp_path):
+@pytest.mark.parametrize("self_exec", [False, True])
+def test_flow_exec_preserves_original_output_contract(tmp_path, self_exec):
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -503,7 +508,23 @@ flow grow() -> Number:
 agic successor() -> Text:
   user: Successor.
 """,
-        responses=[answer("not a number")],
+        responses=(
+            [
+                ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            "restart",
+                            "restart",
+                            "_toolang__exec",
+                            {"runnable": "successor"},
+                        ),
+                    )
+                )
+            ]
+            if self_exec
+            else []
+        )
+        + [answer("not a number")],
     )
 
     async def scenario():
@@ -515,10 +536,9 @@ agic successor() -> Text:
                 )
             )
             assert root.status == "failed"
-            assert (
-                len(harness.store.list_run_controls(run_id=root.id, kind="execute"))
-                == 1
-            )
+            assert len(
+                harness.store.list_run_controls(run_id=root.id, kind="execute")
+            ) == (2 if self_exec else 1)
             assert harness.store.list_steps(run_id=root.id)[0].status == "succeeded"
 
     asyncio.run(scenario())

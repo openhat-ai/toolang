@@ -16,6 +16,7 @@ from toolang.common.layout import AgentLayout
 from .config import normalize_cap_overrides
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
+from .types import StateFile, StateFileDifference, StateSyncError, StateSyncResult
 from .cache import (
     LayerScope,
     agent_current_path,
@@ -32,6 +33,7 @@ from .source import (
     observe_home_source,
     observe_root_source,
     root_source_manifest,
+    raw_source_files,
     source_path_scope,
 )
 
@@ -51,11 +53,36 @@ class _CheckRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class _CheckFailure:
+    """Keep a rejected check's classification and diagnostics together."""
+
+    error: StateSyncError
+    diagnostics: tuple[StateDiagnostic, ...]
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> _CheckFailure:
+        return cls(
+            "io_error" if isinstance(exc, OSError) else "state_rejected",
+            exc.diagnostics
+            if isinstance(exc, StatePreparationError)
+            else (_candidate_diagnostic(exc),),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StateRefresh:
     """One completed watcher check and its exact last-valid result."""
 
     state: AgentState
-    diagnostics: tuple[StateDiagnostic, ...] = ()
+    failure: _CheckFailure | None = None
+
+    @property
+    def diagnostics(self) -> tuple[StateDiagnostic, ...]:
+        return self.failure.diagnostics if self.failure is not None else ()
+
+    @property
+    def error(self) -> StateSyncError | None:
+        return self.failure.error if self.failure is not None else None
 
 
 class StateWatcher:
@@ -99,7 +126,7 @@ class StateWatcher:
                 ):
                     self._state = self._remember(state)
                     self._record_persisted_baseline(state)
-        self._diagnostics: tuple[StateDiagnostic, ...] = ()
+        self._failure: _CheckFailure | None = None
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
         self._monitoring = False
@@ -114,7 +141,7 @@ class StateWatcher:
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
 
-        return self._diagnostics
+        return self._failure.diagnostics if self._failure is not None else ()
 
     def load(self, revision: str) -> AgentState:
         """Load the exact State identified by a persisted composition."""
@@ -135,6 +162,37 @@ class StateWatcher:
         """Return one serialized check with diagnostics from that exact check."""
 
         return await self._request_check(requested=True, force=force)
+
+    async def sync(self) -> StateSyncResult:
+        """Check once; callers keep authored sources unchanged until return."""
+
+        state: AgentState | None = None
+        try:
+            result = await self.refresh_result(force=False)
+            state = result.state
+            failure = result.failure
+            if failure is None:
+                return StateSyncResult(state.revision, state.files)
+        except Exception as exc:
+            failure = _CheckFailure.from_exception(exc)
+        message = "; ".join(item.message for item in failure.diagnostics)
+        files = state.files if state is not None else ()
+        try:
+            disk_files = await asyncio.to_thread(
+                raw_source_files, self.layout.root, self.layout.name
+            )
+            differences = _file_differences(disk_files, files)
+        except Exception as exc:
+            differences = None
+            message += f"; could not inspect source differences: {exc}"
+        return StateSyncResult(
+            revision=state.revision if state is not None else None,
+            files=files,
+            error=failure.error,
+            message=message,
+            differences=differences,
+            diagnostics=failure.diagnostics,
+        )
 
     async def _request_check(
         self,
@@ -213,14 +271,7 @@ class StateWatcher:
                 self.layout.name,
             )
         except Exception as exc:
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=1",
-                self.layout.name,
-            )
-            return StateRefresh(self._state, self._diagnostics)
+            return self._reject_check(exc)
         if (
             not requested
             and not invalidated_root
@@ -230,7 +281,7 @@ class StateWatcher:
                 home_observation=home_observation,
             )
         ):
-            return StateRefresh(self.current(), self._diagnostics)
+            return StateRefresh(self.current(), self._failure)
         if requested:
             invalidated_root = frozenset(item.path for item in root_observation.files)
             invalidated_home = frozenset(item.path for item in home_observation.files)
@@ -248,10 +299,7 @@ class StateWatcher:
                 invalidated=invalidated_home,
             )
         except Exception as exc:
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            return StateRefresh(self._state, self._diagnostics)
+            return self._reject_check(exc)
         if (
             not requested
             and not force
@@ -266,8 +314,7 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            self._diagnostics = ()
-            return StateRefresh(self.current())
+            return StateRefresh(self.current(), self._failure)
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
@@ -277,22 +324,22 @@ class StateWatcher:
                 previous=self._state,
                 workspace_additions=self._workspace_additions,
             )
-        except StatePreparationError as exc:
-            self._record_checked_candidate(
-                root_observation,
-                home_observation,
-                root_source,
-                home_source,
+            loaded_root_source = load_layer_source(
+                self.layout,
+                "root",
+                candidate.root_revision,
             )
-            self._diagnostics = exc.diagnostics
-            if self._state is None:
-                raise
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=%s",
-                self.layout.name,
-                len(exc.diagnostics),
+            loaded_home_source = load_layer_source(
+                self.layout,
+                "home",
+                candidate.home_revision,
             )
-            return StateRefresh(self._state, self._diagnostics)
+            if not isinstance(loaded_root_source, SourceManifest) or not isinstance(
+                loaded_home_source, SourceManifest
+            ):
+                raise ValueError(
+                    "prepared State layers require portable source manifests"
+                )
         except Exception as exc:
             self._record_checked_candidate(
                 root_observation,
@@ -300,29 +347,8 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=1",
-                self.layout.name,
-            )
-            return StateRefresh(self._state, self._diagnostics)
+            return self._reject_check(exc)
         self._state = self._remember(candidate)
-        loaded_root_source = load_layer_source(
-            self.layout,
-            "root",
-            candidate.root_revision,
-        )
-        loaded_home_source = load_layer_source(
-            self.layout,
-            "home",
-            candidate.home_revision,
-        )
-        if not isinstance(loaded_root_source, SourceManifest) or not isinstance(
-            loaded_home_source, SourceManifest
-        ):
-            raise ValueError("prepared State layers require portable source manifests")
         # Retain the observations that led to preparation. A source change after
         # preparation returned must remain visible to the next watcher check.
         self._checked_root_observation = root_observation
@@ -333,8 +359,19 @@ class StateWatcher:
             candidate.root_revision,
             candidate.home_revision,
         )
-        self._diagnostics = ()
+        self._failure = None
         return StateRefresh(self._state)
+
+    def _reject_check(self, exc: Exception) -> StateRefresh:
+        self._failure = _CheckFailure.from_exception(exc)
+        if self._state is None:
+            raise exc
+        logger.warning(
+            "watch.rejected agent=%s diagnostics=%s",
+            self.layout.name,
+            len(self._failure.diagnostics),
+        )
+        return StateRefresh(self._state, self._failure)
 
     async def updates(
         self,
@@ -441,7 +478,7 @@ class StateWatcher:
                 or root_observation != self._checked_root_observation
                 or home_observation != self._checked_home_observation
             )
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return True
 
     def _manifest_needs_check(
@@ -461,7 +498,7 @@ class StateWatcher:
                 or root_source != self._checked_root_source
                 or home_source != self._checked_home_source
             )
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return True
 
     def _remember(self, state: AgentState) -> AgentState:
@@ -527,7 +564,7 @@ def _current_layer_revisions(
     def load(scope: LayerScope) -> str | None:
         try:
             return load_current_revision(layout, scope)
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return None
 
     return load("root"), load("home")
@@ -541,6 +578,20 @@ def _candidate_diagnostic(exc: Exception) -> StateDiagnostic:
         line=None,
         code="candidate-preparation",
         message=str(exc) or type(exc).__name__,
+    )
+
+
+def _file_differences(
+    disk: tuple[StateFile, ...], published: tuple[StateFile, ...]
+) -> tuple[StateFileDifference, ...]:
+    current = {(item.scope, item.key): item.digest for item in disk}
+    previous = {(item.scope, item.key): item.digest for item in published}
+    return tuple(
+        StateFileDifference(
+            scope, key, current.get((scope, key)), previous.get((scope, key))
+        )
+        for scope, key in sorted(current.keys() | previous.keys())
+        if current.get((scope, key)) != previous.get((scope, key))
     )
 
 

@@ -12,6 +12,8 @@ from typing import Literal, cast
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
+from .types import StateFile
+
 from ..lang.ast import FlowDecl, Program
 
 SourceNodeKind = Literal["file", "directory"]
@@ -326,6 +328,23 @@ def observe_home_source(toolang_root: Path, agent_name: str) -> SourceObservatio
     for directory_name in ("flows", *CAP_DIRECTORY_NAMES):
         _require_source_shape(home / directory_name, shape="directory")
     return observe_source(home, _home_source_paths(home))
+
+
+def raw_source_files(toolang_root: Path, agent_name: str) -> tuple[StateFile, ...]:
+    """Capture tracked raw identities for failure reporting, without parsing."""
+
+    files: list[StateFile] = []
+    for scope, observation in (
+        ("home", observe_home_source(toolang_root, agent_name)),
+        ("root", observe_root_source(toolang_root)),
+    ):
+        for item in observation.files:
+            digest = sha256()
+            with item.source.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+            files.append(StateFile(scope, item.path, digest.hexdigest()))
+    return tuple(files)
 
 
 def root_source_manifest(

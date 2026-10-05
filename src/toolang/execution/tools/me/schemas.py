@@ -1,4 +1,4 @@
-"""Closed schemas for home file operations and loaded receipt comparisons."""
+"""Closed schemas for home file operations and State synchronization."""
 
 from __future__ import annotations
 
@@ -10,15 +10,9 @@ from typing import Any, Literal, NoReturn, cast
 
 from .errors import ResourceError
 
-Operation = Literal["list", "get", "create", "update", "delete", "loaded"]
+Operation = Literal["list", "get", "create", "update", "delete", "sync"]
 Encoding = Literal["utf-8", "base64"]
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-
-
-@dataclass(frozen=True, slots=True)
-class Receipt:
-    key: str
-    digest: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +22,6 @@ class ResourceRequest:
     content: str | None = None
     encoding: Encoding = "utf-8"
     if_digest: str | None = None
-    receipts: tuple[Receipt, ...] = ()
 
 
 def tool_parameters(operation: Operation) -> dict[str, Any]:
@@ -38,27 +31,7 @@ def tool_parameters(operation: Operation) -> dict[str, Any]:
         "type": "string",
         "description": "Canonical home-relative file path, e.g. agent.too or flows/research.too.",
     }
-    if operation == "loaded":
-        properties["receipts"] = {
-            "type": "array",
-            "description": "File versions to compare with this call's loaded State. Null means absent or untracked. Keys must be unique.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "key": key_schema,
-                    "digest": {
-                        "anyOf": [
-                            {"type": "string", "pattern": _SHA256_RE.pattern},
-                            {"type": "null"},
-                        ],
-                    },
-                },
-                "required": ["key", "digest"],
-                "additionalProperties": False,
-            },
-        }
-        required.append("receipts")
-    elif operation != "list":
+    if operation not in {"list", "sync"}:
         properties["key"] = key_schema
         required.append("key")
     if operation in {"create", "update"}:
@@ -97,9 +70,7 @@ def decode_request(
     for name in schema["required"]:
         if name not in arguments:
             fail("invalid_request", f"{name} is required")
-    if operation == "loaded":
-        return ResourceRequest(operation, receipts=_receipts(arguments["receipts"]))
-    key = _key(arguments.get("key")) if operation != "list" else None
+    key = _key(arguments.get("key")) if operation not in {"list", "sync"} else None
     content = arguments.get("content")
     if operation in {"create", "update"} and not isinstance(content, str):
         fail("invalid_request", "content must be the complete file text", key=key)
@@ -127,29 +98,6 @@ def _key(value: Any) -> str:
 
 def _is_digest(value: Any) -> bool:
     return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
-
-
-def _receipts(value: Any) -> tuple[Receipt, ...]:
-    if not isinstance(value, list):
-        fail("invalid_request", "receipts must be an array")
-    result: list[Receipt] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, dict) or set(item) != {"key", "digest"}:
-            fail("invalid_request", "each receipt must contain only key and digest")
-        key = _key(item["key"])
-        digest = item["digest"]
-        if digest is not None and not _is_digest(digest):
-            fail(
-                "invalid_request",
-                "receipt digest must be a lowercase SHA-256 digest or null",
-                key=key,
-            )
-        if key in seen:
-            fail("invalid_request", "receipt keys must be unique", key=key)
-        seen.add(key)
-        result.append(Receipt(key, digest))
-    return tuple(result)
 
 
 def fail(

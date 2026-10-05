@@ -511,7 +511,10 @@ def test_unadvertised_target_waits_for_next_model_catalog(
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            assert route_snapshots(harness.adapter.invocations[0].call)[mode] == []
+            assert [
+                item["ref"]
+                for item in route_snapshots(harness.adapter.invocations[0].call)[mode]
+            ] == (["agic:parent"] if mode == "handoffs" else [])
             publish(harness, source + "flow worker():\n  pass\n")
             gate.release()
             root = await handle
@@ -519,7 +522,7 @@ def test_unadvertised_target_waits_for_next_model_catalog(
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert last_tool_result(harness.adapter.invocations[1].call).error
             assert (
-                route_snapshots(harness.adapter.invocations[1].call)[mode][0]["ref"]
+                route_snapshots(harness.adapter.invocations[1].call)[mode][-1]["ref"]
                 == "flow:worker"
             )
 
@@ -810,8 +813,11 @@ def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
             )
             assert root.status == "succeeded", root.error
             snapshots = route_snapshots(harness.adapter.invocations[0].call)
-            for mode in ("hands", "handoffs"):
-                assert [item["ref"] for item in snapshots[mode]] == ["flow:worker"]
+            assert [item["ref"] for item in snapshots["hands"]] == ["flow:worker"]
+            assert [item["ref"] for item in snapshots["handoffs"]] == [
+                "agic:parent",
+                "flow:worker",
+            ]
             first = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(first.given, StoredModelStepGiven)
             assert first.given.state == harness.state.revision

@@ -183,14 +183,13 @@ def build_agic_frame(
     services = tuple(item for item in caps if item.kind == "service")
     if runtime_tools and resolved_model.tool_call is True:
         active = context.active_runnable_identities(run)
-        routes = replace(
-            routes,
-            resolved=tuple(
-                route
-                for route in routes.resolved
-                if route.runnable.identity not in active
-            ),
-        )
+        visible_routes = []
+        for route in routes.resolved:
+            if route.runnable.identity not in active:
+                visible_routes.append(route)
+            elif "exec" in route.actions and context.can_self_exec(run, route.runnable):
+                visible_routes.append(replace(route, actions=("exec",)))
+        routes = replace(routes, resolved=tuple(visible_routes))
         runnables = runnable_descriptions(state, routes)
     else:
         runnables = ()

@@ -35,6 +35,7 @@ from ...records import RecallControlPayload
 from ...assembly.tool_replies import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
 from ...tools.me.types import MeToolContext
+from toolang.state.types import StateSync
 from ...types import (
     ControlRef,
     ErrorMessage,
@@ -269,7 +270,9 @@ async def _execute(
                 raise ToolangError(f"unknown tool call: {call.name}")
             context = _tool_context(
                 layout=state.layout,
-                state=agent_state,
+                sync_state=state.execution.executor._sync_state
+                if state.execution is not None
+                else None,
                 tool=tool,
                 services=prepared.services,
                 runtime=runtime,
@@ -769,7 +772,7 @@ def _tool_context(
     layout: AgentLayout,
     tool: Tool,
     services: tuple[ToolService, ...],
-    state: AgentState | None = None,
+    sync_state: StateSync | None = None,
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
@@ -795,5 +798,5 @@ def _tool_context(
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":
-        return MeToolContext(*args, layout=layout, state=state)
+        return MeToolContext(*args, layout=layout, sync_state=sync_state)
     return ToolContext(*args)

@@ -132,6 +132,7 @@ class LocalChatSession:
             self.ids,
             setup=self.setup_watcher.current,
             state=self.state_watcher.current,
+            sync_state=self.state_watcher.sync,
             load_state=lambda revision: self.state_watcher.load(revision),
         )
         self.run_client: RunClient = LocalRunClient(self.executor)

@@ -25,6 +25,7 @@ from tests.support.execution_harness import (
 from toolang.execution.types import ErrorMessage, ThreadPrefix, RunOverride
 from toolang.lang.input import CallInput
 from toolang.lang.input import resolve_input_parts
+from toolang.state.types import StateSyncResult
 from toolang.state.watcher import StateRefresh
 
 
@@ -110,6 +111,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
         async def refresh_result(self):
             return StateRefresh(publication)
+
+        async def sync(self):
+            return StateSyncResult(publication.revision, publication.files)
 
         async def run(self, *, stop_signal):
             await stop_signal.wait()

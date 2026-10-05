@@ -72,6 +72,7 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
         **_kwargs: object,
     ) -> Mock:
         assert selected_store is store
+        assert _kwargs["sync_state"] is state.sync
         return executor
 
     def open_client(selected: object) -> Mock:
