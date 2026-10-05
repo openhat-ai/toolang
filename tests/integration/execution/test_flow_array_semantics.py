@@ -11,7 +11,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ControlRef, FieldRef, ThreadPrefix, TypedRef
 from toolang.lang.errors import ToolangError
 
 
@@ -196,6 +196,15 @@ def test_singleton_json_reduce_keeps_the_seed_without_a_child_call(tmp_path, ite
             )
             assert run.output is not None
             assert harness.store.resolve_value(run.output.local.value) == item
+            step = harness.store.list_steps(run_id=run.id)[0]
+            assert step.output is not None
+            assert isinstance(step.output.local.value, TypedRef)
+            seed = FieldRef.from_path(
+                ControlRef.for_run(run.id, 0), "payload", "input", "_", "!", 0
+            )
+            assert harness.store.resolve_value_pointer(step.output.local.value) == seed
+            assert isinstance(run.output.local.value, TypedRef)
+            assert step.output.local.type == run.output.local.type == "Json"
             assert not harness.adapter.invocations
 
     asyncio.run(scenario())
@@ -231,5 +240,53 @@ def test_retry_restores_nested_arrays_and_selected_item_provenance(tmp_path):
                 ["kept"]
             ]
             assert len(harness.adapter.invocations) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "type_name,value",
+    [("Json", "kept"), ("Json", [["a"], []]), ("Text[][]", [["a", "b"], []])],
+)
+def test_retry_preserves_committed_output_when_later_result_is_discarded(
+    tmp_path, type_name, value
+):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"flow main() -> {type_name}:\n  run -> {type_name}: Value\n  let run: Discard\n",
+        responses=[
+            ModelCallResult(message=Message.assistant(json.dumps(value))),
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("discarded")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="main")
+            )
+            assert run.status == "failed"
+            committed = harness.store.list_steps(run_id=run.id)[0]
+            assert committed.output is not None
+            assert isinstance(committed.output.local.value, TypedRef)
+            source = harness.store.resolve_value_pointer(committed.output.local.value)
+
+            retried = await harness.executor.retry(
+                run.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded", retried.error
+            assert retried.output is not None
+            assert retried.output.local.type == type_name
+            assert isinstance(retried.output.local.value, TypedRef)
+            assert (
+                harness.store.resolve_value_pointer(retried.output.local.value)
+                == source
+            )
+            assert harness.store.resolve_value(retried.output.local.value) == (
+                harness.store.resolve_value(committed.output.local.value)
+            )
+            assert len(harness.adapter.invocations) == 3
 
     asyncio.run(scenario())

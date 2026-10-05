@@ -705,6 +705,33 @@ def test_program_data_round_trips_without_parsing_source() -> None:
     assert program_from_data(to_data(program)) == program
 
 
+@pytest.mark.parametrize("kind", ["scatter", "gather", "storm", "settle"])
+def test_program_data_does_not_treat_job_metadata_as_flow_syntax(kind: str) -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source(f"task work:\n  kind = {kind}\n  Do the work.\n")
+
+    assert program_from_data(to_data(program)) == program
+
+
+@pytest.mark.parametrize("kind", ["scatter", "gather", "storm", "settle"])
+def test_program_data_rejects_removed_statements_in_nested_flows(kind: str) -> None:
+    from toolang.lang.ast import program_from_data
+
+    data = cast(
+        dict[str, Any],
+        to_data(
+            Program.from_source(
+                "agic action:\n  Work.\nflow main:\n  repeat 2 times:\n    run action\n"
+            )
+        ),
+    )
+    data["flows"][0]["stmts"][0]["stmts"][0]["kind"] = kind
+
+    with pytest.raises(ValueError, match="migrate source"):
+        program_from_data(data)
+
+
 def test_program_data_round_trip_preserves_ambiguous_statement_kinds() -> None:
     from toolang.lang.ast import program_from_data
 

@@ -3098,6 +3098,7 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
             else FieldRef.from_path(step.ref, "output", "local", "value")
         ),
         type_name=step.output.local.type,
+        record=step.output.local,
     )
 
 

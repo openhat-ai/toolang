@@ -549,7 +549,8 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
 
 def _reject_removed_statements(value: object) -> None:
     if isinstance(value, Mapping):
-        kind = cast(Mapping[str, object], value).get("kind")
+        data = cast(Mapping[str, object], value)
+        kind = data.get("kind")
         if isinstance(kind, str) and kind in {"scatter", "gather", "storm", "settle"}:
             replacement = {
                 "scatter": "run",
@@ -560,8 +561,10 @@ def _reject_removed_statements(value: object) -> None:
             raise ValueError(
                 f"Removed Flow statement {kind!r}; migrate source to {replacement!r} and prepare a new snapshot"
             )
-        for child in value.values():
-            _reject_removed_statements(child)
+        if kind == "program":
+            _reject_removed_statements(data.get("flows", ()))
+        elif kind == "flow" or kind == "repeat":
+            _reject_removed_statements(data.get("stmts", ()))
     elif isinstance(value, (tuple, list)):
         for child in value:
             _reject_removed_statements(child)
