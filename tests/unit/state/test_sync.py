@@ -227,3 +227,55 @@ def test_concurrent_sync_and_canceled_waiter_share_serialized_checker(
         assert results[0].revision == watcher.current().revision
 
     asyncio.run(scenario())
+
+
+def test_sync_keeps_last_valid_state_when_prepared_manifest_cannot_be_read(
+    watcher, monkeypatch
+):
+    previous = asyncio.run(watcher.refresh())
+    watcher.layout.program.write_text("agic answer:\n  Updated.\n")
+    load_source = state_watcher.load_layer_source
+
+    def unreadable_home(layout, scope, revision):
+        if scope == "home":
+            raise PermissionError("prepared home manifest is unreadable")
+        return load_source(layout, scope, revision)
+
+    monkeypatch.setattr(state_watcher, "load_layer_source", unreadable_home)
+    result = asyncio.run(watcher.sync())
+    assert result.error == "io_error"
+    assert result.revision == previous.revision
+    assert result.files == previous.files
+    assert watcher.current() is previous
+    assert result.to_data()["differences"] == [
+        {
+            "scope": "home",
+            "key": "agent.too",
+            "disk_digest": sha256(b"agic answer:\n  Updated.\n").hexdigest(),
+            "state_digest": previous.files[0].digest,
+        }
+    ]
+    assert "prepared home manifest is unreadable" in result.message
+    monkeypatch.setattr(state_watcher, "load_layer_source", load_source)
+    repaired = asyncio.run(watcher.sync())
+    assert repaired.error is None
+    assert repaired.revision != previous.revision
+    assert repaired.revision == watcher.current().revision
+
+
+def test_sync_preserves_preparation_error_when_current_pointer_is_unreadable(
+    watcher, monkeypatch
+):
+    previous = asyncio.run(watcher.refresh())
+    watcher.layout.program.write_text("agic (")
+    monkeypatch.setattr(
+        state_watcher,
+        "load_current_revision",
+        Mock(side_effect=PermissionError("current pointer is unreadable")),
+    )
+    result = asyncio.run(watcher.sync())
+    assert result.error == "state_rejected"
+    assert result.revision == previous.revision
+    assert result.files == previous.files
+    assert result.diagnostics[0].code == "invalid-program"
+    assert watcher.current() is previous

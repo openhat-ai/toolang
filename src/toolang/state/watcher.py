@@ -324,6 +324,22 @@ class StateWatcher:
                 previous=self._state,
                 workspace_additions=self._workspace_additions,
             )
+            loaded_root_source = load_layer_source(
+                self.layout,
+                "root",
+                candidate.root_revision,
+            )
+            loaded_home_source = load_layer_source(
+                self.layout,
+                "home",
+                candidate.home_revision,
+            )
+            if not isinstance(loaded_root_source, SourceManifest) or not isinstance(
+                loaded_home_source, SourceManifest
+            ):
+                raise ValueError(
+                    "prepared State layers require portable source manifests"
+                )
         except StatePreparationError as exc:
             self._record_checked_candidate(
                 root_observation,
@@ -364,20 +380,6 @@ class StateWatcher:
                 "io_error" if isinstance(exc, OSError) else "state_rejected",
             )
         self._state = self._remember(candidate)
-        loaded_root_source = load_layer_source(
-            self.layout,
-            "root",
-            candidate.root_revision,
-        )
-        loaded_home_source = load_layer_source(
-            self.layout,
-            "home",
-            candidate.home_revision,
-        )
-        if not isinstance(loaded_root_source, SourceManifest) or not isinstance(
-            loaded_home_source, SourceManifest
-        ):
-            raise ValueError("prepared State layers require portable source manifests")
         # Retain the observations that led to preparation. A source change after
         # preparation returned must remain visible to the next watcher check.
         self._checked_root_observation = root_observation
@@ -582,7 +584,7 @@ def _current_layer_revisions(
     def load(scope: LayerScope) -> str | None:
         try:
             return load_current_revision(layout, scope)
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return None
 
     return load("root"), load("home")
