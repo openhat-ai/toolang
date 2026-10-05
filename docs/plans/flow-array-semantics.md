@@ -3,7 +3,7 @@
 Status: Proposed; definition only. The human confirmed an operator that collects
 one complete child output per array item, and distinguished it from control
 constructs such as repeat, par, and a possible seq. Use `spread` for this
-operator and `fut` for the related asynchronous-binding direction discussed
+operator and `async` for the related asynchronous-binding direction discussed
 below. Approval of these spellings does not approve the complete definition.
 
 ## Goal and Success Criteria
@@ -246,16 +246,17 @@ This definition PR changes no behavior and needs no release entry.
 
 ## Related Direction: Asynchronous Bindings
 
-Use `fut` as the short asynchronous-binding keyword paired with `let`.
-Its form is `fut [NAME =] VALUE_STMT`: naming the future is optional.
+Use `async VALUE_STMT` to start an operation without waiting or binding.
+Use `let NAME = async VALUE_STMT` to retain its future in a named local.
+Keep `let` as the binding form; do not introduce `fut` or `future` declarations.
 The following syntax records the design direction; root spawning, future
 values, asynchronous scheduling, and awaiting are outside this array-operator
 implementation scope and require a separate complete definition.
 
 ```too
-fut research_result = spawn research
-fut ideas_result = run brainstorm
-fut run review_risks
+let research_result = spawn research
+let ideas_result = async run brainstorm
+async run review_risks
 
 run prepare_outline
 
@@ -265,16 +266,17 @@ let ideas = await ideas_result
 run write_article
 ```
 
-- `fut result = run R` starts a child operation immediately and binds its future.
+- `let result = async run R` starts a child immediately and binds its future.
   `let result = run R` waits and binds the completed result.
-- `fut run R` starts immediately, discards the future, and continues without
+- Bare `async run R` starts immediately, discards the future, and continues without
   waiting or requiring a later await. It preserves `_` and existing named locals.
+  This overrides the ordinary bare value-statement default binding to `_`.
   By comparison, `let run R` waits and discards the completed result.
   Discarding a future does not cancel its work, erase execution records, or
-  turn a child into an independent root; `fut spawn R` starts a root and
-  discards its handle.
+  turn a child into an independent root.
 - `spawn R` starts an independent root and returns its handle immediately.
-  `fut result = spawn R` binds that completion handle without nesting futures.
+  `let result = spawn R` binds that handle; `let spawn R` discards it without
+  waiting. Spawn already starts asynchronously and does not require `async`.
 - Capture inputs at launch. Waiting is explicit: `let a = await future_handle`
   waits and binds the completed output to `a`. The source local retains its
   future when the destination is a different name.
@@ -284,7 +286,7 @@ run write_article
   `_`. Replace the destination only after successful completion.
   Background completion alone does not replace a future local.
   Reusing a retained future waits for the same operation without executing again.
-- The same binding syntax may extend to whole produce/map/spread operations
+- The same async modifier may extend to whole produce/map/spread operations
   while preserving their result and internal scheduling contracts.
 - Model the future value as `Future<T>`, where T is the operation's complete
   output type. This is semantic notation, not a decision to add general authored
@@ -300,9 +302,8 @@ run write_article
 
 The separate definition must resolve unawaited child lifetimes, cancellation
 and failure propagation, durable handles and retry, root context and limits,
-awaiting an already-resolved local, and whether to accept the long `future`
-spelling as an alias. This section does not add those features to this plan's
-acceptance tests.
+and awaiting an already-resolved local. This section does not add those features
+to this plan's acceptance tests.
 
 ## Implementation Touchpoints
 
