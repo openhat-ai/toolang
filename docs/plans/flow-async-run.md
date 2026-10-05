@@ -62,27 +62,28 @@ Text as the inline default and no using. No alternative declaration prefix or
 async placement. Await takes exactly one local identifier, including `_`, not
 an arbitrary expression, array of handles, or implicit await on argument use.
 
-The operand must be a native `Run<T>`, including a completed or spawned run.
+The operand must be a runtime handle, written `Run<T>` in this design, including
+a handle for a completed or spawned run.
 Retained handles can be awaited repeatedly without relaunching work. Replacing a
 handle with `T` makes that local non-awaitable. Background completion never
 changes bindings; status reads do not consume handles or deliver their results.
 
 ## Run Handle Contract
 
-Use #687's shared Run value and public struct view: `id: Text`, `thread: Text`,
+Use #687's runtime handle and public struct view: `id: Text`, `thread: Text`,
 `status: Text`. Identity/thread are stable; execution projects current persisted
 status once per referenced run per statement evaluation. Field projections and
 explicit view rendering are ordinary data, not implicit awaits. General handle
 parameters and containers remain out of scope. Returning the handle confirms
 admission; it does not imply completion.
 
-Public locals have type Run with their complete result contract tracked
-separately; `Run<T>` is explanatory/static notation, not authored generics.
-Reuse the shared `Run!` codec for id, thread, and result_type. Do not persist
-mutable status, output caches, tasks, or executors in handles. Reserve Run in new
-source and preserve historical authored structs through their existing encoding.
-Execution validates identity, thread, and accepted output contract; Json objects
-or rendered Run views do not acquire handle semantics.
+`Run<T>` and `Return<R>` are design notation, not language types or authored
+generics. Track handle locals and their complete result contracts separately
+from authored value types. Use the shared execution-owned record variant for
+identity, thread, and result contract; do not persist status, output caches,
+tasks, or executors. Add no Run built-in, reserved type name, or struct codec.
+Execution validates identity, thread, and accepted output contract. Json objects,
+authored structs named Run, and rendered views do not acquire handle semantics.
 
 For `Run<Text[]>`, await returns `Text[]`, not one element. A spawned root and
 an async child have the same field/await interface; their original ownership
@@ -117,7 +118,7 @@ rules determine cancellation and accounting. Await never transfers ownership.
 
 - Add RunStmt's asynchronous flag, default false for old records, and AwaitStmt
   with an operand local and ordinary result binding (bare default `_`).
-- Async launch is a run-kind Step with native Run output, including when unbound.
+- Async launch is a run-kind Step with runtime handle output, including when unbound.
   Its success means acceptance; the child retains its parent Step and outcome.
   Commit acceptance and handle output atomically before delivery.
 - Await is a value-kind Step recording the target and successful output reference
@@ -132,8 +133,8 @@ rules determine cancellation and accounting. Await never transfers ownership.
 
 ## Implementation Touchpoints
 
-- Upstream grammar and `src/toolang/lang/{ast,lower,types,contracts,flow_validation,
-  format,description}.py`: async modifier, AwaitStmt, Run/result inference,
+- Upstream grammar and `src/toolang/lang/{ast,lower,contracts,flow_validation,
+  format,description}.py`: async modifier, AwaitStmt, handle/result contract tracking,
   binding transitions, field access, and diagnostics.
 - `src/toolang/execution/executor/{executor,common,content,frame}.py`,
   `stmts/{run,await}.py`, `steps/run.py`, `runs/flow.py`, and `iteration.py`:
@@ -164,9 +165,10 @@ through the repository runnable. This definition changes no product behavior.
    or cancel an independently owned target.
 5. Distinguish admission failure from target failure/cancellation, shared limits,
    and event ordering. No failed await writes a destination.
-6. Round-trip Run values; fault-inject admission/delivery. Retry preserves targets,
+6. Round-trip runtime handles; fault-inject admission/delivery. Retry preserves targets,
    bindings, and effects. Cover terminal, missing, incompatible, ownerless, and
-   repeated handles and historical structs named Run.
+   repeated handles. Run remains an available authored struct name, with no handle
+   semantics; existing struct records retain their encoding.
 7. Validate documentation/examples/links. Implementation runs all default checks
    with offline deterministic concurrency tests.
 
