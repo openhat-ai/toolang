@@ -2,9 +2,10 @@
 
 Status: Proposed; definition only. The human confirmed an operator that collects
 one complete child output per array item, and distinguished it from control
-constructs such as repeat, par, and a possible seq. Use `spread` for this
-operator and `async` for the related asynchronous-binding direction discussed
-below. Approval of these spellings does not approve the complete definition.
+constructs such as repeat, par, and a possible seq. Use `await:` without an `all`
+qualifier for this operator and `async` for the related asynchronous-binding
+direction discussed below. Approval of these spellings does not approve the
+complete definition.
 
 ## Goal and Success Criteria
 
@@ -39,7 +40,7 @@ Their unrelated decisions remain unchanged.
   Settle rejects empty input both with and without `from`.
 - Flow statements execute sequentially. Named result bindings preserve `_`;
   named runnable parameters bind from same-named locals.
-- The installed grammar is 0.3.4: `spread:` is rejected, while unrecognized
+- The installed grammar is 0.3.4: `await:` is rejected, while unrecognized
   produce/generate/reduce-like text can be lowered as an implicit run. New
   keywords require a grammar release, not executor-only dispatch changes.
 
@@ -56,7 +57,7 @@ transformation probes; no model or live-provider calls were used.
 | `keep` / `drop` | Select outer elements by position or Boolean predicate | Selected elements in original order |
 | `sort` | One Number score per outer element | A stable ordering of those elements |
 | `reduce` | Sequential reduction of outer elements | The reducer's declared output |
-| `spread` | Independent child statements read one entry snapshot | One outer array, one item per child in source order |
+| `await:` | Independent child statements read one entry snapshot | One outer array, one item per child in source order |
 
 1. Run accepts scalar or array inputs and outputs according to the existing
    runnable contract. It neither iterates nor wraps, unwraps, or flattens values.
@@ -100,23 +101,23 @@ flow summarize(_: Text) -> Text:
 For `[["a", "b"], ["c"]]`, map invokes its child twice with `["a", "b"]`
 and `["c"]`; `keep first 1` returns `[["a", "b"]]`.
 
-## Multi-child Collection Operator
+## Multi-child Await Block
 
 Flow and repeat bodies remain sequential by default. Existing repeat and possible
 par/seq control constructs describe execution organization; value operators
-such as produce, map, reduce, and the proposed spread describe value production
-or transformation. A statement block can supply an operator's children without
-making that operator a control construct. New par/seq control syntax is outside
-this definition.
+such as produce, map, reduce, and the proposed await block describe value
+production or transformation. A statement block can supply an operator's children
+without making that operator a control construct. New par/seq control syntax is
+outside this definition.
 
 A named Flow is already a runnable, so `produce N using pipeline` and
 `map using pipeline` repeat a multi-step sequence without extending `using` to
-accept multiple targets. Use `spread` for independent children with different
+accept multiple targets. Use `await:` for independent children with different
 runnables, counts, and output types:
 
 ```too
 flow review(_: Text) -> Text:
-  spread:
+  await:
     run review_accuracy
     run review_risks
   run summarize_reviews
@@ -124,21 +125,27 @@ flow review(_: Text) -> Text:
 
 Both reviewers consume the original `Text` and return `Text`.
 `summarize_reviews(_: Text[]) -> Text` receives their results as one array.
-Use `let reviews = spread:` when the next runnable needs both the original `_`
-and a named `reviews: Text[]` parameter. Spread does not export child locals or
-assemble named fields into an object.
+Use `let reviews = await:` when the next runnable needs both the original `_`
+and a named `reviews: Text[]` parameter. The await block does not export child
+locals or assemble named fields into an object.
 
-- Syntax is `spread [in P lanes]: STMTS`, with at least one child. Each immediate
+The block starts its children independently and waits for all of them; no
+explicit `async` is needed on each child. Each child contributes its completed
+output, not a future handle. By comparison, `await handle` waits for previously
+started work and updates that local, as described in the related direction below.
+Only the block form is in this array-operator implementation scope.
+
+- Syntax is `await [in P lanes]: STMTS`, with at least one child. Each immediate
   statement contributes exactly one output. First-version children are unbound
-  value statements, including produce/map/reduce and nested spread. Reject direct
-  `let`, `repeat`, and `exec` children: named/discarded child bindings would hide
+  value statements, including produce/map/reduce and nested await blocks. Reject
+  direct `let`, `repeat`, and `exec` children: named/discarded child bindings would hide
   the one-item-per-child contract, and control statements have no return value.
   Put multi-step sequences or repeats in helper Flows and call them with `run`.
   Exec inside a called child Flow still affects only that child Run.
 - All children read the same entry locals and iteration history, including `_`,
   using isolated local tables. A sibling's result never becomes another child's
-  input, even with one lane. Collect itself does not require `_`; each child keeps
-  its own input contract. Preflight every known input and operation contract
+  input, even with one lane. The await block does not require `_`; each child
+  keeps its own input contract. Preflight every known input and operation contract
   against that snapshot before children start; unknown remote contracts retain
   their existing checks at the child boundary.
 - Collect one complete output per child in source order, never completion order.
@@ -150,14 +157,15 @@ assemble named fields into an object.
   each child's typed value and provenance. An unknown child output also selects
   `Json[]`. Do not infer a different result type from observed values or add
   tuple/union types. The outer count always equals the number of children.
-- Spread is a value statement: bare spread writes `_`; `let results = spread:`
-  writes only `results`; `let spread:` discards the whole array. Bind only after
-  all children succeed. No child variable is exported to the enclosing Flow.
+- An await block is a value statement: bare `await:` writes `_`;
+  `let results = await:` writes only `results`; `let await:` discards the whole
+  array. Bind only after all children succeed. No child variable is exported to
+  the enclosing Flow.
 - Limit active direct children with P, or inherit the Flow's `lanes`. Nested
-  spread/produce/map operations retain their own lane limits; this is not a global
+  await/produce/map operations retain their own lane limits; this is not a global
   leaf-call limit. Start ready children in source order, but do not promise
   completion order. Use separate scheduling scopes to avoid nested-lane deadlock.
-- A failure cancels unfinished siblings and awaits their cleanup; fail the spread
+- A failure cancels unfinished siblings and awaits their cleanup; fail the await
   Step without binding a partial array. Parent cancellation cancels the whole
   block. Completed child records remain inspectable. Failed result collection
   does not roll back file or tool side effects.
@@ -166,7 +174,7 @@ assemble named fields into an object.
   it does not introduce an authored par control construct. Its output is an array
   of typed refs to child outputs using existing array codecs; child Steps retain
   their outputs and local bindings.
-  Restore a committed spread prefix from its whole-array output and outer binding,
+  Restore a committed await prefix from its whole-array output and outer binding,
   never by applying child bindings to enclosing locals. Apply the same rule
   inside repeat. Failed blocks retain the existing retry policy; add no
   partial-success retry mode.
@@ -179,7 +187,8 @@ assemble named fields into an object.
   an outer array element.
 - Represent missing locals and statement-without-output separately from valid
   values. Use absence or a private missing-value sentinel, never JSON null.
-  Repeat remains a control statement with no result; spread produces an array.
+  Repeat remains a control statement with no result; an await block produces an
+  array.
 - Static checks accept known array types and reject known non-arrays or missing
   input. Unknown types and open `Json` values defer array checks to execution.
   Repeat joins widen differing type/length facts without a shape lattice.
@@ -200,10 +209,13 @@ behavior; reduce retains settle's clauses and reducer contract.
 
 Remove executable scatter/gather/storm/settle forms with migration diagnostics,
 without deprecated execution aliases. Adopt a published Tree-sitter release
-that defines produce, reduce, and spread statement nodes. Preserve recognizable
-legacy CST forms only for precise rejection, never as implicit prompt text.
+that defines produce, reduce, and await-block statement nodes. Preserve
+recognizable legacy CST forms only for precise rejection, never as implicit
+prompt text.
 Source checking, formatting, help, highlighting, and execution must agree,
-including nested and bound forms. Literal prose with a newly reserved statement
+including nested and bound forms. Distinguish the block from the future-handle
+form; until that form is implemented, reject it as unsupported rather than
+lowering it as prompt text. Literal prose with a newly reserved statement
 header must use explicit `run:`. Pin the released grammar and lock its artifacts
 when available; upstream grammar publication is an implementation prerequisite.
 
@@ -250,8 +262,8 @@ Use `async VALUE_STMT` to start an operation without waiting or binding.
 Use `let NAME = async VALUE_STMT` to retain its future in a named local.
 Keep `let` as the binding form; do not introduce `fut` or `future` declarations.
 The following syntax records the design direction; root spawning, future
-values, asynchronous scheduling, and awaiting are outside this array-operator
-implementation scope and require a separate complete definition.
+values, asynchronous launch, and awaiting existing handles are outside this
+array-operator implementation scope and require a separate complete definition.
 
 ```too
 let research_result = spawn research
@@ -286,8 +298,8 @@ run write_article
   `_`. Replace the destination only after successful completion.
   Background completion alone does not replace a future local.
   Reusing a retained future waits for the same operation without executing again.
-- The same async modifier may extend to whole produce/map/spread operations
-  while preserving their result and internal scheduling contracts.
+- The same async modifier may extend to whole produce/map operations and await
+  blocks while preserving their result and internal scheduling contracts.
 - Model the future value as `Future<T>`, where T is the operation's complete
   output type. This is semantic notation, not a decision to add general authored
   generic syntax; infer T from the operation contract. `Future<Text[]>` is one
@@ -308,19 +320,21 @@ to this plan's acceptance tests.
 ## Implementation Touchpoints
 
 - `src/toolang/lang/{ast,lower,contracts,flow_validation,format,description}.py`:
-  renamed and new statements, spread output contracts, legacy decoding, type checks.
+  renamed and new statements, await-block output contracts, legacy decoding,
+  type checks.
 - The upstream grammar's statement nodes/queries/corpus, followed by this
   repository's `pyproject.toml`, `uv.lock`, CST/formatter/highlighter integration:
   published syntax support; no alternate handwritten parser.
 - `src/toolang/execution/executor/{common,executor,content,iteration}.py`,
   `runs/{flow,agic}.py`, and `stmts/`: complete-value locals, collection selection,
   call/result binding, content handling, and removal of scatter/gather handlers.
-  Rename storm/settle owners to produce/reduce; add `stmts/spread.py` using the
+  Rename storm/settle owners to produce/reduce; add `stmts/await_block.py` using the
   existing internal par Step boundary and child-local execution, collecting
   outputs in source order.
 - `src/toolang/execution/{types,records,schemas,store}.py`: Local codecs,
-  reference projections, historical records, resolved outputs, and SpreadStmt as
-  an existing-kind par Step. Restore only spread's outer binding during Flow retry.
+  reference projections, historical records, resolved outputs, and AwaitBlockStmt
+  as an existing-kind par Step. Restore only the await block's outer binding
+  during Flow retry.
 - `src/toolang/state/cache.py` and execution snapshot entry points: prevent stale
   validated programs from bypassing the new source rules.
 - `src/toolang/cli/common/execution_progress/formatting.py`: summaries without
@@ -357,19 +371,22 @@ to this plan's acceptance tests.
 9. Produce and reduce match the former storm and settle contracts, including
    inline defaults, lane clauses, reducer seeds/history, and call counts.
    New grammar nodes and formatter round trips must not become implicit runs.
-10. Spread returns one array item per child in source order, including child empty
-    arrays and nulls. Test homogeneous `Text[]`/`Text[][]`, heterogeneous
+   Distinguish `await:` from the reserved future-handle form; reject the latter
+   until it has an implementation, rather than treating it as an implicit run.
+10. An await block returns one array item per child in source order, including
+    child empty arrays and nulls. Test homogeneous `Text[]`/`Text[][]`, heterogeneous
     `Json[]`, structs/Parts, unknown output contracts, and preserved refs. Exercise
-    bare/named/discarded spread, nested spread, spread inside repeat, multi-step
-    child Flows, and direct consumption of the resulting array by map/reduce/run.
-11. Reject empty spread, child `let` bindings, unsupported direct control children,
-    and statically known missing inputs before calls; allow input-free children
+    bare/named/discarded await blocks, nested await blocks, blocks inside repeat,
+    multi-step child Flows, and direct consumption of the resulting array by
+    map/reduce/run.
+11. Reject empty await blocks, child `let` bindings, unsupported direct control
+    children, and statically known missing inputs before calls; allow input-free children
     without `_`. Prove entry snapshot reads with one lane and out-of-order
     completion; prove overlap and lane limits with deterministic gates, including
     nested-operation limits.
 12. A failed/canceled child publishes no partial array, cancels and
     drains siblings, preserves child records, and prevents downstream execution.
-    Restoring a successful spread prefix restores exactly its outer binding and
+    Restoring a successful await prefix restores exactly its outer binding and
     refs without replaying child bindings; failed prefixes leak no partial result.
 13. Migrate and check tracked examples; validate current documentation links and
     syntax. Run all default repository checks for the implementation.
@@ -379,14 +396,14 @@ to this plan's acceptance tests.
 This is a breaking language and Local-protocol change. Main risks are lost array
 levels or provenance during the type-model conversion, implicit inline output
 defaults during migration, confusing content arrays with absent output, and
-child results escaping before the whole spread array succeeds. Nested lane limits
-can multiply concurrent calls and must be documented and tested.
+child results escaping before the whole await-block array succeeds. Nested lane
+limits can multiply concurrent calls and must be documented and tested.
 The acceptance cases above cover those boundaries.
 
 Out of scope: authored `par`/`seq` control constructs, implicit result objects or
-destructuring, inline multi-statement spread branches, flattening, a new reduce
-empty policy, automatic
-source rewriting, global concurrency controls, a legacy execution engine, and
+destructuring, inline multi-statement await-block branches, flattening, a new
+reduce empty policy, automatic source rewriting, global concurrency controls,
+a legacy execution engine, and
 unrelated filesystem or presentation uses of the word shape/dim.
 
 The proposed compatibility choice is direct source removal with historical
