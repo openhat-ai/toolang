@@ -58,31 +58,28 @@ Require a runnable reference; default omitted input to `{}`. Named targets may
 be flow or agic. Do not infer arguments from conversation history or accept
 additional fields for thread, identity, source code, or execution configuration.
 
-Receipts describe runtime admission, independently of flow statement values.
-The existing run tool and new spawn tool use these Toolang struct contracts:
+The spawn tool returns this fixed admission schema, expressed as a Toolang struct:
 
 ```too
-struct RunReceipt:
-  run_id: Text
-  controls: Text[]
-
 struct SpawnReceipt:
   run_id: Text
   thread_id: Text
   controls: Text[]
 ```
 
-These name fixed protocol schemas, not new built-in types for scripts. Validate
-their fields using ordinary struct rules. Text fields hold canonical references;
-RunReceipt.controls contains the child entry run control; SpawnReceipt.controls
-contains the thread create control followed by the root entry run control (all
-index 0). Receipts acknowledge committed admission, not target success.
+SpawnReceipt names a protocol schema, not a new built-in type for scripts.
+Validate its fields using ordinary struct rules. Text fields hold canonical
+references; controls contains the thread create control followed by the root
+entry run control (both index 0). It confirms admission, not target success.
 
-Agic `_toolang/run` returns serialized RunReceipt fields in ToolResultPart.output,
-then waits and supplies the result message. `_toolang/spawn` returns serialized
-SpawnReceipt fields and continues immediately. Flow `run`, `async run`, and
-`spawn` expose no receipt as their statement value; their admissions still have
-durable run/control records. Receipt is not a concept introduced by async.
+Agic `_toolang/spawn` returns these fields in ToolResultPart.output and continues.
+The visible run_id lets agic identify newly started work in its summary and use
+existing inspection while that work is still running. Preserve the same IDs in
+stored replies and reconstructed model history.
+
+Keep `_toolang/run`'s existing `{run_id, controls}` reply and completion message
+unchanged; this feature needs no named RunReceipt or shared receipt type.
+Flow `run`, `async run`, and `spawn` expose values below, not receipts.
 
 Existing inspection supplies input, runnable, Steps, error, usage, and controls.
 `history/read_output` supplies a nonblocking status/output snapshot, possibly
@@ -93,7 +90,7 @@ create no thread.
 
 ### Flow Values and Binding
 
-For a runnable R whose complete output type is T, use one shared type relation:
+Let `T = Return<R>`, the complete output type of target runnable R:
 
 | Flow statement | Value type | Available when | Default binding |
 | --- | --- | --- | --- |
@@ -120,7 +117,7 @@ the other reuses it. Spawn implementation creates/restores futures without await
 
 Future references the eventual business result; receipt records admission
 effects. Neither contains the result or grants authority. Await accepts Future,
-never RunReceipt/SpawnReceipt, and does not launch work. If R returns `Text[]`,
+never SpawnReceipt, and does not launch work. If R returns `Text[]`,
 its future is `Future<Text[]>` and await returns `Text[]`; an await block of such
 children returns `Text[][]`. Follow #686's ordered, non-flattening collection
 rules. No implicit awaiting, tuple/union types, or authored generics are added.
@@ -260,7 +257,8 @@ changes no dependencies, product code, or changelog.
    references, codec round trips, and rejection of missing/extra/wrongly typed
    fields. Round-trip futures with their complete result contracts; preserve
    historical records and reject ordinary data misuse. Preserve batches and
-   child receipts/waits; inject no spawn completion online or on replay.
+   child receipts/waits; inject no spawn completion online or on replay. Verify
+   the exact spawned run_id is visible in live and reconstructed tool replies.
 4. Verify thread/root IDs, null parent, control/peer provenance, empty history,
    copied context/limits, fresh accounting, and no authority widening. Cover
    nested callers, iteration captures, and later source changes.
