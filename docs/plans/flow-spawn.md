@@ -2,7 +2,8 @@
 
 Status: Proposed; feature definition only. The human requested separate grammar
 and runtime definitions, launch support in both Flow and Agic, and deferred
-async/await support. The complete contract below still requires human approval.
+async/await support. Bare spawn preserves locals; retaining its handle requires
+a named let, as selected by the human. The complete contract still needs approval.
 
 ## Goal and Scope
 
@@ -53,7 +54,7 @@ Flow consumes the grammar's named and inline forms:
 
 ```too
 let job = spawn investigate
-let spawn record_audit
+spawn record_audit
 spawn -> Text: Research {{_}} and save the findings.
 ```
 
@@ -109,8 +110,9 @@ neither a root nor a success receipt when validation fails.
 
 ## Receipt, Binding, and Available Information
 
-Both surfaces return the same spawn receipt, extending the child receipt's
-run_id/controls convention with the newly allocated thread identity:
+Both surfaces produce the same durable spawn receipt, extending the child
+receipt's run_id/controls convention with the newly allocated thread identity.
+Flow exposes it to a local only through a named let; Agic receives its tool reply:
 
 ```json
 {"run_id": "<RunRef>", "thread_id": "<ThreadRef>", "controls": ["<thread CreateControlRef>", "<entry RunControlRef>"]}
@@ -127,17 +129,30 @@ grant authority. Control references are provenance, not caller control adoption.
 | Surface | Immediate result | Subsequent behavior |
 | --- | --- | --- |
 | Flow `run R` | Complete child output after completion | Bind by normal run rules |
-| Flow `spawn R` | Json receipt in `_` | Continue without waiting |
+| Flow `spawn R` | No local binding | Preserve every local; persist receipt |
 | Flow `let job = spawn R` | Json receipt in job only | Preserve `_` |
 | Flow `let spawn R` | No local binding | Preserve every local; persist receipt |
 | Agic `_toolang/run` | Receipt in ToolResultPart.output | Existing wait and run-result message |
 | Agic `_toolang/spawn` | Spawn receipt in ToolResultPart.output | Continue; no wait or completion injection |
 
-Flow statement result inference is Json regardless of the target's output type.
-A Flow returning this receipt must satisfy its ordinary output contract, for
-example `-> Json`; `spawn -> Text:` still yields Json to the caller. Failure
-before admission leaves existing locals unchanged. Dropping/overwriting a receipt
-does not cancel its root. The launcher Step's success never means root success.
+Bare spawn is the standard form for launching without retaining a handle.
+Keep `let spawn R` as an equivalent explicit discard because nameless let already
+exists; format either unbound form canonically as `spawn R`. Lower both with
+SpawnStmt.binding=None, never the ordinary synchronous run default `_`.
+
+Handle-producing launches require an explicit named let to retain their value;
+this matches the proposed `async run` rule in #685. Without it, Flow has no local
+handle to await or directly use later, including no hidden handle in `_`.
+Durable receipts/results remain inspectable through existing history tooling.
+This binding rule does not introduce a Future type or change the Json receipt
+representation in this PR; later async/await owns handle typing and waiting.
+
+A retained handle has type Json regardless of the target's eventual output type.
+For example, `let job = spawn -> Text: BODY` binds a Json receipt to job. An
+unbound spawn, including a final statement, leaves `_` and the Flow's output
+unchanged; missing or incompatible Flow output follows ordinary validation.
+Admission failure preserves existing locals. Dropping/overwriting a receipt does
+not cancel its root. The launcher Step's success never means root success.
 
 | Information | Access and reason |
 | --- | --- |
@@ -255,9 +270,10 @@ or Agic Tool Step. Validate that origin in the same agent store; it is deliberat
 in a different thread. Keep Run.parent null. Add no spawn control or synthetic
 caller control. Inspection must show causation without execution-child ownership.
 
-Flow uses a run-kind Step with SpawnStmt given, a Json receipt output, and its
-actual default/named/discard binding. Agic uses the ordinary model Tool Step
-with its original ToolCall and a ToolResultPart containing the identical receipt.
+Flow uses a run-kind Step with SpawnStmt given, a Json receipt output, and a named
+binding or binding=None. Bare and nameless-let spawn still persist the receipt;
+restoration must never bind those outputs to `_`. Agic uses the ordinary model
+Tool Step with its original ToolCall and a ToolResultPart containing the receipt.
 Never set the Agic scheduled-child slot or feed spawn receipts into the child
 completion matcher, either online or during history reconstruction.
 
@@ -294,7 +310,8 @@ policy for changed encodings; historical records remain inspectable.
 ## Implementation Touchpoints
 
 - `src/toolang/lang/{ast,lower,contracts,flow_validation,format,description}.py`:
-  consume the published spawn CST, infer Json, bind/format SpawnStmt, invalidate
+  consume the published spawn CST, infer Json for retained handles, default
+  SpawnStmt.binding to None, canonically format unbound spawn, invalidate
   incompatible prepared caches, and validate target inputs/output annotations.
 - `src/toolang/execution/executor/{executor,common,frame,tool_runtime}.py` and
   `stmts/spawn.py`: shared prepared-root admission, context ceilings, independent
@@ -313,8 +330,9 @@ policy for changed encodings; historical records remain inspectable.
 
 ## Acceptance Tests
 
-1. Parse/check/format named and inline spawn with default/named/discard binding;
-   verify Json inference and independent target output validation. Reject malformed
+1. Parse/check/format named and inline spawn with bare/named-let/nameless-let forms;
+   verify canonical bare formatting for both unbound forms, Json inference for
+   named locals, and independent target output validation. Reject malformed
    syntax and invalid arguments before root admission. Use the upstream corpus
    contract for keyword/let boundaries; test prepared-cache invalidation.
 2. Match Flow child input behavior for declared `_`, named/optional parameters,
@@ -322,7 +340,10 @@ policy for changed encodings; historical records remain inspectable.
    diagnostics, hands scopes/requested_only, module visibility, State publication
    checks, and active-ancestry rejection. Reject caller-supplied authority fields.
 3. Deterministic gates prove both surfaces return the exact same three-field
-   receipt before root completion. Verify all Flow bindings, tool batch behavior,
+   receipt before root completion. Verify bare/nameless-let spawn preserve `_`
+   and all named locals even as the last statement or when the target finishes
+   immediately; named let changes only its destination. Check the same behavior
+   after replay/retry, persisted receipts with binding=None, tool batch behavior,
    no scheduled-child wait, and no injected result online or in recovered history.
    Existing child run receipts, waits, and completion messages remain unchanged.
 4. Check distinct empty thread/root identities, null parent, peer/causal origins,
