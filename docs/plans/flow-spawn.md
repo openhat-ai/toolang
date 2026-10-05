@@ -335,9 +335,8 @@ policy for changed encodings; historical records remain inspectable.
    named locals, and independent target output validation. Reject malformed
    syntax and invalid arguments before root admission. In particular,
    `let text = spawn a process` must report malformed spawn, never become text or
-   launch a root. Preserve literal text in an indented let block or
-   `let text = Spawn a process`, including through formatting. Use the upstream
-   corpus contract for keyword/let boundaries; test prepared-cache invalidation.
+   launch a root. Use the upstream corpus contract for keyword/let boundaries;
+   test prepared-cache invalidation.
 2. Match Flow child input behavior for declared `_`, named/optional parameters,
    structs, arrays, Parts, and inline captures. Match Agic child input decoding,
    diagnostics, hands scopes/requested_only, module visibility, State publication
