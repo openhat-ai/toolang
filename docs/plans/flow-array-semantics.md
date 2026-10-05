@@ -15,6 +15,17 @@ locals behave identically; nested arrays stay nested. This group owns the value
 model and source migration, with no async launches, futures, await forms, or
 spawn implementation. Groups 2-4 have separate definitions and PRs.
 
+| Group | Definition PR | Implementation prerequisite |
+| --- | --- | --- |
+| 1. Calls, arrays, names, and using | [#684](https://github.com/openhat-ai/toolang/pull/684) | Matching published grammar |
+| 2. Async run and handle await | [#685](https://github.com/openhat-ai/toolang/pull/685) | Group 1 |
+| 3. Await blocks | [#686](https://github.com/openhat-ai/toolang/pull/686) | Groups 1 and 2 |
+| 4. Independent spawn | [#687](https://github.com/openhat-ai/toolang/pull/687) | Groups 1 and 2 |
+
+The four documentation PRs target main independently. Approval and the grammar
+release are required per implementation group; groups 3 and 4 do not depend on
+one another. Do not implement later groups as incidental work in an earlier PR.
+
 This supersedes the affected rules in [Flow Usability](flow-usability.md) and
 [Flat Call Input](flat-call-input.md); unrelated behavior remains unchanged.
 
