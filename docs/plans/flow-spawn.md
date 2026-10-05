@@ -15,7 +15,7 @@ published grammar and the [call/array simplification](flow-array-semantics.md).
 This runtime contract supersedes #48's provisional Json handle typing.
 [Async run/await](https://github.com/openhat-ai/toolang/pull/685) and
 [await blocks](https://github.com/openhat-ai/toolang/pull/686) remain separate work.
-The launch features share the Run value contract below; whichever lands first
+The launch features share the runtime handle contract below; whichever lands first
 supplies common support without depending on the other's execution behavior.
 Exclude completion messages, thread selectors, implicit forks, cross-agent
 dispatch, detached processes, restart/resume, and new CLI/API flags.
@@ -59,7 +59,10 @@ additional fields for thread, identity, source code, or execution configuration.
 
 ## Run Handle and Result Types
 
-Use one language-owned Run handle. Its public view has this Toolang struct shape:
+`Run<T>` and `Return<R>` are design notation for a runtime handle and its eventual
+result contract. They introduce no language type, annotation, generic syntax,
+constructor, or reserved type name. Describe the handle's public fields using
+Toolang struct notation; this is a schema illustration, not a built-in declaration:
 
 ```too
 struct Run:
@@ -71,8 +74,9 @@ struct Run:
 `id` and `thread` are immutable canonical RunRef/ThreadRef strings. `status` is a
 read-only snapshot of the referenced run's persisted lifecycle: pending, running,
 succeeded, failed, or canceled. It is not the launching Step's status.
-The result type is native handle metadata, not a public data field. Scripts need
-no struct declaration; the schema describes the runtime-supplied view.
+The result contract is internal runtime metadata, not a public data field.
+Scripts obtain handles from launch statements without declaring a struct.
+An authored struct named Run remains ordinary data and is not awaitable.
 
 Let `T = Return<R>`, the complete output type of target runnable R:
 
@@ -85,15 +89,14 @@ Let `T = Return<R>`, the complete output type of target runnable R:
 | flow | Later `await:` block | `T[]` for homogeneous children, otherwise `Json[]` | All children succeed | `_` by default |
 | agic | `_toolang/spawn` targeting R | Serialized Run view | Independent root is admitted | ToolResultPart.output |
 
-`Run<T>` is explanatory/static notation, not authored generic syntax. Await reads
-that run's result without launching work. For `Run<Text[]>`, await returns
+Await reads that run's result without launching work. For `Run<Text[]>`, await returns
 `Text[]`; an await block of such children returns `Text[][]`, without flattening.
 Run's meaning is independent of who owns its lifetime: async children remain
 parent-owned, while spawned roots remain executor-owned.
 
 Returning a Run handle confirms admission. Agic receives `{id, thread, status}`
-and can cite id or pass it as the run
-argument to history/read_output. The reply is a snapshot; it does not update
+and can cite id or pass it as the run argument to history/read_output.
+The reply is a snapshot; it does not update
 inside model history. Keep `_toolang/run`'s existing `{run_id, controls}` reply
 and completion message unchanged. Creation/entry controls remain persisted and
 inspectable by run ID; they need no separate field on the new handle.
@@ -220,16 +223,16 @@ pointing to the originating Step in the same agent store, even across threads;
 the root parent stays null. Separate parent from origin in shared admission
 helpers. Add no new ControlKind, synthetic caller control, or scheduler.
 
-Flow records a run-kind Step with SpawnStmt, native Run output, and its optional
+Flow records a run-kind Step with SpawnStmt, runtime handle output, and its optional
 named binding; agic records a normal Tool Step with the admission-time Run view.
 Do not split thread creation and root admission into separate commits.
 
-Use the shared stored form `{"?":"Run!","!":{"id":ID,"thread":THREAD,"result_type":T}}`.
-Store identity and result contract, not status, results, tasks, or executors.
-Execution resolves status/output and validates the thread and accepted contract.
-Reserve Run in new source; the tag preserves historical authored structs named
-Run under their existing encoding. Lookalike Json and rendered views are not
-native handles. General authored handle parameters/containers remain out of scope.
+Persist handles through an execution-owned record variant, distinct from ordinary
+data outputs. Store identity and result contract, not status, results, tasks, or
+executors. Execution resolves status/output and validates the thread and accepted
+contract. Restore handle locals with that metadata; do not add Run to the language
+value-type registry or struct codec. Lookalike Json, authored structs, and rendered
+views do not become handles. General handle parameters/containers remain out of scope.
 
 Use the source run/physical Step/admission occurrence as the stable request
 identity. Reprocessing restores the original handle and recorded agic reply;
@@ -250,7 +253,7 @@ Paths below are relative to `src/toolang/`.
 
 | Area | Likely files and changes |
 | --- | --- |
-| Language | `lang/{ast,lower,types,input,contracts,flow_validation,format,description}.py`: Run vocabulary, field/type inference, CST, diagnostics, prepared-cache compatibility |
+| Language | `lang/{ast,lower,contracts,flow_validation,format,description}.py`: spawn CST, handle/result contract tracking separate from authored value types, field validation, diagnostics, prepared-cache compatibility |
 | Execution | `execution/executor/{executor,common,content,frame,tool_runtime}.py`, new `execution/executor/stmts/spawn.py`: admission, Run views/projections, context, ownership, binding |
 | Runtime tools | `execution/tools/_toolang.py`, `base/protocols/tool.py`, `execution/runnables.py`, assembly guidance/result matching: registration, hands, handle-only continuation |
 | Persistence/hosts | `execution/{store,threads,records,events,types,schemas}.py`, inspection/history and host observers: Run codec/view, atomic admission, provenance, retention, event routing |
@@ -262,7 +265,8 @@ changes no dependencies, product code, or changelog.
 ## Acceptance Tests
 
 1. Cover the upstream grammar contract, all bindings, named/inline targets,
-   canonical formatting, `Run<T>` inference, and cache compatibility. Malformed
+   canonical formatting, handle/result contract tracking, and cache compatibility.
+   Run remains an available authored struct name, with no handle semantics. Malformed
    `let text = spawn a process` must error, never become text or launch work.
 2. Match run input validation, captures, State resolution, hands policies,
    visibility, and ancestry checks; reject authority/configuration arguments.
@@ -291,6 +295,6 @@ This definition requires implementation review, link checks, and `git diff --che
 Main risks: authority widening, duplicate admission, stale status interpreted as
 live ownership, accidental child completion delivery, and dangling references.
 Independent budgets can multiply work; shared files still permit write races.
-Approval covers Run values/views, hands authorization, new empty threads,
+Approval covers runtime handles/views, hands authorization, new empty threads,
 inherited authority without history, and executor ownership. Waiting remains
 in #685/#686 and consumes the same Run handle contract.
