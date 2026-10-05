@@ -1,4 +1,4 @@
-# Model Catalog and Runtime Integration
+# Models
 
 Toolang separates model knowledge, runtime readiness, and protocol execution.
 The catalog describes what exists; adapters describe how to call one protocol;
@@ -42,16 +42,7 @@ override, its object belongs in `override`. Provider order and
 model order are significant and are preserved. Root, agent-home, environment,
 and CLI-selected catalog files must use this format. Toolang rejects nested
 models.dev provider maps and combined/raw models.dev catalogs; an external
-program must convert them before use. For example:
-
-```bash
-curl -fsSL https://models.dev/catalog.json -o /tmp/models.dev.catalog.json
-jq '{providers: [.providers[] | del(.models)],
-     models: [.providers[] as $p | $p.models[]
-       | (if has("provider") then .override = .provider else . end)
-       | .provider = $p.id]}' \
-  /tmp/models.dev.catalog.json -c > catalog.json
-```
+program must convert them before use.
 
 Toolang selects the catalog file in this order:
 
@@ -72,27 +63,9 @@ context; it does not read an implicit `agents/default`. In a Docker guest, an
 external `--catalog` source is mounted read-only and
 `TOOLANG_MODEL_CATALOG` is rewritten to its guest path.
 
-Use `too alice models` to inspect a resident agent's model context. It layers
-the agent's provider/plugin configuration and dotenv values over root inputs,
-and prefers its home catalog according to the precedence above. The agent does
-not need to be running. `--catalog`, `--all`, `--human`, and `--json` work in
-both root and resident forms. Only models accept `--query/-q`:
-
-```bash
-too models
-too alice providers --all
-too alice models --all --query '*[tags has no_env]'
-too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
-```
-
-The target goes before `models` or `providers`; use `agent:<name>` when a name
-matches a command name. Both forms default to routable, allowed models.
-`--all` includes unready and allow-excluded records. Inspection queries run
-transiently over the selected records. `too models --json` emits an array of
-public model records; `too providers --json` emits an array of provider inspection records with
-`models` formatted as stored ready/total counts. Neither is the flat catalog input format.
-Availability reflects the invoking process's configuration and environment,
-not a running agent's session or sandbox.
+Model inspection resolves the invoking process's root or selected-agent setup,
+without requiring a running server. It does not observe an existing session's
+configuration or sandbox. See [CLI routing](cli.md) and [query projections](queries.md).
 
 The flat importer validates both arrays, unique provider/model identities,
 provider references, and known field types. It drops unknown additive fields,
@@ -180,18 +153,19 @@ progress. Fixed instructions and current execution input must still fit.
 
 Fields inherit independently: agent config, root config, built-in defaults.
 Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
-or `too alice run --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
+or `too serve alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `start` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. The [compaction design](plans/persist-batched-compaction-run.md)
-describes execution, batching, durable coverage, and history adoption.
+captured configuration. See [history recall and compaction](execution.md#history-recall-and-compaction) and the
+[compaction implementation](../src/toolang/execution/compaction.py) for coverage
+and history adoption.
 
 ## Catalog Plugins
 
 Catalog plugins use the `toolang.model_catalog` entry-point group and return an
 immutable provider/model snapshot. The built-in `models_dev` plugin reads the
-flat cata format for its selected static file; it does not convert raw models.dev
+flat catalog format for its selected static file; it does not convert raw models.dev
 provider maps or combined catalogs. External catalog plugins and the built-in
 Ollama and llama.cpp plugins may still return `CatalogSnapshot` or
 `ModelCatalogSnapshot` directly.
@@ -299,45 +273,10 @@ requests as coding-agent traffic. Explicit provider/model API routes still take
 precedence; other provider IDs are unchanged. The Messages adapter appends
 `/messages` to this base, producing `/coding-agent/v1/messages`.
 
-## Adapter Plugins
+## Model-call budgets
 
-Adapter plugins use the `toolang.model_adapter` entry-point group and implement:
-
-```python
-class ModelAdapter(Protocol):
-    name: str
-    description: str | None
-    default_api: str | None
-
-    async def invoke(self, target, request) -> ModelCallResult: ...
-    async def stream(self, target, request, *, on_event) -> ModelCallResult: ...
-```
-
-Built-in adapters are:
-
-- `chat_completions`;
-- `responses`;
-- `messages`;
-- `generate_content`.
-
-Adapter factory configuration uses the same plugin grammar:
-
-```toml
-[plugin.model_adapter.responses]
-```
-
-Only this merged table is passed to the `responses` factory. The built-in
-adapters currently define no authored plugin options; external adapters may
-define their own non-sensitive values and secret-reference fields.
-
-Adapters receive the effective connection, the resolved `Model`, and the
-`ModelCall`. They translate
-canonical messages and tools, normalize streaming, usage, cache, reasoning,
-and audio meters, and preserve protocol state needed by later calls. For
-example, the Generate Content adapter retains Gemini thought signatures in
-provider state and restores them on subsequent tool-call turns. The Messages
-adapter likewise preserves signed Anthropic thinking and redacted-thinking
-blocks and replays them before the associated tool use.
+Adapters implement the [plugin protocol](plugins.md#model-adapter). This section
+owns the host policy resolved before dispatch.
 
 Canonical model-call resource controls are `effort` and `max_output`:
 
@@ -368,7 +307,7 @@ An independent input limit does not imply an output limit. With neither context
 nor input capacity known, local input admission is unavailable. Unknown limits
 can still lead to provider rejection; a larger allowance reduces truncation risk
 but cannot guarantee a complete response. See the
-[output budget policy](plans/model-output-budget.md) for the full missing-data matrix.
+[budget tests](../tests/unit/execution/test_model_budget.py) for the missing-data matrix.
 
 Adapters can implement `ModelOutputOptions.output_allowance(options)` to normalize
 authored output aliases before admission. They send the resolved allowance unchanged. Known context/input limits reserve output and an estimation
@@ -425,59 +364,18 @@ never rewritten, so it can deliberately select a service running inside the
 guest. Configure routes through the owning catalog plugin; core
 `[models.providers.<name>]` overrides are not supported.
 
-## Inspection and Export
+## Inspection
 
-The public resources are:
+The default model/provider view contains routable, allowed resources. `--all`
+adds unready and excluded models and empty providers without granting access.
+Inspection skips default/compact-model validation so broken choices remain
+diagnosable. Both views consume one published Setup revision.
 
-```text
-too models [--all] [--query QUERY] [--json]
-too providers [--all] [--json]
-too catalogs
-too adapters
-```
-
-`too models` shows ready, allowed models. `too providers` lists providers with
-at least one such model. `--all` (or `-a`) includes unready and excluded entries,
-plus empty providers. It preserves scope and catalog precedence and grants no
-runtime access. Providers store no model collection; their setup-computed
-`ready_count` and `model_count` always cover all owned models.
-
-Model tags describe availability/blockers and `local`/`remote` origin. Provider
-inspection formats stored counts as `models: "3/5"` and exposes the default
-route as `adapter`, `api`, and `env`; providers have no tags. Models expose short
-inspection fields alongside the full canonical record. Human headers uppercase
-those keys, and `PRICE` formats per-million-token input/output prices together.
-See [Resource Queries](queries.md) for exact shapes and column order.
-
-Human summaries count displayed rows: `N models, M providers` (no provider count
-for zero or one model) or `N providers`. Empty human results print the zero count.
-JSON is an array without summaries; empty JSON is `[]`. `--human` explicitly
-selects the default table and cannot combine with `--json`.
-
-`too catalogs` and `too adapters` list locally installed catalog and
-adapter entry points with `NAME` and distribution `PACKAGE` columns. Plugin
-inventories have no `--json`, `--human`, or query options. They do not
-accept an agent name, construct setup, read catalog/configuration files, or
-invoke plugin factories. Installed entries remain visible even if they cannot
-be loaded. Runtime setup still owns the adapter instances used for execution.
-Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
-these commands read one published setup version.
-
-`too models --query ... --json` emits an array of public model records from the
-same setup version used for selection. `too providers --json` emits provider
-inspection records with a formatted `models` count string. Both follow the default/`--all` visibility;
-the full provider view includes empty providers. These inspection records are
-not the flat runtime catalog input format. Inspection skips configured default
-and compact-model validation so that `--all` can diagnose unready choices.
-
-Models preserve supported models.dev fields and add `ref`, `tags`, and safe
-`_toolang` route metadata. Queries use native TQ over these JSON records,
-including nested fields such as `limit.context` and `cost.input`. Use
-`*[tags has ready]` for availability and `*[modalities.input has image]` for
-array membership. See [Resource Queries](queries.md) for fields, tags, ordering,
-and policy semantics. Setup does not retain query indexes or field registries.
-Model-call parameters such as reasoning effort are structured request fields,
-not query syntax.
+Public model records include canonical catalog fields and safe route metadata.
+Provider projections contain their default route and stored ready/total model
+counts. These arrays are inspection output, not flat catalog input. Exact fields,
+tags, column order and query behavior belong to [Resource Queries](queries.md).
+Installed catalog/adapter inventories are separate [CLI operations](cli.md).
 
 ## Runtime Configuration
 
@@ -492,14 +390,10 @@ models = ["gateway/*"]
 model = "gateway/chat effort=high"
 ```
 
-`SetupWatcher` captures `allow.models` with each revision. With no allow query,
-model order is exactly catalog order. With allow queries, matching records are
-ordered by query branch and catalog position within each branch; unmatched
-records remain at the end in their original relative order. All records remain
-available for inspection, while `models_effective()` contains only records
-marked both routable and allowed. Request and runnable policy can only narrow
-that ready view. Query matching uses `tq-json` without precomputed model
-collection indexes.
+Setup captures `allow.models` with each revision. Request and runnable policy
+can only narrow its effective view; see [selection](#model-selection) and
+[run policy](execution.md#policy-resolution).
+
 `default.model` uses the same model body as invocation, Chat, and run-input
 settings: an optional concrete ref followed by typed assignments. The current
 assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,
@@ -521,8 +415,7 @@ there is no `[default.model]` table. Legacy `none` values in Setup default
 sources normalize to canonical `unset`.
 
 `[models.providers.*]`, `[models].default`, and `[models.aliases.*]` are rejected.
-Custom model identities and aliases will be supplied by a future custom catalog rather than
-by a parallel runtime route mechanism.
+Custom identities must come from a catalog; core configuration supplies no alias layer.
 
 ## Runtime Calls and Accounting
 
@@ -571,22 +464,21 @@ controls. Historical costs are read from recorded amounts, never current prices.
 Cost selection is `reported`, `estimated`, `zero`, or `unknown`. `zero` requires
 an explicitly free, complete estimate; a positive rate rounded to zero remains
 `estimated`. Partial estimates retain `complete: false`. Unknown costs are not
-free. Provider reports remain `reported`, including zero and non-USD amounts.
+free. Selection prefers a USD provider report (including zero), then a USD
+catalog estimate. A non-USD provider report remains recorded but is selected
+only when no USD estimate is available; run cost limits do not convert currencies.
 
 Call totals settle to six fractional USD digits, rounding half up after all
 components are calculated. Accumulation and budget comparison use integer
 micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
 Accounting uses numeric fields; rates and intermediate lines are not rounded
-before final settlement. The records change intentionally does not support old
-formats. See [the record contract](plans/model-records.md).
+before final settlement. See [execution records](records.md#persistence) for storage compatibility.
 
 ## Model Response Recovery
 
-Each Agic run allows at most two automatic attempts to recover response errors,
-shared across all its model turns, including turns used for typed-output repair.
-The separate output-contract repair does not replenish this allowance. Every
-attempt also counts toward the run's model-call limit. Output and reasoning
-budgets remain unchanged.
+The [Agic cycle](agic.md#output-and-recovery) owns automatic recovery attempts,
+output-contract repair and the shared model-call allowance. Model adapters
+classify provider responses for that runtime policy:
 
 - Built-in adapters reject truncated responses, streams that end before a
   terminal event, malformed or non-object tool arguments, and missing
@@ -619,3 +511,15 @@ Observer failures are propagated separately and never classified as provider
 transport errors. Native stream completion follows the
 [Messages event lifecycle](https://platform.claude.com/docs/en/build-with-claude/streaming)
 and [Generate Content finish reasons](https://ai.google.dev/api/generate-content#FinishReason).
+
+## Implementation and verification
+
+[Setup catalog resolution](../src/toolang/setup/catalog.py),
+[static parsing](../src/toolang/plugin/catalogs/models_dev/parsing.py),
+[local catalogs](../src/toolang/plugin/catalogs/), and
+[model budget policy](../src/toolang/plugin/models/budget.py) own these boundaries.
+[Catalog tests](../tests/unit/setup/test_catalog_declarations.py),
+[Setup watcher tests](../tests/unit/setup/test_setup_watcher.py),
+[budget tests](../tests/unit/execution/test_model_budget.py),
+[batched compaction tests](../tests/unit/execution/test_batched_compaction.py), and
+[accounting tests](../tests/unit/execution/test_model_accounting.py) verify them.

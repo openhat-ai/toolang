@@ -20,13 +20,9 @@ JSON instead of the default indented S-expression. The representation does not
 change between a terminal and a pipe. `--compact` implies compact JSON and can
 also accompany `--json`.
 
-**Migration:** `parse` previously emitted AST JSON by default. Add `--json` to
-existing scripts; `--compact` retains its previous behavior and AST JSON fields
-remain unchanged.
-
-The AST is the lowered, validated Toolang `Program`. It includes declarations,
+The [semantic AST](ast.md) is the lowered, validated Toolang `Program`. It includes declarations,
 flow statements, signatures, and module/runnable/parameter documentation.
-Validation checks source semantics without resolving installed capabilities or
+Validation checks source semantics without resolving installed caps or
 preparing execution. Invalid input produces an error and no partial AST.
 
 `--check` accepts multiple files/directories, recursively discovers `.too` files,
@@ -59,8 +55,7 @@ anchors; previous declarations or conflicting properties appear on separate
 Excerpts come from the original source, are escaped and bounded to 100 characters
 plus a truncation marker, and include block context for recovery errors. Error
 messages do not contain repair advice. Source order takes precedence over
-specificity. See the [diagnostic examples](source-diagnostics-examples.md) for
-verified outputs and differences between AST and raw CST inspection.
+specificity. See [diagnostic examples](#diagnostic-examples) for representative AST/CST differences.
 
 Library source exceptions expose their structured diagnostic separately from
 `str(error)`, which includes known locations but no source excerpt.
@@ -72,21 +67,17 @@ diagnostics on stderr and exit status 1. Semantic errors do not invalidate CST
 output.
 
 CST S-expressions show named nodes, fields, and error/missing markers. JSON also
-includes anonymous tokens and preserves all whitespace through the original
-`source` field. Its envelope contains `schema_version: 1`, the grammar name and
-installed version, `source`, `root`, and `diagnostics`. Nodes contain:
+includes anonymous tokens and the original `source`. The Toolang CLI envelope
+contains `schema_version: 1`, the installed grammar name/version, `source`, `root`
+and `diagnostics`; [cst.py](../src/toolang/lang/cst.py) owns that inspection codec.
+CST node names, fields and syntax rules belong to the
+[grammar repository](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md).
+They are not Toolang's semantic AST or runtime storage schema.
 
-- `type`, `field` (parent field name or null), and ordered `children`;
-- `is_named`, `is_extra`, `is_error`, `is_missing`, and `has_error`;
-- `start_byte`/`end_byte` and `start_point`/`end_point`.
-
-Ranges are half-open. Points are `{row, column}` with zero-based rows and UTF-8
-byte columns. AST `span.line` remains one-based. Diagnostics distinguish native
-errors, missing nodes, and grammar-specific invalid nodes. Node names track the
-grammar version; this inspection format is not a runtime storage schema.
-Diagnostic `message` values contain only the reason, without a location or
-excerpt. They use the same syntax explanations as AST parsing and formatting. All native diagnostic entries and overlapping ranges are retained;
-human explanations do not change the raw node types or parser recovery markers.
+CST positions use zero-based rows and UTF-8 byte columns; AST `span.line` is
+one-based. Diagnostics retain overlapping recovery ranges and reason-only
+messages, without a location or excerpt embedded in `message`. Human syntax
+explanations do not change the raw node types or parser recovery markers.
 
 AST S-expressions use `(kind field: value ...)`, `(span line: N)`, `(list ...)`,
 and `(map ("key" value) ...)`. Strings/scalars use JSON escaping, and empty
@@ -120,14 +111,37 @@ valid. Both reject directories, multiple files, and `--check`. Formatting runs
 before highlighting, so capture positions refer to the formatted source.
 Output modes emit only code/HTML, without status messages.
 
-`--tab-size N` sets structural indentation (positive integer, default 2).
-Formatting preserves omitted types, compacts adjacent imports of the same cap
-kind and resource directives of the same key, and keeps adjacent inline role
-messages compact. Different import kinds/directive keys are separated by one
-blank line. Source order, authored explicit types, literal text, and documentation
-bindings are preserved. See the
-[formatter conventions](./toolang-authoring-conventions.md#automatic-formatting)
-for the boundary between mechanical rules and authoring decisions.
+
+`too fmt` applies mechanical conventions consistently to file writes, `--check`,
+`--stdout`, and `--highlight`:
+
+- Use two spaces for structural indentation by default (`--tab-size` overrides).
+- Preserve omitted signature types: `agic rewrite(_, instruction):` remains
+  concise. Keep explicit types, return annotations, `()`, and optional `?`.
+- Keep adjacent `with` clauses of the same cap kind together, with one blank
+  line between different kinds. Preserve source order; do not alphabetize.
+- Group each contiguous resource-directive section by key, ordering key groups
+  by first appearance and preserving each key's operator/value order. Keep all
+  groups compact without blank lines. Never move directives across comments or
+  other syntax, so documentation ownership remains unchanged.
+- Keep adjacent inline `user:`/`assistant:`/`tool:` messages compact. Keep block
+  messages as blocks and preserve role names.
+- Separate prose and explicit flow statements with a structural blank line,
+  while preserving whitespace inside each literal text body.
+- Normalize comment/tag spacing using the installed grammar. Preserve documentation
+  attachment and deliberate detachment, exact parameter names, legacy marker
+  spellings, module boundaries, and the executable shebang.
+
+Comments and text ownership take precedence over compact grouping. Formatting
+must be idempotent and preserve semantic content and documentation bindings.
+The formatter works on syntax-valid source even when semantic validation fails.
+
+Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
+resource directives, hoisting `context`/`instruct`, and omitting a sole `user:`
+role remain authoring decisions. The formatter does not make those rewrites.
+Recommended source style belongs to the website
+[Authoring Conventions](https://toolang.ai/docs/toolang-conventions).
+
 
 ## Highlight
 
@@ -182,3 +196,27 @@ on stderr; invalid option combinations return 2. Existing in-place formatter
 messages and legacy option error statuses are retained. JSON/S-expressions
 end with LF and contain no generated ANSI; source output retains its own ending
 except for formatter normalization.
+
+## Diagnostic examples
+
+These inputs intentionally fail `too parse --check - --stdin-filepath case.too`
+with exit 1 and no stdout. Escaped newlines show exact source boundaries.
+
+| Input | Expected diagnostic |
+| --- | --- |
+| `flow work(value: Text:\n  pass\n` | `case.too:1:22: Expected ')' in parameter list` |
+| `struct X:\n  field:\n` | `case.too:2:9: Expected a field type` |
+| `flow work:\n  sort these items\n` | `case.too:2:3: Malformed flow statement 'sort'` |
+
+Actual stderr appends the bounded source excerpt. AST/check reports the first
+error; raw CST retains every native error, including overlapping recovery
+regions. Missing final newlines can change raw CST recovery; AST/fmt normalize
+the source boundary. `highlight` renders these invalid sources without syntax
+validation. Duplicate declarations/properties report the current location and a
+separate note pointing to the previous one.
+
+Implementation: [language tooling](../src/toolang/lang/),
+[CLI source commands](../src/toolang/cli/toolang/commands/program.py).
+Verification: [diagnostics](../tests/unit/lang/test_diagnostics.py),
+[format contracts](../tests/unit/lang/test_format_contract.py),
+[CLI diagnostic contract](../tests/integration/cli/test_diagnostic_contract.py).

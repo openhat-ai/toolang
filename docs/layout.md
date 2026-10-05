@@ -5,15 +5,14 @@ This document defines the current local filesystem layout.
 
 ## Toolang Root
 
-Toolang stores all local state under one root directory.
+Resident agents share one Toolang root directory.
 
 Default root:
 
 - `~/.toolang`
 
-CLI override:
-
-- `TOOLANG_ROOT`
+Override with `TOOLANG_ROOT` or the CLI `--root` option. Roaming scripts derive
+their own root from the source directory; see [scripts](scripts.md).
 
 Current root layout:
 
@@ -39,6 +38,7 @@ ${TOOLANG_ROOT}/
       prompts/
       tasks/
       chores/
+      drafts/
       archive/
       .state/
       .runtime/
@@ -51,7 +51,7 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by `toolang serve <remote>` are materialized under a
+Visiting agents fetched by `too serve <remote>` are materialized under a
 stable system temporary root derived from the canonical remote ref:
 
 - `/tmp/toolang-<agent>-<hash:8>/`
@@ -62,7 +62,8 @@ runs of the same remote agent ref, independent of the local `TOOLANG_ROOT`,
 while remaining disposable across machine restarts or normal
 temporary-directory cleanup. The cached remote `agent.too` is refetched after
 one hour. Roaming `.too` file invocation uses the source file's sibling
-`.toolang` directory and does not start a long-lived HTTP runtime.
+`.toolang` directory. Placement determines storage; the command determines
+whether execution is local or hosted.
 
 Key paths:
 
@@ -107,7 +108,7 @@ memory when their lazy accessors are first used. Model/catalog data is not store
 or shared through a `.setup/` cache directory.
 
 
-## Runtime Room
+## Runtime Storage
 
 Runtime data shared by every local agent process lives under:
 
@@ -123,7 +124,7 @@ Key paths:
 | -------------- | ------------------------------------------------------------ |
 | `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
-| `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
+| `logs/<runnable-label>/<run_id>.log` | Per-run script logs when `PY_LOG` is set; the label is sanitized, or `default` when no runnable name is supplied |
 | `jobs.db` | Ready-job checkpoints, RRULE cursors, and active claims       |
 | `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
 | `ids.json`     | Local id allocator state                                     |
@@ -156,7 +157,7 @@ revision directories. Layer source identities contain only logical paths,
 canonical byte sizes, and content digests, so the same revisions remain usable
 when root and home are mounted at different absolute paths. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest
-paths. See [agent-state.md](./agent-state.md) for the canonical documents,
+paths. See [state.md](./state.md) for the canonical documents,
 revision calculation, validation, and publication rules.
 
 
@@ -174,5 +175,13 @@ Durable authored state lives in:
 - agent `drafts/`
 - agent `archive/`
 
-Durable execution state does not live in authored files. It lives in
-`jobs.db` and `runs.db`.
+Scheduler checkpoints live in `jobs.db`; execution history lives in `runs.db`.
+Neither is written into authored files.
+
+## Implementation and verification
+
+[Agent layout](../src/toolang/common/layout.py) derives paths;
+[hosting](../src/toolang/up/) owns runtime/control files. See
+[State](state.md) and [execution records](records.md) for revision
+and store contracts. [Hosting tests](../tests/integration/up/) verify placement
+and sandbox ownership.

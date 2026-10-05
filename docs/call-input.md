@@ -3,6 +3,7 @@
 `CallInput[T]` is the complete input supplied to a prompt, script invocation,
 or runnable. It uses one immutable flat mapping throughout parsing, execution,
 HTTP, and persistence. `_` holds primary input; other keys hold arguments.
+This type sketch omits imports:
 
 ```python
 CallInput[str]({"_": "Review this change.", "count": "2"})
@@ -77,13 +78,12 @@ the self-describing value codec, without an input-only `Local` wrapper. Input
 references use `payload/input/_` or `payload/input/argumentName`. Nested paths
 follow the value codec: a boxed array item uses `payload/input/items/!/0`.
 Outputs use `Output(local=Local(value=..., dim=0), binding="_")`. `Local`
-contains only the value and dimension; the enclosing local map or output
-binding supplies its name. `binding=None` leaves a result unbound.
+stores a typed value/reference and dimension; its `type` property is derived
+from that value and exposed in the HTTP/event projection. The enclosing local
+map or output binding supplies its name. `binding=None` leaves a result unbound.
 
-This format replaces the old source compartments, resolved compartments, HTTP
-`args` sibling, and persisted local arrays. RunStore schema 43 rejects older
-stores without modifying them. HTTP clients must send the flat format; no
-compatibility adapter or migration is provided.
+HTTP clients use this flat format. Incompatible stores are rejected unchanged;
+see [record compatibility](records.md#persistence).
 
 ## Input Forms
 
@@ -153,7 +153,7 @@ longer hyphen runs, and hyphens embedded in another line do not close the block.
 At a root runnable boundary, only whitespace may follow the closing fence.
 Backtick fences do not introduce Call Input.
 
-## Chat Runnable Calls
+## Runnable Override Calls
 
 A runnable override is a runnable call header and accepts every explicit form:
 
@@ -212,103 +212,24 @@ unnamed entry's signature. `_`, `agic:_`, and `flow:_` select that entry explici
 can select a runnable whose name is a CLI command, such as `serve`.
 Global `--root` / `-r` overrides are not supported in Script mode.
 
-Runnable help summarizes the available input categories:
+The command-line collector accepts declared `NAME=VALUE` assignments until
+primary input starts. An ordinary operand or `--` begins line input; remaining
+shell words become content, including words that look like flags or assignments.
+`--` requires nonempty input. Unknown or duplicate assignments before that point
+are errors; shell quoting alone does not make an assignment literal.
 
-```text
-Usage: too run app.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
-```
+A final standalone `-` reads stdin through EOF, even when empty. Omitted input
+reads piped/redirected stdin but not an interactive terminal; an empty omitted
+stream means absent input. Standalone `---` in the command header is rejected
+before reading stdin. It remains literal after input starts and remains valid
+for prompt capture inside Content. Missing required inputs show runnable help
+and exit 2; explicit help exits 0. Neither prepares or starts a run.
 
-`[NAME=VALUE...]` appears when the signature declares at least one named parameter.
-`[-- <INPUT> | -]` appears when the signature requires primary input. This includes
-the implicit `Part[]` input of a runnable without a signature. Empty and named-only
-signatures omit it. It denotes one logical input, which may span multiple shell
-words or come from stdin. The command-line group is optional because piped or
-redirected stdin can supply the input. Required named arguments remain required
-despite the optional `[NAME=VALUE...]` group.
-
-The opening description uses `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
-when an authored doc comment exists. Usage and the help panels follow. Flows
-end with an epilog: `The flow proceeds as follows:`, a blank line, and an outline
-in normal style with one blank line between sibling steps; each step's doc and
-operation description remain adjacent.
-
-The **Arguments** panel lists named parameters in signature order with per-name
-metavars such as `begin=<BEGIN>`, without a separate type label. A `*` marks required
-parameters, and parameter doc comments appear in the help column. Missing docs use
-the authored type, for example `Named input (Text)` or `Primary input (Part[])`.
-The INPUT row is last when primary input is accepted, and appends
-`reads stdin with - or when input is omitted` to its description. Arguments may be
-supplied in any order, interspersed with command options, before input.
-
-| Form | Behavior |
-| --- | --- |
-| `TEXT...` | The first ordinary operand starts input; the remaining shell words are its text. |
-| `-- TEXT...` | Explicitly starts input, including text beginning with an option or assignment. |
-| `-` | Reads stdin through EOF, including an empty stream. |
-| Omitted | Reads piped or redirected stdin; an empty stream means input is absent. |
-
-When primary input is forbidden, its row and instructions are absent. Empty
-signatures omit Arguments entirely. **Options** follows Arguments. Top-level
-Script file help says `Execute a runnable from FILE.` and lists **Runnables** before
-Options, without a redundant Arguments panel. Its three columns are name, kind,
-and description. The unnamed `_` comes first with its `<entry:LINE>` identity and
-authored comment, then named agics and flows in source order within each kind.
-Named entries use authored descriptions or `Agic NAME` / `Flow NAME` fallbacks.
-Qualified selectors and bare names are both accepted. RUNNABLE is optional in
-Usage only when the file has an unnamed entry.
-
-Root and runnable help show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
-`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
-`-h` / `--help`. Common options may appear on either side of RUNNABLE, before
-input. Runnable-level scalar values override root values when explicitly set;
-repeated `--workspace`, `--allow`, and `--limit` values accumulate in command-line
-order. `--workdir` may be specified only once across both levels. See
-[Script Projects](script-projects.md) for workspace and path rules.
-`--quiet` at either level enables quiet mode, and `--help` describes that level.
-
-Both line forms accept the same text:
-
-```bash
-toolang agent.too review focus=security Review this API
-toolang agent.too review focus=security -- Review this API
-```
-
-After input starts, all remaining words are content, including `name=value`,
-`--help`, `-`, and `---`. Before input starts, an undeclared `name=value`
-assignment is an error; use `-- name=value` for literal input. Shell quoting
-alone does not make such an assignment literal. Remaining shell words are
-joined with spaces, while quoted newlines and include items retain their
-Content boundaries. An explicit `--` requires nonempty line input.
-
-The standalone `-` marker must be the final command-line token:
-
-```bash
-toolang agent.too review focus=security - < request.md
-```
-
-Omitted input does not read an interactive terminal. Missing required input or
-arguments displays runnable help with exit status 2; explicit `--help` exits
-with status 0. Neither starts a run.
-
-A standalone `---` in the command header is rejected before reading stdin or
-starting a run, with this diagnostic:
-
-```text
-fenced input marker '---' is not supported in script mode; use '-' to read stream input from stdin
-```
-
-Replace the old header marker with `-` and remove the closing fence:
-
-```bash
-toolang agent.too review focus=security - <<'EOF'
-Review this API.
-EOF
-```
-
-Stream input continues through EOF, including any `---` lines. `---` remains
-literal as a declared argument value, an option value, or part of line input.
-Prompt calls inside Script input retain all three Content capture forms.
+Common options can occur before or after RUNNABLE, before input. Scalar
+runnable-level values override root values, repeated workspace/allow/limit
+options accumulate, and workdir may be specified only once. See
+[CLI routing](cli.md) and [scripts](scripts.md) for the owning
+command and filesystem contracts.
 
 ## Prompt Expansion
 
@@ -345,3 +266,127 @@ Script command headers reject empty explicit line input, tokens after the
 standalone `-` marker, the standalone `---` marker, and unknown or duplicate
 argument assignments. Input resolution still validates Content and coerces
 values against the runnable signature.
+
+## Content
+
+```text
+InputContent = NonEmptyContent
+Content      = ContentItem*
+ContentItem  = Text | IncludeRef | PromptCall
+
+evaluate(InputContent | Content) -> Part[]
+```
+
+`$` and `@` are special only as the first character of a `Content` line. `:` is
+special only in the policy prefix, and `/` is special only when Chat classifies
+a complete command. Ordinary Markdown code fences suspend special-line
+recognition. Double a leading marker where its single form would be special to
+produce literal text:
+
+```text
+//help           -> /help
+$$review         -> $review
+::model gpt-5    -> :model gpt-5
+@@README.md      -> @README.md
+```
+
+### Includes
+
+An include occupies its complete line and resolves to one `Part`. Its `@`
+prefix is followed by one reference, with shell-style quoting for spaces:
+`@README.md` or `@"path with spaces/image.png"`. Leading whitespace makes it text.
+
+The Content evaluator delegates the reference to a caller-supplied resolver.
+Built-in Chat, script and job callers resolve filesystem paths, with bases
+described in [file inputs](scripts.md#file-inputs). They support UTF-8
+text, images, MP3/WAV audio and recognized document formats; missing files,
+invalid UTF-8 text and unsupported formats fail during input preparation.
+Hosted calls use client-read attachment content, not server-side path resolution.
+There is no built-in upload-ID resolver or file-picker integration.
+
+Prompt calls and their capture boundaries are defined above. On Content
+surfaces a slash is ordinary text; Chat's command classification is a separate
+boundary. Shell callers must quote `$` to prevent shell expansion.
+
+## Evaluation
+
+```text
+Text        -> text Part
+IncludeRef  -> one Part
+PromptCall  -> Text
+Content     -> Part[]
+```
+
+`Part` and `Part[]` remain parts. Other values become canonical text;
+structured values use compact JSON. The declared primary type is then applied:
+
+```text
+Part[]      preserve all parts
+Part        require exactly one part
+Text        require text-only content
+Number      parse one canonical number
+Boolean     parse true or false
+Json/S/T[]  parse JSON and validate the declared type
+```
+
+Conversion never discards non-text parts. Invalid input is rejected before the
+run starts. Output uses the same declared-type validation; structured model
+output may also be one Markdown code block labeled `json`.
+
+Run preparation persists both authored and effective facts. The authored
+policy and `CallInput[str]` sources retain `$prompt` syntax for transcript and
+history views. Ordered prompt provenance records canonical arguments, cap ref,
+and definition hash. Resolved locals drive conversation recall and retry/rerun,
+while model steps retain the exact normalized `ModelCall` sent to the adapter.
+
+## Shared run overrides
+
+Chat, script, task and chore input can pair a sparse `RunOverride` with
+`CallInput[str]`. Leading colon lines use POSIX quoting and escaping without
+shell expansion. Blank lines after overrides are structural. These are caller
+input envelopes, not agic/flow source directives.
+
+| Form | Parsed value |
+| --- | --- |
+| `:model [REF] [effort=VALUE] [max_output=VALUE]` | Exact model selection and/or sparse call parameters; at least one value required. |
+| `:runnable REF`, `:agic NAME`, `:flow NAME` | Runnable selection; may carry named arguments and a capture marker. Only the generic form treats `default` as a reset. |
+| `:workdir PATH` | Exactly one path, quoted when needed. |
+| `:allow FIELD=QUERY...` | Models, tools, psyches, skills, services or prompts; queries, `all` or `none`. |
+| `:limit FIELD=VALUE...` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost` or `time`; nonnegative values or `none`. |
+
+Model, runnable and workdir may each appear once. Repeated allow queries
+accumulate and deduplicate; `all`/`none` cannot combine with other values for
+that field. Limit fields may span lines but cannot repeat. Cost must be finite
+and nonnegative; other limit values are nonnegative integers.
+
+`effort` accepts a recognized level, canonical unsigned token budget or `auto`;
+`max_output` accepts a canonical unsigned integer or `auto`. Model-specific
+validation and policy precedence belong to [execution](execution.md#policy-resolution).
+A syntactically valid override is not permission to broaden the resource base.
+
+An explicit runnable selection can invoke with an empty argument map, subject
+to its signature. `:flow research -` instead supplies explicit empty `_`.
+Other overrides alone are invalid; they require primary or named input. Plain
+run-only parsing can accept no input when the selected signature allows it.
+Invalid override, argument, include, prompt or coercion rejects the complete
+submission before acceptance. Slash commands and `:?` belong only to [Chat](chat.md).
+
+Example caller input, assuming a `review` runnable with a `focus` parameter:
+
+```text
+:model effort=high
+:allow tools=shell/*
+:workdir lab://src
+:agic review focus=security
+
+Review the API and its tests.
+```
+
+## Implementation and verification
+
+- [Input parsing/coercion](../src/toolang/lang/input.py) owns Content and typed boundaries.
+- [Policy parsing](../src/toolang/execution/policy.py) owns shared run overrides;
+  [policy tests](../tests/unit/execution/test_policy.py) cover empty/duplicate inputs and layering.
+- [Language tests](../tests/unit/lang/) cover capture forms and coercion;
+  [typed template regression](../tests/unit/execution/test_execution_template.py)
+  checks that resolved values retain their types.

@@ -1,63 +1,54 @@
 # Developer Documentation
 
-This directory contains the developer-facing documentation for the current
-Toolang runtime.
+These docs serve Toolang maintainers and contributors, with API and plugin
+implementers as secondary readers. Start with [architecture](architecture.md)
+for the system model and [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution
+and verification. User installation, guides and examples belong on
+[toolang.ai](https://toolang.ai).
 
-User-facing quickstart and guide content belongs in the separate
-`toolang-docs` site. Generated implementation reference belongs under
-`reference/`.
+## Repository responsibilities
 
-
-## Scope
-
-Use this directory for:
-
-- runtime concepts and terminology
-- filesystem layout and durable state
-- capability, job, and execution models
-- CLI and local agent API surfaces
-- plugin and integration boundaries
-
-
-## Document Map
-
-| Document | Scope |
+| Repository | Owns |
 | --- | --- |
-| [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
-| [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
-| [program.md](./program.md) | Program declarations, runnable signatures, agics, flows, directives, and surface rules |
-| [toolang-authoring-conventions.md](./toolang-authoring-conventions.md) | Source style, natural prose, type defaults, and documentation comments |
-| [source-commands.md](./source-commands.md) | Offline formatting, AST/CST inspection, and syntax highlighting |
-| [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
-| [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
-| [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |
-| [script-projects.md](./script-projects.md) | Script project discovery, configuration ownership, temporary workspace options, and attachment origins |
-| [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
-| [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
-| [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [queries.md](./queries.md) | Native TQ resource queries, JSON fields, tags, and set semantics |
-| [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
-| [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
-| [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
-| [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |
-| [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |
-| [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
-| [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
-| [execution-presentation.md](./execution-presentation.md) | Shared script and chat TUI presentation language for runs, steps, streaming, and scrollback |
-| [models.md](./models.md) | Model integrations, including queries, providers, routes, and built-in model providers |
-| [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
-| [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
-| [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |
+| [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) | Source syntax, public CST nodes/fields and parser queries; see its [grammar reference](https://github.com/openhat-ai/tree-sitter-toolang/blob/main/GRAMMAR.md). |
+| Toolang | Semantic AST and lowering, language semantics, architecture, runtime and integration contracts, verified against code and tests. |
+| `toolang-docs` | User guides, published reference and [authoring conventions](https://toolang.ai/docs/toolang-conventions). |
 
+## Reading paths
 
-## Implementation Targets
+- **Change language behavior:** [semantic AST and lowering](ast.md) →
+  [shared program semantics](program.md) →
+  [Agic execution](agic.md) / [Flow evaluation](flow.md) / [call input](call-input.md) →
+  [source tooling](source-commands.md) and their linked tests.
+- **Change binding or state:** [layout](layout.md) →
+  [State publication](state.md) → [run acceptance](execution.md).
+- **Change resources or plugins:** [caps](caps.md) / [models and Setup](models.md) /
+  [tools](tools.md) → [query selection](queries.md) → [plugin contracts](plugins.md).
+- **Change background work:** [Markdown jobs](tasks.md) /
+  [program declarations](program.md#job-declarations) → [scheduling and recovery](work.md).
+- **Change history or compaction:** [threads](execution.md#threads) →
+  [recall and compaction](execution.md#history-recall-and-compaction) →
+  [durable records](records.md).
+- **Change a caller or integration:** [CLI](cli.md) / [HTTP](api.md) →
+  [execution](execution.md) → [events](events.md) / [durable records](records.md).
 
-| Document | Scope |
+## Document map
+
+| Area | Focused owners |
 | --- | --- |
-| [refactor-target.md](./refactor-target.md) | Target package structure, core classes, dependency direction, CLI split, and migration order |
+| Orientation | [Architecture](architecture.md), [contributing](../CONTRIBUTING.md) |
+| Language | [Semantic AST and lowering](ast.md), [Program declarations and shared semantics](program.md), [Agic model/tool loop](agic.md), [Flow evaluation](flow.md), [call input](call-input.md), [source commands](source-commands.md) |
+| Configuration and State | [Scripts](scripts.md), [layout/storage](layout.md), [prepared State](state.md) |
+| Resources | [Composable agent primitives (caps)](caps.md), [queries](queries.md), [models](models.md), [tools](tools.md), [plugins](plugins.md) |
+| Work | [Markdown tasks/chores](tasks.md), [program declarations](program.md#job-declarations), [scheduling/recovery](work.md) |
+| Execution | [Lifecycle and policy](execution.md), [records/references](records.md), [events/tracing](events.md), [presentation](execution-presentation.md) |
+| Callers | [CLI](cli.md), [Chat](chat.md), [HTTP API](api.md) |
 
+## History and generated reference
 
-## Generated Reference
+[Plans](plans/) record feature definitions and past decisions; they are not
+proof of implemented behavior. Use [CHANGELOG.md](../CHANGELOG.md) for user-facing
+changes and migration guidance.
 
-Use `reference/` for generated package and module reference derived directly
-from code.
+[Generated code reference](../reference/) complements these contract guides.
+Follow each guide's source/test links for exact types and current behavior.

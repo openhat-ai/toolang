@@ -1,9 +1,10 @@
-# Execution Model
+# Execution
 
 This document defines the ownership and lifecycle boundaries of
-`toolang.execution`. Detailed record shapes live in
-[run-step-records.md](./run-step-records.md), and runtime behavior lives in
-[executor.md](./executor.md).
+`toolang.execution`. Runnable evaluation belongs to [Agics](agic.md) and
+[Flows](flow.md); detailed record shapes live in [records](records.md), and
+observation contracts live in [events](events.md). Caller protocols belong to
+[CLI](cli.md), [Chat](chat.md) and [HTTP](api.md).
 
 
 ## Responsibilities
@@ -43,8 +44,8 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 36: both
-read-only and writable opens reject every other version unchanged. This build
+process exits. Both read-only and writable store opens reject incompatible schemas unchanged;
+see the [current schema](records.md#persistence). This build
 does not migrate older stores.
 
 
@@ -71,147 +72,169 @@ private indexed columns, and protects both identities. One process owns
 execution of a run tree.
 
 
-## Run Execution
+## Policy resolution
 
-`RunClient` is the transport-neutral caller boundary used by Terminal Chat. It
-accepts self-contained `RunRequest` values, exposes asynchronous connect, run,
-cancel, steer, and disconnect operations, and returns a transport-neutral
-`RunHandle` plus
-caller-facing `RunDetail` and `ControlInfo` values. The boundary deliberately
-excludes stores, setup and state snapshots, local tasks, and durable records so
-local and remote execution preserve the same interaction shape. Clients are
-disconnected after construction and reject operations until `connect()`.
+Callers resolve configuration and authored overrides before acceptance. The
+configuration precedence is built-in defaults, root config, agent-home config,
+captured environment, process CLI overrides, then request/session fields.
+Setup watchers reload configuration; environment and CLI overrides remain fixed
+for the process lifetime. Setup publishes model/tool availability; State publishes
+module cap visibility and workspace grants.
 
-`LocalRunClient` implements that boundary over a `RunExecutor`. It reads the
-current setup and state once for each run, validates the request's concrete
-runnable, model parameters, materialized policy, and authored input, and
-converts terminal and control records through the existing caller-facing
-schemas. Terminal Chat still owns its session defaults, watchers, store, thread
-manager, result inspection, and event-loop thread. Other local execution owners
-continue to use `RunExecutor` directly.
+`SessionSetting` holds concrete defaults adopted by a caller. A sparse
+`RunOverride` produces a self-contained `RunRequest`; [call input](call-input.md#shared-run-overrides)
+owns its colon syntax and [Chat](chat.md) owns slash interactions. Execution
+validates the concrete request and resolves authored values into `RunSpec`.
+Transport requests carry neither a mutable session nor an instruction to choose
+client fallbacks on the server.
 
-`RemoteRunClient` implements the same boundary over an agent runtime's absolute
-HTTP origin. It sends self-contained, materialized requests to
-`POST /api/v1/runs/authored/stream`, consumes canonical `RunEvent` values from
-the accepted run's SSE response, and uses the existing run detail, cancel, and
-steer endpoints. The server owns setup/state snapshots, request validation,
-authored-input resolution, and file includes; mutable session defaults and
-fallback rules never cross the request boundary. The client never
-retries a run or reconnects an incomplete stream because the live event
-protocol has no replay cursor. Disconnecting the client detaches its readers and
-owned HTTP resources without canceling server runs or managing the server
-process.
+- Session allow changes replace the specified session field. A run allow override
+  adds another independently applied ceiling. Each ceiling intersects the
+  published base; union queries in two ceilings do not merge into a broader OR.
+- Runnable selectors apply within that authority. Their dynamic State visibility
+  and inherited rules are described in [program semantics](program.md#directives)
+  and [queries](queries.md); they cannot grant excluded resources.
+- Limits overlay supplied fields; omission inherits, while `none` disables that
+  limit. Limits are budget settings, distinct from allow ceilings.
+- Model identity selection clears unmentioned explicit call parameters;
+  parameter-only updates retain identity. `effort=auto` or `max_output=auto`
+  removes an inherited explicit setting. One-run `default` restores the surface
+  model; `unset` removes its binding. Validate the resulting request against the
+  effective model before acceptance.
+- Generic runnable `default` restores the surface selection. Explicit selections
+  bypass default lookup but remain subject to existence, signature and authority.
+- Workdir is resolved at the caller/server boundary against authorized workspace
+  grants. Relative overrides use the supplied session/base context; a canonical
+  workspace URI or absolute location starts its own resolution. See
+  [scripts](scripts.md) for path and attachment boundaries.
 
-Terminal Chat first resolves a CLI-owned `ExecutionRuntime`. It attaches to a
-compatible running AgentServer for any materialized layout, uses embedded host
-execution when no server is active and `host` is selected, or starts a
-command-owned temporary AgentServer for a non-host sandbox. Remote execution is
-used only after endpoint health and profile checks. Non-run HTTP operations
-remain in the Chat client: runtime/model/runnable inspection, run-default
-adoption, thread creation, and result reads. A stream failure after acceptance is
-recovered from durable run detail without retrying the run or synthesizing
-missing `RunEvent` values. Closing Chat never stops an attached server and
-stops and releases only a temporary server created by that command.
+## Run limits
 
-The process-local executor remains the execution engine:
+| Field | Default | Accounting scope |
+| --- | --- | --- |
+| `agic_model_calls` | 200 | Each agic invocation |
+| `agic_tool_calls` | Unlimited | Each agic invocation |
+| `tokens` | Unlimited | Complete recursive root tree |
+| `cost` | Unlimited | Complete recursive root tree, USD |
+| `time` | Unlimited | Complete recursive root tree, wall-clock seconds |
 
-`RunExecutor` is the public run entry point:
+`None` disables a limit. Model/tool call counts are checked before invocation;
+zero blocks the corresponding call. Token/cost limits are checked after model
+results, so zero rejects recorded positive usage rather than preventing dispatch.
+A model Step can succeed before the enclosing Run fails on a total.
 
-```text
-start()                                             -> None
-run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
-cancel(run_id, timing, request_id?, reason?)         -> ControlRecord
-steer(run_id, message, timing, request_id?)          -> ControlRecord
-cancel_control(run_id, index)                        -> ControlRecord
-stop()                                               -> None
-```
+Token limits require provider usage. Cost limits accumulate the selected USD
+amounts, including partial estimates. A cost limit alone does not require
+usage or pricing: unknown amounts and selected non-USD amounts do not block a
+call and contribute no known USD cost. Missing usage or rates can leave coverage
+incomplete, so the limit bounds recorded costs, not necessarily actual spending.
+See [accounting](models.md#runtime-calls-and-accounting) for cost selection and
+coverage. The cost limit serializes as decimal text; recorded accounting amounts
+use numeric fields.
 
-`start()` is an idempotent lifecycle hook. `run()` accepts durable truth,
-creates the owner task, and immediately
-returns an awaitable `LocalRunHandle`. Awaiting the handle returns the terminal
-`RunRecord`; canceling one waiter does not cancel execution. The handle also
-provides same-process `cancel()`, `steer()`, and
-`cancel_control()` conveniences.
-Cross-process callers address the run by ID through their local `RunExecutor`.
+Time expiry interrupts work and records failure rather than user cancellation.
+Preparation controls retain effective limits. Retry restores token/cost totals
+from retained succeeded Steps; deleted attempts are excluded, and reexecuted
+agics restart local call counts.
 
-`steer()` and `cancel()` only accept durable controls; `cancel_control()` changes
-one pending steer or cancel to `revoked`. These controls do not require the
-target run to be owned by the submitting process. Run execution remains local:
-the process that calls `run(spec)` accepts and executes that run. `stop()` is
-terminal and cancels the run tasks owned by that executor instance. The process
-owner closes the shared `RunStore` after the executor stops.
+## Run acceptance and ownership
 
-Callers resolve the captured `AgentSetup` defaults and any session or run
-policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
-limits reset on each agic invocation, while token, cost, and time limits are
-shared by all recursive runs. Effective limits are stored on the root run
-control and on each retry control.
+`RunClient` is the asynchronous local/remote boundary over concrete requests,
+handles and caller-facing projections. It starts disconnected and requires
+`connect()`. `LocalRunClient` reads Setup/State once per request; `RemoteRunClient`
+uses the [authored HTTP stream](api.md#run-requests). Neither owns Chat session
+policy. Other local owners can call `RunExecutor` directly.
 
-`run()` requires an existing thread. Thread creation belongs to
-`ThreadManager` or to the package that owns a deterministic external thread id.
+The process composition root shares one `RunStore` and `IdIssuer` between
+`RunExecutor` and `ThreadManager`. The executor is usable after construction;
+`start()` is idempotent and `stop()` is terminal, canceling its owned tasks before
+the composition root closes the store.
 
-The run operation atomically inserts the pending run and its index-zero run
-control. Run IDs are globally unique within `RunStore`; duplicates are
-rejected. A non-null request ID is unique within its control table and is never
-treated as a replay key. Clients either generate a globally unique request ID
-across run and thread controls or pass `None`.
+`run()` requires an existing thread and a validated immutable `RunSpec`.
+`RunStore.accept_run()` commits the pending Run and index-zero `run` Control in
+one `BEGIN IMMEDIATE` transaction before launching the owner task. Duplicate Run
+IDs or non-null request IDs fail; request IDs are globally unique across the
+Control table and are not replay/idempotency keys. Scripts preallocate a Run ID for logging; the scheduler does so before its
+durable dispatch claim. Other callers can let the executor issue it.
 
+The returned `LocalRunHandle` awaits a terminal record. Its wait is shielded:
+canceling an HTTP request or other waiter does not cancel durable execution.
+The active registry tracks task ownership, not admission truth. Calling `run()`
+in another process executes there; the store is not a cross-process work queue.
 
-## Mandatory Persistence And Tracing
+Each root has a private execution context and owner task on its event loop.
+Recursive Runs share that owner, tracer and root accounting; child Runs have
+independent durable IDs and entry controls. Agic/flow execution stays asynchronous
+on that loop; explicitly synchronous tools may use worker threads.
 
-`RunExecutor` constructs one private event projector from its `RunStore`.
-Persistence cannot be replaced or disabled by callers.
+## Retry and rerun
 
-For every `RunEvent`, ordering is:
+Both require a terminal root Run. Rerun prepares a new root against current
+Setup/State and accepts it with a normal `run` Control; there is no `rerun`
+Control kind. It does not rewrite the source Run or its history membership.
 
-```text
-runtime produces event
-  -> one transaction projects RunRecord or StepRecord
-     and updates referenced ControlRecord statuses
-  -> optional RunTracer observes the event
-```
+Retry retains the root identity, recorded State and model request. It appends
+an applied `retry` Control, resolves its anchor, deletes the invalid structural
+Step suffix and child Runs, fails stale pending controls, then reopens the root.
+New Steps reuse trimmed indexes. The latest visible incomplete Step is the
+usual implicit anchor; succeeded Runs prefer the latest non-value Step, falling
+back to a value Step. See the executor for the complete anchor selection.
 
-The private projector never creates or updates run controls. Tracer failures
-are logged and isolated from execution. One tracer observes the complete run
-tree started by its `run()` call, including child runs, steps, parts, and
-terminal events. Each event already contains its complete durable references
-and output edge; the private projector does not reconstruct runtime locals or
-infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
-serializes tracer calls and awaits each one on the owner event loop, so tracers
-never need to infer which worker thread emitted an event.
+A flow restores typed locals from the succeeded top-level prefix. An unfinished
+container is invalidated with its nested failure. An agic restarts its model/tool
+cycle. Retry rejects trees captured by durable fork prefixes, prior applied
+execute timelines, missing/mismatched sandbox provenance, and workspace grants
+removed or remapped in current State. Validation precedes destructive trimming;
+rerun is the route for accepting current code/grants.
 
+Neither operation implies automatic resumption after owner-process loss.
 
-## Run Events
+## Execution and assembly
 
-The canonical run trace is intentionally small:
+| Owner | Responsibility |
+| --- | --- |
+| [executor.py](../src/toolang/execution/executor/executor.py) | Acceptance, root ownership, controls and recursive execution |
+| [resources.py](../src/toolang/execution/executor/resources.py) | Authority and runnable resource selection |
+| [frame.py](../src/toolang/execution/executor/frame.py) | Bound agic frame and model-call inputs |
+| [runs](../src/toolang/execution/executor/runs/) / [stmts](../src/toolang/execution/executor/stmts/) | Agic model/tool cycle and lowered flow statement behavior |
+| [steps](../src/toolang/execution/executor/steps/) | Canonical Step boundaries and events |
+| [assembly](../src/toolang/execution/assembly/) | Instructions, messages, tools, output schemas and replayable control text |
 
-```text
-RunBegin
-StepBegin
-PartBegin
-PartDelta
-PartEnd
-StepEnd
-RunEnd
-```
+Assembly consumes prepared data and records without running tools or querying
+the store. The model Step constructs a normalized `ModelCall`; adapters never
+receive the private frame. [Agic instruction layers](agic.md#instruction-layers)
+own model-facing composition and [records](records.md) own durable
+call reconstruction. There is no loop plugin or public execution-frame protocol.
 
-There are no waiting, starting, steering, or stopping events. Control
-acceptance is durable record truth. Control application is represented by data
-edges:
+Top-level runs have no synthetic containing Step. A flow call emits a Run Step
+around its child. Model `_toolang/run` instead commits the pending child and
+receipt during the Tool Step; after that Step ends it runs the child before
+continuing the remaining tool batch. The child retains the triggering Tool Step
+as `parent`, even though their lifetimes do not overlap. Tool replies precede
+run-result context; child internals are not flattened into the caller. Target
+failure/cancellation leaves the receipt intact and supplies an outcome. Root
+cancellation also cancels accepted children that have not started.
 
-- `RunBegin.control` references the run control;
-- `StepBegin.input` references every run control or prior step output consumed by
-  the step;
-- `RunEnd.control` references the cancel control that canceled the run.
+Model `_toolang/exec` validates its target, then records an applied execute
+Control triggered by the Tool Step. That Step finishes before the target starts.
+There is no child Run or second `RunBegin`: the Run retains root authority,
+accounting and its original output contract while the target gets a fresh
+continuation and agic call counters. Failed validation creates no execute
+Control. Authored flow `exec` uses the same replacement semantics with an exec
+Step; see [flow evaluation](flow.md#exec).
 
-Providers stream deltas when supported. A tracer may ignore `PartDelta` and
-observe only higher-level events.
+## Events and persistence
 
+`RunExecutor` projects Run/Step changes into durable records before notifying
+its optional tracer. Event projection cannot be disabled. Thread mutations
+commit before their listener is notified. [Events](events.md) owns event kinds,
+ordering, control relationships, serialization and observation contracts;
+[records](records.md) owns stored facts and references.
 
 ## Run Controls
 
-Preparation control kinds are `run`, `rerun`, and `retry`; runtime control
-kinds include `execute`, `steer`, and `cancel`. Control timing is:
+Preparation controls use `run` and `retry`; runtime controls include `execute`,
+`steer`, `cancel`, `cwd`, `recall` and `compact`. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -268,16 +291,8 @@ child runs are never thread anchors. An empty thread has no implicit anchor and
 cannot be forked or rewound. Every selected anchor must be terminal.
 
 Every successful mutation has a durable `ControlRecord` and produces one
-success event:
-
-```text
-ThreadCreated
-ThreadForked
-ThreadRewound
-```
-
-Failures are returned or raised by the synchronous operation and do not
-produce failure events.
+[thread event](events.md#thread-events). Failures are returned or raised by the
+synchronous operation and do not produce failure events.
 
 A fork stores its source thread and anchor run but does not copy run, step, or
 run-control rows. Its inherited history includes the anchor. It may select an
@@ -294,6 +309,41 @@ the rewind idle check, and control insertion occur in one SQLite write
 transaction. The store keeps expected-head comparison as an internal defensive
 check; it is not part of the public manager API.
 
+
+## History recall and compaction
+
+Each root recalls a fixed logical prefix of earlier root Runs in its thread.
+`far` supplies a summary of covered history; `near` reconstructs retained recent
+exchanges from durable records. Fork/rewind controls determine the logical view.
+The [recall directive](program.md#directives) selects which sources are visible
+and when a root agic prepends them to its messages. Child agics access history
+only through explicit runtime-variable references.
+
+A `horizon` is a Run or Step reference to a validated compaction result:
+`{thread, begin, end, summary}`. Its half-open `[begin, end)` range identifies
+covered history using Run or Step boundaries, so a summary may end inside a
+root Run. Compaction changes the model's history view; it does not delete or
+rewrite the underlying Runs and Steps. Provider continuation cursors are a
+separate mechanism for continuing model calls.
+
+When model preflight needs compaction, a runtime-only `_toolang/compact` Tool
+Step starts an internal compact child Run. Neither is a public model-callable
+tool or user-startable runnable. The child uses ordinary durable model/tool
+Steps, and its usage counts against the enclosing root's token/cost limits.
+Model choice, thresholds and retained-history budgets belong to
+[compaction configuration](models.md#automatic-compaction-configuration).
+
+A cancellable thread-scoped file lock serializes compaction across processes.
+After acquiring it, execution rechecks the current history boundary and may
+reuse a compatible saved result. Successful publication validates coverage and
+the complete normal request's fit, then commits the thread horizon and applied
+compact Control together. Failure or cancellation leaves the horizon unchanged
+and prevents dispatch of the oversized normal model call.
+
+Later Steps can adopt the published horizon throughout an active root tree.
+An already prepared model call retains its captured history view. Durable
+checkpoints support explicit retry/recovery; they do not provide automatic
+resumption after owner-process loss.
 
 ## State Capture
 
@@ -316,3 +366,18 @@ Each physical Step retains its executing Run's State reference. A newly accepted
 named child independently captures the latest published State and validates it
 against the caller's contract. Inline bodies retain their containing plan.
 Publication never rebinds accepted Runs. Invalid source is not published.
+
+## Verification anchors
+
+- [Control relations](../tests/integration/execution/test_control_relations.py)
+  and [control scenarios](../tests/integration/execution/test_control_scenarios.py)
+  cover durable acceptance, ordering and application.
+- [Latest State binding](../tests/integration/execution/test_latest_state_binding.py)
+  covers changed named callees versus pinned accepted code.
+- [Thread controls](../tests/integration/execution/test_thread_control_scenarios.py)
+  cover fork/rewind history boundaries.
+- [Compaction lifecycle](../tests/integration/execution/test_batched_compact_run.py)
+  and [compact controls](../tests/integration/execution/test_compact_controls.py)
+  cover coverage, cancellation, durable publication and history adoption.
+- [Policy tests](../tests/unit/execution/test_policy.py) cover caller layering;
+  [remote runs](../tests/integration/api/test_remote_runs.py) exercise transport parity.

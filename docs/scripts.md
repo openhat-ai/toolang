@@ -1,19 +1,15 @@
-# Script Projects
+# Scripts
+
+This guide describes configuration discovery, path resolution, workspace grants
+and file inputs for local `.too` scripts.
 
 `too init DIR` creates an executable `aide.too` and a comment-only `toolang.toml`.
 Both belong in version control. Initialization refuses to overwrite either file,
 including directories and symlinks. A failure during creation may leave partial
 output; remove or complete it before retrying. Add `.toolang/` to Git ignore rules.
 
-For a script with an unnamed entry, omit the runnable or select `_` explicitly:
-`too file.too` and `too file.too _` select the same entry. `agic:_` and `flow:_`
-also check its kind. `<entry:5>` in help identifies the source line. Input `-`
-reads stdin, so `too file.too _ -` selects the entry and reads from stdin.
-
-Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
-command. Otherwise, `run` can be omitted: `too aide.too whats_for`.
-Add `--help` after the file or runnable for details. File help lists the unnamed
-entry first, then named agics and flows in their source order within each kind.
+[CLI routing](cli.md) owns runnable selection, unnamed entries and script help.
+[Call input](call-input.md#script-runnable-calls) owns arguments and stdin.
 
 ## Directories and configuration
 
@@ -52,7 +48,9 @@ or settings from the resident `~/.toolang` root.
 
 Script calls automatically add srcdir as a workspace and select it as workdir.
 Chat and hosting commands do not add it automatically, including for roaming
-agents. `-w` and `-d` are available in all three placements:
+agents. `-w` and `-d` are available in all three placements. The examples below
+assume `too init .` has created `aide.too`. Referenced directories must exist, and
+`repo://src` requires a configured `repo` workspace containing `src/`:
 
 ```sh
 ./aide.too whats_for
@@ -91,8 +89,17 @@ visiting agents accept temporary grants only.
 
 ## File inputs
 
-Chat and script `@file` inputs use procdir even when workdir changes. Task/chore
-attachments remain relative to their authored files. Attachments supply content,
-not workspace access. Hosted calls send client-read content; they never reopen
-the same filename on the server. Prompt expansion, escaping, and fenced text keep
-their existing [Content syntax](input-syntax.md).
+Chat and script `@file` inputs use procdir even when workdir changes. Attachments
+in [Markdown tasks/chores](tasks.md#body) resolve relative to the defining file;
+[program job declarations](program.md#job-declarations) use the agent home.
+Attachments supply content, not workspace access. Hosted calls send client-read
+content; they never reopen the same filename on the server. Prompt expansion, escaping, and fenced text keep
+their existing [Content syntax](call-input.md#content).
+
+## Implementation and verification
+
+[Script orchestration](../src/toolang/cli/toolang/commands/script.py),
+[configuration sources](../src/toolang/common/config_sources.py), and
+[CLI tests](../tests/unit/cli/) cover discovery, projection and invocation.
+[Configuration source tests](../tests/unit/common/test_config_sources.py) verify
+layering and relative paths.

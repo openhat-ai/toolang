@@ -38,54 +38,18 @@ Tasks use every `JobStatus`. Chores normally use `pending`, `running`, and
 `done`; a failed or canceled chore run does not disable later occurrences.
 
 
-## Identity And Definition
+## Definition and identity
 
-A job id is globally unique across task and chore kinds and every authored
-stage. It is the sole scheduler key. Both `id` and `kind` are immutable:
+[Authored jobs](tasks.md) owns Markdown identity and stage transitions;
+[program declarations](program.md#job-declarations) use their declaration names
+as IDs. The scheduler normalizes each effective source into an immutable `Job`
+with `id`, `kind`, `title`, `body`, `schedule`, `revision`, `source` and optional
+`path`.
 
-```text
-id       durable identity
-kind     immutable behavior
-stage    authored lifecycle placement
-revision current authored body version
-```
-
-Moving a job between draft, ready, and archived stages, renaming its source
-file, editing its body, or changing its schedule preserves its id. Copying a
-job or changing between task and chore creates a new id. A duplicate id is an
-invalid authored state.
-
-The runtime normalizes ready authored sources and program declarations into:
-
-```python
-@dataclass(frozen=True, slots=True)
-class Job:
-    id: str
-    kind: JobKind
-    title: str | None
-    body: str
-    schedule: str | None
-    revision: str
-    source: str
-    path: Path | None
-```
-
-`revision` hashes the normalized authored body. Title, file name, path, and
-schedule do not affect it. The schedule is compared separately so an RRULE
-change can reset its cursor without pretending that the body changed.
-
-`id` is the machine-readable selector and `title` is the only optional
-human-readable label. There is no additional job `name`. A display title falls
-back to the first meaningful body line and then the id.
-
-The thread id is a projection rather than persisted scheduler state:
-
-```python
-thread_id = f"{job.kind}_{job.id}"
-```
-
-All runs for one job share that thread.
-
+`revision` hashes the normalized body. Title, filename and path do not affect it;
+schedule changes are compared separately. Display title falls back to the first
+meaningful body line, then the ID. The thread is derived as `<kind>_<id>` and
+shared by all revisions/occurrences of that job.
 
 ## Ready Snapshot
 
@@ -104,9 +68,10 @@ wakeup hints: it debounces a change, reads a stable complete snapshot, and
 publishes only a different value. Startup always performs a complete ready
 refresh, and an infrequent safety refresh repairs missed notifications.
 
-Program task and chore declarations arrive through `StateWatcher` and are
-inherently ready. `JobScheduler` merges both sources by id. A duplicate id is
-an error; sources do not silently shadow one another.
+Task and chore declarations in State's `agent` module arrive through
+`StateWatcher` and are inherently ready. Declarations in flow modules are not
+scheduled. `JobScheduler` merges program and ready Markdown jobs by ID. A
+duplicate ID is an error; sources do not silently shadow one another.
 
 A manually added ready file without an id receives one under the authored-job
 write lock before the snapshot is published.
@@ -240,33 +205,20 @@ The scheduler wakes for a ready snapshot, state snapshot, run completion,
 manual control, the nearest heap timer, or the safety refresh. It captures the
 latest setup and state snapshots when constructing a dispatch. The job body is
 parsed into a policy-command prefix and `CallInput[str]`; the default runnable
-is the job kind and falls back to `default`.
+is the job kind and falls back to the single unnamed entry; absence of both
+fails before acceptance.
 
 One job is always serial. Different jobs may run concurrently. `JobScheduler`
-adds no separate bandwidth pool or limit. Any future process-wide admission
-policy belongs at the execution boundary so API, chat, task, and chore traffic
-share the same policy.
+adds no separate bandwidth pool or limit. Execution owns Run limits shared with API and Chat callers.
 
 
 ## Execution Attribution
 
-The scheduler does not modify `RunSpec`, `RunExecutor`, or execution-owned run
-context. The stable job thread's existing create control carries the minimum
-attribution already accepted by the execution API:
-
-```python
-{
-    "job": {
-        "id": job.id,
-        "kind": job.kind,
-    }
-}
-```
-
-Runs are associated with the job through that thread. Trigger, revision,
-RRULE, scheduled timestamps, next timestamps, and scheduler status remain
-exclusively in `jobs.db`. Adding root-run job context would change the execution
-contract and requires a separately reviewed execution design.
+The scheduler creates or reuses `<kind>_<id>` with thread `origin` equal to the
+job kind. Its `create` Control has an empty payload. Runs associate with the job
+through that thread. Trigger, revision, RRULE, scheduled timestamps, next
+timestamps, and scheduler status remain
+exclusively in `jobs.db`. No separate root-run job context is added.
 
 
 ## Dispatch And Recovery
@@ -306,9 +258,11 @@ chore run.
 
 ## Inspection And Control
 
-Job inspection joins the authored/effective job with its scheduler record and
-the latest run summary for the stable job thread. This is an inspection path,
-not a scheduler dependency on `runs.db`. CLI job lists expose scheduler status,
+Job inspection joins each Markdown catalog job with its scheduler record and
+the latest run summary for the stable job thread. Program declarations are
+outside this catalog projection; see [caller projection](tasks.md#caller-projection).
+This is an inspection path, not a scheduler dependency on `runs.db`.
+CLI job lists expose scheduler status,
 latest-run status, the next chore occurrence, and the most relevant scheduler
 or run error. The small control surface retains source meaning:
 
@@ -327,3 +281,11 @@ abstraction.
 `toolang.work` owns `Job`, `JobRecord`, `JobWatcher`, `JobStore`, job inspection,
 and `JobScheduler`. `toolang.execution` owns threads, runs, execution, and run
 controls and does not depend on `toolang.work`.
+
+[Scheduler](../src/toolang/work/scheduler.py),
+[watcher](../src/toolang/work/watcher.py), and
+[store](../src/toolang/work/store.py) implement these boundaries.
+[Scheduler tests](../tests/unit/work/test_scheduler.py),
+[checkpoint tests](../tests/unit/work/test_store.py), and
+[Run binding tests](../tests/unit/work/test_run_binding.py)
+verify claims, loop isolation, recurrence and recovery.
