@@ -258,20 +258,27 @@ flow main:
 
 
 @pytest.mark.parametrize("limit", ["2", "invalid"])
-def test_empty_map_skips_element_conversion_but_checks_named_arguments(
-    tmp_path: Path, limit: str
+@pytest.mark.parametrize("operation", ["map", "reduce"])
+def test_empty_array_skips_element_conversion_but_checks_named_arguments(
+    tmp_path: Path, limit: str, operation: str
 ) -> None:
+    output_type = "Number[]" if operation == "map" else "Number"
+    statement = (
+        "map using worker"
+        if operation == "map"
+        else "reduce using worker:\n    from: 0"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
-        source="""
+        source=f"""
 agic worker(_: Number, limit: Number) -> Number:
-  {{_}} {{limit}}
-flow main(limit) -> Number[]:
+  {{{{_}}}} {{{{limit}}}}
+flow main(limit) -> {output_type}:
   recall = none
   instruct = none
   context = none
   run -> Text[]: Items
-  map using worker
+  {statement}
 """,
         responses=[ModelCallResult(message=Message.assistant("[]"))],
     )
@@ -284,8 +291,10 @@ flow main(limit) -> Number[]:
             )
             if limit == "2":
                 assert root.status == "succeeded", root.error
-                assert root.output is not None and root.output.type == "Number[]"
-                assert harness.store.run_output_text(run_id=root.id) == "[]"
+                assert root.output is not None and root.output.type == output_type
+                assert harness.store.run_output_text(run_id=root.id) == (
+                    "[]" if operation == "map" else "0"
+                )
             else:
                 assert root.status == "failed" and root.error is not None
                 assert "Number" in harness.store.resolve_error(root.error)

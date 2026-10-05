@@ -34,7 +34,7 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
         ),
         (
             "flow work:\n  run -> Text[]: Values\n  reduce -> Number: {{_}}\n",
-            "Reduce without from requires Text output",
+            "Reduce without an initializer requires Text output",
         ),
         (
             "flow work:\n  repeat 5 times windowing 1:\n"
@@ -256,4 +256,32 @@ flow main():
   reduce:
     {{_}} {{_2._}}
     from: Initial
+""")
+
+
+@pytest.mark.parametrize("target", ["named", "inline"])
+def test_known_empty_reduce_checks_initializer_but_skips_reducer_history(target):
+    statement = (
+        "reduce using combine:" if target == "named" else "reduce:\n    {{_}} {{_2._}}"
+    )
+    source = (
+        "agic combine(_):\n  {{_}} {{_2._}}\n"
+        f"flow main():\n  generate 0: No calls\n  {statement}\n    from: INITIAL\n"
+    )
+    Program.from_source(source.replace("INITIAL", "seed"))
+    with pytest.raises(ToolangError, match="missing.*seed"):
+        Program.from_source(source.replace("INITIAL", "{{seed}}"))
+    with pytest.raises(ToolangError, match="unclosed"):
+        Program.from_source(source.replace("INITIAL", "{{#items}}"))
+
+
+def test_known_empty_reduce_still_checks_required_named_arguments():
+    with pytest.raises(ToolangError, match="Missing.*limit"):
+        Program.from_source("""
+agic combine(_: Number, limit: Number) -> Number:
+  {{_}} {{limit}}
+flow main():
+  generate 0: No calls
+  reduce using combine:
+    from: 0
 """)

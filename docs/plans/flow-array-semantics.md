@@ -2,7 +2,11 @@
 
 Status: Approved in #684 and refined during implementation: preserve run's
 existing behavior, remove the durable Local wrapper, and provide no compatibility
-reader for old storage, statement records, or output references.
+reader for old storage, statement records, or output references. The approved
+empty-input rule returns the initializer when present and otherwise rejects
+an empty reduction. The AST uses `initial`; switching the source clause from
+`from:` to `initial:` is approved but deferred to a separate grammar update.
+This PR implements the runtime behavior with the currently published grammar.
 
 ## Goal and Scope
 
@@ -70,11 +74,13 @@ This supersedes the affected rules in [Flow Usability](flow-usability.md) and
    the input's complete type, inner values, order contracts, and provenance.
 4. Empty map/keep/drop/sort and generate 0 make zero child calls and return
    correctly typed empty arrays; normal target/contract preflight still applies.
-   Run passes an empty array and calls once. Reduce retains settle's nonempty
-   input requirement, including with from.
-5. Without from, reduce seeds from the first element, requires the reducer output
-   to equal the element type, and makes N-1 calls. With from, coerce the initializer
-   to the reducer output type and make N calls. Preserve iteration history and
+   Run passes an empty array and calls once. Reduce without an initializer
+   rejects an empty array. With an initializer, evaluate and coerce it and
+   return it without child calls. Target and named-input contracts still apply; skip
+   element conversion and unused reducer history templates.
+5. Without an initializer, reduce seeds from the first element, requires the
+   reducer output to equal the element type, and makes N-1 calls. With an
+   initializer, coerce it to the reducer output type and make N calls. Preserve iteration history and
    treat an array accumulator as one complete value.
 6. Part[] follows the same array rule. Ordinary calls and prompt/model transport
    still render the complete content value using its type, without shape flags.
@@ -200,8 +206,11 @@ feature groups.
    for empty/singleton/multiple arrays, Json arrays, Part[], nested arrays, and
    array-valued child results. Reject scalar/object/null/missing collection input.
 4. Generate and reduce preserve storm/settle's count, seed, history, lane,
-   cancellation, and error contracts. Test zero generation and both empty-reduce
-   failures, N-1 unseeded calls, and N seeded calls.
+   cancellation, and error contracts except the approved empty-input change.
+   Test zero generation, rejection of empty unseeded reduction, and typed
+   initializers returned by empty seeded reduction with zero calls. Cover named
+   and inline reducers, invalid initializers, required named inputs, and skipped
+   child history. Verify N-1 unseeded calls and N seeded calls.
 5. Round-trip flat outputs without Local/dim; distinguish absent output from
    JSON null. Reject old store versions without mutation, old wrappers, statement
    records, and reference paths. Retry restores complete values and bindings.
@@ -219,8 +228,8 @@ The existing seek executor has no agent execution bridge. This group covers its
 shared complete-value transformation; end-to-end seek array checks require that
 separate bridge implementation and must not be reported as passing here.
 
-Out of scope: automatic source rewriting, flattening, new reduce-empty behavior,
-new concurrency operators, futures, root spawning, and a legacy execution engine.
+Out of scope: automatic source rewriting, flattening, new concurrency operators,
+futures, root spawning, and a legacy execution engine.
 The approved definition and published tree-sitter-toolang 0.4.0a1 provide the
 implementation prerequisites. Update current documentation and the changelog
 alongside the implementation.

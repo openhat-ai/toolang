@@ -17,6 +17,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `reduce` with a `from:` initializer accepts an empty outer array and returns
+  that initializer coerced to the reducer output type without any child calls;
+  without an initializer it still rejects an empty array.
+
 - **Breaking:** `storm` is renamed to `generate` and `settle` to `reduce`, and
   `generate`, `map`, and `reduce` now require `using` for named targets and must
   omit it for inline bodies, so `map using [-> T]: BODY` becomes

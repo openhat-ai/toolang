@@ -11,7 +11,13 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import ControlRef, FieldRef, ThreadPrefix, TypedRef
+from toolang.execution.types import (
+    ControlRef,
+    FieldRef,
+    LoopStepNoted,
+    ThreadPrefix,
+    TypedRef,
+)
 from toolang.lang.errors import ToolangError
 
 
@@ -171,6 +177,7 @@ def test_outer_arrays_are_identical_across_boundaries(
         "drop last 1",
         "sort ascending by: {{_}}",
         "reduce -> Json: {{_}}",
+        "reduce -> Json:\n    {{_}}\n    from: []",
     ],
 )
 def test_open_json_nonarrays_fail_inside_step_without_child_calls(
@@ -344,5 +351,58 @@ def test_retry_preserves_committed_output_when_later_result_is_discarded(
                 harness.store.resolve_value(committed.output.value)
             )
             assert len(harness.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("target", ["named", "inline"])
+@pytest.mark.parametrize("origin", ["parameter", "generate"])
+@pytest.mark.parametrize(
+    "output_type,initial,expected",
+    [
+        ("Text", "seed", "seed"),
+        ("Number", 7, "7"),
+        ("Number[][]", [[1, 2], []], "[[1,2],[]]"),
+        ("Json", None, "null"),
+    ],
+)
+def test_empty_reduce_returns_typed_initializer_without_child_calls(
+    tmp_path, target, origin, output_type, initial, expected
+):
+    statement = (
+        "reduce using combine" if target == "named" else f"reduce -> {output_type}"
+    )
+    body = "" if target == "named" else "    {{_}} {{_1._}}\n"
+    prefix = "  generate 0: No calls\n" if origin == "generate" else ""
+    initializer = "null" if initial is None else "{{initial}}"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            f"agic combine(_: Number) -> {output_type}:\n  {{{{_}}}} {{{{_1._}}}}\n"
+            f"flow main(_: Text[], initial: {output_type}) -> {output_type}:\n"
+            f"{prefix}  {statement}:\n{body}    from: {initializer}\n"
+        ),
+        responses=[],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="main", named={"_": [], "initial": initial}
+                )
+            )
+            assert run.status == "succeeded", (
+                harness.store.resolve_error(run.error) if run.error else None
+            )
+            assert run.output is not None and run.output.type == output_type
+            assert harness.store.run_output_text(run_id=run.id) == expected
+            step = harness.store.list_steps(run_id=run.id)[-1]
+            assert step.status == "succeeded"
+            assert step.output is not None and step.output.type == output_type
+            assert step.noted == LoopStepNoted(0, "exhausted", 0)
+            assert len(harness.store.list_run_tree(root_run_id=run.id)) == 1
+            assert not harness.adapter.invocations
 
     asyncio.run(scenario())

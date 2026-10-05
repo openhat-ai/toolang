@@ -198,6 +198,7 @@ flow main():
     "initial,output,responses,expected",
     [
         (None, "Text", ['["one"]'], "one"),
+        ("not a number", "Number", ["[]"], None),
         ("start", "Text", ['["one"]', "start+one"], "start+one"),
         ("not a number", "Number", ['["one"]'], None),
         (None, "Number", ['["one"]'], None),
@@ -225,7 +226,7 @@ flow main() -> {output}:
         )
     if initial is None and output != "Text":
         with pytest.raises(
-            ToolangError, match="Reduce without from requires Text output"
+            ToolangError, match="Reduce without an initializer requires Text output"
         ):
             Program.from_source(source)
         return
@@ -234,6 +235,8 @@ flow main() -> {output}:
     assert run.status == ("succeeded" if expected is not None else "failed"), run.error
     if expected is not None:
         assert output == expected
+    else:
+        assert "Number" in str(error)
     assert len(harness.adapter.invocations) == len(responses)
 
 

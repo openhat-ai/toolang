@@ -187,7 +187,11 @@ class _FlowChecker:
                 raise ToolangValidationError(
                     f"{stmt.kind.capitalize()} requires an outer array, got {actual}"
                 )
-            if isinstance(stmt, ast.ReduceStmt) and source.length == 0:
+            if (
+                isinstance(stmt, ast.ReduceStmt)
+                and stmt.initial is None
+                and source.length == 0
+            ):
                 raise ToolangValidationError("Reduce requires a nonempty array")
 
         child_name = getattr(stmt, "runnable", None)
@@ -215,7 +219,7 @@ class _FlowChecker:
             if stmt.initial is None:
                 if element_type is not None and element_type != output:
                     raise ToolangValidationError(
-                        f"Reduce without from requires {element_type} output, got {output}"
+                        f"Reduce without an initializer requires {element_type} output, got {output}"
                     )
             else:
                 self.content(stmt.initial, locals, window)
@@ -223,7 +227,12 @@ class _FlowChecker:
             isinstance(stmt, ast.GenerateStmt)
             and stmt.count == 0
             or isinstance(
-                stmt, ast.MapStmt | ast.KeepStmt | ast.DropStmt | ast.SortStmt
+                stmt,
+                ast.MapStmt
+                | ast.KeepStmt
+                | ast.DropStmt
+                | ast.SortStmt
+                | ast.ReduceStmt,
             )
             and source is not None
             and source.length == 0

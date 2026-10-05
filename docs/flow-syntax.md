@@ -267,12 +267,16 @@ returns one complete result per outer input item. Neither flattens array results
 | `keep` / `drop` with a predicate | An outer array | Returns an empty value with the source type | N |
 | Positional `keep` / `drop` | An outer array | Returns an empty value with the source type | 0 |
 | `sort` | An outer array | Returns an empty value with the source type | N |
-| `reduce` without `from` | A nonempty outer array | Rejects empty input; one item is returned as the seed | N - 1 |
-| `reduce` with `from` | A nonempty outer array | Rejects empty input before evaluating the initializer | N |
+| `reduce` without an initializer | A nonempty outer array | Rejects empty input; one item is returned as the seed | N - 1 |
+| `reduce` with an initializer | An outer array | Returns the initializer coerced to the reducer output type | N |
+
+The initializer is stored as `initial` in the AST. The currently published
+grammar still spells the source clause `from:`; the approved rename to
+`initial:` will be introduced with a separate grammar update.
 
 Here `U` is the child output type. Zero-call generation, mapping, predicate
-selection, and sorting still validate the target, its output contract, and
-required named arguments; they make no model calls.
+selection, sorting, and initialized reduction still validate the target, its
+output contract, and required named arguments; they make no model calls.
 Array consumers skip per-element conversion when there are no elements.
 Generate validates its complete call inputs even when its count is zero.
 
@@ -310,10 +314,12 @@ are clipped: keep retains everything and drop removes everything.
   `_` and the previous result as `_1._`; output must match the source element
   type. A singleton is validated and returned without a child call.
 - The AST's optional `initial` Content is evaluated once in the outer scope,
-  coerced to reducer output type, then used for N calls. It introduces no local.
+  coerced to reducer output type, then used for N calls. For an empty array,
+  that coerced value is the result. Invalid initializers still fail. It introduces
+  no local.
 - Empty map/keep/drop/sort produce typed empty lists without child calls.
-  Reduce rejects empty input even with `from`. Argument and output
-  contracts still apply to empty collections.
+  Reduce rejects empty input only when its initializer is absent. Argument and output
+  contracts still apply to empty arrays; unused reducer history is not evaluated.
 - Positional `keep/drop` do not start child runs.
 
 

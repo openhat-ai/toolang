@@ -132,7 +132,7 @@ def test_reduction_size_controls_seed_and_child_call_count(
             statement += "\n    from: seed"
         calls = size if operation == "reduce-from" else max(0, size - 1)
         answers = [f"merged-{index}" for index in range(1, calls + 1)]
-    expected = answers[-1] if answers else "a" if size else None
+    expected = answers[-1] if answers else "a" if size else "seed"
     _check(
         tmp_path,
         body=f"run -> Text[]: Items\n  {statement}",
@@ -140,7 +140,7 @@ def test_reduction_size_controls_seed_and_child_call_count(
         output_type="Text",
         expected=expected,
         error=f"{operation.split('-')[0]} requires a nonempty array"
-        if not size and operation != "run"
+        if not size and operation == "reduce"
         else None,
     )
 
