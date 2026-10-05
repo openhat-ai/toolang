@@ -376,7 +376,6 @@ async def _execute(state: _AgicState) -> Message | None:
         ref = FieldRef.from_path(
             StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
-            "local",
             "value",
         )
         state.output = ref
@@ -491,7 +490,7 @@ async def _dispatch_run(state: _AgicState, completions: list[MessageTemplate]) -
     if child is None:
         raise RuntimeError(f"scheduled Run disappeared: {binding.run_id}")
     if child.status == "succeeded" and child.output is not None:
-        state.output = FieldRef.from_path(RunRef(child.id), "output", "local", "value")
+        state.output = FieldRef.from_path(RunRef(child.id), "output", "value")
         state.record_output(state.output)
     completions.append(
         run_completion(

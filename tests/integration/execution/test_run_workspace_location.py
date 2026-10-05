@@ -726,7 +726,7 @@ def test_unavailable_workspace_is_omitted_and_lab_remains_usable(tmp_path):
                 p
                 for step in harness.store.list_steps(run_id=result.id)
                 if step.kind == "tool" and step.output is not None
-                for p in (step.output.local.value,)
+                for p in (step.output.value,)
                 if isinstance(p, ToolResultPart)
             ]
             assert "not available" in (replies[0].error or "")
@@ -834,11 +834,11 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
             from toolang.base.types.message import ToolResultPart
 
             outputs = [
-                step.output.local.value
+                step.output.value
                 for step in harness.store.list_steps(run_id=run.id)
                 if step.kind == "tool"
                 and step.output is not None
-                and isinstance(step.output.local.value, ToolResultPart)
+                and isinstance(step.output.value, ToolResultPart)
             ]
             assert [p.output.get("cwd") for p in outputs] == [
                 "repo://src",
@@ -1175,11 +1175,11 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
             assert (guest / "file").read_text() == "guest"
             assert not (host / "file").exists()
             written = [
-                step.output.local.value
+                step.output.value
                 for step in harness.store.list_steps(run_id=run.id)
                 if step.kind == "tool"
                 and step.output is not None
-                and isinstance(step.output.local.value, ToolResultPart)
+                and isinstance(step.output.value, ToolResultPart)
             ]
             assert written[0].output["path"] == "repo://file"
 

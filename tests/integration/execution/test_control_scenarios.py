@@ -156,9 +156,7 @@ agic revise(_: Part[]) -> Part[]:
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].preceded_by == (control.ref,)
             assert steps[1].input == (
-                FieldRef.from_path(
-                    StepRef.parse(f"{record.id}.0"), "output", "local", "value"
-                ),
+                FieldRef.from_path(StepRef.parse(f"{record.id}.0"), "output", "value"),
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, control.index),
                     "payload",
@@ -333,10 +331,8 @@ def test_cancel_before_tool_call_has_a_step_boundary(
             ]
             assert steps[1].aborted_by == control.ref
             assert steps[1].output is not None
-            assert isinstance(steps[1].output.local.value, ToolResultPart)
-            assert (
-                steps[1].output.local.value.error == "canceled; operation not executed"
-            )
+            assert isinstance(steps[1].output.value, ToolResultPart)
+            assert steps[1].output.value.error == "canceled; operation not executed"
             assert tool.calls == []
             assert_run_event_integrity(tracer.events)
 
@@ -413,10 +409,10 @@ agic calculate(_: Part[]) -> Part[]:
             skipped = harness.store.list_steps(run_id=record.id)[1]
             assert skipped.aborted_by == control.ref
             assert skipped.output is not None
-            assert skipped.output.local.value == canceled
+            assert skipped.output.value == canceled
             second = harness.store.list_steps(run_id=record.id)[2]
             assert second.input == (
-                FieldRef.from_path(skipped.ref, "output", "local", "value"),
+                FieldRef.from_path(skipped.ref, "output", "value"),
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, control.index),
                     "payload",

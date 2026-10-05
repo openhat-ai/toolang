@@ -63,7 +63,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import RerunRequest
 from toolang.execution.store import RunStore
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.execution.types import (
     ControlRef,
     Pointer,
@@ -961,7 +961,7 @@ def test_interrupted_model_persists_partial_output(
             assert first.status == ("failed" if interruption == "error" else "canceled")
             assert first.aborted_by == (control.ref if control is not None else None)
             assert first.output is not None
-            assert parts_from_local(first.output.local) == expected
+            assert parts_from_value(first.output.value) == expected
             tool_steps = [step for step in steps if step.kind == "tool"]
             if interruption == "error":
                 assert not tool_steps
@@ -969,7 +969,7 @@ def test_interrupted_model_persists_partial_output(
                 assert len(tool_steps) == 1
                 assert tool_steps[0].status == "canceled"
                 assert tool_steps[0].output is not None
-                (result,) = parts_from_local(tool_steps[0].output.local)
+                (result,) = parts_from_value(tool_steps[0].output.value)
                 assert isinstance(result, ToolResultPart)
                 assert result.tool_call_id == "complete"
                 assert result.error is not None
@@ -1045,7 +1045,7 @@ def test_interrupting_model_result_delivery_preserves_step_output(
             )
             assert first.aborted_by == (None if boundary == "step_end" else control.ref)
             assert first.output is not None
-            assert parts_from_local(first.output.local) == parts
+            assert parts_from_value(first.output.value) == parts
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -1148,7 +1148,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             assert step.status == "canceled"
             assert step.aborted_by == control.ref
             assert step.output is not None
-            (part,) = parts_from_local(step.output.local)
+            (part,) = parts_from_value(step.output.value)
             assert isinstance(part, ToolResultPart)
             assert part.tool_call_id == "call-1" and part.tool_name == tool_name
             if tool_name == "math__double":

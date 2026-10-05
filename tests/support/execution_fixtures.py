@@ -26,6 +26,7 @@ from toolang.common.time import utc_now
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    value_for_type,
     Output,
     AgentResources,
     ControlRef,
@@ -48,7 +49,6 @@ from toolang.execution.types import (
     StepNoted,
     StepStatus,
     StepRef,
-    Local,
     ThreadRef,
     ToolStepGiven,
 )
@@ -303,7 +303,7 @@ def project_step(
                 output=(
                     output
                     if isinstance(output, Output) or output is None
-                    else Output(Local.typed("Part[]", tuple(output)), "_")
+                    else Output(value_for_type("Part[]", tuple(output)), "_")
                 ),
                 noted=_step_noted(kind, detail),
                 error=ErrorMessage(error) if isinstance(error, str) else error,
@@ -464,7 +464,7 @@ def project_run_end(
             run=run_id,
             status=status,
             output=(
-                Output(Local.typed("Part[]", output), "_")
+                Output(value_for_type("Part[]", output), "_")
                 if isinstance(output, FieldRef)
                 else output
             ),
@@ -505,5 +505,5 @@ def project_compaction(
         request_id=None,
         created_at=utc_now(),
     )
-    project_run_end(store, run_id=run.id, output=Output(Local(summary), None))
+    project_run_end(store, run_id=run.id, output=Output(summary, None))
     return RunRef(run.id)

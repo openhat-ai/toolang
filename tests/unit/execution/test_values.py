@@ -30,25 +30,26 @@ from toolang.execution.records import (
     SteerControlPayload,
     control_payload_from_data,
     control_payload_to_data,
-    local_from_data,
-    local_to_data,
+    value_from_data,
+    value_to_data,
 )
 from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import (
+    value_for_type,
     AgentResources,
     ControlRef,
     FieldRef,
-    Local,
     Pointer,
     RunCommand,
     StepRef,
     TypedRef,
-    local_from_protocol_data,
-    local_to_protocol_data,
+    Output,
+    output_from_protocol_data,
+    output_to_protocol_data,
 )
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.lang.input import CallInput, PromptInvocation
-from toolang.lang.types import Array, Struct
+from toolang.lang.types import Array, Struct, Value
 
 
 def test_pointer_accepts_run_step_control_and_json_paths() -> None:
@@ -63,10 +64,8 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
     assert Pointer.parse("run_1@3/payload/input/1").kind == "control"
     assert Pointer.parse("term_1@0").kind == "control"
     assert str(
-        FieldRef.from_path(
-            StepRef.from_local("run_1", (0, 2)), "output", "local", "value"
-        )
-    ) == ("run_1.0.2/output/local/value")
+        FieldRef.from_path(StepRef.from_local("run_1", (0, 2)), "output", "value")
+    ) == ("run_1.0.2/output/value")
 
 
 @pytest.mark.parametrize(
@@ -95,27 +94,27 @@ def test_pointer_accepts_a_whole_value_slash() -> None:
 
 
 def test_typed_pointer_uses_pointer_then_type() -> None:
-    typed = TypedRef.parse("run_1.0/output/local/value:Part[]")
+    typed = TypedRef.parse("run_1.0/output/value:Part[]")
 
-    assert typed == TypedRef(FieldRef.parse("run_1.0/output/local/value"), "Part[]")
-    assert str(typed) == "run_1.0/output/local/value:Part[]"
+    assert typed == TypedRef(FieldRef.parse("run_1.0/output/value"), "Part[]")
+    assert str(typed) == "run_1.0/output/value:Part[]"
     with pytest.raises(ValueError, match="invalid typed ref"):
-        TypedRef.parse("Part[]@run_1.0/output/local/value")
+        TypedRef.parse("Part[]@run_1.0/output/value")
     with pytest.raises(ValueError, match="invalid typed ref"):
-        TypedRef.parse("run_1/output/local/value:Part[]:Json")
+        TypedRef.parse("run_1/output/value:Part[]:Json")
 
 
-def test_local_keeps_complete_type_without_execution_dimension() -> None:
-    response = Local.typed(type_name="Part[]", value=())
-    scattered = Local.typed(
+def test_value_keeps_complete_type_without_execution_dimension() -> None:
+    response = value_for_type(type_name="Part[]", value=())
+    scattered = value_for_type(
         type_name="Part[]",
-        value=TypedRef(FieldRef.parse("run_1.0/output/local/value"), "Part[]"),
+        value=TypedRef(FieldRef.parse("run_1.0/output/value"), "Part[]"),
     )
-    batches = Local.typed(
+    batches = value_for_type(
         type_name="Part[][]",
         value=(
-            TypedRef(FieldRef.parse("run_a/output/local/value"), "Part[]"),
-            TypedRef(FieldRef.parse("run_b/output/local/value"), "Part[]"),
+            TypedRef(FieldRef.parse("run_a/output/value"), "Part[]"),
+            TypedRef(FieldRef.parse("run_b/output/value"), "Part[]"),
         ),
     )
 
@@ -124,19 +123,17 @@ def test_local_keeps_complete_type_without_execution_dimension() -> None:
     assert batches.type == "Part[][]"
 
 
-def test_legacy_dim_one_requires_an_array_type_and_value() -> None:
-    with pytest.raises(ValueError, match="array value type"):
-        local_from_data({"value": "one", "dim": 1})
+def test_array_requires_an_array_value() -> None:
     with pytest.raises(TypeError, match="Text"):
-        Local.typed(type_name="Text[]", value="one")
+        value_for_type(type_name="Text[]", value="one")
 
 
-def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
-    local = Local.typed(
+def test_value_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
+    local = value_for_type(
         type_name="Part[]",
         value=(
             TextPart("kept"),
-            TypedRef(FieldRef.parse("run_1.0/output/local/value/2"), "Part"),
+            TypedRef(FieldRef.parse("run_1.0/output/value/2"), "Part"),
             ToolCallPart(
                 tool_call_id="call_1",
                 tool_name="search",
@@ -146,7 +143,7 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
         ),
     )
 
-    assert local_from_data(local_to_data(local)) == local
+    assert value_from_data(value_to_data(local)) == local
 
 
 @pytest.mark.parametrize(
@@ -170,18 +167,18 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
         ),
     ),
 )
-def test_local_codec_round_trips_every_concrete_part(part: Part) -> None:
-    local = Local(value=part)
+def test_value_codec_round_trips_every_concrete_part(part: Part) -> None:
+    local = part
 
-    data = local_to_data(local)
+    data = value_to_data(local)
 
-    stored = cast(Mapping[str, object], data["value"])
+    stored = cast(Mapping[str, object], data)
     assert stored["?"] == type(part).__name__
-    assert local_from_data(data) == local
+    assert value_from_data(data) == local
 
 
-def test_local_codec_round_trips_structs_and_nested_arrays() -> None:
-    local = Local.typed(
+def test_value_codec_round_trips_structs_and_nested_arrays() -> None:
+    local = value_for_type(
         "Review",
         {
             "score": 1,
@@ -189,8 +186,8 @@ def test_local_codec_round_trips_structs_and_nested_arrays() -> None:
         },
     )
 
-    assert isinstance(local.value, Struct)
-    assert local_from_data(local_to_data(local)) == local
+    assert isinstance(local, Struct)
+    assert value_from_data(value_to_data(local)) == local
 
 
 @pytest.mark.parametrize(
@@ -214,15 +211,15 @@ def test_struct_rejects_types_reserved_by_runtime_values(type_name: str) -> None
         Struct(type_name, {})
 
 
-def test_local_codec_canonicalizes_untyped_collections_before_storage() -> None:
-    local = Local.typed("Review", {"items": [1, {"labels": ["one", "two"]}]})
+def test_value_codec_canonicalizes_untyped_collections_before_storage() -> None:
+    local = value_for_type("Review", {"items": [1, {"labels": ["one", "two"]}]})
 
-    assert isinstance(local.value, Struct)
-    assert local.value["items"] == (1, {"labels": ("one", "two")})
-    assert local_from_data(local_to_data(local)) == local
+    assert isinstance(local, Struct)
+    assert local["items"] == (1, {"labels": ("one", "two")})
+    assert value_from_data(value_to_data(local)) == local
 
 
-def test_local_part_projection_preserves_tool_parts() -> None:
+def test_value_part_projection_preserves_tool_parts() -> None:
     part = ToolCallPart(
         tool_call_id="call_1",
         tool_name="search",
@@ -230,17 +227,17 @@ def test_local_part_projection_preserves_tool_parts() -> None:
         input={"query": "toolang"},
     )
 
-    assert parts_from_local(Local.typed("Part[]", (part,))) == (part,)
+    assert parts_from_value(value_for_type("Part[]", (part,))) == (part,)
 
 
-def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
+def test_value_codec_normalizes_collections_and_tags_nested_parts() -> None:
     part = TextPart("nested")
-    local = Local.typed(type_name="Json", value={"items": [part, {"ok": True}]})
+    local = value_for_type(type_name="Json", value={"items": [part, {"ok": True}]})
 
-    data = local_to_data(local)
+    data = value_to_data(local)
 
-    assert local.value == {"items": (part, {"ok": True})}
-    assert data["value"] == {
+    assert local == {"items": (part, {"ok": True})}
+    assert data == {
         "?": "Json",
         "items": {
             "?": "Json!",
@@ -250,70 +247,69 @@ def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
             ],
         },
     }
-    assert local_from_data(data) == local
+    assert value_from_data(data) == local
 
 
-def test_local_codec_rejects_values_that_do_not_match_the_declared_type() -> None:
+def test_value_codec_rejects_values_that_do_not_match_the_declared_type() -> None:
     with pytest.raises(ValueError, match="boxed Text"):
-        local_from_data({"value": {"?": "Text!", "!": 42}, "dim": 0})
+        value_from_data({"?": "Text!", "!": 42})
 
     with pytest.raises(TypeError, match="Text"):
-        local_from_data(
-            {"value": {"?": "Json", "items": {"?": "Text[]!", "!": [42]}}, "dim": 0}
-        )
+        value_from_data({"?": "Json", "items": {"?": "Text[]!", "!": [42]}})
 
     with pytest.raises(TypeError, match="Text"):
-        local_from_protocol_data({"type": "Text", "value": 42})
+        output_from_protocol_data({"type": "Text", "value": 42, "binding": None})
 
 
-def test_local_codec_reserves_the_pointer_marker() -> None:
-    local = Local.typed(type_name="Json", value={"?": "ordinary data"})
+def test_value_codec_reserves_the_pointer_marker() -> None:
+    local = value_for_type(type_name="Json", value={"?": "ordinary data"})
 
     with pytest.raises(ValueError, match="reserved"):
-        local_to_data(local)
+        value_to_data(local)
 
 
-def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
-    local = Local.typed(
+def test_value_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
+    local = value_for_type(
         "Part[]",
         (
             TextPart("hello"),
-            TypedRef(FieldRef.parse("run_1.0/output/local/value/2"), "Part"),
+            TypedRef(FieldRef.parse("run_1.0/output/value/2"), "Part"),
         ),
     )
 
-    assert local_to_data(local) == {
-        "value": {
-            "?": "Part[]!",
-            "!": [
-                {"?": "TextPart", "text": "hello"},
-                {"?": "run_1.0/output/local/value/2:Part"},
-            ],
-        },
+    assert value_to_data(local) == {
+        "?": "Part[]!",
+        "!": [
+            {"?": "TextPart", "text": "hello"},
+            {"?": "run_1.0/output/value/2:Part"},
+        ],
     }
-    assert local_to_protocol_data(local) == {
+    assert output_to_protocol_data(Output(local)) == {
+        "binding": None,
         "type": "Part[]",
         "value": [
             {"type": "text", "text": "hello"},
-            {"?": "run_1.0/output/local/value/2:Part"},
+            {"?": "run_1.0/output/value/2:Part"},
         ],
     }
 
 
 def test_protocol_projection_round_trips_parts_nested_in_json() -> None:
-    local = Local.typed("Json", {"answer": TextPart("hello")})
+    local = value_for_type("Json", {"answer": TextPart("hello")})
 
-    assert local_to_protocol_data(local)["value"] == {
+    assert output_to_protocol_data(Output(local))["value"] == {
         "answer": {"type": "text", "text": "hello"}
     }
-    assert local_from_protocol_data(local_to_protocol_data(local)) == local
+    assert output_from_protocol_data(output_to_protocol_data(Output(local))) == Output(
+        local
+    )
 
 
 def test_json_preserves_nested_struct_through_durable_projection() -> None:
-    local = Local.typed("Json", {"review": Struct("Review", {"score": 1})})
+    local = value_for_type("Json", {"review": Struct("Review", {"score": 1})})
 
-    assert isinstance(cast(Mapping[str, object], local.value)["review"], Struct)
-    assert local_from_data(local_to_data(local)) == local
+    assert isinstance(cast(Mapping[str, object], local)["review"], Struct)
+    assert value_from_data(value_to_data(local)) == local
 
 
 @pytest.mark.parametrize(
@@ -327,9 +323,11 @@ def test_json_preserves_nested_struct_through_durable_projection() -> None:
 def test_protocol_projection_does_not_reinterpret_ordinary_json(
     value: dict[str, object],
 ) -> None:
-    local = Local.typed("Json", value)
+    local = value_for_type("Json", value)
 
-    assert local_from_protocol_data(local_to_protocol_data(local)) == local
+    assert output_from_protocol_data(output_to_protocol_data(Output(local))) == Output(
+        local
+    )
 
 
 def test_preparation_payload_round_trips_resolved_input() -> None:
@@ -564,7 +562,7 @@ def test_inherited_preparation_payload_round_trips_without_revision_duplication(
 
 
 def test_execute_payload_round_trips_source_pointing_locals() -> None:
-    source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "local", "value", 1)
+    source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "value", 1)
     payload = ExecuteControlPayload(
         state="a" * 64,
         runnable="_flow_deliver$flow:deliver",
@@ -625,3 +623,21 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
 
     assert type(restored_record.payload) is type(payload)
     assert type(restored_info.payload) is type(payload)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [TextPart("nested")],
+        {"items": [TextPart("nested")]},
+        [[{"answer": TextPart("nested")}]],
+    ],
+)
+def test_parts_projection_accepts_plain_json_arrays(value) -> None:
+    assert parts_from_value(value) == parts_from_value(value_for_type("Json", value))
+
+
+def test_parts_projection_rejects_unresolved_refs_inside_plain_arrays() -> None:
+    value = [TypedRef(FieldRef.parse("run_source/output/value"), "Text")]
+    with pytest.raises(ValueError, match="resolved"):
+        parts_from_value(cast(Value, value))

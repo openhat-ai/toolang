@@ -34,8 +34,8 @@ from toolang.execution.events import (
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import (
-    BoundRun,
     Local,
+    BoundRun,
     transform_flow_result,
 )
 from toolang.execution.executor.executor import _Execution
@@ -50,11 +50,11 @@ from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ControlRef,
     ErrorMessage,
     FieldRef,
-    Local as RecordLocal,
     Occurrence,
     RunRef,
     StepRef,
@@ -174,12 +174,12 @@ def _model_setup(tmp_path: Path) -> AgentSetup:
     ],
 )
 def test_flow_call_preserves_the_complete_array_type(statement) -> None:
-    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "local", "value")
+    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "value")
     evaluated = Local(
         ["one", "two"],
         ref=pointer,
         type_name="Text[]",
-        record=RecordLocal.typed("Text[]", pointer),
+        stored=value_for_type("Text[]", pointer),
     )
 
     result = transform_flow_result(
@@ -192,7 +192,7 @@ def test_flow_call_preserves_the_complete_array_type(statement) -> None:
         ["one", "two"],
         ref=pointer,
         type_name="Text[]",
-        record=RecordLocal.typed("Text[]", pointer),
+        stored=value_for_type("Text[]", pointer),
     )
 
 
@@ -311,7 +311,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert detail.controls[0].payload == run_control.payload
     assert [step.kind for step in detail.steps] == ["value"]
     assert detail.steps[0].output == Output(
-        RecordLocal.typed("Part[]", (TextPart(text="done"),)), "_"
+        value_for_type("Part[]", (TextPart(text="done"),)), "_"
     )
     assert not hasattr(detail.steps[0], "message")
     asyncio.run(executor.stop())
@@ -1804,7 +1804,7 @@ def test_private_event_projector_persists_run_and_step_records(
             step=StepRef.parse("run_test.0"),
             kind="value",
             status="succeeded",
-            output=Output(RecordLocal.typed("Part[]", (TextPart(text="done"),)), "_"),
+            output=Output(value_for_type("Part[]", (TextPart(text="done"),)), "_"),
             finished_at="2026-01-01T00:00:03Z",
         )
     )
@@ -1813,11 +1813,9 @@ def test_private_event_projector_persists_run_and_step_records(
             run="run_test",
             status="succeeded",
             output=Output(
-                RecordLocal.typed(
+                value_for_type(
                     "Part[]",
-                    FieldRef.from_path(
-                        StepRef.parse("run_test.0"), "output", "local", "value"
-                    ),
+                    FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
                 ),
                 "_",
             ),
@@ -1867,7 +1865,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
                 step=StepRef.parse(f"{run_id}.0"),
                 kind="value",
                 status="succeeded",
-                output=Output(RecordLocal.typed("Part[]", (TextPart(text=text),)), "_"),
+                output=Output(value_for_type("Part[]", (TextPart(text=text),)), "_"),
                 finished_at="2026-01-01T00:00:03Z",
             )
         )

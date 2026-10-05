@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from toolang.lang import format_statement_head
-from toolang.lang.types import is_generated_ref
-from toolang.execution.types import HistoricalFlowStmt
 
 from ..records import (
     ControlRecord,
@@ -75,30 +73,7 @@ def step_operation(step: StepRecord) -> str:
         return step.given.model
     if isinstance(step.given, ToolStepGiven):
         return step.given.call.name
-    if isinstance(step.given, HistoricalFlowStmt):
-        return historical_statement_head(step.given)
     return format_statement_head(step.given)
-
-
-def historical_statement_head(statement: HistoricalFlowStmt) -> str:
-    """Render durable facts without turning old records into executable AST."""
-    words = [statement.kind]
-    if statement.count is not None:
-        words.append(str(statement.count))
-    if statement.lanes is not None:
-        words.append(f"in {statement.lanes} lane{'s' if statement.lanes != 1 else ''}")
-    if statement.runnable and not is_generated_ref(statement.runnable):
-        words.extend(
-            ("until" if statement.kind == "repeat" else "using", statement.runnable)
-        )
-    head = " ".join(words)
-    if statement.kind == "repeat" or statement.binding == "_":
-        return head
-    return (
-        f"let {head}"
-        if statement.binding is None
-        else f"let {statement.binding} = {head}"
-    )
 
 
 def direct_step_parent(ref: StepRef) -> StepRef | None:

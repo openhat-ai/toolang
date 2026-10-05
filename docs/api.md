@@ -111,7 +111,7 @@ toolang alice inspect threads
 toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
-toolang alice inspect run_ppkp9e94.0/output/local/value
+toolang alice inspect run_ppkp9e94.0/output/value
 toolang alice inspect run_ppkp9e94.0 call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
@@ -425,7 +425,7 @@ run_ab12                          Run record
 run_ab12.0                        Step record
 term_ab12@0                       Thread Control record
 run_ab12@1                        Run Control record
-run_ab12.0/output/local/value/0   nested field
+run_ab12.0/output/value/0   nested field
 run_ab12@1/payload/input/_        nested Control field
 ```
 
@@ -467,7 +467,7 @@ too SCRIPT inspect run_ab12 output | jq '.'
 too SCRIPT inspect run_ab12 output --json
 ```
 
-`output` resolves stored references and removes the `Output` / `Local` wrappers.
+`output` resolves stored references and extracts the value from `Output`.
 The default view writes Text unchanged and concatenates TextPart bodies in
 order for textual Parts. It preserves whitespace and Markdown source, adding
 only a final newline when nonempty text lacks one. Empty text and empty Parts
@@ -486,7 +486,7 @@ is the same in a terminal and a pipe, including when `FORCE_COLOR` is set.
 A Run without an output fails with its ID and status instead of returning a
 blank success or waiting for completion. Present null and empty outputs succeed.
 Use `inspect RUN/output` to inspect the output wrapper, or
-`inspect RUN/output/local/value --json` for the raw stored value, including
+`inspect RUN/output/value --json` for the raw stored value, including
 unresolved references. Existing Pointer queries retain their original behavior.
 The `output` projector is available only for whole Runs, not Steps or collections.
 
@@ -567,7 +567,7 @@ vocabulary as trees, and both child counts are direct visible relations.
 Field tables always use `FIELD`, `TYPE`, and `VALUE`. They list direct children
 as relative field suffixes and show a bounded preview of the raw canonical value
 in the third column. Long or multiline strings include size facts. Field tables
-do not unwrap `Local`, follow a Pointer, mark a resolved type, or fail because a
+do not follow a Pointer, mark a resolved type, or fail because a
 stored Pointer is missing, cyclic, or has a mismatched target. A directly
 selected value retains normal Pointer resolution and validation.
 
@@ -1472,9 +1472,9 @@ This is a breaking format change: sibling `args`, source `named` lists, and
 primary parts arrays as the complete container are no longer accepted. A valid
 declared argument may still be named `primary`, `named`, or `args`. Input-bearing
 control responses likewise use flat maps with self-describing value encodings.
-Run/Step outputs use `{"local": {"type": "Text", "value": "result"},
-"binding": "_"}`. The binding is a name or null. Local types describe the complete value; there
-is no separate dimension flag.
+Run/Step outputs use `{"type": "Text", "value": "result", "binding": "_"}`.
+The binding is a name or null. The type describes the complete value; there is
+no Local wrapper or dimension flag.
 See [run-step-records.md](./run-step-records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,

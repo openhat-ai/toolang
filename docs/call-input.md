@@ -76,12 +76,12 @@ Execution records use `CallInput[Value | TypedRef]`. Each stored entry retains
 the self-describing value codec, without an input-only `Local` wrapper. Input
 references use `payload/input/_` or `payload/input/argumentName`. Nested paths
 follow the value codec: a boxed array item uses `payload/input/items/!/0`.
-Outputs use `Output(local=Local(value=...), binding="_")`. `Local`
-contains only the complete value; the enclosing local map or output
-binding supplies its name. `binding=None` leaves a result unbound.
+Outputs use `Output(value=..., binding="_")` without a Local wrapper.
+The binding supplies the destination name; `binding=None` leaves a result
+unbound. Output references use `output/value`.
 
 This format replaces the old source compartments, resolved compartments, HTTP
-`args` sibling, and persisted local arrays. RunStore schema 43 rejects older
+`args` sibling, and persisted local arrays. RunStore schema 51 rejects older
 stores without modifying them. HTTP clients must send the flat format; no
 compatibility adapter or migration is provided.
 

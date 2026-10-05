@@ -22,6 +22,7 @@ from toolang.lang.input import coerce_output
 from ...types import Occurrence, StepRef, TypedRef
 from ..common import BoundRun
 from ..common import (
+    _MISSING,
     Local,
     bind_flow_result,
     program_structs,
@@ -65,7 +66,7 @@ async def execute(
             ),
             result.ref if preserves_provenance else None,
             flow.output,
-            result.record if preserves_provenance else None,
+            result.stored if preserves_provenance else _MISSING,
         )
     return result
 

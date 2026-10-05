@@ -371,10 +371,10 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
                 }
             ]
             persisted = [
-                step.output.local.value
+                step.output.value
                 for step in harness.store.list_steps(run_id=run.id)
                 if step.output is not None
-                and isinstance(step.output.local.value, ToolResultPart)
+                and isinstance(step.output.value, ToolResultPart)
             ]
             assert persisted == returned
             assert harness.setup.layout.program.read_text() == repaired

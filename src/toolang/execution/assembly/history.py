@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from toolang.base.types.compaction import CompactionResult
+from toolang.lang.types import Value, value_type
 from toolang.base.types.message import (
     Message,
     MessageRole,
@@ -37,7 +38,6 @@ from ..types import (
     history_root,
     FieldRef,
     validate_compaction_coverage,
-    Local,
     ContentRef,
     MessageTemplate,
     RecallTarget,
@@ -46,7 +46,7 @@ from ..types import (
     ToolStepGiven,
     TypedRef,
 )
-from ..values import parts_from_local
+from ..values import parts_from_value
 from .tool_replies import workspace_reply_from_step
 from .run_results import scheduled_run
 from .utils import control_message, literal_delta, render_delta
@@ -208,7 +208,7 @@ class MessageHistory:
                     (
                         TypedRef(
                             FieldRef.from_path(
-                                history_root(horizon), "output", "local", "value"
+                                history_root(horizon), "output", "value"
                             ),
                             "Text",
                         ),
@@ -291,10 +291,10 @@ def tail_delta(
         ):
             if "_" in entry.payload.input:
                 messages.append(
-                    _local_message(
+                    _value_message(
                         "user",
                         FieldRef.from_path(entry.ref, "payload", "input", "_"),
-                        Local(entry.payload.input["_"]),
+                        entry.payload.input["_"],
                         resolve,
                     )
                 )
@@ -305,17 +305,17 @@ def tail_delta(
         if (reply := workspace_reply_from_step(step, resolve)) is not None
     }
     result_ids = {reply.tool_call_id for reply in replies.values()} | {
-        step.output.local.value.tool_call_id
+        step.output.value.tool_call_id
         for step in tail
         if step.output is not None
-        and isinstance(step.output.local.value, ToolResultPart)
+        and isinstance(step.output.value, ToolResultPart)
         and isinstance(step.given, ToolStepGiven)
         and step.given.trigger == "model"
     }
     calls: set[str] = set()
     for step in tail:
         if step.output is not None and step.kind == "model":
-            parts = parts_from_local(step.output.local)
+            parts = parts_from_value(step.output.value)
             segments = []
             for index, part in enumerate(parts):
                 if isinstance(part, ToolCallPart):
@@ -324,7 +324,7 @@ def tail_delta(
                     calls.add(part.tool_call_id)
                 segments.append(
                     TypedRef(
-                        FieldRef.from_path(step.ref, "output", "local", "value", index),
+                        FieldRef.from_path(step.ref, "output", "value", index),
                         "Part",
                     )
                 )
@@ -336,19 +336,17 @@ def tail_delta(
                 messages.append(MessageTemplate("tool", (reply,)))
         elif (
             step.output is not None
-            and isinstance(step.output.local.value, ToolResultPart)
+            and isinstance(step.output.value, ToolResultPart)
             and isinstance(step.given, ToolStepGiven)
             and step.given.trigger == "model"
         ):
-            if step.output.local.value.tool_call_id in calls:
+            if step.output.value.tool_call_id in calls:
                 messages.append(
                     MessageTemplate(
                         "tool",
                         (
                             TypedRef(
-                                FieldRef.from_path(
-                                    step.ref, "output", "local", "value"
-                                ),
+                                FieldRef.from_path(step.ref, "output", "value"),
                                 "ToolResultPart",
                             ),
                         ),
@@ -370,18 +368,18 @@ def tail_delta(
         if (
             (run_id := scheduled_run(step)) is not None
             and step.output is not None
-            and isinstance(step.output.local.value, ToolResultPart)
-            and step.output.local.value.tool_call_id in calls
+            and isinstance(step.output.value, ToolResultPart)
+            and step.output.value.tool_call_id in calls
             and (message := completion(run_id)) is not None
         ):
             messages.append(message)
     if not models and run.output is not None:
         # A non-model root contributes its public output, never child internals.
         messages.append(
-            _local_message(
+            _value_message(
                 "assistant",
-                FieldRef.from_path(RunRef(run.id), "output", "local", "value"),
-                run.output.local,
+                FieldRef.from_path(RunRef(run.id), "output", "value"),
+                run.output.value,
                 resolve,
             )
         )
@@ -403,13 +401,18 @@ def tail_delta(
     return tuple(messages)
 
 
-def _local_message(
-    role: MessageRole, ref: FieldRef, value: Local, resolve: Callable[[object], object]
+def _value_message(
+    role: MessageRole,
+    ref: FieldRef,
+    value: Value | TypedRef,
+    resolve: Callable[[object], object],
 ) -> MessageTemplate:
-    if value.type in {"Text", "Part", "Part[]"}:
-        return MessageTemplate(role, (TypedRef(ref, value.type),))
-    local = replace(value, value=resolve(value.value))
-    return literal_delta((Message(role, parts_from_local(local)),))[0]
+    type_name = value.type if isinstance(value, TypedRef) else value_type(value)
+    if type_name in {"Text", "Part", "Part[]"}:
+        return MessageTemplate(role, (TypedRef(ref, type_name),))
+    return literal_delta(
+        (Message(role, parts_from_value(cast(Value, resolve(value)))),)
+    )[0]
 
 
 @dataclass(frozen=True)

@@ -45,7 +45,7 @@ flow main:
             assert len(runs) == (2 if via_flow else 1)
             for run in runs:
                 assert run.status == "succeeded", run.error
-                assert run.output is not None and run.output.local.type == "Text"
+                assert run.output is not None and run.output.type == "Text"
                 assert harness.store.run_output_text(run_id=run.id) == "done"
             assert len(harness.adapter.invocations) == 1
             assert harness.adapter.invocations[0].call.output_schema is None
@@ -156,7 +156,7 @@ flow main{annotation}:
                 )
             )
             assert root.status == "succeeded", root.error
-            assert root.output is not None and root.output.local.type == result_type
+            assert root.output is not None and root.output.type == result_type
             assert harness.store.run_output_text(run_id=root.id) == result
             children = [
                 run
@@ -166,9 +166,9 @@ flow main{annotation}:
             assert all(
                 run.status == "succeeded" and run.output is not None for run in children
             )
-            assert sorted(
-                run.output.local.type for run in children if run.output
-            ) == sorted(child_types)
+            assert sorted(run.output.type for run in children if run.output) == sorted(
+                child_types
+            )
             schemas = {
                 "Text": None,
                 "Text[]": {"type": "array", "items": {"type": "string"}},
@@ -284,7 +284,7 @@ flow main(limit) -> Number[]:
             )
             if limit == "2":
                 assert root.status == "succeeded", root.error
-                assert root.output is not None and root.output.local.type == "Number[]"
+                assert root.output is not None and root.output.type == "Number[]"
                 assert harness.store.run_output_text(run_id=root.id) == "[]"
             else:
                 assert root.status == "failed" and root.error is not None

@@ -234,11 +234,11 @@ def test_typed_output_ignores_reasoning_without_losing_durable_parts(
         try:
             saved_run = reopened.get_run(run_id=run.id)
             assert saved_run is not None and saved_run.output is not None
-            assert reopened.resolve_output(saved_run.output).local.value == expected
+            assert reopened.resolve_output(saved_run.output).value == expected
             step = reopened.list_steps(run_id=run.id)[0]
             assert step.output is not None
-            assert isinstance(step.output.local.value, Array)
-            assert tuple(step.output.local.value) == parts
+            assert isinstance(step.output.value, Array)
+            assert tuple(step.output.value) == parts
             assert (
                 tuple(e.data for e in tracer.events if isinstance(e, PartEnd)) == parts
             )
@@ -284,15 +284,15 @@ def test_failed_stream_persists_reasoning_prefix_without_native_state(tmp_path: 
             assert run.status == "failed"
             step = harness.store.list_steps(run_id=run.id)[0]
             assert step.output is not None
-            assert isinstance(step.output.local.value, Array)
-            assert tuple(step.output.local.value) == (
+            assert isinstance(step.output.value, Array)
+            assert tuple(step.output.value) == (
                 ToolCallPart("incomplete", "", ""),
                 completed,
                 ReasoningPart("unfinished α"),
             )
             assert tuple(
                 event.data for event in tracer.events if isinstance(event, PartEnd)
-            ) == tuple(step.output.local.value)
+            ) == tuple(step.output.value)
             assert [
                 event.part for event in tracer.events if isinstance(event, PartEnd)
             ] == [0, 1, 2]

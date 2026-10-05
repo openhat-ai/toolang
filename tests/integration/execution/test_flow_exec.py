@@ -206,7 +206,7 @@ agic finish() -> Text:
                 harness.store.resolve_error(root.error) if root.error else None
             )
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == "finished"
+            assert harness.store.resolve_value(root.output.value) == "finished"
             grow = next(
                 r
                 for r in harness.store.list_run_tree(root_run_id=root.id)

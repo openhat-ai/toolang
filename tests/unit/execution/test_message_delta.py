@@ -1,9 +1,12 @@
 """Message-format semantics are independent of runtime template generation."""
 
+from toolang.lang.types import Value, value_type
+
 from dataclasses import replace
 from typing import Any, cast
 
 import pytest
+from toolang.execution.types import TypedRef, value_for_type
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import (
@@ -31,13 +34,11 @@ from toolang.execution.records import (
 from toolang.execution.recall import recall_revisions
 from toolang.execution.types import (
     FieldRef,
-    Local,
     ModelMessages,
     ContentRef,
     MessageTemplate,
     ModelStepGiven,
     StepRef,
-    TypedRef,
     SkillRecallTarget,
     SkillTriggerRecallTarget,
 )
@@ -46,7 +47,7 @@ from toolang.lang.types import Array
 
 def reference(type: str) -> TypedRef:
     return TypedRef(
-        FieldRef.from_path(StepRef.parse("run_ab12.0"), "output", "local", "value"),
+        FieldRef.from_path(StepRef.parse("run_ab12.0"), "output", "value"),
         type,
     )
 
@@ -74,28 +75,37 @@ def test_steer_template_preserves_multimodal_part_boundaries() -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        Local.typed("Text", "a"),
-        Local.typed("TextPart", TextPart("a")),
-        Local.typed("Part", ImagePart(file_id="file-image")),
-        Local.typed("TextPart[]", (TextPart("a"), TextPart("b"))),
-        Local.typed("Part[]", ()),
+        value_for_type("Text", "a"),
+        value_for_type("TextPart", TextPart("a")),
+        value_for_type("Part", ImagePart(file_id="file-image")),
+        value_for_type("TextPart[]", (TextPart("a"), TextPart("b"))),
+        value_for_type("Part[]", ()),
     ],
 )
-def test_typed_segments_expand_under_one_rule(value: Local) -> None:
-    delta = (MessageTemplate("user", (reference(value.type),)),)
-    expected = (
-        (TextPart(value.value),)
-        if isinstance(value.value, str)
-        else tuple(value.value)
-        if isinstance(value.value, Array)
-        else (value.value,)
+def test_typed_segments_expand_under_one_rule(value: Value | TypedRef) -> None:
+    delta = (
+        MessageTemplate(
+            "user",
+            (
+                reference(
+                    value.type if isinstance(value, TypedRef) else value_type(value)
+                ),
+            ),
+        ),
     )
-    assert render_delta(delta, lambda _: value.value)[0].parts == expected
+    expected = (
+        (TextPart(value),)
+        if isinstance(value, str)
+        else tuple(value)
+        if isinstance(value, Array)
+        else (value,)
+    )
+    assert render_delta(delta, lambda _: value)[0].parts == expected
 
 
 def test_literal_parts_and_nested_reference_looking_data_round_trip() -> None:
     tool_data = {
-        "?": "run_ab12.0/output/local/value:Part[]",
+        "?": "run_ab12.0/output/value:Part[]",
         "items": [1, {"type": "image"}],
     }
     messages = (
@@ -134,7 +144,7 @@ def test_adopted_values_do_not_share_mutable_tool_data() -> None:
     buffer.append_ref(
         "tool",
         reference("ToolResultPart").ref,
-        Local.typed("ToolResultPart", part),
+        value_for_type("ToolResultPart", part),
     )
     part.output["items"].append(2)
     adopted = buffer.messages[0].parts[0]
@@ -186,10 +196,10 @@ def test_buffer_only_renders_additions_and_groups_unsaved_tool_results(
     for index in (1, 2):
         part = ToolResultPart(str(index), "tool", "tool")
         ref = FieldRef.from_path(
-            StepRef.from_local("run_ab12", (index,)), "output", "local", "value"
+            StepRef.from_local("run_ab12", (index,)), "output", "value"
         )
         values[TypedRef(ref, "ToolResultPart")] = part
-        buffer.append_ref("tool", ref, Local.typed("ToolResultPart", part))
+        buffer.append_ref("tool", ref, value_for_type("ToolResultPart", part))
     buffer.group_tools(0)
     copied = buffer.copy()
     copied.initialize((Message.user("ignored after start"),))

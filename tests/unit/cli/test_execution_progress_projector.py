@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from toolang.execution.types import ModelCost
+from toolang.execution.types import ModelCost, value_for_type
 
 from toolang.execution.types import ModelAccounting
 
@@ -38,7 +38,6 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     IterationOccurrence,
-    Local,
     LoopStepNoted,
     LoopTermination,
     ModelStepGiven,
@@ -87,11 +86,11 @@ def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
 
 
 def _parts(text: str) -> Output:
-    return Output(Local.typed("Part[]", (TextPart(text),)), "_")
+    return Output(value_for_type("Part[]", (TextPart(text),)), "_")
 
 
 def _part_output(*parts: Part) -> Output:
-    return Output(Local.typed("Part[]", parts), "_")
+    return Output(value_for_type("Part[]", parts), "_")
 
 
 def _tool_call_part() -> ToolCallPart:
@@ -934,7 +933,7 @@ def test_tool_output_is_not_projected(
             kind="tool",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolResultPart(
@@ -1051,7 +1050,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
             step=StepRef.parse("run_root.0"),
             kind="value",
             status="succeeded",
-            output=Output(Local.typed("Text", "agent runtimes"), "topic"),
+            output=Output(value_for_type("Text", "agent runtimes"), "topic"),
         )
     )
 
@@ -1084,7 +1083,9 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
             step=path,
             kind="value",
             status="succeeded",
-            output=Output(Local.typed("Text[]", ("query one", "query two")), "queries"),
+            output=Output(
+                value_for_type("Text[]", ("query one", "query two")), "queries"
+            ),
         )
     )
 
@@ -1115,11 +1116,11 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
             kind="value",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Text",
                     TypedRef(
                         FieldRef.from_path(
-                            StepRef.parse("run_source.0"), "output", "local", "value"
+                            StepRef.parse("run_source.0"), "output", "value"
                         ),
                         "Text",
                     ),
@@ -1860,7 +1861,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             kind="tool",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolResultPart(
@@ -1913,7 +1914,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             step=par,
             kind="par",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (TextPart("done"),)), "_"),
+            output=Output(value_for_type("Part[]", (TextPart("done"),)), "_"),
         )
     )
 

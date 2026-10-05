@@ -21,12 +21,12 @@ from toolang.execution.records import RunControlPayload, RunRecord, StepRecord
 from toolang.execution.inspection.views import RunView
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.views import ThreadView
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ControlRef,
     FieldRef,
-    Local,
     ModelStepGiven,
     RunRef,
     StepKind,
@@ -257,7 +257,7 @@ def test_thread_page_does_not_decode_unselected_run_outputs(
     for index in range(8):
         run = start(store, f"run_{index}")
         project_run_end(
-            store, run_id=run.id, output=Output(Local("large output " * 1000), None)
+            store, run_id=run.id, output=Output("large output " * 1000, None)
         )
     original = store_module._run_from_row
     decoded: list[str] = []
@@ -418,7 +418,7 @@ def test_run_page_rejects_completion_of_a_captured_running_step(
         ref=model.ref,
         kind="model",
         status="canceled",
-        output=Output(Local("partial"), None),
+        output=Output("partial", None),
         noted=None,
         error=None,
         finished_at="2026-01-01T00:00:01Z",
@@ -450,7 +450,7 @@ def test_run_view_keeps_control_relationships_separate_from_input(
         ref=first.ref,
         kind="model",
         status="canceled",
-        output=Output(Local("partial"), None),
+        output=Output("partial", None),
         noted=None,
         error=None,
         aborted_by=steer.ref,
@@ -473,7 +473,7 @@ def test_run_view_keeps_control_relationships_separate_from_input(
         ("1", "begin", (steer.ref,)),
     ]
     assert view.steps()[0].input == (control_input,)
-    assert view.steps()[0].output == Output(Local("partial"), None)
+    assert view.steps()[0].output == Output("partial", None)
     assert [c.ref for c in view.controls()].count(steer.ref) == 1
 
 
@@ -498,7 +498,7 @@ def test_raw_pages_may_cross_tool_exchange_without_losing_parts(
     history = RunHistory(store)
     captured = pages(history, history.run_view("run_a", limit=1))
     assert [
-        parts_from_local(s.output.local)
+        parts_from_value(s.output.value)
         for page in captured
         if isinstance(page, RunView)
         for s in page.steps()
@@ -536,9 +536,7 @@ def test_child_pages_do_not_decode_ancestor_outputs(
     step(store, "run_leaf")
     project_run_end(store, run_id="run_leaf")
     for name in ("run_child", "run_a"):
-        project_run_end(
-            store, run_id=name, output=Output(Local("large output " * 1000), None)
-        )
+        project_run_end(store, run_id=name, output=Output("large output " * 1000, None))
     original = store_module._run_from_row
 
     def decode(row: sqlite3.Row) -> RunRecord:
@@ -569,7 +567,7 @@ def test_output_and_model_call_reads_are_independent(
         ref=model.ref,
         kind="model",
         status="succeeded",
-        output=Output(Local("answer"), None),
+        output=Output("answer", None),
         noted=None,
         error=None,
         finished_at="2026-01-01T00:00:01Z",
@@ -578,9 +576,7 @@ def test_output_and_model_call_reads_are_independent(
         store,
         run_id="run_a",
         output=Output(
-            Local.typed(
-                "Text", FieldRef.from_path(model.ref, "output", "local", "value")
-            ),
+            value_for_type("Text", FieldRef.from_path(model.ref, "output", "value")),
             None,
         ),
     )
@@ -596,7 +592,7 @@ def test_output_and_model_call_reads_are_independent(
         "list_steps",
         lambda **_kwargs: pytest.fail("output must not load all steps"),
     )
-    assert history.get_output("run_a") == Output(Local("answer"), None)
+    assert history.get_output("run_a") == Output("answer", None)
     with pytest.raises(KeyError):
         history.get_output("run_missing")
     start(store, "run_empty")
@@ -614,9 +610,7 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     history = RunHistory(store)
     assert history.get_compaction("term_a") is None
     start(store, "run_old", thread="compact_term_a")
-    project_run_end(
-        store, run_id="run_old", output=Output(Local("obsolete summary"), None)
-    )
+    project_run_end(store, run_id="run_old", output=Output("obsolete summary", None))
     from tests.support.execution_fixtures import project_compaction
 
     ref = project_compaction(

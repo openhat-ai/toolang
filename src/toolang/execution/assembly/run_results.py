@@ -1,10 +1,11 @@
 """Project a scheduled Run's durable outcome into caller context."""
 
 from collections.abc import Callable
-from dataclasses import replace
+from typing import cast
 from html import escape
 import json
 
+from toolang.lang.types import Value
 from toolang.base.types.message import (
     Part,
     ReasoningPart,
@@ -24,7 +25,7 @@ from ..types import (
     ToolStepGiven,
     TypedRef,
 )
-from ..values import parts_from_local
+from ..values import parts_from_value
 
 
 def run_receipt(run_id: str) -> dict[str, object]:
@@ -41,10 +42,10 @@ def scheduled_run(step: StepRecord) -> str | None:
         and step.given.trigger == "model"
         and step.given.call.name == "_toolang__run"
         and step.output is not None
-        and isinstance(step.output.local.value, ToolResultPart)
+        and isinstance(step.output.value, ToolResultPart)
     ):
         return None
-    return scheduled_run_id(step.output.local.value)
+    return scheduled_run_id(step.output.value)
 
 
 def scheduled_run_id(receipt: ToolResultPart) -> str | None:
@@ -72,12 +73,12 @@ def run_completion(
     attributes = f'run="{escape(run.id, quote=True)}" status="{run.status}"'
     content = ()
     if run.status == "succeeded" and run.output is not None:
-        value = run.output.local
-        resolved = replace(value, value=resolve(value.value))
-        raw_parts = parts_from_local(resolved)
-        parts = parts_from_local(resolved, content_only=True)
-        attributes += f' output-type="{escape(value.type, quote=True)}"'
-        if value.type in {"Text", "Part", "Part[]"} and not any(
+        type_name = run.output.type
+        resolved = cast(Value, resolve(run.output.value))
+        raw_parts = parts_from_value(resolved)
+        parts = parts_from_value(resolved, content_only=True)
+        attributes += f' output-type="{escape(type_name, quote=True)}"'
+        if type_name in {"Text", "Part", "Part[]"} and not any(
             isinstance(part, ReasoningPart | ToolCallPart | ToolResultPart)
             or (
                 isinstance(part, TextPart)
@@ -91,8 +92,8 @@ def run_completion(
         ):
             content = (
                 TypedRef(
-                    FieldRef.from_path(RunRef(run.id), "output", "local", "value"),
-                    value.type,
+                    FieldRef.from_path(RunRef(run.id), "output", "value"),
+                    type_name,
                 ),
             )
         else:

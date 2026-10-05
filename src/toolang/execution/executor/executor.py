@@ -83,7 +83,6 @@ from ..records import (
 from ..store import RunStore
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
-    HistoricalFlowStmt,
     ModelAccounting,
     value_for_type,
     value_type,
@@ -94,7 +93,6 @@ from ..types import (
     ErrorRef,
     FieldRef,
     RecallTarget,
-    Local as RecordLocal,
     Output,
     ControlKind,
     StepRef,
@@ -120,9 +118,10 @@ from ..runnables import (
 )
 from .steps import loop as loop_step
 from .common import (
+    Local,
+    _MISSING,
     BoundRun,
     EventEmitter,
-    Local,
     _ExecutionFailed,
     _ExecuteCommitted,
     _RunRejected,
@@ -2127,8 +2126,7 @@ class _Execution:
             if statement.binding == "_":
                 self.record_output(
                     binding.run_id,
-                    local.ref
-                    or FieldRef.from_path(step.ref, "output", "local", "value"),
+                    local.ref or FieldRef.from_path(step.ref, "output", "value"),
                 )
         return current, len(committed)
 
@@ -2147,7 +2145,7 @@ class _Execution:
         if step.output.binding == "_":
             self.record_output(
                 run_id,
-                local.ref or FieldRef.from_path(step.ref, "output", "local", "value"),
+                local.ref or FieldRef.from_path(step.ref, "output", "value"),
             )
 
     async def execute_child(
@@ -2487,18 +2485,18 @@ class _Execution:
             raise _ExecutionFailed(
                 ErrorRef(FieldRef.from_path(RunRef(binding.run_id), "error")), exc
             ) from exc
-        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "local", "value")
+        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "value")
         item_type = result.type_name or "Json"
         source_pointer = (
             result.ref
             if result.ref is not None
-            and (result.record is not None or result.type_name == "Part[]")
+            and (result.has_stored or result.type_name == "Part[]")
             else pointer
         )
         return replace(
             result,
             ref=source_pointer,
-            record=RecordLocal.typed(
+            stored=value_for_type(
                 type_name=item_type,
                 value=pointer,
             ),
@@ -2508,12 +2506,8 @@ class _Execution:
         self, step: StepRef, name: str, runnable: AgicDecl | FlowDecl
     ) -> None:
         record = self.store.get_step(ref=step)
-        if record is not None and isinstance(record.given, HistoricalFlowStmt):
-            raise ToolangError(
-                "Historical Flow syntax cannot execute; migrate source and prepare a new snapshot"
-            )
         if record is not None and not isinstance(
-            record.given, StoredModelStepGiven | ToolStepGiven | HistoricalFlowStmt
+            record.given, StoredModelStepGiven | ToolStepGiven
         ):
             validate_operation_contract(
                 record.given.kind,
@@ -2620,13 +2614,13 @@ class _Execution:
         return Local(
             [result.value for result in results],
             type_name=f"{output_type}[]",
-            record=(
-                RecordLocal.typed(
+            stored=(
+                value_for_type(
                     type_name=f"{output_type}[]",
                     value=result_refs,
                 )
                 if len(result_refs) == len(results)
-                else None
+                else _MISSING
             ),
         )
 
@@ -2736,9 +2730,7 @@ class _Execution:
         )
         if record is not None and record.output is not None:
             self._run_outputs[run_id] = Output(
-                replace(
-                    record.output.local, value=TypedRef(ref, record.output.local.type)
-                ),
+                TypedRef(ref, record.output.type),
                 "_",
             )
 
@@ -2807,10 +2799,6 @@ class _Execution:
         return state, state_ref
 
     async def _check_step_cancel(self, event: StepBegin, emit: EventEmitter) -> None:
-        if isinstance(event.given, HistoricalFlowStmt):
-            raise ToolangError(
-                "Historical Flow syntax cannot execute; migrate source and prepare a new snapshot"
-            )
         try:
             self.raise_if_canceling(
                 event.step.run_id,
@@ -2841,7 +2829,7 @@ class _Execution:
                     if isinstance(event.given, ToolStepGiven)
                     else None,
                     output=Output(
-                        RecordLocal.typed(
+                        value_for_type(
                             "ToolResultPart",
                             canceled_result(
                                 event.given.call,
@@ -3091,14 +3079,14 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     if step.output is None:
         return Local()
     return Local(
-        value=store.resolve_value(step.output.local.value),
+        value=store.resolve_value(step.output.value),
         ref=(
-            store.resolve_value_pointer(step.output.local.value)
-            if isinstance(step.output.local.value, TypedRef)
-            else FieldRef.from_path(step.ref, "output", "local", "value")
+            store.resolve_value_pointer(step.output.value)
+            if isinstance(step.output.value, TypedRef)
+            else FieldRef.from_path(step.ref, "output", "value")
         ),
-        type_name=step.output.local.type,
-        record=step.output.local,
+        type_name=step.output.type,
+        stored=step.output.value,
     )
 
 
@@ -3275,9 +3263,9 @@ def _execute_locals(
             input[name],
             pointer.ref if isinstance(pointer, TypedRef) else None,
             types[name],
-            RecordLocal.typed(types[name], pointer)
+            value_for_type(types[name], pointer)
             if not isinstance(pointer, TypedRef)
-            else RecordLocal(pointer),
+            else pointer,
         )
     return result
 
@@ -3293,8 +3281,12 @@ def _child_control_value(
 
 
 def _runtime_local_type(local: Local) -> str | None:
-    if local.record is not None:
-        return local.record.type
+    if local.has_stored:
+        return (
+            local.stored.type
+            if isinstance(local.stored, TypedRef)
+            else value_type(local.stored)
+        )
     if local.type_name is None:
         return None
     return local.type_name
@@ -3354,7 +3346,7 @@ def _coerce_execute_output(
         value=value,
         ref=result.ref if preserve else None,
         type_name=type_name,
-        record=result.record if preserve else None,
+        stored=result.stored if preserve else _MISSING,
     )
 
 
@@ -3369,7 +3361,7 @@ def _run_result_output(
     reference = (
         result.ref
         if result.ref is not None
-        and (result.record is not None or result.type_name == "Part[]")
+        and (result.has_stored or result.type_name == "Part[]")
         else None
     )
     concrete = (
@@ -3378,7 +3370,7 @@ def _run_result_output(
         else result.value
     )
     return Output(
-        RecordLocal.typed(
+        value_for_type(
             type_name=item_type,
             value=reference if reference is not None else cast(Value, concrete),
         ),

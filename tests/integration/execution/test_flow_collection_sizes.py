@@ -61,8 +61,8 @@ flow main() -> {output_type}:
                 assert step.status == "failed" and step.output is None
             else:
                 assert run.status == "succeeded", run.error
-                assert run.output is not None and run.output.local.type == output_type
-                assert step.output is not None and step.output.local.type == output_type
+                assert run.output is not None and run.output.type == output_type
+                assert step.output is not None and step.output.type == output_type
                 assert harness.store.run_output_text(run_id=run.id) == expected
 
     asyncio.run(scenario())

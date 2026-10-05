@@ -1,7 +1,7 @@
-"""Output bindings are independent of reusable local values and dimensions."""
+"""Output bindings are independent of reusable complete values."""
 
 from contextlib import closing
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
@@ -18,49 +18,44 @@ from toolang.execution.records import output_from_data, output_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     FieldRef,
-    Local,
     Output,
     Pointer,
-    StepRef,
     TypedRef,
-    local_to_protocol_data,
     output_from_protocol_data,
     output_to_protocol_data,
+    value_to_protocol_data,
 )
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Value
 
 
 @pytest.mark.parametrize("binding", [None, "_", "answer"])
 @pytest.mark.parametrize(
-    "local",
+    "value",
     [
-        Local(value=""),
-        Local(value=0),
-        Local(value=False),
-        Local(value=None),
-        Local(value=Array("Part[]", (TextPart("answer"),))),
-        Local(value=Array("Text[]", ())),
-        Local(value=Array("Text[]", ())),
-        Local(
-            value=TypedRef(
-                FieldRef.from_path(
-                    StepRef.parse("run_source.0"), "output", "local", "value"
-                ),
-                "Text[]",
-            ),
-        ),
+        "",
+        0,
+        False,
+        None,
+        Array("Part[]", (TextPart("answer"),)),
+        Array("Text[]", ()),
+        Array("Text[][]", (Array("Text[]", ("nested",)),)),
+        TypedRef(FieldRef.parse("run_source.0/output/value"), "Text[]"),
     ],
 )
-def test_output_reuses_local_across_storage_and_protocol(
-    local: Local, binding: str | None
+def test_output_reuses_value_across_storage_and_protocol(
+    value: Value | TypedRef, binding: str | None
 ) -> None:
-    locals = {"answer": local}
-    output = Output(local=locals["answer"], binding=binding)
-    assert output.local is local
-    assert not hasattr(local, "name")
-    assert output_from_data(output_to_data(output)) == output
+    output = Output(value, binding)
+    assert output.value is value
+    stored = output_to_data(output)
+    assert set(stored) == {"value", "binding"}
+    assert output_from_data(stored) == output
     data = output_to_protocol_data(output)
-    assert data == {"local": local_to_protocol_data(local), "binding": binding}
+    assert data == {
+        "type": output.type,
+        "value": value_to_protocol_data(value),
+        "binding": binding,
+    }
     assert output_from_protocol_data(data) == output
     adapter = TypeAdapter(Output)
     assert adapter.dump_python(output, mode="json") == data
@@ -70,24 +65,23 @@ def test_output_reuses_local_across_storage_and_protocol(
 
 
 def test_output_binding_is_validated_and_immutable() -> None:
-    output = Output(local=Local(value="result"), binding="_")
+    output = Output("result", "_")
     with pytest.raises(FrozenInstanceError):
         setattr(output, "binding", "answer")
     for binding in ("", "bad name", "bad-name", 1, False):
         with pytest.raises(ValueError, match="invalid output binding"):
-            Output(local=output.local, binding=binding)  # ty: ignore[invalid-argument-type]
+            Output(output.value, binding)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("binding", [None, "_", "answer"])
 @pytest.mark.parametrize(
-    "local",
-    [None, Local(value=None), Local(value=Array("Text[]", ("a", "b")))],
+    "output", [None, Output(None), Output(Array("Text[]", ("a", "b")))]
 )
 def test_output_presence_bindings_and_references_survive_reopening(
-    tmp_path: Path, local: Local | None, binding: str | None
+    tmp_path: Path, output: Output | None, binding: str | None
 ) -> None:
     path = tmp_path / "runs.db"
-    output = Output(local=local, binding=binding) if local is not None else None
+    output = replace(output, binding=binding) if output is not None else None
     with closing(RunStore(path)) as store:
         run = project_run_start(
             store,
@@ -107,13 +101,10 @@ def test_output_presence_bindings_and_references_survive_reopening(
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
         )
-        reference = FieldRef.from_path(step.ref, "output", "local", "value")
+        reference = FieldRef.from_path(step.ref, "output", "value")
         retained = (
-            Output(
-                local=Local(value=TypedRef(reference, local.type)),
-                binding=binding,
-            )
-            if local is not None
+            Output(TypedRef(reference, output.type), binding)
+            if output is not None
             else None
         )
         project_run_end(store, run_id=run.id, output=retained)
@@ -124,17 +115,19 @@ def test_output_presence_bindings_and_references_survive_reopening(
         assert restored is not None and final is not None
         assert restored.output == output
         assert final.output == retained
-        if local is None:
+        if output is None:
             assert final.output is None
         else:
             assert final.output is not None
             assert store.resolve_output(final.output) == output
-            assert store.select_pointer(Pointer(reference)).runtime == local.value
+            selected = store.select_pointer(Pointer(reference))
+            assert selected.runtime == output.value
+            assert selected.render_type == output.type
             assert (
                 store.select_pointer(
-                    Pointer(FieldRef.from_path(step.ref, "output", "local"))
+                    Pointer(FieldRef.from_path(step.ref, "output"))
                 ).runtime
-                == local
+                == output
             )
             assert (
                 store.select_pointer(
@@ -142,21 +135,23 @@ def test_output_presence_bindings_and_references_survive_reopening(
                 ).runtime
                 == binding
             )
-            with pytest.raises(ValueError, match="field does not exist"):
-                store.select_pointer(
-                    Pointer(FieldRef.from_path(step.ref, "output", "value"))
-                )
+            for suffix in (("local",), ("local", "value"), ("dim",)):
+                with pytest.raises(ValueError, match="field does not exist"):
+                    store.select_pointer(
+                        Pointer(FieldRef.from_path(step.ref, "output", *suffix))
+                    )
 
 
 @pytest.mark.parametrize(
     "data",
     [
         {"value": "old", "name": "_", "dim": 0},
-        {"value": {"value": "old", "dim": 0}, "binding": "_"},
+        {"local": {"value": "old", "dim": 0}, "binding": "_"},
+        {"local": {"type": "Text", "value": "old"}, "binding": "_"},
         {"local": None, "binding": "_"},
     ],
 )
-def test_output_codecs_reject_old_or_missing_local_shapes(data) -> None:
+def test_output_codecs_reject_removed_wrappers(data) -> None:
     for decode in (output_from_data, output_from_protocol_data):
         with pytest.raises(ValueError):
             decode(data)

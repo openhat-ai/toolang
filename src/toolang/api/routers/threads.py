@@ -19,7 +19,7 @@ from toolang.api.schemas import (
 from toolang.execution.records import ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail, ThreadInfo
 from toolang.execution.types import ThreadPrefix
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -107,7 +107,7 @@ def latest_thread_result(core: AgentCoreDep, thread_id: str) -> RunDetail:
             if run.status != "succeeded" or run.output is None:
                 continue
             output = core.history.get_output(run.id)
-            if output is not None and parts_from_local(output.local):
+            if output is not None and parts_from_value(output.value):
                 detail = core.history.get_run(run.id)
                 if detail is not None:
                     return replace(detail, output=output)

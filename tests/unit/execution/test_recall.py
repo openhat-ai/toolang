@@ -148,7 +148,7 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         return {root: deltas[root] for root in selected}
 
     def resolve(ref):
-        if ref.ref == FieldRef.from_path(horizon, "output", "local", "value"):
+        if ref.ref == FieldRef.from_path(horizon, "output", "value"):
             return '<skill ref="skill/testing">far is not recall</skill>'
         return controls[ref.ref.record].payload.content
 

@@ -94,7 +94,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 50
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 51
         finally:
             connection.close()
     finally:
@@ -590,7 +590,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         entry = store.get_run_control(run_id=run.id, index=0)
         assert entry is not None and isinstance(entry.payload, RunControlPayload)
         assert entry.payload.state is not None
-        source = FieldRef.from_path(model.ref, "output", "local", "value", 0)
+        source = FieldRef.from_path(model.ref, "output", "value", 0)
         trigger = project_step(
             store,
             run_id=run.id,

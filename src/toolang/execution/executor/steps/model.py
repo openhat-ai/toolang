@@ -42,11 +42,11 @@ from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...recall import required_declarations, history_variables, recall_revisions
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
+    value_for_type,
     ModelAccounting,
     ControlRef,
     ErrorMessage,
     FieldRef,
-    Local,
     ModelMessages,
     MessageTemplate,
     ModelStepGiven,
@@ -678,14 +678,13 @@ async def _apply_response(
     duration_ms: int,
 ) -> ModelCallResult:
     run = state.prepared.run
-    local = Local.typed("Part[]", output)
+    local = value_for_type("Part[]", output)
     if output:
         state.messages.append_ref(
             "assistant",
             FieldRef.from_path(
                 StepRef.from_local(run.run_id, (step_index,)),
                 "output",
-                "local",
                 "value",
             ),
             local,
@@ -834,7 +833,6 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
         FieldRef.from_path(
             StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
-            "local",
             "value",
         ),
     )
@@ -923,7 +921,7 @@ async def _end_incomplete(
         and (response_error is None or isinstance(part, TextPart | ReasoningPart))
     }
     step = StepRef.from_local(state.prepared.run.run_id, (stream.step,))
-    local = Local.typed("Part[]", output) if output else None
+    local = value_for_type("Part[]", output) if output else None
     calls = tuple(
         ToolCall(
             part.tool_call_id,
@@ -937,9 +935,7 @@ async def _end_incomplete(
     accounting = state.account_usage(response_error.usage) if response_error else None
     if retained and response_error is None:
         refs = tuple(
-            TypedRef(
-                FieldRef.from_path(step, "output", "local", "value", index), "Part"
-            )
+            TypedRef(FieldRef.from_path(step, "output", "value", index), "Part")
             for index in retained
         )
         values: dict[object, Part] = dict(zip(refs, retained.values()))

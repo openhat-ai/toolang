@@ -156,9 +156,9 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             control = controls[0]
             assert isinstance(control.payload, CompactControlPayload)
             assert tool.output is not None and isinstance(
-                tool.output.local.value, ToolResultPart
+                tool.output.value, ToolResultPart
             )
-            assert tool.output.local.value.output == {
+            assert tool.output.value.output == {
                 "controls": [
                     {"ref": str(control.ref), "horizon": str(control.payload.horizon)}
                 ]
@@ -281,9 +281,7 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == ["model", "tool", "tool", "model"]
             first, lookup, compact, last = steps
-            assert last.input == (
-                FieldRef.from_path(lookup.ref, "output", "local", "value"),
-            )
+            assert last.input == (FieldRef.from_path(lookup.ref, "output", "value"),)
             assert isinstance(lookup.given, ToolStepGiven)
             assert lookup.given.trigger == "model"
             assert isinstance(compact.given, ToolStepGiven)

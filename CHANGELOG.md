@@ -27,10 +27,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `keep`, `drop`, `sort`, and `reduce` operate on outer items. Arrays from
   parameters, calls, helper flows, `exec`, and restored values behave
   identically, and array-valued child results stay nested.
-- **Breaking:** `Local` no longer carries `dim`. Durable/stored locals contain
-  only `value`, while the HTTP/event protocol projection contains `type` and
-  `value`. Integrations must stop sending or requiring `dim`. Existing
-  `dim=0/1` records remain readable, but new records omit it.
+- **Breaking:** the `Local` wrapper is removed. Stored outputs contain only
+  `value` and `binding`, and the HTTP/event protocol projection contains `type`,
+  `value`, and `binding`; update output references from `output/local/value` to
+  `output/value`. RunStore schema 51 rejects older stores before mutation with no
+  compatibility reader or migration, so keep the matching runtime to inspect old
+  records and start new runs on a fresh store.
 
 - **Breaking:** the `me` tool `me__loaded(receipts)` is replaced by `me__sync()`,
   which waits for one State publication and returns `{revision, files}` for the
@@ -44,7 +46,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `scatter using R` and `gather using R` as `run R`, and give a former `scatter`
   body an explicit `run -> Text[]` type; a former `gather` may now receive `[]`.
   Source, snapshots, retries, and reruns using them are rejected with migration
-  guidance; historical records stay inspectable but are not executable.
+  guidance, and older records remain available only to their matching runtime.
 
 ## [0.3.6] - 2026-10-04
 

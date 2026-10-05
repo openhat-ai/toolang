@@ -18,7 +18,7 @@ from toolang.execution.types import (
     StepKind,
     StepRef,
 )
-from toolang.execution.types import RecordedFlowStmt as FlowStmt
+from toolang.lang.ast import FlowStmt
 
 from .facts import cost_fact, execution_count_fact, token_fact
 from .formatting import flow_statement

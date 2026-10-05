@@ -100,7 +100,7 @@ flow main() -> {output}:
     expected_type = output
     run, output, error = _run(harness)
     assert run.status == "succeeded", run.error
-    assert run.output is not None and run.output.local.type == expected_type
+    assert run.output is not None and run.output.type == expected_type
     assert output == "[]"
     assert len(harness.adapter.invocations) == 1
 
@@ -927,7 +927,7 @@ flow main() -> Json:
             )
             assert run.status == "succeeded", run.error
             assert run.output is not None
-            assert harness.store.resolve_output(run.output).local.value == value
+            assert harness.store.resolve_output(run.output).value == value
             expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
             assert expected in _texts(harness)[-1]
 

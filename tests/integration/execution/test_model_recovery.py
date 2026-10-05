@@ -156,8 +156,8 @@ def test_failed_step_retains_available_text(
             failed, recovered = harness.store.list_steps(run_id=run.id)
             assert failed.status == "failed"
             assert failed.output is not None
-            assert isinstance(failed.output.local.value, Array)
-            assert tuple(failed.output.local.value) == (TextPart(expected),)
+            assert isinstance(failed.output.value, Array)
+            assert tuple(failed.output.value) == (TextPart(expected),)
             assert recovered.status == "succeeded"
             assert Message.assistant(expected) not in (
                 harness.adapter.invocations[-1].call.messages

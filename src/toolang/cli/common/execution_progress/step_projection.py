@@ -16,8 +16,8 @@ from toolang.execution.types import (
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.execution.values import parts_from_local
-from toolang.execution.types import RecordedFlowStmt as FlowStmt
+from toolang.execution.values import parts_from_value
+from toolang.lang.ast import FlowStmt
 from toolang.lang.ast import (
     DropStmt,
     KeepStmt,
@@ -353,7 +353,7 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
     try:
-        parts = parts_from_local(event.output.local, content_only=True)
+        parts = parts_from_value(event.output.value, content_only=True)
     except (TypeError, ValueError):
         return []
     lines: list[str] = []

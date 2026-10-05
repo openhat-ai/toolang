@@ -30,11 +30,11 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
-from toolang.common.immutable import freeze_mapping
 from toolang.lang.ast import (
     AskStmt,
     DropStmt,
     FlowStmt,
+    flow_stmt_from_data,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -920,69 +920,59 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class Local:
-    """One complete runtime value, independent of its local name."""
+class Output:
+    """One complete value and its optional destination in the local table."""
 
     value: Value | TypedRef
-
-    @classmethod
-    def typed(
-        cls,
-        type_name: str,
-        value: object,
-    ) -> Local:
-        """Build a local by applying one explicit typed boundary."""
-
-        return cls(
-            value=value_for_type(type_name, value),
-        )
+    binding: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.value, TypedRef):
             object.__setattr__(
-                self,
-                "value",
-                value_for_type(value_type(self.value), self.value),
+                self, "value", value_for_type(value_type(self.value), self.value)
             )
         validate_runtime_value(self.value, self.type)
+        if self.binding is not None and (
+            not isinstance(self.binding, str)
+            or not _LOCAL_NAME_RE.fullmatch(self.binding)
+        ):
+            raise ValueError(f"invalid output binding: {self.binding!r}")
 
     @property
     def type(self) -> str:
-        """Return the canonical runtime or expected pointer type."""
+        """Return the concrete value type or a reference's expected type."""
 
-        if isinstance(self.value, TypedRef):
-            return self.value.type
-        return value_type(self.value)
+        return (
+            self.value.type
+            if isinstance(self.value, TypedRef)
+            else value_type(self.value)
+        )
 
     @classmethod
-    def _validate_pydantic(cls, value: object) -> Local:
+    def _validate_pydantic(cls, value: object) -> Output:
         if isinstance(value, cls):
             return value
         if isinstance(value, Mapping):
-            return local_from_protocol_data(cast(Mapping[str, object], value))
-        raise TypeError("local must be a Local or canonical object")
-
-    @staticmethod
-    def _serialize_pydantic(value: Local) -> dict[str, object]:
-        return local_to_protocol_data(value)
+            return output_from_protocol_data(cast(Mapping[str, object], value))
+        raise TypeError("output must be an Output or canonical object")
 
     @classmethod
     def __get_pydantic_core_schema__(
-        cls,
-        _source_type: Any,
-        _handler: Any,
+        cls, _source_type: Any, _handler: Any
     ) -> core_schema.CoreSchema:
         protocol_schema = core_schema.typed_dict_schema(
             {
                 "type": core_schema.typed_dict_field(core_schema.str_schema()),
                 "value": core_schema.typed_dict_field(core_schema.any_schema()),
+                "binding": core_schema.typed_dict_field(
+                    core_schema.nullable_schema(core_schema.str_schema())
+                ),
             },
             extra_behavior="forbid",
         )
         return core_schema.json_or_python_schema(
             json_schema=core_schema.no_info_after_validator_function(
-                cls._validate_pydantic,
-                protocol_schema,
+                cls._validate_pydantic, protocol_schema
             ),
             python_schema=core_schema.union_schema(
                 [
@@ -993,7 +983,7 @@ class Local:
                 ]
             ),
             serialization=core_schema.plain_serializer_function_ser_schema(
-                cls._serialize_pydantic,
+                output_to_protocol_data,
                 return_schema=core_schema.dict_schema(
                     core_schema.str_schema(), core_schema.any_schema()
                 ),
@@ -1001,67 +991,34 @@ class Local:
         )
 
 
-def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
-    """Parse one caller-facing local projection."""
-
-    if set(payload) != {"type", "value"}:
-        raise ValueError("local requires type and value fields")
-    raw_type = payload.get("type")
-    if not isinstance(raw_type, str):
-        raise ValueError("local type must be text")
-    type_name = validate_type(raw_type)
-    return Local.typed(
-        type_name,
-        value_from_protocol_data(payload.get("value"), type_name),
-    )
-
-
-def local_to_protocol_data(local: Local) -> dict[str, object]:
-    """Serialize one caller-facing local projection."""
-
-    return {
-        "type": local.type,
-        "value": _protocol_value_to_data(local.value),
-    }
-
-
-@dataclass(frozen=True, slots=True)
-class Output:
-    """One produced local and its optional destination in the local table."""
-
-    local: Local
-    binding: str | None = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.local, Local):
-            raise TypeError("output local must be a Local")
-        if self.binding is not None and (
-            not isinstance(self.binding, str)
-            or not _LOCAL_NAME_RE.fullmatch(self.binding)
-        ):
-            raise ValueError(f"invalid output binding: {self.binding!r}")
-
-
 def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
-    """Decode an output while retaining its local value and binding."""
+    """Decode an output's typed value and binding."""
 
-    if set(payload) != {"local", "binding"}:
-        raise ValueError("output requires local and binding fields")
-    local_data = payload["local"]
-    if not isinstance(local_data, Mapping):
-        raise ValueError("output local must be a local object")
+    if set(payload) != {"type", "value", "binding"}:
+        raise ValueError("output requires type, value, and binding fields")
+    raw_type = payload["type"]
+    if not isinstance(raw_type, str):
+        raise ValueError("output type must be text")
+    type_name = validate_type(raw_type)
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
     return Output(
-        local_from_protocol_data(cast(Mapping[str, object], local_data)), binding
+        value_for_type(
+            type_name, value_from_protocol_data(payload["value"], type_name)
+        ),
+        binding,
     )
 
 
 def output_to_protocol_data(output: Output) -> dict[str, object]:
-    """Encode one output using the shared local projection."""
+    """Project an output with its derived type for plain JSON consumers."""
 
-    return {"local": local_to_protocol_data(output.local), "binding": output.binding}
+    return {
+        "type": output.type,
+        "value": value_to_protocol_data(output.value),
+        "binding": output.binding,
+    }
 
 
 def value_from_protocol_data(data: object, type_name: str) -> Value | TypedRef:
@@ -1121,24 +1078,22 @@ def _protocol_json_value_from_data(data: object) -> object:
     return data
 
 
-def _protocol_value_to_data(value: object) -> object:
+def value_to_protocol_data(value: object) -> object:
     if isinstance(value, TypedRef):
         return {"?": str(value)}
     if isinstance(value, _PART_TYPES):
         return value.to_data()
     if isinstance(value, Array):
-        return [_protocol_value_to_data(item) for item in value]
+        return [value_to_protocol_data(item) for item in value]
     if isinstance(value, Struct | Mapping):
-        return {
-            str(name): _protocol_value_to_data(item) for name, item in value.items()
-        }
+        return {str(name): value_to_protocol_data(item) for name, item in value.items()}
     if isinstance(value, tuple | list):
-        return [_protocol_value_to_data(item) for item in value]
+        return [value_to_protocol_data(item) for item in value]
     return value
 
 
 def validate_runtime_value(
-    value: object, type_name: str, *, path: str = "local"
+    value: object, type_name: str, *, path: str = "value"
 ) -> None:
     """Validate one concrete or referenced execution value against a type."""
 
@@ -1162,12 +1117,12 @@ def validate_runtime_value(
     if type_name in {"Text", "Number", "Boolean"}:
         valid = value_type(value) == type_name
     elif type_name == "Json":
-        _validate_open_local_value(value, path=path)
+        _validate_open_value(value, path=path)
         return
     else:
         valid = isinstance(value, Struct) and value.type == type_name
         if valid and isinstance(value, Struct):
-            _validate_open_local_value(value, path=path)
+            _validate_open_value(value, path=path)
             return
     if not valid:
         raise TypeError(f"{path} is not {type_name}")
@@ -1230,7 +1185,7 @@ def _normalize_json_value(value: object) -> object:
     return value
 
 
-def _validate_open_local_value(value: object, *, path: str) -> None:
+def _validate_open_value(value: object, *, path: str) -> None:
     if isinstance(value, (TypedRef, *_PART_TYPES)):
         return
     if value is None or isinstance(value, str | bool | int):
@@ -1244,13 +1199,13 @@ def _validate_open_local_value(value: object, *, path: str) -> None:
         return
     if isinstance(value, tuple | list):
         for index, item in enumerate(value):
-            _validate_open_local_value(item, path=f"{path}[{index}]")
+            _validate_open_value(item, path=f"{path}[{index}]")
         return
     if isinstance(value, Mapping):
         for name, item in value.items():
             if not isinstance(name, str):
                 raise TypeError(f"{path} contains a non-text key")
-            _validate_open_local_value(item, path=f"{path}.{name}")
+            _validate_open_value(item, path=f"{path}.{name}")
         return
     raise TypeError(f"{path} contains unsupported {type(value).__name__}")
 
@@ -1462,46 +1417,7 @@ class ToolStepGiven:
         _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
 
 
-@dataclass(frozen=True, slots=True)
-class HistoricalFlowStmt:
-    """Validated historical statement facts; never an executable language AST."""
-
-    data: Mapping[str, Any]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "data", freeze_mapping(self.data))
-
-    @property
-    def kind(self) -> str:
-        return self.data["kind"]
-
-    @property
-    def binding(self) -> str | None:
-        return self.data["binding"]
-
-    @property
-    def doc(self) -> str | None:
-        return self.data["doc"]
-
-    @property
-    def count(self) -> int | None:
-        return self.data.get("count")
-
-    @property
-    def lanes(self) -> int | None:
-        return self.data.get("lanes")
-
-    @property
-    def runnable(self) -> str | None:
-        return self.data.get("runnable")
-
-
-RecordedFlowStmt: TypeAlias = FlowStmt | HistoricalFlowStmt
-
-
 def _serialize_step_given(value: StepGiven, handler: Any) -> object:
-    if isinstance(value, HistoricalFlowStmt):
-        return ast_to_data(value.data)
     if isinstance(value, Node):
         return ast_to_data(value)
     return handler(value)
@@ -1510,14 +1426,12 @@ def _serialize_step_given(value: StepGiven, handler: Any) -> object:
 def _parse_step_given(value: object) -> object:
     payload = cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
     if isinstance(payload.get("kind"), str):
-        from .records import recorded_flow_stmt_from_data
-
-        return recorded_flow_stmt_from_data(value)
+        return flow_stmt_from_data(value)
     return value
 
 
 StepGiven: TypeAlias = Annotated[
-    RecordedFlowStmt | ModelStepGiven | ToolStepGiven,
+    FlowStmt | ModelStepGiven | ToolStepGiven,
     BeforeValidator(_parse_step_given),
     WrapSerializer(_serialize_step_given),
 ]
@@ -1922,14 +1836,6 @@ def _validate_step_summary(
 
 
 def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
-    if isinstance(value, HistoricalFlowStmt):
-        return kind == {
-            "scatter": "run",
-            "gather": "run",
-            "storm": "par",
-            "settle": "loop",
-            "repeat": "loop",
-        }.get(value.kind)
     if kind == "exec":
         return isinstance(value, ExecStmt)
     if kind == "value":

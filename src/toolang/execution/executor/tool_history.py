@@ -12,7 +12,7 @@ from ..inspection.history import RunHistory
 from toolang.lang.types import Value
 
 from ..records import (
-    local_value_to_data,
+    value_to_data,
     CancelControlPayload,
     ControlRecord,
     ExecuteControlPayload,
@@ -180,7 +180,7 @@ def _record_data(store: RunStore, record: Record) -> dict[str, object]:
         data["payload"] = {
             **cast(dict[str, object], data["payload"]),
             "input": {
-                name: local_value_to_data(cast(Value, store.resolve_value(value)))
+                name: value_to_data(cast(Value, store.resolve_value(value)))
                 for name, value in record.payload.input.items()
             },
         }

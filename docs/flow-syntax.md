@@ -15,8 +15,6 @@ P          positive concurrency limit
 VALUE_STMT a result-producing statement (excludes repeat and exec)
 RUNNABLE   named agic or flow
 AGENT      agent selector
-EXPANDER   one-run runnable returning a list
-MERGER     one-run runnable merging a list into one item
 MAPPER     per-input runnable returning one item
 REDUCER    per-item runnable updating an accumulator
 FILTER     per-item runnable returning Boolean
@@ -29,8 +27,8 @@ STMTS      indented flow statements
 
 Uppercase words are placeholders, not keywords. `[X]` marks optional syntax,
 and `A | B` marks alternatives. Counts and sort direction immediately follow
-the verb. Named runnable and lane clauses may exchange order; an inline
-runnable always comes last.
+the verb. Lane placement follows each statement's form below; an inline
+runnable always comes last. Generate/map require lanes before their target.
 
 `BODY` never includes its introducing colon:
 
@@ -375,14 +373,19 @@ A helper Flow can return the complete array type to preserve the same behavior.
 
 ## Migration to Array Operators
 
-Replace `scatter using R` and `gather using R` with `run R`. For inline scatter,
+Scatter/gather are removed; run retains its existing single-call behavior and
+input/output contracts. Existing programs can express those calls with `run R`
+in place of `scatter using R` or `gather using R`. For inline scatter,
 use `run -> Text[]: BODY` or retain its explicit array output type. Run accepts
 empty arrays; move any required nonempty validation into the callee.
 Rename `storm` to `generate` and `settle` to `reduce`. Remove `using` before
 inline generate/map/reduce bodies; retain it before named targets. Keep bindings,
 `from` initializers, explicit types, and lane counts.
 
-Local protocol objects now contain only `type` and `value`; clients must stop
-sending or requiring `dim`. Stored locals write only `value`. Historical locals
-with valid `dim` and old statement records remain readable. Old executable
+Output protocol objects contain `type`, `value`, and `binding`; stored outputs
+contain `value` and `binding`, using the self-describing value codec. There is no
+Local wrapper or `dim` field. Update output references to `output/value`.
+RunStore schema 51 rejects older stores without modifying them; retain the
+matching older runtime to inspect those stores, and use a fresh store for new
+runs. No compatibility reader or automatic migration is provided. Old executable
 snapshots require source migration and a newly prepared state before retry/rerun.

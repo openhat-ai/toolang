@@ -42,7 +42,7 @@ from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import delta_to_data
 from toolang.execution.recall import recall_revisions
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -243,7 +243,7 @@ def test_online_tool_loops_only_record_and_render_additions(
                 assert step.output is not None
                 reasoning = [
                     part
-                    for part in parts_from_local(step.output.local)
+                    for part in parts_from_value(step.output.value)
                     if isinstance(part, ReasoningPart)
                 ]
                 assert len(reasoning) == 1
@@ -340,7 +340,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
             assert step.status == "canceled"
             assert step.aborted_by == second.ref
             assert step.output is not None
-            assert parts_from_local(step.output.local) == tuple(
+            assert parts_from_value(step.output.value) == tuple(
                 event.data
                 for event in tracer.events
                 if isinstance(event, PartEnd) and event.step == step.ref
@@ -427,7 +427,7 @@ def test_interrupted_model_end_preserves_referenced_output(
             assert step.status == ("canceled" if at_commit else "succeeded")
             assert step.aborted_by == (control.ref if at_commit else None)
             assert step.output is not None
-            parts = parts_from_local(step.output.local)
+            parts = parts_from_value(step.output.value)
             assert parts[0] == TextPart("draft")
             assert len(parts) == 1 + len(requests)
             assert all(isinstance(part, ToolCallPart) for part in parts[1:])
@@ -721,7 +721,7 @@ def test_delta_cannot_exceed_the_assembled_call(
     store = RunStore(tmp_path / "runs.db")
     try:
         missing = TypedRef(
-            FieldRef.from_path(StepRef.parse("run_dead.0"), "output", "local", "value"),
+            FieldRef.from_path(StepRef.parse("run_dead.0"), "output", "value"),
             "Part[]",
         )
         with pytest.raises(ValueError, match="delta exceeds the assembled messages"):
@@ -906,7 +906,7 @@ def test_recorded_messages_freeze_actual_parts_and_require_intact_hashes(
     original = Message.user("Actually sent {{literal}}")
     head = StepRef.parse("run_ab12.0")
     # Persistence must freeze the already assembled call, not reread this field.
-    unavailable = TypedRef(FieldRef.from_path(head, "output", "local", "value"), "Text")
+    unavailable = TypedRef(FieldRef.from_path(head, "output", "value"), "Text")
     monkeypatch.setattr(
         store,
         "resolve_value",

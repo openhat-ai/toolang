@@ -17,9 +17,9 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.lang.types import Array, Struct
+from toolang.lang.types import Array, Struct, Value, value_type
 
-from .types import Local, TypedRef
+from .types import TypedRef
 
 _PART_TYPES = (
     TextPart,
@@ -42,27 +42,26 @@ _PART_ARRAY_TYPES = {
 }
 
 
-def parts_from_local(local: Local, *, content_only: bool = False) -> tuple[Part, ...]:
-    """Project one resolved typed local into canonical message parts."""
+def parts_from_value(
+    value: Value | TypedRef, *, content_only: bool = False
+) -> tuple[Part, ...]:
+    """Project one resolved value into canonical message parts."""
 
-    value = local.value
     if _contains_pointer(value):
-        raise ValueError("local must be resolved before projecting parts")
+        raise ValueError("value must be resolved before projecting parts")
     if isinstance(value, _PART_TYPES):
         return content_parts((value,)) if content_only else (value,)
-    if local.type in _PART_ARRAY_TYPES:
+    if value_type(value) in _PART_ARRAY_TYPES:
         if not isinstance(value, Array) or not all(
             isinstance(item, _PART_TYPES) for item in value
         ):
-            raise TypeError("Part[] local requires an ordered part sequence")
+            raise TypeError("Part[] value requires an ordered part sequence")
         return (
             content_parts(cast(tuple[Part, ...], tuple(value)))
             if content_only
             else cast(tuple[Part, ...], tuple(value))
         )
-    if local.type == "Text":
-        if not isinstance(value, str):
-            raise TypeError("Text local requires text")
+    if isinstance(value, str):
         return (TextPart(value),)
     return (
         TextPart(
@@ -79,7 +78,7 @@ def parts_from_local(local: Local, *, content_only: bool = False) -> tuple[Part,
 def _contains_pointer(value: object) -> bool:
     if isinstance(value, TypedRef):
         return True
-    if isinstance(value, Array | tuple):
+    if isinstance(value, Array | tuple | list):
         return any(_contains_pointer(item) for item in value)
     if isinstance(value, Struct | Mapping):
         return any(_contains_pointer(item) for item in value.values())
@@ -92,7 +91,7 @@ def _presentation_data(value: object, *, content_only: bool = False) -> object:
             visible = content_parts((value,))
             return {"$part": visible[0].to_data()} if visible else None
         return {"$part": value.to_data()}
-    if isinstance(value, Array | tuple):
+    if isinstance(value, Array | tuple | list):
         return [
             _presentation_data(item, content_only=content_only)
             for item in value
@@ -107,4 +106,4 @@ def _presentation_data(value: object, *, content_only: bool = False) -> object:
     return value
 
 
-__all__ = ["parts_from_local"]
+__all__ = ["parts_from_value"]

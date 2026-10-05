@@ -453,7 +453,7 @@ def test_publication_preserves_the_next_step_of_an_active_agic(tmp_path: Path) -
                 "type": "number"
             }
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == 7
+            assert harness.store.resolve_value(root.output.value) == 7
 
     asyncio.run(scenario())
 

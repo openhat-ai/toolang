@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from toolang.execution.types import ModelCost
+from toolang.execution.types import ModelCost, value_for_type
 
 from toolang.execution.types import ModelAccounting
 
@@ -52,7 +52,6 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     ModelStepGiven,
     ModelStepNoted,
     StepRef,
@@ -67,7 +66,7 @@ class _TtyStream(StringIO):
 
 
 def _parts(text: str) -> Output:
-    return Output(Local.typed("Part[]", (TextPart(text),)), "_")
+    return Output(value_for_type("Part[]", (TextPart(text),)), "_")
 
 
 def _model() -> ModelStepGiven:
@@ -145,10 +144,10 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 run="run_one",
                 status="succeeded",
                 output=Output(
-                    Local.typed(
+                    value_for_type(
                         "Part[]",
                         FieldRef.from_path(
-                            StepRef.parse("run_one.0"), "output", "local", "value"
+                            StepRef.parse("run_one.0"), "output", "value"
                         ),
                     ),
                     "_",
@@ -295,7 +294,7 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
                 kind="model",
                 status="succeeded",
                 output=Output(
-                    Local.typed(
+                    value_for_type(
                         "Part[]",
                         (
                             ToolCallPart(
@@ -363,7 +362,7 @@ def test_tool_output_is_not_rendered() -> None:
                 kind="tool",
                 status="succeeded",
                 output=Output(
-                    Local.typed(
+                    value_for_type(
                         "Part[]",
                         (
                             ToolResultPart(

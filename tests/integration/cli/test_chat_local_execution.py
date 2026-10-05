@@ -36,7 +36,6 @@ from toolang.execution.types import (
     ModelOverride,
     RunOverride,
     SessionSetting,
-    Local,
     RunRef,
 )
 from toolang.lang.input import CallInput
@@ -61,9 +60,7 @@ def test_latest_chat_output_keeps_one_snapshot_during_retry(
             origin="chat",
             input=Message.user("input"),
         )
-        project_run_end(
-            writer, run_id="run_a", output=Output(Local("original answer"), None)
-        )
+        project_run_end(writer, run_id="run_a", output=Output("original answer", None))
         control = writer.get_run_control(run_id="run_a", index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
         payload = control.payload

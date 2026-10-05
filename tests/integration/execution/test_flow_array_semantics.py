@@ -15,6 +15,62 @@ from toolang.execution.types import ControlRef, FieldRef, ThreadPrefix, TypedRef
 from toolang.lang.errors import ToolangError
 
 
+@pytest.mark.parametrize("target", ["named", "inline"])
+@pytest.mark.parametrize(
+    "type_name,value",
+    [
+        ("Text", "value"),
+        ("Text[]", []),
+        ("Text[]", ["a", "b"]),
+        ("Text[][]", [["a"], []]),
+    ],
+)
+def test_run_preserves_one_call_with_complete_input_and_output(
+    tmp_path, target, type_name, value
+):
+    statement = "run echo" if target == "named" else f"run -> {type_name}: {{{{_}}}}"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            f"agic echo(_: {type_name}) -> {type_name}:\n  {{{{_}}}}\n"
+            f"flow main(_: {type_name}) -> {type_name}:\n  {statement}\n"
+        ),
+        responses=[
+            ModelCallResult(
+                message=Message.assistant(
+                    value if type_name == "Text" else json.dumps(value)
+                )
+            )
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="main", named={"_": value})
+            )
+            assert run.status == "succeeded", run.error
+            children = [
+                child
+                for child in harness.store.list_run_tree(root_run_id=run.id)
+                if child.parent is not None
+            ]
+            assert len(children) == len(harness.adapter.invocations) == 1
+            control = harness.store.get_run_control(run_id=children[0].id, index=0)
+            assert control is not None
+            source = TypedRef(
+                FieldRef.from_path(control.ref, "payload", "input", "_"), type_name
+            )
+            assert run.output is not None and run.output.type == type_name
+            assert harness.store.resolve_value(run.output.value) == (
+                harness.store.resolve_value(source)
+            )
+            assert not harness.store.list_steps(run_id=run.id)[0].noted
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("type_name", ["Text[][]", "Json"])
 @pytest.mark.parametrize("origin", ["parameter", "run", "helper", "exec"])
 @pytest.mark.parametrize("size", [0, 1, 2])
@@ -97,7 +153,7 @@ def test_outer_arrays_are_identical_across_boundaries(
                 assert run.status == "succeeded", (
                     harness.store.resolve_error(run.error) if run.error else None
                 )
-                assert run.output is not None and run.output.local.type == result_type
+                assert run.output is not None and run.output.type == result_type
                 actual = harness.store.run_output_text(run_id=run.id)
                 assert json.loads(actual) == expected
             assert len(harness.adapter.invocations) == len(responses)
@@ -161,7 +217,7 @@ def test_part_arrays_select_outer_parts_and_keep_their_type(tmp_path, statement)
                 )
             )
             assert run.status == "succeeded" and run.output is not None
-            assert run.output.local.type == "Part[]"
+            assert run.output.type == "Part[]"
             assert harness.store.run_output_text(run_id=run.id) == "first"
             assert not harness.adapter.invocations
 
@@ -195,16 +251,16 @@ def test_singleton_json_reduce_keeps_the_seed_without_a_child_call(tmp_path, ite
                 harness.store.resolve_error(run.error) if run.error else None
             )
             assert run.output is not None
-            assert harness.store.resolve_value(run.output.local.value) == item
+            assert harness.store.resolve_value(run.output.value) == item
             step = harness.store.list_steps(run_id=run.id)[0]
             assert step.output is not None
-            assert isinstance(step.output.local.value, TypedRef)
+            assert isinstance(step.output.value, TypedRef)
             seed = FieldRef.from_path(
                 ControlRef.for_run(run.id, 0), "payload", "input", "_", "!", 0
             )
-            assert harness.store.resolve_value_pointer(step.output.local.value) == seed
-            assert isinstance(run.output.local.value, TypedRef)
-            assert step.output.local.type == run.output.local.type == "Json"
+            assert harness.store.resolve_value_pointer(step.output.value) == seed
+            assert isinstance(run.output.value, TypedRef)
+            assert step.output.type == run.output.type == "Json"
             assert not harness.adapter.invocations
 
     asyncio.run(scenario())
@@ -233,9 +289,7 @@ def test_retry_restores_nested_arrays_and_selected_item_provenance(tmp_path):
                 run.id, setup=harness.setup, state=harness.state
             )
             assert retried.status == "succeeded", retried.error
-            assert (
-                retried.output is not None and retried.output.local.type == "Text[][]"
-            )
+            assert retried.output is not None and retried.output.type == "Text[][]"
             assert json.loads(harness.store.run_output_text(run_id=run.id)) == [
                 ["kept"]
             ]
@@ -246,7 +300,12 @@ def test_retry_restores_nested_arrays_and_selected_item_provenance(tmp_path):
 
 @pytest.mark.parametrize(
     "type_name,value",
-    [("Json", "kept"), ("Json", [["a"], []]), ("Text[][]", [["a", "b"], []])],
+    [
+        ("Json", None),
+        ("Json", "kept"),
+        ("Json", [["a"], []]),
+        ("Text[][]", [["a", "b"], []]),
+    ],
 )
 def test_retry_preserves_committed_output_when_later_result_is_discarded(
     tmp_path, type_name, value
@@ -270,22 +329,19 @@ def test_retry_preserves_committed_output_when_later_result_is_discarded(
             assert run.status == "failed"
             committed = harness.store.list_steps(run_id=run.id)[0]
             assert committed.output is not None
-            assert isinstance(committed.output.local.value, TypedRef)
-            source = harness.store.resolve_value_pointer(committed.output.local.value)
+            assert isinstance(committed.output.value, TypedRef)
+            source = harness.store.resolve_value_pointer(committed.output.value)
 
             retried = await harness.executor.retry(
                 run.id, setup=harness.setup, state=harness.state
             )
             assert retried.status == "succeeded", retried.error
             assert retried.output is not None
-            assert retried.output.local.type == type_name
-            assert isinstance(retried.output.local.value, TypedRef)
-            assert (
-                harness.store.resolve_value_pointer(retried.output.local.value)
-                == source
-            )
-            assert harness.store.resolve_value(retried.output.local.value) == (
-                harness.store.resolve_value(committed.output.local.value)
+            assert retried.output.type == type_name
+            assert isinstance(retried.output.value, TypedRef)
+            assert harness.store.resolve_value_pointer(retried.output.value) == source
+            assert harness.store.resolve_value(retried.output.value) == (
+                harness.store.resolve_value(committed.output.value)
             )
             assert len(harness.adapter.invocations) == 3
 

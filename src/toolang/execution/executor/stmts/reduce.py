@@ -14,9 +14,9 @@ from toolang.state.state import state_program
 from ...runnables import resolve_call_target
 from ...records import ControlRecord, StepRef
 from ...types import IterationOccurrence, Occurrence, OccurrencePosition
-from ...types import Local as RecordLocal
+from ...types import value_for_type
 from ..common import BoundRun
-from ..common import Local, require_list
+from ..common import Local, _MISSING, require_list
 from ..content import evaluate_content
 from ..iteration import IterationScope, IterationFrame, snapshot, iteration_scope
 from ..steps import loop as loop_step
@@ -86,9 +86,9 @@ async def execute(
             ),
             ref=seed_ref,
             type_name=output_type,
-            record=RecordLocal.typed(output_type, seed_ref)
+            stored=value_for_type(output_type, seed_ref)
             if seed_ref is not None
-            else None,
+            else _MISSING,
         )
         scope = IterationScope(
             1, (IterationFrame(snapshot({}), snapshot({"_": accumulator})),)

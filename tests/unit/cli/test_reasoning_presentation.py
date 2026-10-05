@@ -6,9 +6,8 @@ import pytest
 
 from toolang.base.types.message import ReasoningPart, TextPart, ToolCallPart
 from toolang.cli.common.human_values import human_scalar_text, parts_response_text
-from toolang.execution.types import Local
 from toolang.lang.types import Array, Struct
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 
 
 def test_human_fallbacks_hide_reasoning_and_native_fields():
@@ -41,19 +40,15 @@ def test_human_fallbacks_hide_reasoning_and_native_fields():
             "input": {},
         }
     ]
-    local = Local(
-        Struct(
-            "Result",
-            {
-                "nested": Array(
-                    "Part[][]", (Array("Part[]", (reasoning, text, call)),)
-                ),
-                "reasoning": reasoning,
-            },
-        )
+    local = Struct(
+        "Result",
+        {
+            "nested": Array("Part[][]", (Array("Part[]", (reasoning, text, call)),)),
+            "reasoning": reasoning,
+        },
     )
-    raw = parts_from_local(local)
-    visible = parts_from_local(local, content_only=True)
+    raw = parts_from_value(local)
+    visible = parts_from_value(local, content_only=True)
     assert isinstance(raw[0], TextPart)
     assert isinstance(visible[0], TextPart)
     assert "private reasoning" in raw[0].text
@@ -78,26 +73,24 @@ def test_chat_result_filters_native_parts_before_structured_fallback(remote, run
 
     native: dict[str, object] = {"adapter": "responses", "model": "test"}
     output = Output(
-        Local(
-            Struct(
-                "Result",
-                {
-                    "nested": Array(
-                        "Part[]",
-                        (
-                            ReasoningPart(
-                                "hidden thought", "opaque-state", "provider", native
-                            ),
-                            TextPart(
-                                "answer",
-                                signature="text-signature",
-                                provider="provider",
-                                provider_metadata=native,
-                            ),
+        Struct(
+            "Result",
+            {
+                "nested": Array(
+                    "Part[]",
+                    (
+                        ReasoningPart(
+                            "hidden thought", "opaque-state", "provider", native
                         ),
-                    )
-                },
-            )
+                        TextPart(
+                            "answer",
+                            signature="text-signature",
+                            provider="provider",
+                            provider_metadata=native,
+                        ),
+                    ),
+                )
+            },
         ),
         "_",
     )

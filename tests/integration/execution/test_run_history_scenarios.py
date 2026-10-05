@@ -17,7 +17,13 @@ from toolang.common.ids import IdIssuer
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix, Output
+from toolang.execution.types import (
+    ControlRef,
+    FieldRef,
+    ThreadPrefix,
+    Output,
+    value_for_type,
+)
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -150,9 +156,9 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
             store,
             run_id=run.id,
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part",
-                    FieldRef.from_path(step.ref, "output", "local", "value", 1),
+                    FieldRef.from_path(step.ref, "output", "value", 1),
                 ),
                 "_",
             ),
@@ -165,9 +171,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
         expected = Output(
-            Local.typed(
-                "Part", FieldRef.from_path(step.ref, "output", "local", "value", 1)
-            ),
+            value_for_type("Part", FieldRef.from_path(step.ref, "output", "value", 1)),
             "_",
         )
         assert detail.output == expected
@@ -207,7 +211,7 @@ def test_run_history_resolves_pass_through_control_output(
         assert stored is not None
         assert stored.control == ControlRef.for_run(run.id, 0)
         assert stored.output == Output(
-            Local.typed(
+            value_for_type(
                 "Part[]",
                 FieldRef.from_path(
                     ControlRef.for_run(run.id, 0), "payload", "input", "_"
@@ -218,7 +222,7 @@ def test_run_history_resolves_pass_through_control_output(
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
         assert detail.output == Output(
-            Local.typed(
+            value_for_type(
                 "Part[]",
                 FieldRef.from_path(
                     ControlRef.for_run(run.id, 0), "payload", "input", "_"
@@ -230,7 +234,7 @@ def test_run_history_resolves_pass_through_control_output(
         store.close()
 
 
-def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> None:
+def test_resolve_output_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -242,16 +246,16 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
         )
 
         with pytest.raises(TypeError, match="Number"):
-            store.resolve_local(
+            store.resolve_output(
                 Output(
-                    Local.typed(
+                    value_for_type(
                         "Number",
                         FieldRef.from_path(
                             ControlRef.for_run(run.id, 0), "payload", "input", "_"
                         ),
                     ),
                     "_",
-                ).local
+                )
             )
     finally:
         store.close()

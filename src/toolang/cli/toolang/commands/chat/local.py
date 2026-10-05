@@ -51,7 +51,7 @@ from toolang.state.state import (
     state_module_caps,
     state_program,
 )
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from .base import (
     ChatExecutorMetadata,
     ChatResult,
@@ -429,7 +429,7 @@ class LocalChatSession:
             except KeyError:
                 raise ValueError(f"Run not found: {run_id}") from None
             output = (
-                parts_from_local(result.local, content_only=True)
+                parts_from_value(result.value, content_only=True)
                 if result is not None
                 else ()
             )
@@ -448,7 +448,7 @@ class LocalChatSession:
                     continue
                 result = self.history.get_output(run.id)
                 output = (
-                    parts_from_local(result.local, content_only=True)
+                    parts_from_value(result.value, content_only=True)
                     if result is not None
                     else ()
                 )

@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.inspect import (
 )
 from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
-from toolang.execution.types import Local, Pointer
+from toolang.execution.types import Pointer, value_for_type
 from toolang.lang.types import Array, Struct
 
 
@@ -65,7 +65,7 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
 def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
     output = StringIO()
     console = Console(file=output, width=20, force_terminal=False)
-    pointer = f"run_{'x' * 80}/output/local/value"
+    pointer = f"run_{'x' * 80}/output/value"
 
     _print_human_table(console, ((pointer, "Text", "complete"),))
 
@@ -222,23 +222,23 @@ def test_output_is_plain_on_terminals_and_pipes(
 @pytest.mark.parametrize(
     ("local", "expected"),
     (
-        (Local("# Heading\n\n**bold**"), True),
-        (Local(""), True),
-        (Local.typed("Part[]", ()), True),
-        (Local.typed("TextPart", TextPart("")), True),
-        (Local.typed("ReasoningPart", ReasoningPart("reasoning")), False),
+        ("# Heading\n\n**bold**", True),
+        ("", True),
+        (value_for_type("Part[]", ()), True),
+        (value_for_type("TextPart", TextPart("")), True),
+        (value_for_type("ReasoningPart", ReasoningPart("reasoning")), False),
         (
-            Local.typed(
+            value_for_type(
                 "Part[]", (ImagePart(image_url="https://example.com/image.png"),)
             ),
             False,
         ),
-        (Local.typed("Json", {}), False),
-        (Local(Array("ReportPart[]", ())), False),
-        (Local(Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),))), False),
+        (value_for_type("Json", {}), False),
+        (Array("ReportPart[]", ()), False),
+        (Array("ReportPart[]", (Struct("ReportPart", {"value": 1}),)), False),
     ),
 )
-def test_output_extracts_only_textual_content(local: Local, expected: bool) -> None:
+def test_output_extracts_only_textual_content(local: object, expected: bool) -> None:
     from toolang.cli.toolang.commands.inspect import _run_output_text
 
     assert (_run_output_text(local) is not None) is expected

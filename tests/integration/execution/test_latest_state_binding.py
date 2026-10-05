@@ -865,7 +865,7 @@ def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targ
                 harness.store.resolve_error(root.error) if root.error else None
             )
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == 42
+            assert harness.store.resolve_value(root.output.value) == 42
             first, repaired = [item.call for item in harness.adapter.invocations]
             assert [item["ref"] for item in route_snapshots(first)["hands"]] == [
                 "flow:worker"

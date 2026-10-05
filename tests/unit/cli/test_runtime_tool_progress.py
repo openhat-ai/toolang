@@ -22,12 +22,12 @@ from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.tools._toolang import ToolangToolset
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ControlRef,
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
-    Local,
 )
 
 
@@ -78,7 +78,7 @@ def _end(begin, status="succeeded", output=None):
         finished_at=FINISH,
         noted=ToolStepNoted(summary=summary),
         output=Output(
-            Local.typed(
+            value_for_type(
                 "ToolResultPart",
                 ToolResultPart(
                     call.tool_call_id,
@@ -195,7 +195,7 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
         finished_at=FINISH,
         noted=ToolStepNoted(summary=f"Executed {name}"),
         output=Output(
-            Local.typed(
+            value_for_type(
                 "ToolResultPart",
                 ToolResultPart(
                     call.tool_call_id,
@@ -211,8 +211,8 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
     assert rows[0].text == f"› Executed {name}"
-    assert end.output is not None and isinstance(end.output.local.value, ToolResultPart)
-    assert end.output.local.value.output == {"value": "Result is still available"}
+    assert end.output is not None and isinstance(end.output.value, ToolResultPart)
+    assert end.output.value.output == {"value": "Result is still available"}
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])

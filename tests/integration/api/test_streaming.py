@@ -58,7 +58,13 @@ from toolang.execution.records import (
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
-from toolang.execution.types import ControlRef, FieldRef, Local, StepRef, Output
+from toolang.execution.types import (
+    ControlRef,
+    FieldRef,
+    StepRef,
+    Output,
+    value_for_type,
+)
 from toolang.lang.ast import LetStmt, RunStmt, Span
 from toolang.state.prepare import prepare_agent_state
 from toolang.up import AgentCore
@@ -391,7 +397,7 @@ agic chat(_: Part[]) -> Part[]:
             if event.startswith("step_") or event.startswith("part_")
         )
         assert run_detail.output == Output(
-            Local.typed("Part[]", (TextPart("chat reply"),)), "_"
+            value_for_type("Part[]", (TextPart("chat reply"),)), "_"
         )
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()

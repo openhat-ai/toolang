@@ -36,9 +36,9 @@ from toolang.execution.policy import apply_session_setting
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ErrorMessage,
-    Local,
     ModelOverride,
     RunOverride,
     SessionSetting,
@@ -606,7 +606,9 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
             step=StepRef.parse("run_success.1"),
             kind="model",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (TextPart("complete answer"),)), "_"),
+            output=Output(
+                value_for_type("Part[]", (TextPart("complete answer"),)), "_"
+            ),
         )
     )
     renderer.render(RunEnd(run="run_success", status="succeeded"))

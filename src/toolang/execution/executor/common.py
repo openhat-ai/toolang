@@ -50,6 +50,7 @@ from ..events import RunEvent, StepBegin, StepEnd
 from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_call_target
 from ..types import (
+    value_for_type,
     value_type,
     AgentResources,
     CollectionStepNoted,
@@ -58,7 +59,6 @@ from ..types import (
     ErrorRef,
     FieldRef,
     RunRef,
-    Local as RecordLocal,
     Output,
     Occurrence,
     StepKind,
@@ -146,11 +146,16 @@ class Local:
     value: Any = _MISSING
     ref: FieldRef | None = None
     type_name: str | None = None
-    record: RecordLocal | None = None
+    # Self-describing durable value; may retain refs instead of resolved data.
+    stored: Any = _MISSING
 
     @property
     def has_value(self) -> bool:
         return self.value is not _MISSING
+
+    @property
+    def has_stored(self) -> bool:
+        return self.stored is not _MISSING
 
     @property
     def element_type(self) -> str | None:
@@ -348,7 +353,7 @@ async def execute_step(
     return (
         replace(
             result,
-            ref=result.ref or FieldRef.from_path(path, "output", "local", "value"),
+            ref=result.ref or FieldRef.from_path(path, "output", "value"),
         )
         if output is not None
         else result
@@ -421,8 +426,8 @@ def transform_flow_result(
     return Local(
         [items[index] for index in indexes],
         type_name=source.type_name,
-        record=(
-            RecordLocal.typed(
+        stored=(
+            value_for_type(
                 type_name=source.type_name or "Json",
                 value=tuple(
                     TypedRef(source.ref.select(index), source.element_type or "Json")
@@ -430,7 +435,7 @@ def transform_flow_result(
                 ),
             )
             if source.ref is not None
-            else None
+            else _MISSING
         ),
     )
 
@@ -508,7 +513,7 @@ def initial_locals(binding: BoundRun) -> dict[str, Local]:
             value,
             pointer,
             type_name,
-            RecordLocal.typed(type_name, pointer),
+            value_for_type(type_name, pointer),
         )
     return locals
 
@@ -674,11 +679,11 @@ def output_from_local(local: Local, *, binding: str | None) -> Output | None:
 
     if not local.has_value:
         return None
-    if local.record is not None:
-        return Output(local.record, binding)
+    if local.has_stored:
+        return Output(local.stored, binding)
     item_type = local.type_name or "Json"
     return Output(
-        RecordLocal.typed(
+        value_for_type(
             type_name=item_type,
             value=(
                 tuple(local.value)

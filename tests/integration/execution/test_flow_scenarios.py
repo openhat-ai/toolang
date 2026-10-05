@@ -41,6 +41,7 @@ from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import (
+    value_for_type,
     Output,
     CollectionStepNoted,
     ControlRef,
@@ -48,7 +49,6 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     IterationOccurrence,
-    Local,
     LoopStepNoted,
     Occurrence,
     OccurrencePosition,
@@ -106,7 +106,7 @@ flow render(_: Text, argument: Json) -> Text:
             assert run.status == "succeeded", run.error
             step = harness.store.list_steps(run_id=run.id)[0]
             assert step.output is not None
-            assert harness.store.resolve_output(step.output).local.value == Array(
+            assert harness.store.resolve_output(step.output).value == Array(
                 "Part[]", (TextPart(value),)
             )
 
@@ -205,7 +205,7 @@ flow parent() -> Json:
             ]
             assert len(children) == 1
             assert children[0].output is not None
-            assert harness.store.resolve_output(children[0].output).local.value is None
+            assert harness.store.resolve_output(children[0].output).value is None
 
     asyncio.run(scenario())
 
@@ -579,7 +579,7 @@ flow retained(_: Text) -> Text:
             step = harness.store.list_steps(run_id=root.id)[0]
             assert step.output is not None
             assert step.output.binding is None
-            assert harness.store.resolve_value(step.output.local.value) == "temporary"
+            assert harness.store.resolve_value(step.output.value) == "temporary"
 
     asyncio.run(scenario())
 
@@ -671,8 +671,8 @@ flow staged(_: Part[]) -> Part[]:
                 (1, "succeeded"),
             ]
             assert active[0].output is not None
-            assert isinstance(active[0].output.local.value, Array)
-            assert tuple(active[0].output.local.value) == (TextPart("committed"),)
+            assert isinstance(active[0].output.value, Array)
+            assert tuple(active[0].output.value) == (TextPart("committed"),)
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
             run_control = harness.store.get_run_control(run_id=retried.id, index=0)
             assert run_control is not None
@@ -1390,7 +1390,7 @@ def test_research_pipeline_reshapes_filters_and_sorts(
                 strict=True,
             ):
                 assert step.output is not None
-                assert harness.store.resolve_output(step.output).local.value == Array(
+                assert harness.store.resolve_output(step.output).value == Array(
                     "Text[]", tuple(expected)
                 )
             assert len(harness.adapter.invocations) == 19
@@ -2475,8 +2475,8 @@ flow number(_: Text) -> Number:
                 )
             )
 
-            assert root.output == Output(Local.typed("Number", 7), "_")
+            assert root.output == Output(value_for_type("Number", 7), "_")
             assert root.output is not None
-            assert harness.store.resolve_local(root.output.local).value == 7
+            assert harness.store.resolve_output(root.output).value == 7
 
     asyncio.run(scenario())
