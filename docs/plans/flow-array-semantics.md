@@ -259,7 +259,7 @@ fut run review_risks
 
 run prepare_outline
 
-let research = await research_result
+await research_result
 let ideas = await ideas_result
 
 run write_article
@@ -275,16 +275,23 @@ run write_article
   discards its handle.
 - `spawn R` starts an independent root and returns its handle immediately.
   `fut result = spawn R` binds that completion handle without nesting futures.
-- Capture inputs at launch. Waiting is explicit: `await result` writes the
-  completed output to `_`; `let value = await result` binds only `value`.
-  The original future remains reusable; waiting again does not execute again.
+- Capture inputs at launch. Waiting is explicit: `let a = await future_handle`
+  waits and binds the completed output to `a`. The source local retains its
+  future when the destination is a different name.
+- Standalone `await future_handle` waits and replaces that named local's future
+  with the completed output. It updates only the operand local, instead of the
+  ordinary value-statement default binding to `_`. Both examples above preserve
+  `_`. Replace the destination only after successful completion.
+  Background completion alone does not replace a future local.
+  Reusing a retained future waits for the same operation without executing again.
 - The same binding syntax may extend to whole produce/map/spread operations
   while preserving their result and internal scheduling contracts.
 
 The separate definition must resolve unawaited child lifetimes, cancellation
 and failure propagation, durable handles and retry, root context and limits,
-and whether to accept the long `future` spelling as an alias. This section
-does not add those features to this plan's acceptance tests.
+awaiting an already-resolved local, and whether to accept the long `future`
+spelling as an alias. This section does not add those features to this plan's
+acceptance tests.
 
 ## Implementation Touchpoints
 
