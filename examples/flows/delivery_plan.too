@@ -153,21 +153,21 @@ flow(_: Text, constraints?):
     {{_}}
 
   ## Decompose the project into independently actionable workstreams
-  scatter using decompose
+  run decompose
   ## Plan independent workstreams concurrently
-  map using plan_workstream in 4 lanes
+  map in 4 lanes using plan_workstream
   ## Reconcile the workstreams into one dependency-aware draft
-  gather using assemble_plan
+  run assemble_plan
 
   let draft =
     {{_}}
 
   ## Select review perspectives suited to this particular plan
-  scatter using review_lenses
+  run review_lenses
   ## Challenge the draft from each perspective concurrently
-  map using review_plan in 3 lanes
+  map in 3 lanes using review_plan
   ## Apply the independent reviews sequentially to one evolving plan
-  settle using apply_review:
+  reduce using apply_review:
     from: {{draft}}
 
   ## Make two bounded improvements to the reviewed plan

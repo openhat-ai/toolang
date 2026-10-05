@@ -355,7 +355,7 @@ prepend recalled messages; child calls and flow Content receive recall-filtered
 `_far`, `_near`, and `_past`. Successful compaction advances the shared version;
 subsequent evaluations adopt it through recorded controls, while started Steps
 keep their captured version. Iteration scopes use task-local immutable frames,
-shadowed by nested repeat/settle and preserved through ordinary calls.
+shadowed by nested repeat/reduce and preserved through ordinary calls.
 
 Input structs, prompts, static child calls, and `here` caps resolve against the
 bound owner module. Static child calls stay within that module; private helpers

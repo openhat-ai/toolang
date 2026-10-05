@@ -1472,8 +1472,9 @@ This is a breaking format change: sibling `args`, source `named` lists, and
 primary parts arrays as the complete container are no longer accepted. A valid
 declared argument may still be named `primary`, `named`, or `args`. Input-bearing
 control responses likewise use flat maps with self-describing value encodings.
-Run/Step outputs use `{"local": {"type": "Text", "value": "result", "dim": 0},
-"binding": "_"}`. The binding is a name or null; dimension belongs to Local.
+Run/Step outputs use `{"local": {"type": "Text", "value": "result"},
+"binding": "_"}`. The binding is a name or null. Local types describe the complete value; there
+is no separate dimension flag.
 See [run-step-records.md](./run-step-records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,

@@ -1,11 +1,11 @@
-"""Settle-statement semantics."""
+"""Reduce-statement semantics."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.lang.ast import SettleStmt
+from toolang.lang.ast import ReduceStmt
 from toolang.lang.contracts import OutputContract
 from toolang.common.errors import ToolangError
 from toolang.lang.input import coerce_output
@@ -29,7 +29,7 @@ async def execute(
     binding: BoundRun,
     locals: Mapping[str, Local],
     path: StepRef,
-    statement: SettleStmt,
+    statement: ReduceStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
@@ -37,13 +37,12 @@ async def execute(
 
     async def evaluate() -> Local:
         source = locals.get("_", Local())
-        item_type = source.type_name
-        items = require_list(locals, operation="settle", nonempty=True)
+        item_type = source.element_type
+        items = require_list(locals, operation="reduce", nonempty=True)
 
         def element(index: int) -> Local:
             return Local(
                 items[index],
-                "item",
                 ref=source.ref.select(index) if source.ref is not None else None,
                 type_name=item_type,
             )
@@ -70,7 +69,7 @@ async def execute(
         if statement.initial is None:
             if output_type != item_type:
                 raise ToolangError(
-                    f"settle without from requires {item_type} output, got {output_type}"
+                    f"reduce without from requires {item_type} output, got {output_type}"
                 )
             seed = element(0)
             start = 1
@@ -83,7 +82,6 @@ async def execute(
                 output_type,
                 structs=structs,
             ),
-            "item",
             ref=seed.ref if seed.type_name == output_type else None,
             type_name=output_type,
         )

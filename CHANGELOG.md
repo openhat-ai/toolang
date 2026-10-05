@@ -17,11 +17,34 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** `storm` is renamed to `generate` and `settle` to `reduce`, and
+  `generate`, `map`, and `reduce` now require `using` for named targets and must
+  omit it for inline bodies, so `map using [-> T]: BODY` becomes
+  `map [-> T]: BODY`. `reduce` keeps its optional `from:` initializer.
+- **Breaking:** flow arrays use the actual outermost array and there is no
+  separate item/list shape. `run` makes exactly one child call with the complete
+  input, including arrays, without iterating, wrapping, or flattening; `map`,
+  `keep`, `drop`, `sort`, and `reduce` operate on outer items. Arrays from
+  parameters, calls, helper flows, `exec`, and restored values behave
+  identically, and array-valued child results stay nested.
+- **Breaking:** `Local` no longer carries `dim`. Durable/stored locals contain
+  only `value`, while the HTTP/event protocol projection contains `type` and
+  `value`. Integrations must stop sending or requiring `dim`. Existing
+  `dim=0/1` records remain readable, but new records omit it.
+
 - **Breaking:** the `me` tool `me__loaded(receipts)` is replaced by `me__sync()`,
   which waits for one State publication and returns `{revision, files}` for the
   agent's tracked root and home sources. Integrations that poll `me.loaded`
   receipts must call `me.sync()` / `me__sync({})`, handle operational error codes,
   and use the scoped `files` manifest as the receipt.
+
+### Removed
+
+- **Breaking:** the `scatter` and `gather` flow statements are removed. Rewrite
+  `scatter using R` and `gather using R` as `run R`, and give a former `scatter`
+  body an explicit `run -> Text[]` type; a former `gather` may now receive `[]`.
+  Source, snapshots, retries, and reruns using them are rejected with migration
+  guidance; historical records stay inspectable but are not executable.
 
 ## [0.3.6] - 2026-10-04
 

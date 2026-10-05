@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-from toolang.lang.ast import FlowStmt, RepeatStmt
+from toolang.lang.ast import RepeatStmt
+from toolang.execution.types import HistoricalFlowStmt, RecordedFlowStmt
+from toolang.execution.inspection.types import historical_statement_head
 from toolang.lang.description import statement_description
 from toolang.lang.types import is_generated_ref
 
 from .formatting import one_line
 
 
-def statement_header(statement: FlowStmt) -> str:
+def statement_header(statement: RecordedFlowStmt) -> str:
     """Return one concise presentation header from a typed Flow statement."""
 
     if statement.doc and (doc := one_line(statement.doc.strip())):
         return doc
 
+    if isinstance(statement, HistoricalFlowStmt):
+        return historical_statement_head(statement)
     return statement_description(statement)
 
 

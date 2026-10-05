@@ -320,8 +320,6 @@ def _select_local_child(
         return local.type, str, "str", "Text"
     if token == "value":
         return local.value, Any, "Value | TypedRef", local.type
-    if token == "dim":
-        return local.dim, Literal[0, 1], "Literal[0, 1]", "Number"
     raise ValueError(f"field does not exist ({token!r}): {source}")
 
 

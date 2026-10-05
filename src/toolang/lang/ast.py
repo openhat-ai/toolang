@@ -192,16 +192,8 @@ class AskStmt(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ScatterStmt(Node):
-    kind: ClassVar[str] = "scatter"
-
-    binding: str | None = "_"
-    runnable: str
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class StormStmt(Node):
-    kind: ClassVar[str] = "storm"
+class GenerateStmt(Node):
+    kind: ClassVar[str] = "generate"
 
     binding: str | None = "_"
     count: int
@@ -210,16 +202,8 @@ class StormStmt(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class GatherStmt(Node):
-    kind: ClassVar[str] = "gather"
-
-    binding: str | None = "_"
-    runnable: str
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SettleStmt(Node):
-    kind: ClassVar[str] = "settle"
+class ReduceStmt(Node):
+    kind: ClassVar[str] = "reduce"
 
     binding: str | None = "_"
     runnable: str
@@ -300,10 +284,8 @@ FlowStmt = Annotated[
     | Annotated[ExecStmt, Tag("exec")]
     | Annotated[SeekStmt, Tag("seek")]
     | Annotated[AskStmt, Tag("ask")]
-    | Annotated[ScatterStmt, Tag("scatter")]
-    | Annotated[StormStmt, Tag("storm")]
-    | Annotated[GatherStmt, Tag("gather")]
-    | Annotated[SettleStmt, Tag("settle")]
+    | Annotated[GenerateStmt, Tag("generate")]
+    | Annotated[ReduceStmt, Tag("reduce")]
     | Annotated[MapStmt, Tag("map")]
     | Annotated[KeepStmt, Tag("keep")]
     | Annotated[DropStmt, Tag("drop")]
@@ -415,6 +397,11 @@ class Program(Node):
                     exc.column = len(raw) - len(raw.lstrip(" \t")) + 1
             raise
         return program
+
+
+def validate_source_syntax(source: str) -> None:
+    """Validate authored syntax without resolving external declarations."""
+    _parse_source(source)
 
 
 def _parse_source(source: str) -> _ParsedSource:
@@ -530,11 +517,15 @@ def to_data(value: object) -> object:
 def program_from_data(value: object) -> Program:
     """Load a previously validated program from its JSON representation."""
 
+    _reject_removed_statements(value)
+
     return _program_adapter().validate_python(value)
 
 
 def flow_stmt_from_data(value: object) -> FlowStmt:
     """Load one previously validated lowered Flow statement."""
+
+    _reject_removed_statements(value)
 
     statement = _flow_stmt_adapter().validate_python(value)
     canonical = cast(dict[str, object], to_data(statement))
@@ -542,11 +533,6 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     def legacy_defaults(raw: object, encoded: dict[str, Any]) -> None:
         if not isinstance(raw, Mapping):
             return
-        if encoded.get("kind") == "scatter" and "count" in raw:
-            count = cast(Mapping[str, object], raw)["count"]
-            if type(count) is not int or count < 0:
-                raise ValueError("legacy scatter count requires a non-negative integer")
-            encoded["count"] = count
         for name, default in (("window", 3), ("initial", None)):
             if name not in raw and encoded.get(name) == default:
                 encoded.pop(name, None)
@@ -559,6 +545,26 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     if not isinstance(value, Mapping) or dict(value) != canonical:
         raise ValueError("flow statement requires canonical typed fields")
     return statement
+
+
+def _reject_removed_statements(value: object) -> None:
+    if isinstance(value, Mapping):
+        kind = cast(Mapping[str, object], value).get("kind")
+        if isinstance(kind, str) and kind in {"scatter", "gather", "storm", "settle"}:
+            replacement = {
+                "scatter": "run",
+                "gather": "run",
+                "storm": "generate",
+                "settle": "reduce",
+            }[kind]
+            raise ValueError(
+                f"Removed Flow statement {kind!r}; migrate source to {replacement!r} and prepare a new snapshot"
+            )
+        for child in value.values():
+            _reject_removed_statements(child)
+    elif isinstance(value, (tuple, list)):
+        for child in value:
+            _reject_removed_statements(child)
 
 
 @lru_cache(maxsize=1)

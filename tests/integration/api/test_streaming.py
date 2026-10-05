@@ -391,7 +391,7 @@ agic chat(_: Part[]) -> Part[]:
             if event.startswith("step_") or event.startswith("part_")
         )
         assert run_detail.output == Output(
-            Local.typed("Part[]", (TextPart("chat reply"),), 0), "_"
+            Local.typed("Part[]", (TextPart("chat reply"),)), "_"
         )
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()

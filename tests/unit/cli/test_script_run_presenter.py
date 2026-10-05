@@ -58,7 +58,7 @@ from toolang.execution.types import (
     StepRef,
     ToolStepGiven,
 )
-from toolang.lang.ast import GatherStmt, Span
+from toolang.lang.ast import RunStmt, Span
 
 
 class _TtyStream(StringIO):
@@ -67,7 +67,7 @@ class _TtyStream(StringIO):
 
 
 def _parts(text: str) -> Output:
-    return Output(Local.typed("Part[]", (TextPart(text),), 0), "_")
+    return Output(Local.typed("Part[]", (TextPart(text),)), "_")
 
 
 def _model() -> ModelStepGiven:
@@ -150,7 +150,6 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                         FieldRef.from_path(
                             StepRef.parse("run_one.0"), "output", "local", "value"
                         ),
-                        0,
                     ),
                     "_",
                 ),
@@ -306,7 +305,6 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
                                 input={"query": "agent runtimes"},
                             ),
                         ),
-                        0,
                     ),
                     "_",
                 ),
@@ -375,7 +373,6 @@ def test_tool_output_is_not_rendered() -> None:
                                 output={"results": [{}, {}, {}]},
                             ),
                         ),
-                        0,
                     ),
                     "_",
                 ),
@@ -891,7 +888,7 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
             StepBegin(
                 step=gather,
                 kind="run",
-                given=GatherStmt(span=Span(line=1), runnable="merge"),
+                given=RunStmt(span=Span(line=1), runnable="merge"),
             )
         )
         await presenter.on_event(
@@ -1081,7 +1078,7 @@ def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
             StepBegin(
                 step=owner,
                 kind="run",
-                given=GatherStmt(span=Span(line=1), runnable="child"),
+                given=RunStmt(span=Span(line=1), runnable="child"),
             ),
             RunBegin(
                 run=child,

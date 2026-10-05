@@ -105,12 +105,11 @@ def test_typed_pointer_uses_pointer_then_type() -> None:
         TypedRef.parse("run_1/output/local/value:Part[]:Json")
 
 
-def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
-    response = Local.typed(type_name="Part[]", value=(), dim=0)
+def test_local_keeps_complete_type_without_execution_dimension() -> None:
+    response = Local.typed(type_name="Part[]", value=())
     scattered = Local.typed(
         type_name="Part[]",
         value=TypedRef(FieldRef.parse("run_1.0/output/local/value"), "Part[]"),
-        dim=1,
     )
     batches = Local.typed(
         type_name="Part[][]",
@@ -118,19 +117,18 @@ def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
             TypedRef(FieldRef.parse("run_a/output/local/value"), "Part[]"),
             TypedRef(FieldRef.parse("run_b/output/local/value"), "Part[]"),
         ),
-        dim=1,
     )
 
-    assert response.item_type == "Part[]"
-    assert scattered.item_type == "Part"
-    assert batches.item_type == "Part[]"
+    assert response.type == "Part[]"
+    assert scattered.type == "Part[]"
+    assert batches.type == "Part[][]"
 
 
-def test_dim_one_requires_an_array_type_and_value() -> None:
+def test_legacy_dim_one_requires_an_array_type_and_value() -> None:
     with pytest.raises(ValueError, match="array value type"):
-        Local(value="one", dim=1)
+        local_from_data({"value": "one", "dim": 1})
     with pytest.raises(TypeError, match="Text"):
-        Local.typed(type_name="Text[]", value="one", dim=1)
+        Local.typed(type_name="Text[]", value="one")
 
 
 def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
@@ -146,7 +144,6 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
                 input={"query": "toolang"},
             ),
         ),
-        dim=1,
     )
 
     assert local_from_data(local_to_data(local)) == local
@@ -233,7 +230,7 @@ def test_local_part_projection_preserves_tool_parts() -> None:
         input={"query": "toolang"},
     )
 
-    assert parts_from_local(Local.typed("Part[]", (part,), 0)) == (part,)
+    assert parts_from_local(Local.typed("Part[]", (part,))) == (part,)
 
 
 def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
@@ -266,7 +263,7 @@ def test_local_codec_rejects_values_that_do_not_match_the_declared_type() -> Non
         )
 
     with pytest.raises(TypeError, match="Text"):
-        local_from_protocol_data({"type": "Text", "value": 42, "dim": 0})
+        local_from_protocol_data({"type": "Text", "value": 42})
 
 
 def test_local_codec_reserves_the_pointer_marker() -> None:
@@ -283,7 +280,6 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
             TextPart("hello"),
             TypedRef(FieldRef.parse("run_1.0/output/local/value/2"), "Part"),
         ),
-        1,
     )
 
     assert local_to_data(local) == {
@@ -294,7 +290,6 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
                 {"?": "run_1.0/output/local/value/2:Part"},
             ],
         },
-        "dim": 1,
     }
     assert local_to_protocol_data(local) == {
         "type": "Part[]",
@@ -302,7 +297,6 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
             {"type": "text", "text": "hello"},
             {"?": "run_1.0/output/local/value/2:Part"},
         ],
-        "dim": 1,
     }
 
 

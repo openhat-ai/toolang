@@ -697,7 +697,6 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         "local": {
             "type": "Part[]",
             "value": [{"text": "prepared", "type": "text"}],
-            "dim": 0,
         },
         "binding": "_",
     }
@@ -1304,7 +1303,7 @@ def test_inspect_projects_complete_persisted_model_call(
             ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (TextPart(result_text),), 0), "_"),
+            output=Output(Local.typed("Part[]", (TextPart(result_text),)), "_"),
             noted=None,
             error=None,
             finished_at="2026-01-01T00:00:01Z",
@@ -1683,7 +1682,6 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
                         tool_family="web",
                         output={"status": "ok", "results": 3, "detail": result_detail},
                     ),
-                    0,
                 ),
                 "_",
             ),
@@ -2308,7 +2306,6 @@ def test_roaming_source_reads_inspect_collections_and_records(
         "local": {
             "type": "Part[]",
             "value": [{"text": "ready", "type": "text"}],
-            "dim": 0,
         },
         "binding": "_",
     }
@@ -2365,7 +2362,6 @@ def test_visiting_selector_reads_inspection_without_fetching(
         "local": {
             "type": "Part[]",
             "value": [{"text": "cached", "type": "text"}],
-            "dim": 0,
         },
         "binding": "_",
     }

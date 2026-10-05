@@ -307,7 +307,7 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         status="canceled",
         output=Output(
             Local.typed(
-                "Text", FieldRef.from_path(source.ref, "output", "local", "value"), 0
+                "Text", FieldRef.from_path(source.ref, "output", "local", "value")
             ),
             None,
         ),
@@ -529,7 +529,7 @@ def test_output_preserves_status_and_partial_value_without_model_rebuild(
         status=status,
         output=Output(
             Local.typed(
-                "Text", FieldRef.from_path(source.ref, "output", "local", "value"), 0
+                "Text", FieldRef.from_path(source.ref, "output", "local", "value")
             ),
             None,
         ),
@@ -544,7 +544,7 @@ def test_output_preserves_status_and_partial_value_without_model_rebuild(
         "run": "run_a",
         "status": status,
         "output": {
-            "local": {"type": "Text", "value": "partial", "dim": 0},
+            "local": {"type": "Text", "value": "partial"},
             "binding": None,
         },
     }
@@ -562,7 +562,6 @@ def test_absent_output_is_null_and_unresolved_output_fails(store):
                 FieldRef.from_path(
                     StepRef.parse("run_a.99"), "output", "local", "value"
                 ),
-                0,
             ),
             None,
         ),

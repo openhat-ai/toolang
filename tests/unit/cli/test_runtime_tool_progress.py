@@ -86,7 +86,6 @@ def _end(begin, status="succeeded", output=None):
                     call.name,
                     output=output or {"controls": []},
                 ),
-                0,
             ),
             None,
         ),

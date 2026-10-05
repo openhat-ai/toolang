@@ -27,7 +27,7 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelRequest, Reasoning
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
-from toolang.lang.ast import FlowStmt, flow_stmt_from_data
+from toolang.lang.ast import flow_stmt_from_data
 from toolang.lang.ast import to_data as ast_to_data
 from toolang.lang.input import (
     CallInput,
@@ -38,6 +38,8 @@ from toolang.lang.input import (
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
 from .types import (
+    HistoricalFlowStmt,
+    RecordedFlowStmt,
     AgentResources,
     CollectionStepNoted,
     ContentRef,
@@ -597,7 +599,7 @@ class StoredModelStepGiven:
             raise TypeError("stored model given requires ModelCallRefs")
 
 
-StoredStepGiven: TypeAlias = FlowStmt | StoredModelStepGiven | ToolStepGiven
+StoredStepGiven: TypeAlias = RecordedFlowStmt | StoredModelStepGiven | ToolStepGiven
 
 
 @dataclass(frozen=True)
@@ -723,16 +725,20 @@ _PART_STORAGE_TYPES = {
 def local_from_data(payload: Mapping[str, object]) -> Local:
     """Parse one local from its private durable representation."""
 
-    if set(payload) != {"value", "dim"}:
-        raise ValueError("stored local requires value and dim fields")
-    raw_dim = payload.get("dim")
-    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
-        raise ValueError("local dim must be 0 or 1")
-    dim = cast(Literal[0, 1], raw_dim)
-    return Local(
-        value=local_value_from_data(payload.get("value")),
-        dim=dim,
-    )
+    if set(payload) not in ({"value"}, {"value", "dim"}):
+        raise ValueError("stored local requires value and optional legacy dim")
+    local = Local(value=local_value_from_data(payload.get("value")))
+    if "dim" in payload:
+        dim = payload["dim"]
+        if type(dim) is not int or dim not in (0, 1):
+            raise ValueError("legacy local dim must be 0 or 1")
+        if dim == 1 and not local.type.endswith("[]"):
+            raise ValueError("legacy dim=1 requires an array value type")
+        if dim == 1 and not isinstance(local.value, Array | TypedRef):
+            raise TypeError(
+                "legacy dim=1 requires an array value or whole-value pointer"
+            )
+    return local
 
 
 def local_to_data(local: Local) -> dict[str, object]:
@@ -740,7 +746,6 @@ def local_to_data(local: Local) -> dict[str, object]:
 
     return {
         "value": local_value_to_data(local.value),
-        "dim": local.dim,
     }
 
 
@@ -1199,6 +1204,43 @@ def _iteration_occurrence_from_data(data: object) -> IterationOccurrence | None:
     )
 
 
+def recorded_flow_stmt_from_data(data: object) -> RecordedFlowStmt:
+    """Read old statement facts without reviving their source or execution syntax."""
+
+    historical = False
+
+    def current(raw: object) -> object:
+        nonlocal historical
+        if not isinstance(raw, Mapping):
+            return raw
+        result = dict(raw)
+        kind = result.get("kind")
+        if kind in {"scatter", "gather", "storm", "settle"}:
+            historical = True
+            result["kind"] = {
+                "scatter": "run",
+                "gather": "run",
+                "storm": "generate",
+                "settle": "reduce",
+            }[kind]
+            if kind == "scatter" and "count" in result:
+                count = result.pop("count")
+                if type(count) is not int or count < 0:
+                    raise ValueError(
+                        "legacy scatter count requires a non-negative integer"
+                    )
+        if kind == "repeat" and isinstance(result.get("stmts"), (tuple, list)):
+            result["stmts"] = [current(child) for child in result["stmts"]]
+        return result
+
+    migrated = current(data)
+    statement = flow_stmt_from_data(migrated)
+    if historical:
+        assert isinstance(data, Mapping)
+        return HistoricalFlowStmt(dict(data))
+    return statement
+
+
 def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
     """Parse one typed Step-begin fact payload from durable data."""
 
@@ -1241,7 +1283,7 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             summary=raw_summary,
             trigger=cast(Literal["model", "runtime"], payload["trigger"]),
         )
-    statement = flow_stmt_from_data(data)
+    statement = recorded_flow_stmt_from_data(data)
     from .types import validate_step_given
 
     return validate_step_given(kind, statement)
@@ -1272,7 +1314,10 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
         if given.summary:
             data["summary"] = given.summary
         return data
-    return cast(dict[str, object], ast_to_data(given))
+    return cast(
+        dict[str, object],
+        ast_to_data(given.data if isinstance(given, HistoricalFlowStmt) else given),
+    )
 
 
 def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven:

@@ -496,7 +496,7 @@ agic child(_: Part[]) -> Part[]:
   user: Child task.
 
 flow parent(_: Part[]) -> Part[][]:
-  storm 2 using child in 2 lanes
+  generate 2 in 2 lanes using child
 """
     )
     harness, repo, publication = _harness(

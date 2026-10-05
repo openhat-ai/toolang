@@ -46,7 +46,7 @@ from toolang.execution.types import (
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, ScatterStmt, Span
+from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, Span
 
 _EVENTS: tuple[RunEvent, ...] = (
     RunBegin(
@@ -109,7 +109,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepRef.parse("run_root.0"),
         kind="model",
         status="succeeded",
-        output=Output(Local.typed("Part[]", (TextPart("hello"),), 0), "_"),
+        output=Output(Local.typed("Part[]", (TextPart("hello"),)), "_"),
         noted=ModelStepNoted(
             accounting=ModelAccounting(input_tokens=4, output_tokens=2)
         ),
@@ -124,7 +124,6 @@ _EVENTS: tuple[RunEvent, ...] = (
                 FieldRef.from_path(
                     StepRef.parse("run_root.0"), "output", "local", "value"
                 ),
-                0,
             ),
             "_",
         ),
@@ -151,7 +150,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
         path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
-        given=ScatterStmt(span=Span(line=4), runnable="agic:child"),
+        given=RunStmt(span=Span(line=4), runnable="agic:child"),
         state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
@@ -160,7 +159,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
 
     assert payload["path"] == "run_root.1"
     assert payload["state"] == {"run": "run_root", "index": 0}
-    assert payload["given"]["kind"] == "scatter"
+    assert payload["given"]["kind"] == "run"
     assert TypeAdapter(StepData).validate_python(payload) == step
 
 

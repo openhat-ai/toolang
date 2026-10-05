@@ -30,11 +30,11 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
+from toolang.common.immutable import freeze_mapping
 from toolang.lang.ast import (
     AskStmt,
     DropStmt,
     FlowStmt,
-    GatherStmt,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -42,12 +42,10 @@ from toolang.lang.ast import (
     RepeatStmt,
     RunStmt,
     ExecStmt,
-    ScatterStmt,
     SeekStmt,
-    SettleStmt,
+    ReduceStmt,
     SortStmt,
-    StormStmt,
-    flow_stmt_from_data,
+    GenerateStmt,
 )
 from toolang.lang.ast import (
     to_data as ast_to_data,
@@ -923,28 +921,23 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class Local:
-    """One runtime value and its flow dimension, independent of its name."""
+    """One complete runtime value, independent of its local name."""
 
     value: Value | TypedRef
-    dim: Literal[0, 1] = 0
 
     @classmethod
     def typed(
         cls,
         type_name: str,
         value: object,
-        dim: Literal[0, 1] = 0,
     ) -> Local:
         """Build a local by applying one explicit typed boundary."""
 
         return cls(
             value=value_for_type(type_name, value),
-            dim=dim,
         )
 
     def __post_init__(self) -> None:
-        if self.dim not in {0, 1}:
-            raise ValueError(f"unsupported local dimension: {self.dim!r}")
         if not isinstance(self.value, TypedRef):
             object.__setattr__(
                 self,
@@ -952,10 +945,6 @@ class Local:
                 value_for_type(value_type(self.value), self.value),
             )
         validate_runtime_value(self.value, self.type)
-        if self.dim == 1 and not self.type.endswith("[]"):
-            raise ValueError("dim=1 requires an array value type")
-        if self.dim == 1 and not isinstance(self.value, Array | TypedRef):
-            raise TypeError("dim=1 requires an array value or whole-value pointer")
 
     @property
     def type(self) -> str:
@@ -964,12 +953,6 @@ class Local:
         if isinstance(self.value, TypedRef):
             return self.value.type
         return value_type(self.value)
-
-    @property
-    def item_type(self) -> str:
-        """Return the execution item type for this local."""
-
-        return self.type[:-2] if self.dim == 1 else self.type
 
     @classmethod
     def _validate_pydantic(cls, value: object) -> Local:
@@ -993,8 +976,8 @@ class Local:
             {
                 "type": core_schema.typed_dict_field(core_schema.str_schema()),
                 "value": core_schema.typed_dict_field(core_schema.any_schema()),
-                "dim": core_schema.typed_dict_field(core_schema.literal_schema([0, 1])),
-            }
+            },
+            extra_behavior="forbid",
         )
         return core_schema.json_or_python_schema(
             json_schema=core_schema.no_info_after_validator_function(
@@ -1021,19 +1004,15 @@ class Local:
 def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
     """Parse one caller-facing local projection."""
 
-    if set(payload) != {"type", "value", "dim"}:
-        raise ValueError("local requires type, value, and dim fields")
+    if set(payload) != {"type", "value"}:
+        raise ValueError("local requires type and value fields")
     raw_type = payload.get("type")
     if not isinstance(raw_type, str):
         raise ValueError("local type must be text")
     type_name = validate_type(raw_type)
-    raw_dim = payload.get("dim")
-    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
-        raise ValueError("local dim must be 0 or 1")
     return Local.typed(
         type_name,
         value_from_protocol_data(payload.get("value"), type_name),
-        dim=cast(Literal[0, 1], raw_dim),
     )
 
 
@@ -1043,7 +1022,6 @@ def local_to_protocol_data(local: Local) -> dict[str, object]:
     return {
         "type": local.type,
         "value": _protocol_value_to_data(local.value),
-        "dim": local.dim,
     }
 
 
@@ -1484,7 +1462,46 @@ class ToolStepGiven:
         _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalFlowStmt:
+    """Validated historical statement facts; never an executable language AST."""
+
+    data: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "data", freeze_mapping(self.data))
+
+    @property
+    def kind(self) -> str:
+        return self.data["kind"]
+
+    @property
+    def binding(self) -> str | None:
+        return self.data["binding"]
+
+    @property
+    def doc(self) -> str | None:
+        return self.data["doc"]
+
+    @property
+    def count(self) -> int | None:
+        return self.data.get("count")
+
+    @property
+    def lanes(self) -> int | None:
+        return self.data.get("lanes")
+
+    @property
+    def runnable(self) -> str | None:
+        return self.data.get("runnable")
+
+
+RecordedFlowStmt: TypeAlias = FlowStmt | HistoricalFlowStmt
+
+
 def _serialize_step_given(value: StepGiven, handler: Any) -> object:
+    if isinstance(value, HistoricalFlowStmt):
+        return ast_to_data(value.data)
     if isinstance(value, Node):
         return ast_to_data(value)
     return handler(value)
@@ -1493,12 +1510,14 @@ def _serialize_step_given(value: StepGiven, handler: Any) -> object:
 def _parse_step_given(value: object) -> object:
     payload = cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
     if isinstance(payload.get("kind"), str):
-        return flow_stmt_from_data(value)
+        from .records import recorded_flow_stmt_from_data
+
+        return recorded_flow_stmt_from_data(value)
     return value
 
 
 StepGiven: TypeAlias = Annotated[
-    FlowStmt | ModelStepGiven | ToolStepGiven,
+    RecordedFlowStmt | ModelStepGiven | ToolStepGiven,
     BeforeValidator(_parse_step_given),
     WrapSerializer(_serialize_step_given),
 ]
@@ -1903,6 +1922,14 @@ def _validate_step_summary(
 
 
 def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
+    if isinstance(value, HistoricalFlowStmt):
+        return kind == {
+            "scatter": "run",
+            "gather": "run",
+            "storm": "par",
+            "settle": "loop",
+            "repeat": "loop",
+        }.get(value.kind)
     if kind == "exec":
         return isinstance(value, ExecStmt)
     if kind == "value":
@@ -1910,17 +1937,17 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
             isinstance(value, KeepStmt | DropStmt) and value.runnable is None
         )
     if kind == "run":
-        return isinstance(value, RunStmt | ScatterStmt | GatherStmt)
+        return isinstance(value, RunStmt)
     if kind == "agent":
         return isinstance(value, SeekStmt)
     if kind == "human":
         return isinstance(value, AskStmt)
     if kind == "par":
-        return isinstance(value, StormStmt | MapStmt | SortStmt) or (
+        return isinstance(value, GenerateStmt | MapStmt | SortStmt) or (
             isinstance(value, KeepStmt | DropStmt) and value.runnable is not None
         )
     if kind == "loop":
-        return isinstance(value, SettleStmt | RepeatStmt)
+        return isinstance(value, ReduceStmt | RepeatStmt)
     return False
 
 

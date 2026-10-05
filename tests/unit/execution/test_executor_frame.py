@@ -180,7 +180,6 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
     assert output_parts(
         Local(
             value=[(TextPart("one"), image)],
-            shape="list",
         )
     ) == (
         TextPart(
@@ -193,10 +192,8 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
 
 
 def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
-    assert output_parts(Local(value=[], shape="item", type_name="Text[]")) == (
-        TextPart("[]"),
-    )
-    assert output_parts(Local(value=(), shape="item", type_name="Part[]")) == ()
+    assert output_parts(Local(value=[], type_name="Text[]")) == (TextPart("[]"),)
+    assert output_parts(Local(value=(), type_name="Part[]")) == ()
 
 
 def test_recall_values_map_to_current_history_only_when_near_is_selected() -> None:

@@ -34,13 +34,13 @@ from toolang.lang.types import Array
 @pytest.mark.parametrize(
     "local",
     [
-        Local(value="", dim=0),
-        Local(value=0, dim=0),
-        Local(value=False, dim=0),
-        Local(value=None, dim=0),
-        Local(value=Array("Part[]", (TextPart("answer"),)), dim=0),
-        Local(value=Array("Text[]", ()), dim=0),
-        Local(value=Array("Text[]", ()), dim=1),
+        Local(value=""),
+        Local(value=0),
+        Local(value=False),
+        Local(value=None),
+        Local(value=Array("Part[]", (TextPart("answer"),))),
+        Local(value=Array("Text[]", ())),
+        Local(value=Array("Text[]", ())),
         Local(
             value=TypedRef(
                 FieldRef.from_path(
@@ -48,7 +48,6 @@ from toolang.lang.types import Array
                 ),
                 "Text[]",
             ),
-            dim=1,
         ),
     ],
 )
@@ -71,7 +70,7 @@ def test_output_reuses_local_across_storage_and_protocol(
 
 
 def test_output_binding_is_validated_and_immutable() -> None:
-    output = Output(local=Local(value="result", dim=0), binding="_")
+    output = Output(local=Local(value="result"), binding="_")
     with pytest.raises(FrozenInstanceError):
         setattr(output, "binding", "answer")
     for binding in ("", "bad name", "bad-name", 1, False):
@@ -82,7 +81,7 @@ def test_output_binding_is_validated_and_immutable() -> None:
 @pytest.mark.parametrize("binding", [None, "_", "answer"])
 @pytest.mark.parametrize(
     "local",
-    [None, Local(value=None, dim=0), Local(value=Array("Text[]", ("a", "b")), dim=1)],
+    [None, Local(value=None), Local(value=Array("Text[]", ("a", "b")))],
 )
 def test_output_presence_bindings_and_references_survive_reopening(
     tmp_path: Path, local: Local | None, binding: str | None
@@ -111,7 +110,7 @@ def test_output_presence_bindings_and_references_survive_reopening(
         reference = FieldRef.from_path(step.ref, "output", "local", "value")
         retained = (
             Output(
-                local=Local(value=TypedRef(reference, local.type), dim=local.dim),
+                local=Local(value=TypedRef(reference, local.type)),
                 binding=binding,
             )
             if local is not None

@@ -39,10 +39,10 @@ flow(_: Text):
   context = none
   tools = none
   let topic = {{_}}
-  scatter using expand_queries
-  map using search_web in 4 lanes
+  run expand_queries
+  map in 4 lanes using search_web
   keep if is_relevant
   sort descending by relevance
   keep first 2
-  map using extract_findings in 4 lanes
-  gather using synthesize_report
+  map in 4 lanes using extract_findings
+  run synthesize_report

@@ -83,6 +83,7 @@ from ..records import (
 from ..store import RunStore
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
+    HistoricalFlowStmt,
     ModelAccounting,
     value_for_type,
     value_type,
@@ -1603,7 +1604,9 @@ class _Execution:
         self._validate_child_contract(step, name, runnable)
         _bind_child_input(
             runnable if include_primary else replace(runnable, input=None),
-            locals,
+            locals
+            if include_primary
+            else {name: local for name, local in locals.items() if name != "_"},
             reference=name,
             structs={
                 item.name: item for item in state_program(state, target.module).structs
@@ -2496,9 +2499,8 @@ class _Execution:
             result,
             ref=source_pointer,
             record=RecordLocal.typed(
-                type_name=(f"{item_type}[]" if result.shape == "list" else item_type),
+                type_name=item_type,
                 value=pointer,
-                dim=1 if result.shape == "list" else 0,
             ),
         )
 
@@ -2506,8 +2508,12 @@ class _Execution:
         self, step: StepRef, name: str, runnable: AgicDecl | FlowDecl
     ) -> None:
         record = self.store.get_step(ref=step)
+        if record is not None and isinstance(record.given, HistoricalFlowStmt):
+            raise ToolangError(
+                "Historical Flow syntax cannot execute; migrate source and prepare a new snapshot"
+            )
         if record is not None and not isinstance(
-            record.given, StoredModelStepGiven | ToolStepGiven
+            record.given, StoredModelStepGiven | ToolStepGiven | HistoricalFlowStmt
         ):
             validate_operation_contract(
                 record.given.kind,
@@ -2535,7 +2541,7 @@ class _Execution:
         for lane in range(lanes):
             available_lanes.put_nowait(lane)
         source_local = locals.get("_", Local())
-        input_type = source_local.type_name
+        input_type = source_local.element_type
         target = resolve_call_target(state, binding.module, runnable)
         self.require_inactive_runnable(binding, target, action="run")
         declaration = target.executable
@@ -2552,7 +2558,6 @@ class _Execution:
             if select_source:
                 current["_"] = Local(
                     value,
-                    "item",
                     ref=source_local.ref.select(index)
                     if source_local.ref is not None
                     else None,
@@ -2564,7 +2569,9 @@ class _Execution:
         if not inputs:
             _bind_child_input(
                 replace(declaration, input=None) if select_source else declaration,
-                locals,
+                {name: local for name, local in locals.items() if name != "_"}
+                if select_source
+                else locals,
                 reference=runnable,
                 structs=structs,
             )
@@ -2612,13 +2619,11 @@ class _Execution:
         result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
-            "list",
-            type_name=output_type,
+            type_name=f"{output_type}[]",
             record=(
                 RecordLocal.typed(
                     type_name=f"{output_type}[]",
                     value=result_refs,
-                    dim=1,
                 )
                 if len(result_refs) == len(results)
                 else None
@@ -2802,6 +2807,10 @@ class _Execution:
         return state, state_ref
 
     async def _check_step_cancel(self, event: StepBegin, emit: EventEmitter) -> None:
+        if isinstance(event.given, HistoricalFlowStmt):
+            raise ToolangError(
+                "Historical Flow syntax cannot execute; migrate source and prepare a new snapshot"
+            )
         try:
             self.raise_if_canceling(
                 event.step.run_id,
@@ -2991,7 +3000,7 @@ def _bind_child_input(
     source_locals = {
         name: locals[name]
         for name in parameters
-        if name in locals and locals[name].shape != "none"
+        if name in locals and locals[name].has_value
     }
     if isinstance(runnable, AgicDecl) and is_generated_ref(reference):
         # Captures already passed their producing boundary. Revalidating them
@@ -3083,13 +3092,12 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
         return Local()
     return Local(
         value=store.resolve_value(step.output.local.value),
-        shape="list" if step.output.local.dim == 1 else "item",
         ref=(
             store.resolve_value_pointer(step.output.local.value)
             if isinstance(step.output.local.value, TypedRef)
             else FieldRef.from_path(step.ref, "output", "local", "value")
         ),
-        type_name=step.output.local.item_type,
+        type_name=step.output.local.type,
     )
 
 
@@ -3264,7 +3272,6 @@ def _execute_locals(
     for name, pointer in records.items():
         result[name] = Local(
             input[name],
-            "item",
             pointer.ref if isinstance(pointer, TypedRef) else None,
             types[name],
             RecordLocal.typed(types[name], pointer)
@@ -3289,7 +3296,7 @@ def _runtime_local_type(local: Local) -> str | None:
         return local.record.type
     if local.type_name is None:
         return None
-    return f"{local.type_name}[]" if local.shape == "list" else local.type_name
+    return local.type_name
 
 
 def _resolve_stored_input(
@@ -3340,15 +3347,10 @@ def _coerce_execute_output(
         type_name,
         structs={item.name: item for item in program.structs},
     )
-    source_type = (
-        f"{result.type_name or 'Json'}[]"
-        if result.shape == "list"
-        else result.type_name or "Json"
-    )
+    source_type = result.type_name or "Json"
     preserve = source_type == type_name
     return Local(
         value=value,
-        shape="item",
         ref=result.ref if preserve else None,
         type_name=type_name,
         record=result.record if preserve else None,
@@ -3360,7 +3362,7 @@ def _run_result_output(
     *,
     binding: str | None = "_",
 ) -> Output | None:
-    if result.shape == "none":
+    if not result.has_value:
         return None
     item_type = result.type_name or "Json"
     reference = (
@@ -3376,9 +3378,8 @@ def _run_result_output(
     )
     return Output(
         RecordLocal.typed(
-            type_name=f"{item_type}[]" if result.shape == "list" else item_type,
+            type_name=item_type,
             value=reference if reference is not None else cast(Value, concrete),
-            dim=1 if result.shape == "list" else 0,
         ),
         binding,
     )

@@ -576,7 +576,7 @@ agic child() -> Text:
     elif scenario_name == "parallel":
         source = """
 flow parent(_: Text) -> Text[]:
-  storm 2 in 2 lanes using child
+  generate 2 in 2 lanes using child
 
 agic child(_: Text) -> Text:
   recall = none

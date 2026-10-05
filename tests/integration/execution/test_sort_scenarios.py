@@ -35,7 +35,7 @@ agic score(_: Text) -> Number:
   {{_}}
 
 flow work(_: Text) -> Text[]:
-  scatter using split
+  run split
 """
 
 
@@ -88,7 +88,7 @@ def test_sort_and_selection_commit_typed_results_without_extra_model_calls(
             assert isinstance(sort.given, SortStmt)
             assert sort.given.order == order
             assert sort.output is not None
-            assert (sort.output.local.type, sort.output.local.dim) == ("Text[]", 1)
+            assert sort.output.local.type == "Text[]"
             assert isinstance(sort.output.local.value, Array)
             source_output = steps[0].output
             assert source_output is not None
@@ -101,10 +101,7 @@ def test_sort_and_selection_commit_typed_results_without_extra_model_calls(
             if selection:
                 selected = steps[2]
                 assert selected.output is not None
-                assert (selected.output.local.type, selected.output.local.dim) == (
-                    "Text[]",
-                    1,
-                )
+                assert selected.output.local.type == "Text[]"
                 selected_value = harness.store.resolve_value(
                     selected.output.local.value
                 )

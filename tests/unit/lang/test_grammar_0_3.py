@@ -27,8 +27,6 @@ agic score -> Number:
 @pytest.mark.parametrize(
     ("first", "second"),
     [
-        ("storm 3 in 2 lanes using worker", "storm 3 using worker in 2 lanes"),
-        ("map in 2 lanes using worker", "map using worker in 2 lanes"),
         ("keep in 2 lanes if predicate", "keep if predicate in 2 lanes"),
         ("drop in 2 lanes if predicate", "drop if predicate in 2 lanes"),
         ("sort ascending in 2 lanes by score", "sort ascending by score in 2 lanes"),
@@ -38,7 +36,7 @@ def test_clause_order_preserves_semantics_and_lane_limit(
     first: str, second: str
 ) -> None:
     sources = [
-        RUNNABLES + f"flow work:\n  storm 2 using worker\n  {header}\n"
+        RUNNABLES + f"flow work:\n  generate 2 using worker\n  {header}\n"
         for header in (first, second)
     ]
     programs = [Program.from_source(source) for source in sources]
@@ -54,22 +52,22 @@ def test_clause_order_preserves_semantics_and_lane_limit(
     ("header", "output"),
     [
         ("run: Work.", "Text"),
-        ("scatter using -> Text[]: Work.", "Text[]"),
-        ("scatter using: Work.", "Text[]"),
-        ("scatter using -> Number[]: Work.", "Number[]"),
-        ("storm 2 in 1 lane using -> Text: Work.", "Text"),
-        ("storm 2 using: Work.", "Text"),
-        ("storm 2 using -> Number[]: Work.", "Number[]"),
-        ("gather using: Work with {{_}}.", "Text"),
-        ("gather using -> Number[]: Work with {{_}}.", "Number[]"),
-        ("settle using: Work with {{_}} and {{_1._}}.", "Text"),
+        ("run -> Text[]: Work.", "Text[]"),
+        ("run -> Text[]: Work.", "Text[]"),
+        ("run -> Number[]: Work.", "Number[]"),
+        ("generate 2 in 1 lane -> Text: Work.", "Text"),
+        ("generate 2: Work.", "Text"),
+        ("generate 2 -> Number[]: Work.", "Number[]"),
+        ("run: Work with {{_}}.", "Text"),
+        ("run -> Number[]: Work with {{_}}.", "Number[]"),
+        ("reduce: Work with {{_}} and {{_1._}}.", "Text"),
         (
-            "settle using -> Number[]:\n    Work with {{_}}.\n    from: [0]",
+            "reduce -> Number[]:\n    Work with {{_}}.\n    from: [0]",
             "Number[]",
         ),
-        ("map using: Work with {{_}}.", "Text"),
-        ("map using -> Text: Work with {{_}}.", "Text"),
-        ("map using -> Number[]: Work with {{_}}.", "Number[]"),
+        ("map: Work with {{_}}.", "Text"),
+        ("map -> Text: Work with {{_}}.", "Text"),
+        ("map -> Number[]: Work with {{_}}.", "Number[]"),
         ("keep if: Decide {{_}}.", "Boolean"),
         ("drop if: Decide {{_}}.", "Boolean"),
         ("drop if -> Boolean: Decide {{_}}.", "Boolean"),
@@ -80,7 +78,7 @@ def test_clause_order_preserves_semantics_and_lane_limit(
 def test_inline_runnable_fields_preserve_the_operation_contract(
     header: str, output: str
 ) -> None:
-    program = Program.from_source(f"flow work:\n  scatter: Items\n  {header}\n")
+    program = Program.from_source(f"flow work:\n  run -> Text[]: Items\n  {header}\n")
     statement = program.flows[0].stmts[-1]
     agic = program.find_agic(getattr(statement, "runnable"))
     assert agic is not None
@@ -98,12 +96,12 @@ def test_inline_runnable_fields_preserve_the_operation_contract(
     "header",
     [
         "map worker par 2",
-        "map using worker in 0 lanes",
+        "map in 0 lanes using worker",
         "map in 1 lanes using worker",
         "map in 2 lane using worker",
         "map in 2 lanes in 3 lanes using worker",
         "map using worker using worker",
-        "map using -> Text in 2 lanes: Work.",
+        "map -> Text in 2 lanes: Work.",
         "map in 2 lanes with worker",
         "map using worker.",
         "sort by score",
@@ -113,7 +111,7 @@ def test_inline_runnable_fields_preserve_the_operation_contract(
         "top 3",
         "bottom 3",
         "scatter 2: Work.",
-        "storm {{n}} using worker",
+        "generate {{n}} using worker",
         "repeat 2:\n    run worker",
         "repeat 1 times:\n    run worker",
         "repeat 2 time:\n    run worker",
@@ -133,8 +131,6 @@ def test_invalid_and_legacy_headers_fail_before_lowering_or_execution(
 @pytest.mark.parametrize(
     "header",
     [
-        "scatter using -> Text: Items.",
-        "scatter using -> Number: Items.",
         "keep if -> Text: Decide.",
         "keep if -> Boolean[]: Decide.",
         "drop if -> Number: Decide.",
@@ -154,11 +150,10 @@ def test_incompatible_return_types_are_not_silently_replaced(header: str) -> Non
 @pytest.mark.parametrize(
     "header,expected",
     [
-        ("scatter using worker", "array"),
         ("keep if worker", "Boolean"),
         ("drop if worker", "Boolean"),
         ("sort ascending by worker", "Number"),
-        ("settle using worker", "Number"),
+        ("reduce using worker", "Number"),
     ],
 )
 def test_named_agic_output_is_not_reinterpreted_at_the_call_site(
@@ -168,7 +163,7 @@ def test_named_agic_output_is_not_reinterpreted_at_the_call_site(
     assert Program.from_source(declaration).agics[0].output == "Text"
     with pytest.raises(ToolangError, match=f"requires {expected} output"):
         Program.from_source(
-            declaration + f"flow work:\n  scatter -> Number[]: Items\n  {header}\n"
+            declaration + f"flow work:\n  run -> Number[]: Items\n  {header}\n"
         )
 
 
@@ -181,19 +176,19 @@ def test_named_agic_output_is_not_reinterpreted_at_the_call_site(
         ("keep if", "Boolean"),
         ("drop if", "Boolean"),
         ("sort ascending by", "Number"),
-        ("gather using", "Text"),
-        ("settle using", "Text"),
+        ("reduce using", "Text"),
     ],
 )
 def test_collection_call_sites_require_primary_input(
     count: int, named: bool, header: str, output: str
 ) -> None:
     declaration = f"agic worker() -> {output}:\n  Work.\n" if named else ""
+    if not named and header in {"map using", "reduce using"}:
+        header = header.removesuffix(" using")
     target = " worker" if named else ": Work."
     with pytest.raises(ToolangError, match="requires primary input '_'"):
         Program.from_source(
-            declaration
-            + f"flow work:\n  storm {count} using: Items\n  {header}{target}\n"
+            declaration + f"flow work:\n  generate {count}: Items\n  {header}{target}\n"
         )
 
 
@@ -201,7 +196,7 @@ def test_numeric_agreement_uses_value_and_zero_counts_remain_valid() -> None:
     program = Program.from_source(
         RUNNABLES
         + """flow work:
-  storm 0 in 01 lane using worker
+  generate 0 in 01 lane using worker
   keep first 0
   drop last 0
   repeat 01 time:
@@ -222,7 +217,7 @@ def test_numeric_agreement_uses_value_and_zero_counts_remain_valid() -> None:
 def test_sort_direction_and_binding_round_trip_as_canonical_step_data() -> None:
     program = Program.from_source(
         RUNNABLES
-        + "flow work:\n  storm 2 using worker\n  let sorted_items = sort descending by score\n"
+        + "flow work:\n  generate 2 using worker\n  let sorted_items = sort descending by score\n"
     )
     statement = program.flows[0].stmts[-1]
     assert isinstance(statement, SortStmt)
@@ -243,8 +238,8 @@ def test_formatter_preserves_prose_continuations_and_statement_boundaries() -> N
   Explain the options.
   Sort     is a word in this prompt.
 
-  scatter: Items
-  map in 2 lanes using:
+  run -> Text[]: Items
+  map in 2 lanes:
     Rewrite {{_}}.
 
   Summarize the result.
@@ -254,7 +249,7 @@ def test_formatter_preserves_prose_continuations_and_statement_boundaries() -> N
     after = Program.from_source(formatted)
     assert [item.kind for item in before.flows[0].stmts] == [
         "run",
-        "scatter",
+        "run",
         "map",
         "run",
     ]

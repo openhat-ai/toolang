@@ -6,7 +6,6 @@ from toolang.lang.ast import (
     AskStmt,
     DropStmt,
     FlowStmt,
-    GatherStmt,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -14,11 +13,10 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
-    ScatterStmt,
     SeekStmt,
-    SettleStmt,
+    ReduceStmt,
     Span,
-    StormStmt,
+    GenerateStmt,
 )
 
 from toolang.lang.description import statement_description
@@ -57,9 +55,9 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
     )
     assert (
         statement_description(
-            StormStmt(span=SPAN, count=3, runnable="review_item", lanes=2)
+            GenerateStmt(span=SPAN, count=3, runnable="review_item", lanes=2)
         )
-        == "Storm into 3 items with review_item independently, up to 2 at once"
+        == "Generate into 3 items with review_item independently, up to 2 at once"
     )
     assert (
         statement_description(
@@ -98,24 +96,24 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Ask reviewer for input",
         ),
         (
-            ScatterStmt(span=SPAN, runnable="expand_queries"),
-            "Scatter into items with expand_queries",
+            RunStmt(span=SPAN, runnable="expand_queries"),
+            "Run expand_queries",
         ),
         (
-            ScatterStmt(span=SPAN, runnable="agic:<adhoc:5>"),
-            "Scatter into items with agic:<adhoc:5>",
+            RunStmt(span=SPAN, runnable="agic:<adhoc:5>"),
+            "Run agic:<adhoc:5>",
         ),
         (
-            GatherStmt(span=SPAN, runnable="synthesize"),
-            "Gather all items into one with synthesize",
+            RunStmt(span=SPAN, runnable="synthesize"),
+            "Run synthesize",
         ),
         (
-            GatherStmt(span=SPAN, runnable="agic:<adhoc:6>"),
-            "Gather all items into one with agic:<adhoc:6>",
+            RunStmt(span=SPAN, runnable="agic:<adhoc:6>"),
+            "Run agic:<adhoc:6>",
         ),
         (
-            SettleStmt(span=SPAN, runnable="merge_pair"),
-            "Settle all items into one with merge_pair sequentially",
+            ReduceStmt(span=SPAN, runnable="merge_pair"),
+            "Reduce all items into one with merge_pair sequentially",
         ),
         (
             MapStmt(span=SPAN, runnable="agic:<adhoc:7>"),
@@ -154,8 +152,8 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
             "Repeat up to 1 time, until complete is true",
         ),
         (
-            StormStmt(span=SPAN, count=1, runnable="review"),
-            "Storm into 1 item with review independently",
+            GenerateStmt(span=SPAN, count=1, runnable="review"),
+            "Generate into 1 item with review independently",
         ),
         (
             RepeatStmt(span=SPAN, runnable="completion_check"),
@@ -180,23 +178,23 @@ def test_statement_description_covers_every_statement(
             "Ask agent researcher to run agic:<adhoc:3>",
         ),
         (
-            "scatter using: Expand the query.",
-            "Scatter into items with agic:<adhoc:3>",
+            "run -> Text[]: Expand the query.",
+            "Run agic:<adhoc:3>",
         ),
         (
-            "storm 3 in 2 lanes using: Review the findings.",
-            "Storm into 3 items with agic:<adhoc:3> independently, up to 2 at once",
+            "generate 3 in 2 lanes: Review the findings.",
+            "Generate into 3 items with agic:<adhoc:3> independently, up to 2 at once",
         ),
         (
-            "gather using: Combine {{_}}.",
-            "Gather all items into one with agic:<adhoc:3>",
+            "run: Combine {{_}}.",
+            "Run agic:<adhoc:3>",
         ),
         (
-            "settle using: Merge {{_}}.",
-            "Settle all items into one with agic:<adhoc:3> sequentially",
+            "reduce: Merge {{_}}.",
+            "Reduce all items into one with agic:<adhoc:3> sequentially",
         ),
         (
-            "let results = map in 2 lanes using:\n    Search for {{_}}.",
+            "let results = map in 2 lanes:\n    Search for {{_}}.",
             "Map each item with agic:<adhoc:3>, up to 2 at once, save result to results",
         ),
         ("keep if: Check {{_}}.", "Keep items where agic:<adhoc:3> is true"),
@@ -213,6 +211,6 @@ def test_statement_description_covers_every_statement(
 def test_descriptions_preserve_lowered_inline_runnable_names(
     source: str, expected: str
 ) -> None:
-    program = Program.from_source(f"flow work:\n  scatter: Items\n  {source}\n")
+    program = Program.from_source(f"flow work:\n  run -> Text[]: Items\n  {source}\n")
 
     assert statement_description(program.flows[0].stmts[-1]) == expected

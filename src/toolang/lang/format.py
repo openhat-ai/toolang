@@ -45,10 +45,8 @@ _FLOW_STATEMENT_TYPES = {
     "exec_statement",
     "seek_statement",
     "ask_statement",
-    "scatter_statement",
-    "storm_statement",
-    "gather_statement",
-    "settle_statement",
+    "generate_statement",
+    "reduce_statement",
     "map_statement",
     "keep_statement",
     "drop_statement",
@@ -150,22 +148,15 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
         )
     elif isinstance(statement, ast.AskStmt):
         head = "ask"
-    elif isinstance(statement, ast.ScatterStmt):
+    elif isinstance(statement, ast.GenerateStmt):
         head = _statement_words(
-            "scatter",
-            _runnable_clause("using", statement.runnable),
-        )
-    elif isinstance(statement, ast.StormStmt):
-        head = _statement_words(
-            "storm",
+            "generate",
             str(statement.count),
             _parallel_clause(statement.lanes),
             _runnable_clause("using", statement.runnable),
         )
-    elif isinstance(statement, ast.GatherStmt):
-        head = _statement_words("gather", _runnable_clause("using", statement.runnable))
-    elif isinstance(statement, ast.SettleStmt):
-        head = _statement_words("settle", _runnable_clause("using", statement.runnable))
+    elif isinstance(statement, ast.ReduceStmt):
+        head = _statement_words("reduce", _runnable_clause("using", statement.runnable))
     elif isinstance(statement, ast.MapStmt):
         head = _statement_words(
             "map",
@@ -221,7 +212,10 @@ def _count_phrase(value: int, noun: str) -> str:
 
 
 def _runnable_clause(connector: str, runnable: str) -> str:
-    return _statement_words(connector, _authored_runnable(runnable))
+    return _statement_words(
+        "" if connector == "using" and is_generated_ref(runnable) else connector,
+        _authored_runnable(runnable),
+    )
 
 
 def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:
@@ -256,7 +250,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             depth = 1 + sum(
                 1
                 for item in ancestors
-                if item.type in {"repeat_statement", "settle_statement"}
+                if item.type in {"repeat_statement", "reduce_statement"}
                 and text_indent_width(lines[item.start_point.row])
                 < text_indent_width(line)
             )
@@ -434,7 +428,7 @@ def _indent_depth(node: Node) -> int:
                 and current.start_point.row < node.start_point.row
             )
             or (
-                current.type == "settle_statement"
+                current.type == "reduce_statement"
                 and (initial := current.child_by_field_name("from")) is not None
                 and node.start_point.row >= initial.start_point.row
             )

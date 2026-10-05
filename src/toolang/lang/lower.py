@@ -563,27 +563,17 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        if node.type == "scatter_statement":
-            return ast.ScatterStmt(
-                runnable=self._runnable(node, default_output="Text[]"),
-                span=span,
-                doc=doc,
-            )
-        if node.type == "storm_statement":
-            return ast.StormStmt(
+        if node.type == "generate_statement":
+            return ast.GenerateStmt(
                 count=self._required_int(node, "count"),
                 runnable=self._runnable(node, default_output="Text"),
                 lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
-        if node.type == "gather_statement":
-            return ast.GatherStmt(
-                runnable=self._runnable(node, default_output="Text"), span=span, doc=doc
-            )
-        if node.type == "settle_statement":
+        if node.type == "reduce_statement":
             initial = node.child_by_field_name("from")
-            return ast.SettleStmt(
+            return ast.ReduceStmt(
                 runnable=self._runnable(node),
                 initial=self._block_text(initial) if initial is not None else None,
                 span=span,

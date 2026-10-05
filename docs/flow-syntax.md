@@ -95,7 +95,7 @@ Flow normally.
 ## Statements
 
 ```text
-# Produce one item
+# Call once with the complete input
 run RUNNABLE
 run [-> T]: BODY
 TEXT                                      shorthand for inline `run`
@@ -107,28 +107,24 @@ ask: BODY
 exec RUNNABLE
 exec [-> T]: BODY
 
-# Expand one item into a list
-scatter using EXPANDER
-scatter [using] [-> T]: BODY
-storm N [in P lanes] using MAPPER
-storm N [in P lanes] using [-> T]: BODY
+# Generate an outer array of complete results
+generate N [in P lanes] using MAPPER
+generate N [in P lanes] [-> T]: BODY
 
-# Reduce a list into one item
-gather using MERGER
-gather using [-> T]: BODY
-settle using REDUCER
-settle [using] [-> T]: BODY
+# Reduce the outer array sequentially
+reduce using REDUCER
+reduce [-> T]: BODY
 
-settle using REDUCER:
+reduce using REDUCER:
   from: BODY
 
-settle [using] [-> T]:
+reduce [-> T]:
   TEXT
   [from: BODY]
 
 # Transform every list item
 map [in P lanes] using MAPPER
-map [in P lanes] using [-> T]: BODY
+map [in P lanes] [-> T]: BODY
 
 # Select or sort list items
 keep first N
@@ -160,10 +156,8 @@ run      run a named agic or flow, or an inline agic
 exec     replace the current runnable with a named or inline runnable; never return
 seek     seek another agent's help with a named runnable or inline request
 ask      ask the human owner for input, judgment, or confirmation
-scatter  scatter the current item into a list in one run
-storm    storm N independent results from the current item
-gather   gather the current list into one item in one run
-settle   settle the current list into one item through sequential runs
+generate generate N independent results from the current value
+reduce   reduce outer items to one value through sequential runs
 map      map each current item to a new item while preserving order
 keep     keep positional items or items accepted by a filter
 drop     drop positional items or items accepted by a filter
@@ -171,16 +165,10 @@ sort     sort all items by score in the required ascending or descending order
 repeat   repeat a statement block, bounded by N or until
 ```
 
-The reshape statements form two execution families:
-
-| Execution | `item -> list` | `list -> list` | `list -> item` |
-| --- | --- | --- | --- |
-| one child run | `scatter` | - | `gather` |
-| multiple child runs | `storm` | `map` | `settle` |
-
-`scatter/gather` delegate reshape to one runnable. `storm/map/settle` let the
-executor coordinate multiple child runs. All five remain value statements and
-bind their complete result once.
+All value statements bind their complete result once. `run` calls once with the
+whole input. `generate N` returns N complete results in an outer array; `map`
+returns one complete result per outer input item. Neither flattens array results.
+`reduce` combines the outer items sequentially.
 
 
 ## Rules
@@ -199,7 +187,7 @@ bind their complete result once.
 - The first complete token of every implicit prose line is checked for
   lowercase keywords, including continuations. `sort these items` is invalid
   syntax; `Sort these items.` is prose. `sorter` is not the keyword `sort`.
-- Explicit bodies such as `run:`, `map using:`, and `until:` preserve literal
+- Explicit bodies such as `run:`, `map:`, and `until:` preserve literal
   keywords, Markdown, and relative text indentation until the body dedents.
   Text margins use the same eight-column tab stops as parsing. Lowering removes
   the shared margin and represents relative indentation with spaces; formatting
@@ -212,13 +200,21 @@ bind their complete result once.
 
 ### Results
 
+- Array operations use the actual outermost array. `Text[][]` supplies `Text[]`
+  items; open `Json` arrays supply `Json` items; `Part[]` supplies `Part` items.
+  Parameters, run results, helper Flows, exec, and restored values follow the
+  same rule. Scalars, objects, null, and absent values are rejected; operations
+  do not parse JSON strings or traverse object fields.
+- There is no separate shape/dim. Generate/map with result type `U` produce
+  `U[]`, including typed empty arrays with zero calls. Selection and sorting
+  retain the input's complete type and element provenance.
+
 - Named runnable roles use the result contract declared by their agic or flow.
-- Declaration output defaults to `Text`. Inline output defaults are `Text[]`
-  for scatter, `Boolean` for keep/drop/until, `Number` for sort, and `Text`
-  otherwise. Explicit signatures remain authoritative.
-- Scatter requires an array output type, including an explicit annotation's
-  complete array suffix. Map/storm preserve array-valued child results as nested
-  arrays. Gather/settle may return any value type.
+- Declaration output defaults to `Text`. Inline output defaults to `Boolean`
+  for keep/drop/until, `Number` for sort, and `Text` otherwise. An inline run
+  returning an array needs an explicit array type.
+- Map/generate preserve array-valued child results as nested arrays. Run and
+  reduce may return any value type.
 - Inline agics capture their own free template references, excluding runtime
   variables. References inside sections also capture existing outer locals;
   section fields take precedence. Item-only fields do not require outer inputs.
@@ -229,8 +225,8 @@ bind their complete result once.
   module does not require a matching declaration in the caller. Named calls
   still validate arguments against their declared parameter contracts. Authored
   named parameters default to `Text`; `_` defaults to `Part[]`.
-  Map/keep/drop/sort/gather/settle require `_` in the child's signature or inline
-  body. Scatter/storm permit its omission.
+  Map/keep/drop/sort/reduce require `_` in the child's signature or inline
+  body. Run/generate permit its omission.
 - `ask` evaluates its `Content` for the human owner and returns the owner's
   canonical `Percept`, represented in the language as `Part[]`.
 - A direct `let NAME = BODY` evaluates its `Content` as one `Percept` local
@@ -253,36 +249,40 @@ bind their complete result once.
 - Bare `TEXT` is shorthand for inline `run` and starts the same child run.
 - `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
   sends its body to the target agent.
-- `scatter` and `gather` each start one child run, then reshape its result.
-- Scatter has no count; its child must return an array, whose length determines
-  the output length.
-- `storm` starts `N` independent child runs and preserves result order.
+- `run` calls once, including for empty or nested arrays, and retains the
+  complete output type.
+- `generate` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `sort` start one child run per item.
-- Settle accepts an optional trailing `from:` initializer, evaluated once in the
+- Reduce accepts an optional trailing `from:` initializer, evaluated once in the
   outer frame before entering its own iteration scope. The initializer introduces
   no local. In an adhoc multiline body, only baseline `from:` ends reducer text;
   deeper occurrences remain literal. A named reducer's colon block contains only
-  the `from:` clause. Settle retains one prior frame and has no window clause.
-- Settle without an initializer uses the first element as the cumulative seed
+  the `from:` clause. Reduce retains one prior frame and has no window clause.
+- Reduce without an initializer uses the first element as the cumulative seed
   and invokes the reducer N-1 times. Each call receives the current element as
   `_` and the previous result as `_1._`; output must match the source element
   type. A singleton is validated and returned without a child call.
 - The AST's optional `initial` Content is evaluated once in the outer scope,
   coerced to reducer output type, then used for N calls. It introduces no local.
 - Empty map/keep/drop/sort produce typed empty lists without child calls.
-  Gather/settle reject empty input before calling a child. Argument and output
+  Reduce rejects empty input even with `from`. Argument and output
   contracts still apply to empty collections.
 - Positional `keep/drop` do not start child runs.
 
 
 ### Clauses
 
+- Generate/map/reduce require `using` for named targets and must omit it for
+  inline bodies. The rule also applies to named and discarded `let` results.
+  Their lane clause precedes the target: `map in 2 lanes using worker`.
+  Run/exec/seek use direct targets; keep/drop retain `if`, sort retains `by`.
+
 - `in P lanes` limits independent child work without changing result order.
   The fallback is the enclosing runnable's inherited lane setting, initially 4.
   A statement override does not change its children's default.
-  It is supported by storm, map, predicate keep/drop, and sort. Use `in 1 lane`
+  It is supported by generate, map, predicate keep/drop, and sort. Use `in 1 lane`
   for numeric value 1, including `01`; other positive values require `lanes`.
-- `keep/drop first|last N` select directly by current list position.
+- `keep/drop first|last N` select directly by outer array position.
 - `sort ascending` orders scores from lowest to highest; `sort descending`
   orders highest to lowest. Equal scores preserve input order in both directions.
   Empty input produces an empty list without scorer calls.
@@ -316,7 +316,9 @@ bind their complete result once.
 The common form is:
 
 ```text
-verb -> count/direction -> lanes -> using/if/by -> runnable or inline body
+verb -> count/direction -> lanes -> using + named runnable (or inline body)
+keep/drop -> lanes -> if -> named runnable or inline body
+sort -> direction -> lanes -> by -> named runnable or inline body
 ```
 
 
@@ -324,7 +326,7 @@ verb -> count/direction -> lanes -> using/if/by -> runnable or inline body
 
 ```too
 flow research(_, topic) -> Report:
-  scatter using -> Text[]:
+  run -> Text[]:
     Generate distinct research directions for {{_}}.
 
   keep in 4 lanes if:
@@ -335,7 +337,7 @@ flow research(_, topic) -> Report:
 
   keep first 3
 
-  gather using -> Report:
+  run -> Report:
     Synthesize {{_}} into one report.
 
   repeat 2 times:
@@ -368,5 +370,19 @@ descending sort followed by `keep last N` to preserve the final item order.
 Named or discarded legacy rank-with-selection has no general equivalent
 rewrite: an unbound sort updates `_`, while the old bound or discarded rank
 left `_` unchanged. Re-author those flows with explicit binding boundaries.
-Wrapping the two statements in a helper flow does not preserve collection
-shape across the current item-based runnable boundary.
+A helper Flow can return the complete array type to preserve the same behavior.
+
+
+## Migration to Array Operators
+
+Replace `scatter using R` and `gather using R` with `run R`. For inline scatter,
+use `run -> Text[]: BODY` or retain its explicit array output type. Run accepts
+empty arrays; move any required nonempty validation into the callee.
+Rename `storm` to `generate` and `settle` to `reduce`. Remove `using` before
+inline generate/map/reduce bodies; retain it before named targets. Keep bindings,
+`from` initializers, explicit types, and lane counts.
+
+Local protocol objects now contain only `type` and `value`; clients must stop
+sending or requiring `dim`. Stored locals write only `value`. Historical locals
+with valid `dim` and old statement records remain readable. Old executable
+snapshots require source migration and a newly prepared state before retry/rerun.

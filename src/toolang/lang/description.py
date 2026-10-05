@@ -7,7 +7,6 @@ from .ast import (
     AskStmt,
     DropStmt,
     FlowStmt,
-    GatherStmt,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -15,10 +14,9 @@ from .ast import (
     RepeatStmt,
     RunStmt,
     ExecStmt,
-    ScatterStmt,
     SeekStmt,
-    SettleStmt,
-    StormStmt,
+    ReduceStmt,
+    GenerateStmt,
 )
 
 
@@ -45,18 +43,14 @@ def statement_description(statement: FlowStmt) -> str:
             if statement.name
             else "Ask for human input"
         )
-    elif isinstance(statement, ScatterStmt):
-        action = f"Scatter into items with {_runnable_label(statement.runnable)}"
-    elif isinstance(statement, StormStmt):
+    elif isinstance(statement, GenerateStmt):
         action = (
-            f"Storm into {_count(statement.count, 'item')} "
+            f"Generate into {_count(statement.count, 'item')} "
             f"with {_runnable_label(statement.runnable)} independently"
         )
-    elif isinstance(statement, GatherStmt):
-        action = f"Gather all items into one with {_runnable_label(statement.runnable)}"
-    elif isinstance(statement, SettleStmt):
+    elif isinstance(statement, ReduceStmt):
         action = (
-            "Settle all items into one with "
+            "Reduce all items into one with "
             f"{_runnable_label(statement.runnable)} sequentially"
         )
     elif isinstance(statement, MapStmt):

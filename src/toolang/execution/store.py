@@ -1788,7 +1788,6 @@ class RunStore:
         validate_runtime_value(value, type_name)
         return Local(
             value=value,
-            dim=local.dim,
         )
 
     def resolve_value(self, value: object) -> object:
@@ -1805,10 +1804,21 @@ class RunStore:
             if ref in seen:
                 raise ValueError(f"value reference cycle: {ref}")
             seen.add(ref)
-            runtime = self.select_pointer(Pointer(ref)).runtime
+            selected = self.select_pointer(Pointer(ref))
+            runtime = selected.runtime
             if isinstance(runtime, Local):
                 runtime = runtime.value
             if not isinstance(runtime, TypedRef):
+                # Control inputs use the self-describing codec. Array indexes
+                # live below its box; output locals already expose plain arrays.
+                if (
+                    isinstance(runtime, Array | tuple | list)
+                    and isinstance(selected.value, Mapping)
+                    and isinstance(
+                        cast(Mapping[str, object], selected.value).get("!"), list
+                    )
+                ):
+                    return ref.select("!")
                 return ref
             ref = runtime.ref
 

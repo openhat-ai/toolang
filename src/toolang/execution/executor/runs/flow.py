@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from toolang.common.errors import ToolangError
-from toolang.lang.ast import FlowDecl, FlowStmt, RepeatStmt
+from toolang.lang.ast import (
+    FlowDecl,
+    FlowStmt,
+    RepeatStmt,
+    MapStmt,
+    KeepStmt,
+    DropStmt,
+    SortStmt,
+    ReduceStmt,
+)
 from toolang.lang.input import coerce_output
 
-from ...types import Occurrence, StepRef
+from ...types import Occurrence, StepRef, TypedRef
 from ..common import BoundRun
 from ..common import (
     Local,
@@ -43,17 +53,9 @@ async def execute(
     )
     result = locals.get("_", Local())
     if flow.output is not None:
-        if result.shape == "none":
+        if not result.has_value:
             raise ToolangError(f"flow output is missing; expected {flow.output}")
-        source_type = (
-            result.record.type
-            if result.record is not None
-            else (
-                f"{result.type_name}[]"
-                if result.shape == "list" and result.type_name is not None
-                else result.type_name
-            )
-        )
+        source_type = result.type_name
         preserves_provenance = source_type == flow.output
         result = Local(
             coerce_output(
@@ -61,13 +63,8 @@ async def execute(
                 flow.output,
                 structs=program_structs(binding),
             ),
-            "list" if result.shape == "list" and flow.output.endswith("[]") else "item",
             result.ref if preserves_provenance else None,
-            (
-                flow.output[:-2]
-                if result.shape == "list" and flow.output.endswith("[]")
-                else flow.output
-            ),
+            flow.output,
             result.record if preserves_provenance else None,
         )
     return result
@@ -92,6 +89,15 @@ async def execute_statements(
             if parent is None
             else parent.child(index)
         )
+        if isinstance(statement, (MapStmt, KeepStmt, DropStmt, SortStmt, ReduceStmt)):
+            source = locals.get("_", Local())
+            if source.ref is not None:
+                locals["_"] = replace(
+                    source,
+                    ref=execution.store.resolve_value_pointer(
+                        TypedRef(source.ref, source.type_name or "Json")
+                    ),
+                )
         result = await stmts.execute(
             execution,
             binding,

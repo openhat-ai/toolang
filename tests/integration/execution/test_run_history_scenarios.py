@@ -153,7 +153,6 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
                 Local.typed(
                     "Part",
                     FieldRef.from_path(step.ref, "output", "local", "value", 1),
-                    0,
                 ),
                 "_",
             ),
@@ -167,7 +166,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         assert detail is not None
         expected = Output(
             Local.typed(
-                "Part", FieldRef.from_path(step.ref, "output", "local", "value", 1), 0
+                "Part", FieldRef.from_path(step.ref, "output", "local", "value", 1)
             ),
             "_",
         )
@@ -213,7 +212,6 @@ def test_run_history_resolves_pass_through_control_output(
                 FieldRef.from_path(
                     ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
-                0,
             ),
             "_",
         )
@@ -225,7 +223,6 @@ def test_run_history_resolves_pass_through_control_output(
                 FieldRef.from_path(
                     ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
-                0,
             ),
             "_",
         )
@@ -252,7 +249,6 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
                         FieldRef.from_path(
                             ControlRef.for_run(run.id, 0), "payload", "input", "_"
                         ),
-                        0,
                     ),
                     "_",
                 ).local

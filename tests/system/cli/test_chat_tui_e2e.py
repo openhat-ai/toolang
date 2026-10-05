@@ -520,7 +520,7 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
         wait_for_layout(0)
         pane.send_keys("hold queue", enter=True)
         # Wait for the submission to clear Input and the initial live progress
-        # to settle before typing another request or measuring its position.
+        # to reduce before typing another request or measuring its position.
         wait_for_layout(0, started=True)
         for count in range(1, 4):
             pane.send_keys(f"queued request {count}", enter=True)

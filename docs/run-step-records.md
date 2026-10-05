@@ -96,23 +96,24 @@ References address `payload/input/_` or `payload/input/argumentName`.
 RunStore schema 43 accepts only this format. Older stores are rejected before
 mutation and remain intact for their matching runtime. There is no migration.
 Execution-time locals remain distinct from call input. Their names come from
-the enclosing local table. A durable `Local` contains `value` and `dim`; an
+the enclosing local table. A durable `Local` contains the complete `value`; an
 `Output` contains that Local in `local` and a `binding: str | None`. `"_"` is
 an ordinary binding name for the current local; `None` leaves the result
 unbound. `StepRecord.input` remains a dependency-reference list.
 
 ```python
-local = Local(value=input_value, dim=0)
+local = Local(value=input_value)
 locals = {"_": local}
 output = Output(local=local, binding="_")
 ```
 
-`dim=0` treats the complete value as one item, even when its type is an array.
-`dim=1` treats an array as the current collection. The dimension stays in Local
-for both bound and unbound outputs. An absent output (`None`) differs from an
-output whose Local contains a JSON null value.
+Array operations select only outer items, using the complete value type. An
+absent output (`None`) differs from an output whose Local contains JSON null.
+Historical locals with valid `dim=0/1` remain readable; new records omit it.
+Historical scatter/gather/storm/settle facts remain inspectable, but cannot be
+used as executable AST. Old source snapshots require migration and preparation.
 
-The durable output object is `{"local": {"value": ..., "dim": 0}, "binding": "_"}`.
+The durable output object is `{"local": {"value": ...}, "binding": "_"}`.
 The HTTP/event Local projection also includes its derived `type`; no Local
 carries a `name` field. Raw-value references use `output/local/value`, while
 `output/local` selects the complete Local and `output/binding` selects the

@@ -1141,8 +1141,8 @@ flow research(_: Text):
   let topic = {{_}}
   ## Broaden [bold]the question[/bold].
   ## Keep diverse perspectives.
-  scatter using expand
-  map using search in 4 lanes
+  run expand
+  map in 4 lanes using search
   keep first 1
 
 agic expand -> Text[]:
@@ -1191,7 +1191,7 @@ agic search:
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
         "[1] Broaden [bold]the question[/bold]. Keep diverse perspectives.",
-        "    Scatter into items with expand",
+        "    Run expand",
         "[2] Map each item with search, up to 4 at once",
         "[3] Keep the first item",
     ]
@@ -1250,7 +1250,7 @@ def test_script_flow_outline_truncates_each_description_and_doc_line(
     source = _write_source(
         tmp_path,
         f"""flow pipeline(_: Text):
-  scatter: Items
+  run -> Text[]: Items
   ## {"Evidence 証拠 " * 30}DOC_END
   sort descending by score_{"x" * 100}
   keep first 1

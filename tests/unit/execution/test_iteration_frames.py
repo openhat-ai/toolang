@@ -20,7 +20,7 @@ from toolang.execution.executor.iteration import (
 @pytest.mark.parametrize("value", [False, 0, "", []])
 def test_history_guards_test_presence_even_for_empty_values(value):
     frame = IterationFrame(
-        snapshot({"_": Local("input", "item")}), snapshot({"_": Local(value, "item")})
+        snapshot({"_": Local("input")}), snapshot({"_": Local(value)})
     )
     with iteration_scope(IterationScope(1, (frame,))):
         values = iteration_values()
@@ -48,7 +48,7 @@ def test_missing_frames_can_be_guarded_but_missing_fields_cannot():
         assert not history_available(("{{^_2}}waiting{{/_2}}",))
     with iteration_scope(
         IterationScope(
-            1, (IterationFrame(snapshot({}), snapshot({"_": Local("seed", "item")})),)
+            1, (IterationFrame(snapshot({}), snapshot({"_": Local("seed")})),)
         )
     ):
         with pytest.raises(ToolangError, match="field is missing"):
@@ -59,9 +59,9 @@ def test_snapshots_exclude_runtime_bindings_and_copy_nested_values():
     mutable = {"items": [1], "_1": "ordinary data"}
     entry = snapshot(
         {
-            "report": Local(mutable, "item", type_name="Json"),
-            "_1": Local("old", "item"),
-            "_past": Local([], "item"),
+            "report": Local(mutable, type_name="Json"),
+            "_1": Local("old"),
+            "_past": Local([]),
         }
     )
     mutable["items"].append(2)
@@ -75,7 +75,7 @@ def test_snapshots_exclude_runtime_bindings_and_copy_nested_values():
 
 def test_async_children_shadow_independently_and_restore_the_outer_scope():
     async def child(value):
-        frame = IterationFrame(snapshot({}), snapshot({"_": Local(value, "item")}))
+        frame = IterationFrame(snapshot({}), snapshot({"_": Local(value)}))
         with iteration_scope(IterationScope(1, (frame,))):
             await asyncio.sleep(0)
             return render_text_template("{{_1._}}", iteration_values())

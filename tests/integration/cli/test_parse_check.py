@@ -192,12 +192,12 @@ def test_source_output_commands_report_home_expansion_failure(monkeypatch, comma
 @pytest.mark.parametrize(
     "statement",
     [
-        "storm {number} using: Seed",
-        "storm 1 in {number} lanes using: Seed",
+        "generate {number}: Seed",
+        "generate 1 in {number} lanes: Seed",
         "repeat {number} times:\n    run: Seed",
         "repeat 1 time windowing {number}:\n    run: Seed",
-        "storm 1 using: Seed\n  keep first {number}",
-        "storm 1 using: Seed\n  drop last {number}",
+        "generate 1: Seed\n  keep first {number}",
+        "generate 1: Seed\n  drop last {number}",
         "lanes = {number}\n  run: Seed",
     ],
 )

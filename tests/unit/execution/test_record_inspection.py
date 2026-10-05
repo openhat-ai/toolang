@@ -292,7 +292,6 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "local": {
                 "type": "Part[]",
                 "value": {"?": f"{step.ref}/output/local/value:Part[]"},
-                "dim": 0,
             },
             "binding": "_",
         }

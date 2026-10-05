@@ -27,14 +27,14 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
             "agic worker(_, topic):\n  {{topic}}\nflow work:\n  run worker\n",
             "Missing.*topic",
         ),
-        ("flow work:\n  map using: {{_}}\n", "shape list"),
+        ("flow work():\n  map using missing\n", "unknown runnable"),
         (
-            "flow work:\n  run -> Text[]: Values\n  map using: {{_}}\n",
-            "shape list",
+            "flow work:\n  run -> Text: Values\n  map: {{_}}\n",
+            "outer array",
         ),
         (
-            "flow work:\n  scatter: Values\n  settle -> Number: {{_}}\n",
-            "Settle without from requires Text output",
+            "flow work:\n  run -> Text[]: Values\n  reduce -> Number: {{_}}\n",
+            "Reduce without from requires Text output",
         ),
         (
             "flow work:\n  repeat 5 times windowing 1:\n"
@@ -42,11 +42,11 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
             "outside the active window",
         ),
         (
-            "flow work:\n  scatter: Values\n  settle: {{_}} {{_2._}}\n",
+            "flow work:\n  run -> Text[]: Values\n  reduce: {{_}} {{_2._}}\n",
             "outside the active window",
         ),
         (
-            "flow work:\n  scatter: Values\n  settle:\n    {{_}}\n"
+            "flow work:\n  run -> Text[]: Values\n  reduce:\n    {{_}}\n"
             "    from: {{#items}}Hello\n",
             "unclosed",
         ),
@@ -65,11 +65,11 @@ def test_source_determined_errors_are_rejected(source, message):
         "agic work(records: Json):\n  {{#records}}{{_field}}{{/records}}\n",
         "agic worker(_, topic?):\n  {{topic}}\nflow work:\n  run worker\n",
         "agic reducer(_):\n  {{_}} {{_1._}}\n",
-        "flow work:\n  scatter: Values\n  map using -> Text[]: {{_}}\n  gather using: {{_}}\n",
-        "flow work:\n  repeat 0 times:\n    map using: {{_}}\n",
-        "flow work:\n  storm 0 using: No calls\n",
+        "flow work:\n  run -> Text[]: Values\n  map -> Text[]: {{_}}\n  run: {{_}}\n",
+        "flow work:\n  repeat 0 times:\n    map: {{_}}\n",
+        "flow work:\n  generate 0: No calls\n",
         "flow work:\n  repeat 2 times:\n    run: {{_}}\n    until: {{_3._}}\n",
-        "flow work:\n  repeat 2 times:\n    scatter: Values\n    settle:\n"
+        "flow work:\n  repeat 2 times:\n    run -> Text[]: Values\n    reduce:\n"
         "      {{_}} {{_1._}}\n      from: {{_2._}}\n",
         "flow work:\n  repeat 2 times:\n    repeat 2 times windowing 1:\n"
         "      run: {{_}}\n      until: {{_1._}}\n    until: {{_3._}}\n",
@@ -108,29 +108,29 @@ flow main:
         Program.from_source(source)
 
 
-@pytest.mark.parametrize("operation", ["gather", "settle"])
+@pytest.mark.parametrize("operation", ["reduce"])
 def test_known_empty_collections_are_rejected(operation):
-    with pytest.raises(ToolangError, match="requires a nonempty list"):
+    with pytest.raises(ToolangError, match="requires a nonempty array"):
         Program.from_source(f"""
 flow main:
-  storm 0 using: No calls
-  {operation} using: {{{{_}}}}
+  generate 0: No calls
+  {operation}: {{{{_}}}}
 """)
 
 
 def test_named_and_discarded_results_do_not_replace_current():
     Program.from_source("""
 flow main:
-  scatter: Items
-  let saved = gather using: {{_}}
-  let gather using: {{_}}
-  map using: {{_}} {{saved}}
+  run -> Text[]: Items
+  let saved = run: {{_}}
+  let run: {{_}}
+  map: {{_}} {{saved}}
 """)
-    with pytest.raises(ToolangError, match="shape list"):
+    with pytest.raises(ToolangError, match="outer array"):
         Program.from_source("""
-flow main:
-  let items = scatter: Items
-  map using: {{_}}
+flow main(_: Text):
+  let items = run -> Text[]: Items
+  map: {{_}}
 """)
 
 
@@ -160,9 +160,9 @@ flow main:
 def test_repeat_backedge_widens_changed_shapes_without_unrolling():
     Program.from_source("""
 flow main:
-  scatter: Items
+  run -> Text[]: Items
   repeat 1000000000 times:
-    map using: {{_}}
+    map: {{_}}
     run: {{_}}
 """)
 
@@ -201,12 +201,12 @@ flow main:
 @pytest.mark.parametrize(
     "statement",
     [
-        "storm 0 using: {{missing}}",
-        "storm 0 using: {{_}}",
-        "storm 0 using: Values\n  map using: {{_}} {{missing}}",
-        "storm 0 using: Values\n  keep if: {{_}} {{missing}}",
-        "storm 0 using: Values\n  drop if: {{_}} {{missing}}",
-        "storm 0 using: Values\n  sort ascending by: {{_}} {{missing}}",
+        "generate 0: {{missing}}",
+        "generate 0: {{_}}",
+        "generate 0: Values\n  map: {{_}} {{missing}}",
+        "generate 0: Values\n  keep if: {{_}} {{missing}}",
+        "generate 0: Values\n  drop if: {{_}} {{missing}}",
+        "generate 0: Values\n  sort ascending by: {{_}} {{missing}}",
     ],
 )
 def test_empty_parallel_operations_still_validate_required_inputs(statement):
@@ -215,13 +215,13 @@ def test_empty_parallel_operations_still_validate_required_inputs(statement):
 
 
 @pytest.mark.parametrize(
-    "operation", ["map using", "keep if", "drop if", "sort ascending by"]
+    "operation", ["map", "keep if", "drop if", "sort ascending by"]
 )
 def test_empty_parallel_operations_do_not_render_child_history(operation):
     Program.from_source(f"""
 flow main():
   repeat 1 time windowing 1:
-    storm 0 using: Values
+    generate 0: Values
     {operation}: {{{{_}}}} {{{{_2._}}}}
 """)
 
@@ -230,30 +230,30 @@ def test_zero_storm_does_not_render_child_history():
     Program.from_source("""
 flow main():
   repeat 1 time windowing 1:
-    storm 0 using: {{_2._}}
+    generate 0: {{_2._}}
 """)
 
 
 @pytest.mark.parametrize(
     "steps",
     [
-        "storm 1 using: Seed",
-        "storm 1 using: Seed\n  map using: {{_}}",
-        "storm 1 using: Seed\n  sort ascending by: {{_}}",
-        "storm 3 using: Seed\n  keep first 1",
-        "storm 2 using: Seed\n  drop last 1",
+        "generate 1: Seed",
+        "generate 1: Seed\n  map: {{_}}",
+        "generate 1: Seed\n  sort ascending by: {{_}}",
+        "generate 3: Seed\n  keep first 1",
+        "generate 2: Seed\n  drop last 1",
     ],
 )
 def test_singleton_settle_does_not_render_reducer_history(steps):
-    Program.from_source(f"flow main():\n  {steps}\n  settle: {{{{_}}}} {{{{_2._}}}}\n")
+    Program.from_source(f"flow main():\n  {steps}\n  reduce: {{{{_}}}} {{{{_2._}}}}\n")
 
 
 def test_singleton_settle_with_initializer_still_checks_reducer_history():
     with pytest.raises(ToolangError, match="outside the active window"):
         Program.from_source("""
 flow main():
-  storm 1 using: Seed
-  settle:
+  generate 1: Seed
+  reduce:
     {{_}} {{_2._}}
     from: Initial
 """)

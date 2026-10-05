@@ -195,9 +195,7 @@ async def execute(
 ) -> Local:
     """Execute one complete agic model-tool cycle."""
 
-    variables = {
-        name: local.value for name, local in locals.items() if local.shape != "none"
-    }
+    variables = {name: local.value for name, local in locals.items() if local.has_value}
     estimate = InputEstimate()
     frames: dict[tuple[str, RunRef | StepRef | None, float, bool], _AgicFrame] = {}
 
@@ -268,7 +266,7 @@ async def execute(
         initial_inputs=tuple(
             local.ref
             for _name, local in sorted(locals.items())
-            if local.shape != "none" and local.ref is not None
+            if local.has_value and local.ref is not None
         ),
         begin_step=execution.step_starter(binding),
         prepare_model_frame=prepare_model_frame,
@@ -299,7 +297,6 @@ async def execute(
         )
     return Local(
         output,
-        "item",
         state.output,
         type_name=output_type or "Part[]",
     )

@@ -1020,7 +1020,7 @@ agic worker(_: Part[]) -> Part[]:
   user: {{_}}
 
 flow parallel(_: Part[]):
-  storm 3 using worker in 3 lanes
+  generate 3 in 3 lanes using worker
 """,
         responses=[
             ScriptedModelTurn(
@@ -1265,8 +1265,8 @@ agic upper(_: Text) -> Text:
   user: {{_}}
 
 flow mapped(_: Text) -> Text[]:
-  scatter using split
-  map using upper in 2 lanes
+  run split
+  map in 2 lanes using upper
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["one","two"]')),
@@ -1441,7 +1441,7 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow select(_: Text) -> Text[]:
-  scatter using split
+  run split
   sort descending by: Return a numeric relevance score for {{_}} from 0 to 10.
   keep last 1
 """,
@@ -1499,7 +1499,7 @@ agic worker(_: Text) -> Text:
   user: {{_}}
 
 flow fanout(_: Text) -> Text[]:
-  storm 3 using worker in 2 lanes
+  generate 3 in 2 lanes using worker
 """,
         responses=[
             ScriptedModelTurn(
@@ -1565,8 +1565,8 @@ agic merge(_: Text[]) -> Text:
   user: {{_}}
 
 flow summary(_: Text) -> Text:
-  scatter using split
-  gather using merge
+  run split
+  run merge
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b","c"]')),
@@ -1614,8 +1614,8 @@ agic fold(_: Part[]) -> Text:
   user: {{_1._}}{{_}}
 
 flow folded(_: Text) -> Text:
-  scatter using split
-  settle using fold
+  run split
+  reduce using fold
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b","c"]')),
@@ -1661,8 +1661,8 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow folded(_: Text) -> Text:
-  scatter using split
-  settle using -> Text:
+  run split
+  reduce -> Text:
     {{_1._}}{{_}}
 """,
         responses=[
@@ -1751,7 +1751,7 @@ agic split(_: Text) -> Text[]:
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter using split
+  run split
   {statement}
 """,
         responses=[
@@ -1811,7 +1811,7 @@ agic relevant(_: Text) -> Boolean:
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter using split
+  run split
   {statement}
 """,
         responses=[
@@ -1874,7 +1874,7 @@ agic score(_: Text) -> Number:
   user: {{{{_}}}}
 
 flow ranked(_: Text) -> Text[]:
-  scatter using split
+  run split
   sort descending in 2 lanes by score
   keep {selection}
 """,
@@ -2181,8 +2181,7 @@ flow repeated(_: Text) -> Text:
     "operation,step_kind,responses",
     [
         ("map", "par", ['["a","b"]', "a", "b", "item"]),
-        ("gather", "run", ['["a","b"]', "joined", "item"]),
-        ("settle", "loop", ['["a","b"]', "joined", "item"]),
+        ("reduce", "loop", ['["a","b"]', "joined", "item"]),
     ],
 )
 def test_dynamic_list_errors_remain_inside_their_own_step_boundary(
@@ -2191,7 +2190,7 @@ def test_dynamic_list_errors_remain_inside_their_own_step_boundary(
     harness = ExecutionHarness.create(
         tmp_path,
         source=f"""
-agic echo(_: {"Text[]" if operation == "gather" else "Text"}) -> Text:
+agic echo(_: {"Text"}) -> Text:
   recall = none
   context = none
   instruct = none
@@ -2199,7 +2198,7 @@ agic echo(_: {"Text[]" if operation == "gather" else "Text"}) -> Text:
 agic finish():
   Finished.
 flow invalid(_: Text) -> Text:
-  scatter: Items
+  run -> Text[]: Items
   repeat 2 times:
     {operation} using echo
     run finish
@@ -2221,7 +2220,7 @@ flow invalid(_: Text) -> Text:
                 ),
                 tracer=tracer,
             )
-            error = f"{operation} requires current shape list, got item"
+            error = f"{operation} requires an outer array, got Text"
             assert root.status == "failed"
             assert root.error is not None
             assert harness.store.resolve_error(root.error) == error
@@ -2250,7 +2249,7 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow scattered(_: Text) -> Text[]:
-  scatter using split
+  run split
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b"]')),
@@ -2300,7 +2299,7 @@ flow scattered(_: Text) -> Text[]:
   let source =
     {{_}}
 
-  scatter using -> Text[]:
+  run -> Text[]:
     Return distinct pieces of this source:
     {{source}}
 """,
@@ -2476,7 +2475,7 @@ flow number(_: Text) -> Number:
                 )
             )
 
-            assert root.output == Output(Local.typed("Number", 7, 0), "_")
+            assert root.output == Output(Local.typed("Number", 7), "_")
             assert root.output is not None
             assert harness.store.resolve_local(root.output.local).value == 7
 

@@ -26,7 +26,6 @@ from toolang.lang.ast import (
     DropStmt,
     FlowDecl,
     FlowStmt,
-    GatherStmt,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -35,10 +34,9 @@ from toolang.lang.ast import (
     RepeatStmt,
     RunStmt,
     ExecStmt,
-    ScatterStmt,
     SeekStmt,
-    SettleStmt,
-    StormStmt,
+    ReduceStmt,
+    GenerateStmt,
     StructDecl,
 )
 from toolang.lang.contracts import FlowTransform, operation_transform
@@ -70,7 +68,7 @@ from ..types import (
     TypedRef,
 )
 
-Shape = Literal["none", "item", "list"]
+_MISSING = object()
 
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
 StepBoundary = Callable[
@@ -143,13 +141,22 @@ class BoundRun:
 
 @dataclass(frozen=True, slots=True)
 class Local:
-    """One runtime local and its flow shape."""
+    """One complete runtime value, or an absent statement result."""
 
-    value: Any = None
-    shape: Shape = "none"
+    value: Any = _MISSING
     ref: FieldRef | None = None
     type_name: str | None = None
     record: RecordLocal | None = None
+
+    @property
+    def has_value(self) -> bool:
+        return self.value is not _MISSING
+
+    @property
+    def element_type(self) -> str | None:
+        if self.type_name is None:
+            return None
+        return self.type_name[:-2] if self.type_name.endswith("[]") else "Json"
 
 
 def bind_inline_inputs(
@@ -358,13 +365,15 @@ def _flow_step_noted(
 ) -> StepNoted:
     if note is not None:
         return note(status)
-    if not isinstance(statement, StormStmt | MapStmt | KeepStmt | DropStmt | SortStmt):
+    if not isinstance(
+        statement, GenerateStmt | MapStmt | KeepStmt | DropStmt | SortStmt
+    ):
         return None
-    if isinstance(statement, StormStmt):
+    if isinstance(statement, GenerateStmt):
         total_items = statement.count
     else:
         source = locals.get("_", Local())
-        if source.shape != "list" or not isinstance(source.value, Array | list):
+        if not isinstance(source.value, Array | list | tuple):
             return None
         total_items = len(source.value)
     output_items = None
@@ -383,64 +392,8 @@ def transform_flow_result(
     transform = flow_transform(statement)
     if transform == "none":
         return Local()
-    if transform == "item":
-        output_type = (
-            evaluated.record.type
-            if evaluated.record is not None
-            else (
-                f"{evaluated.type_name or 'Json'}[]"
-                if evaluated.shape == "list"
-                else evaluated.type_name
-            )
-        )
-        return replace(
-            evaluated,
-            shape="item",
-            type_name=output_type,
-            record=(
-                replace(evaluated.record, dim=0)
-                if evaluated.record is not None
-                else None
-            ),
-        )
-    if transform == "list":
-        values = (
-            evaluated.value
-            if evaluated.shape == "list"
-            else result_list(evaluated, operation=statement.kind)
-        )
-        output_type = (
-            evaluated.record.type
-            if evaluated.record is not None
-            else (
-                f"{evaluated.type_name or 'Json'}[]"
-                if evaluated.shape == "list"
-                else evaluated.type_name or "Json[]"
-            )
-        )
-        if not output_type.endswith("[]"):
-            raise ToolangError(
-                f"{statement.kind} requires an array result, got {output_type}"
-            )
-        return Local(
-            values,
-            "list",
-            ref=evaluated.ref,
-            type_name=output_type[:-2],
-            record=(
-                replace(evaluated.record, dim=1)
-                if evaluated.record is not None
-                else (
-                    RecordLocal.typed(
-                        type_name=output_type,
-                        value=evaluated.ref,
-                        dim=1,
-                    )
-                    if evaluated.ref is not None
-                    else None
-                )
-            ),
-        )
+    if transform in {"item", "list"}:
+        return evaluated
     source = locals.get("_", Local())
     items = require_list(locals, operation=statement.kind)
     values = result_list(evaluated, operation=statement.kind)
@@ -467,13 +420,14 @@ def transform_flow_result(
         )
     return Local(
         [items[index] for index in indexes],
-        "list",
         type_name=source.type_name,
         record=(
             RecordLocal.typed(
-                type_name=f"{source.type_name or 'Json'}[]",
-                value=tuple(source.ref.select(index) for index in indexes),
-                dim=1,
+                type_name=source.type_name or "Json",
+                value=tuple(
+                    TypedRef(source.ref.select(index), source.element_type or "Json")
+                    for index in indexes
+                ),
             )
             if source.ref is not None
             else None
@@ -515,13 +469,7 @@ def statement_input_refs(
                 names.update(parameter.name for parameter in child.params)
         if isinstance(
             statement,
-            KeepStmt
-            | DropStmt
-            | GatherStmt
-            | SettleStmt
-            | MapStmt
-            | SortStmt
-            | StormStmt,
+            KeepStmt | DropStmt | ReduceStmt | MapStmt | SortStmt | GenerateStmt,
         ):
             names.add("_")
     return tuple(
@@ -534,13 +482,7 @@ def statement_input_refs(
 def _statement_child_runnable(statement: FlowStmt) -> str | None:
     if isinstance(
         statement,
-        RunStmt
-        | ExecStmt
-        | ScatterStmt
-        | GatherStmt
-        | SettleStmt
-        | MapStmt
-        | StormStmt,
+        RunStmt | ExecStmt | ReduceStmt | MapStmt | GenerateStmt,
     ):
         return statement.runnable
     if isinstance(statement, SortStmt):
@@ -564,7 +506,6 @@ def initial_locals(binding: BoundRun) -> dict[str, Local]:
         )
         locals[name] = Local(
             value,
-            "item",
             pointer,
             type_name,
             RecordLocal.typed(type_name, pointer),
@@ -607,10 +548,8 @@ def statement_has_call(statement: FlowStmt) -> bool:
         | ExecStmt
         | SeekStmt
         | AskStmt
-        | ScatterStmt
-        | StormStmt
-        | GatherStmt
-        | SettleStmt
+        | GenerateStmt
+        | ReduceStmt
         | MapStmt
         | SortStmt,
     ):
@@ -624,25 +563,16 @@ def statement_has_call(statement: FlowStmt) -> bool:
     return False
 
 
-def require_item(locals: Mapping[str, Local], *, operation: str) -> Any:
-    current = locals.get("_", Local())
-    if current.shape != "item":
-        raise ToolangError(
-            f"{operation} requires current shape item, got {current.shape}"
-        )
-    return current.value
-
-
 def require_list(
     locals: Mapping[str, Local], *, operation: str, nonempty: bool = False
 ) -> list[Any]:
     current = locals.get("_", Local())
-    if current.shape != "list" or not isinstance(current.value, Array | list):
+    if not isinstance(current.value, Array | list | tuple):
         raise ToolangError(
-            f"{operation} requires current shape list, got {current.shape}"
+            f"{operation} requires an outer array, got {current.type_name or 'missing input'}"
         )
     if nonempty and not current.value:
-        raise ToolangError(f"{operation} requires a nonempty list")
+        raise ToolangError(f"{operation} requires a nonempty array")
     return list(current.value)
 
 
@@ -673,12 +603,9 @@ def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
 
 
 def output_parts(local: Local) -> tuple[Part, ...]:
-    if local.shape == "none":
+    if not local.has_value:
         return ()
-    if (
-        local.shape == "item"
-        and (parts := value_parts(local.value, type_name=local.type_name)) is not None
-    ):
+    if (parts := value_parts(local.value, type_name=local.type_name)) is not None:
         return tuple(parts)
     return (TextPart(text=value_text(local.value)),)
 
@@ -745,20 +672,19 @@ def _unique_step_inputs(items: Sequence[FieldRef]) -> tuple[FieldRef, ...]:
 def output_from_local(local: Local, *, binding: str | None) -> Output | None:
     """Attach a destination to the durable value of one runtime local."""
 
-    if local.shape == "none":
+    if not local.has_value:
         return None
     if local.record is not None:
         return Output(local.record, binding)
     item_type = local.type_name or "Json"
     return Output(
         RecordLocal.typed(
-            type_name=f"{item_type}[]" if local.shape == "list" else item_type,
+            type_name=item_type,
             value=(
                 tuple(local.value)
-                if local.shape == "list" and isinstance(local.value, list)
+                if item_type.endswith("[]") and isinstance(local.value, list)
                 else local.value
             ),
-            dim=1 if local.shape == "list" else 0,
         ),
         binding,
     )

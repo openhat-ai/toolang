@@ -731,7 +731,7 @@ def test_parallel_children_do_not_automatically_recall_or_compact_root_history(
 ):
     source = (
         SOURCE
-        + "\nflow parallel(_: Part[]) -> Text[]:\n  storm 2 using chat in 2 lanes\n"
+        + "\nflow parallel(_: Part[]) -> Text[]:\n  generate 2 in 2 lanes using chat\n"
     )
     harness = ExecutionHarness.create(
         tmp_path,

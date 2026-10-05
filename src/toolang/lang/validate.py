@@ -588,7 +588,7 @@ def _validate_stmt(
         else (stmt.request,)
         if isinstance(stmt, ast.AskStmt)
         else (stmt.initial,)
-        if isinstance(stmt, ast.SettleStmt) and stmt.initial is not None
+        if isinstance(stmt, ast.ReduceStmt) and stmt.initial is not None
         else ()
     ):
         template_runtime_names(content)
@@ -643,9 +643,9 @@ def _validate_stmt(
 
     runnable = _stmt_runnable(stmt)
     _require_runnable(runnable, runnables, stmt=stmt)
-    if isinstance(stmt, ast.StormStmt):
+    if isinstance(stmt, ast.GenerateStmt):
         _non_negative(stmt.count, field="count", line=stmt.span.line)
-    if isinstance(stmt, ast.StormStmt | ast.MapStmt):
+    if isinstance(stmt, ast.GenerateStmt | ast.MapStmt):
         _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
 
 
@@ -672,13 +672,7 @@ def _validate_binding(stmt: ast.FlowStmt) -> None:
 def _stmt_runnable(stmt: ast.FlowStmt) -> str:
     if isinstance(
         stmt,
-        ast.RunStmt
-        | ast.ExecStmt
-        | ast.ScatterStmt
-        | ast.StormStmt
-        | ast.GatherStmt
-        | ast.SettleStmt
-        | ast.MapStmt,
+        ast.RunStmt | ast.ExecStmt | ast.GenerateStmt | ast.ReduceStmt | ast.MapStmt,
     ):
         return stmt.runnable
     raise RuntimeError(f"Statement {stmt.kind!r} has no runnable field.")

@@ -313,9 +313,10 @@ Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
 runtime values. `Message` is a model-call and chat-projection type, not a
 Toolang language value.
 
-Value type and runtime shape are independent. A `Part[]`, `Text[]`, or other
-array value normally occupies one local with `shape=item`. Only flow operations
-such as scatter, storm, and map produce `shape=list` collections.
+Locals preserve their complete value type, with no shape/dim flag. Array
+operations use the outermost array: mapping `Text[][]` supplies `Text[]` items.
+Arrays from parameters, ordinary calls, and helper Flows behave identically.
+See [Flow syntax](flow-syntax.md) for array operators and migration guidance.
 
 
 ### Output
@@ -600,11 +601,11 @@ A flow is an ordered list of static statements:
 
 ```too
 flow research(_: Text) -> Report:
-  scatter using expand
+  run expand
   keep if relevant in 4 lanes
   sort descending by score in 3 lanes
   keep first 3
-  gather using synthesize
+  run synthesize
 ```
 
 Flows use the same declaration defaults, resource selectors, recall, and routing

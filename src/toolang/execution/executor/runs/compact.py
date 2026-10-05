@@ -377,7 +377,7 @@ async def execute(
         finally:
             execution.record_model_accounting(spec.model, accounting)
         reducer.accept(response)
-    return Local(reducer.summary, "item", type_name="Text")
+    return Local(reducer.summary, type_name="Text")
 
 
 async def _emit_part(

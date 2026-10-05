@@ -76,8 +76,8 @@ Execution records use `CallInput[Value | TypedRef]`. Each stored entry retains
 the self-describing value codec, without an input-only `Local` wrapper. Input
 references use `payload/input/_` or `payload/input/argumentName`. Nested paths
 follow the value codec: a boxed array item uses `payload/input/items/!/0`.
-Outputs use `Output(local=Local(value=..., dim=0), binding="_")`. `Local`
-contains only the value and dimension; the enclosing local map or output
+Outputs use `Output(local=Local(value=...), binding="_")`. `Local`
+contains only the complete value; the enclosing local map or output
 binding supplies its name. `binding=None` leaves a result unbound.
 
 This format replaces the old source compartments, resolved compartments, HTTP

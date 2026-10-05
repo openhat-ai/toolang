@@ -47,7 +47,7 @@ dependencies = [
     "tomlkit>=0.13,<1",
     "tiktoken>=0.12,<1",
     "tree-sitter>=0.25.2,<0.26",
-    "tree-sitter-toolang>=0.3.4,<0.4",
+    "tree-sitter-toolang @ git+https://github.com/openhat-ai/tree-sitter-toolang@47c56ba6e517227036ef1ef0809b830da2d30e85",
     "tq-json>=0.1.0,<0.2",
     "wcwidth>=0.8,<1",
     "typer==0.27.2",
@@ -124,3 +124,7 @@ markers = [
     "live_docker: opt-in checks that use the local Docker engine and network",
     "live_provider: opt-in smoke tests that call a real model provider",
 ]
+
+
+[tool.hatch.metadata]
+allow-direct-references = true

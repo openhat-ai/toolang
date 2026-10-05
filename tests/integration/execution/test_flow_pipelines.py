@@ -16,13 +16,20 @@ from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import ThreadPrefix
 
 
-def test_research_pipeline_stops_before_gather_when_no_evidence_is_relevant(
+def test_research_pipeline_calls_synthesis_with_empty_evidence(
     tmp_path: Path,
 ) -> None:
     source = (FIXTURES_ROOT / "flows" / "research_pipeline.too").read_text(
         encoding="utf-8"
     )
-    responses = ['["first query", "second query"]', "first", "second", "false", "false"]
+    responses = [
+        '["first query", "second query"]',
+        "first",
+        "second",
+        "false",
+        "false",
+        "No evidence",
+    ]
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -41,21 +48,17 @@ def test_research_pipeline_stops_before_gather_when_no_evidence_is_relevant(
                     primary=(TextPart("research topic"),),
                 )
             )
-            assert root.status == "failed"
-            assert root.error is not None
-            assert harness.store.resolve_error(root.error) == (
-                "gather requires a nonempty list"
-            )
-            # Empty sort/map steps do not spend model calls, and gather fails
-            # before starting its child runnable.
-            assert len(harness.adapter.invocations) == 5
+            assert root.status == "succeeded", root.error
+            assert harness.store.run_output_text(run_id=root.id) == "No evidence"
+            # Empty sort/map make no calls; the final run consumes the whole [].
+            assert len(harness.adapter.invocations) == 6
             assert harness.adapter.pending_responses == 0
             children = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
                 if run.parent is not None
             ]
-            assert len(children) == 5
+            assert len(children) == 6
             assert all(run.status == "succeeded" for run in children)
 
     asyncio.run(scenario())

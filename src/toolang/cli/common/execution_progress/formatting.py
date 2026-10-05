@@ -12,7 +12,7 @@ from toolang.execution.types import (
     StepGiven,
     ToolStepGiven,
 )
-from toolang.lang.ast import FlowStmt
+from toolang.execution.types import RecordedFlowStmt as FlowStmt
 from toolang.lang.types import Array, display_runnable_ref
 from wcwidth import wcwidth, wcswidth
 
@@ -136,7 +136,9 @@ def shape_label(event: StepEnd) -> str:
     if event.output is None:
         return ""
     items = output_item_count(event)
-    if event.output.local.dim == 1:
+    if event.output.local.type.endswith("[]") or isinstance(
+        event.output.local.value, Array | tuple | list
+    ):
         return f"{items}-item list" if items is not None else "list"
     return "1 item"
 
@@ -147,6 +149,6 @@ def output_item_count(event: StepEnd) -> int | None:
     if event.output is None:
         return None
     value = event.output.local.value
-    if event.output.local.dim == 1 and isinstance(value, Array | tuple | list):
+    if isinstance(value, Array | tuple | list):
         return len(value)
-    return 1 if event.output.local.dim == 0 else None
+    return None if event.output.local.type.endswith("[]") else 1

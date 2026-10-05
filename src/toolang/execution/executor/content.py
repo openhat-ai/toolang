@@ -32,9 +32,7 @@ def evaluate_content(
     resolution = resolve_input_parts_with_provenance(
         content,
         program=program,
-        values={
-            name: local.value for name, local in locals.items() if local.shape != "none"
-        }
+        values={name: local.value for name, local in locals.items() if local.has_value}
         | execution.runtime_values(binding, step=path),
         types={
             name: local.type_name
@@ -49,4 +47,4 @@ def evaluate_content(
         ),
     )
     execution.record_prompt_invocations(binding, resolution.prompts)
-    return Local(resolution.parts, "item", type_name="Part[]")
+    return Local(resolution.parts, type_name="Part[]")

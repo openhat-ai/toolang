@@ -45,7 +45,7 @@ def snapshot(locals: Mapping[str, Local]) -> Mapping[str, Local]:
     values = {
         name: local
         for name, local in locals.items()
-        if (name == "_" or not name.startswith("_")) and local.shape != "none"
+        if (name == "_" or not name.startswith("_")) and local.has_value
     }
     frozen = freeze_mapping({name: local.value for name, local in values.items()})
     return freeze_mapping(

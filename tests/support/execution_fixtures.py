@@ -303,7 +303,7 @@ def project_step(
                 output=(
                     output
                     if isinstance(output, Output) or output is None
-                    else Output(Local.typed("Part[]", tuple(output), 0), "_")
+                    else Output(Local.typed("Part[]", tuple(output)), "_")
                 ),
                 noted=_step_noted(kind, detail),
                 error=ErrorMessage(error) if isinstance(error, str) else error,
@@ -464,7 +464,7 @@ def project_run_end(
             run=run_id,
             status=status,
             output=(
-                Output(Local.typed("Part[]", output, 0), "_")
+                Output(Local.typed("Part[]", output), "_")
                 if isinstance(output, FieldRef)
                 else output
             ),

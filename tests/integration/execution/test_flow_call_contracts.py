@@ -58,45 +58,45 @@ flow main:
     "body,responses,child_types,result_type,result",
     [
         ("run: {{_}}", ["done"], ["Text"], "Text", "done"),
-        ("scatter: Items", ['["a","b"]'], ["Text[]"], "Text[]", '["a","b"]'),
-        ("storm 2 using: Work", ["a", "b"], ["Text", "Text"], "Text[]", '["a","b"]'),
+        ("run -> Text[]: Items", ['["a","b"]'], ["Text[]"], "Text[]", '["a","b"]'),
+        ("generate 2: Work", ["a", "b"], ["Text", "Text"], "Text[]", '["a","b"]'),
         (
-            "scatter: Items\n  map using: {{_}}",
+            "run -> Text[]: Items\n  map: {{_}}",
             ['["a","b"]', "A", "B"],
             ["Text[]", "Text", "Text"],
             "Text[]",
             '["A","B"]',
         ),
         (
-            "scatter: Items\n  keep if: {{_}}",
+            "run -> Text[]: Items\n  keep if: {{_}}",
             ['["a","b"]', "true", "false"],
             ["Text[]", "Boolean", "Boolean"],
             "Text[]",
             '["a"]',
         ),
         (
-            "scatter: Items\n  drop if: {{_}}",
+            "run -> Text[]: Items\n  drop if: {{_}}",
             ['["a","b"]', "true", "false"],
             ["Text[]", "Boolean", "Boolean"],
             "Text[]",
             '["b"]',
         ),
         (
-            "scatter: Items\n  sort ascending by: {{_}}",
+            "run -> Text[]: Items\n  sort ascending by: {{_}}",
             ['["a","b"]', "2", "1"],
             ["Text[]", "Number", "Number"],
             "Text[]",
             '["b","a"]',
         ),
         (
-            "scatter: Items\n  gather using: {{_}}",
+            "run -> Text[]: Items\n  run: {{_}}",
             ['["a","b"]', "joined"],
             ["Text[]", "Text"],
             "Text",
             "joined",
         ),
         (
-            "scatter: Items\n  settle using: {{_}} {{_1._}}",
+            "run -> Text[]: Items\n  reduce: {{_}} {{_1._}}",
             ['["a","b"]', "joined"],
             ["Text[]", "Text"],
             "Text",
@@ -112,14 +112,14 @@ flow main:
     ],
     ids=[
         "run",
-        "scatter",
-        "storm",
+        "run",
+        "generate",
         "map",
         "keep",
         "drop",
         "sort",
-        "gather",
-        "settle",
+        "run",
+        "reduce",
         "until",
     ],
 )
@@ -187,33 +187,33 @@ flow main{annotation}:
     "header,input_type,output_type,items",
     [
         ("run worker", "Number", "Text", None),
-        ("scatter using worker", "Number", "Text[]", None),
-        ("storm 2 using worker", "Number", "Text", None),
+        ("run worker", "Number", "Text[]", None),
+        ("generate 2 using worker", "Number", "Text", None),
         ("map using worker", "Number", "Text", '["1","invalid"]'),
         ("keep if worker", "Number", "Boolean", '["1","invalid"]'),
         ("drop if worker", "Number", "Boolean", '["1","invalid"]'),
         ("sort ascending by worker", "Number", "Number", '["1","invalid"]'),
-        ("gather using worker", "Number[]", "Text", '["1","invalid"]'),
-        ("gather using worker", "Number", "Text", '["1","2"]'),
-        ("settle using worker", "Number", "Text", '["seed","1","invalid"]'),
+        ("run worker", "Number[]", "Text", '["1","invalid"]'),
+        ("run worker", "Number", "Text", '["1","2"]'),
+        ("reduce using worker", "Number", "Text", '["seed","1","invalid"]'),
     ],
     ids=[
         "run",
-        "scatter",
-        "storm",
+        "run",
+        "generate",
         "map",
         "keep",
         "drop",
         "sort",
         "gather-elements",
         "gather-scalar",
-        "settle",
+        "reduce",
     ],
 )
 def test_incompatible_call_inputs_fail_before_any_target_model_call(
     tmp_path: Path, header: str, input_type: str, output_type: str, items: str | None
 ) -> None:
-    prefix = "scatter: Items\n  " if items is not None else ""
+    prefix = "run -> Text[]: Items\n  " if items is not None else ""
     harness = ExecutionHarness.create(
         tmp_path,
         source=f"""
@@ -241,10 +241,7 @@ flow main:
             assert root.status == "failed"
             assert root.error is not None
             error = harness.store.resolve_error(root.error)
-            if header == "gather using worker" and input_type == "Number":
-                assert error == "Part[] can only contain Part values"
-            else:
-                assert "Number" in error
+            assert "Number" in error or error == "Part[] cannot use Text[]"
             assert len(harness.adapter.invocations) == (1 if items is not None else 0)
             assert harness.adapter.pending_responses == 0
             children = [
@@ -273,7 +270,7 @@ flow main(limit) -> Number[]:
   recall = none
   instruct = none
   context = none
-  scatter: Items
+  run -> Text[]: Items
   map using worker
 """,
         responses=[ModelCallResult(message=Message.assistant("[]"))],
