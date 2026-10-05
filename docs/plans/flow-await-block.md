@@ -14,17 +14,17 @@ Implement after [group 1](https://github.com/openhat-ai/toolang/pull/684)'s
 array/target rules and [group 2](https://github.com/openhat-ai/toolang/pull/685)'s
 handle-await grammar.
 The block scheduler itself uses the existing parallel Step machinery, without
-creating user-visible futures for its branches. Group 2 supplies the existing
+creating user-visible Run handles for its branches. Group 2 supplies the existing
 handle form when a child explicitly awaits previously started work. Spawn is
 not required. These are separate documentation and implementation changes.
 
 ## Verified Current Behavior
 
-- Flow dispatch awaits each statement in order. Map/storm already use an internal
+- Flow dispatch awaits each statement in order. Map/generate use an internal
   par Step and preserve input order despite concurrent completion.
 - Parallel child execution captures inputs, limits lanes, cancels/drains failing
   groups, and preserves complete child output types and references.
-- Current grammar 0.3.4 rejects bare, named, and discarded await blocks.
+- Current grammar rejects bare, named, and discarded await blocks.
 - Retry restores top-level statement outputs, but repeat restoration walks
   descendants. A new block must not leak branch-local bindings during restoration.
 
@@ -58,9 +58,9 @@ Discarded let waits and drops the array. Publish a binding only after the whole
 block succeeds. No all qualifier, spread/collect alias, or implicit flattening.
 
 Block await starts child statements and joins them. In contrast, await handle
-waits for existing work and replaces its operand local according to group 2.
-The parser must distinguish these forms; block result binding follows ordinary
-value-statement rules, while handle-await has its own default destination.
+waits for existing work. Both forms use ordinary value-statement binding: bare
+await writes `_`, named let writes its destination, and nameless let discards.
+Handle await preserves its operand unless that local is also the destination.
 
 ## Children, Inputs, and Types
 
@@ -77,8 +77,8 @@ value-statement rules, while handle-await has its own default destination.
 - Calls in the block need no async prefix. A run child makes one ordinary call;
   generate/map retain their own calls and arrays. Nested blocks are one child
   result each. An exec inside a called Flow affects only that called Run.
-- A direct await handle child resolves the captured future in its private local
-  copy and contributes the completed value. The outer handle remains a future.
+- A direct await handle child awaits the captured `Run<T>` in its private local
+  copy and contributes T. The outer local retains its Run handle.
   It does not launch the target again or adopt ownership of that existing run.
 - Collect outputs in declaration order, not completion order. Arrays stay nested;
   an empty child array contributes one empty-array item. Null is an item, not
@@ -86,7 +86,7 @@ value-statement rules, while handle-await has its own default destination.
 - Determine output from contracts: homogeneous child type T gives T[]; differing
   or unknown types give Json[], retaining typed values and provenance. Do not
   add tuple/union types or infer a narrower type from observed runtime values.
-  A handle-await child contributes its future's result type T.
+  A handle-await child contributes its Run handle's result type T.
 
 ## Scheduling, Failure, and Persistence
 
@@ -100,7 +100,7 @@ drain unfinished branch tasks and newly launched runs owned by the block; retain
 completed/failed records and publish no partial binding. Preserve ordinary parent
 cancellation and limit behavior. File/tool side effects are not rolled back.
 
-Canceling a branch that merely awaits a preexisting future stops that wait; it
+Canceling a branch that merely awaits a preexisting Run handle stops that wait; it
 does not cancel the referenced run just because another branch failed. The
 original owner's lifecycle still applies: group 2 cancels owned async children
 when their parent ends, while group 4's independent roots remain independent.
@@ -142,9 +142,9 @@ runnable. This documentation PR requires no release entry or product changes.
 4. Preserve one item per child across scalar, null, empty/nested arrays, structs,
    Parts, homogeneous and heterogeneous types, and unknown contracts. Feed the
    final array directly into run/map/reduce.
-5. Mix new calls with awaits of existing futures. Collect completed values,
-   retain the outer futures, and never duplicate their launches. On block failure
-   cancel block-owned work but preserve independently owned future targets.
+5. Mix new calls with awaits of existing Run handles. Collect completed values,
+   retain outer Run handles, and never duplicate launches. On block failure,
+   cancel block-owned work but preserve independently owned Run targets.
 6. Failures and parent cancellation drain branch tasks, retain inspection facts,
    avoid partial binding, and leave already-performed side effects observable.
 7. Round-trip output refs and statement records. Retry a successful prefix and
