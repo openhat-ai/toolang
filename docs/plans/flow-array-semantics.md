@@ -17,7 +17,7 @@ generate/map/reduce one runnable-target syntax.
 
 Success means arrays from parameters, run results, helper Flows, and restored
 locals behave identically; nested arrays stay nested. This group owns the value
-model and source migration, with no async launches, futures, await forms, or
+model and source migration, with no async launches, run handles, await forms, or
 spawn implementation. Groups 2-4 have separate definitions and PRs.
 
 | Group | Definition PR | Implementation prerequisite |
@@ -25,11 +25,15 @@ spawn implementation. Groups 2-4 have separate definitions and PRs.
 | 1. Calls, arrays, names, and using | [#684](https://github.com/openhat-ai/toolang/pull/684) | Matching published grammar |
 | 2. Async run and handle await | [#685](https://github.com/openhat-ai/toolang/pull/685) | Group 1 |
 | 3. Await blocks | [#686](https://github.com/openhat-ai/toolang/pull/686) | Groups 1 and 2 |
-| 4. Independent spawn | [#687](https://github.com/openhat-ai/toolang/pull/687) | Groups 1 and 2 |
+| 4. Independent spawn | [Runtime #687](https://github.com/openhat-ai/toolang/pull/687), [grammar #48](https://github.com/openhat-ai/tree-sitter-toolang/pull/48) | Group 1 and published spawn grammar; shares runtime handles with group 2, waiting deferred |
 
-The four documentation PRs target main independently. Approval and the grammar
-release are required per implementation group; groups 3 and 4 do not depend on
-one another. Do not implement later groups as incidental work in an earlier PR.
+The definition PRs target their repositories' main branches independently.
+Approval and the grammar release are required per implementation group. Group 4
+has separate grammar/runtime definitions and does not depend on group 2 or 3.
+Groups 2 and 4 share runtime handles with readable id/thread/status fields;
+`Run<T>` is design notation, not a language type. Shared runtime support does not
+pull in the other's launch or waiting behavior.
+Do not implement later groups as incidental work in an earlier PR.
 
 This supersedes the affected rules in [Flow Usability](flow-usability.md) and
 [Flat Call Input](flat-call-input.md); unrelated behavior remains unchanged.
@@ -229,7 +233,7 @@ shared complete-value transformation; end-to-end seek array checks require that
 separate bridge implementation and must not be reported as passing here.
 
 Out of scope: automatic source rewriting, flattening, new concurrency operators,
-futures, root spawning, and a legacy execution engine.
+run handles, root spawning, and a legacy execution engine.
 The approved definition and published tree-sitter-toolang 0.4.0a1 provide the
 implementation prerequisites. Update current documentation and the changelog
 alongside the implementation.

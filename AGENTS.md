@@ -62,7 +62,11 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Keep plans and documentation concise and decision-complete. Avoid repeated
   context, unnecessary prose, and oversized sections; include only the explicit
   decisions, acceptance criteria, risks, examples, and implementation
-  touchpoints needed to execute the work.
+  touchpoints needed to execute the work. State each decision once; acceptance
+  tests should name scenarios and pass conditions rather than repeat the design.
+  Keep background, alternatives, and implementation details only when they
+  affect a decision or its verification. Link to existing contracts instead of
+  restating them, and remove superseded discussion when revising a plan.
 - Keep diffs minimal, composable, and limited to one concern.
 - Prefer simple, explicit designs and mature libraries over unnecessary layers.
 - Use `types.py` for vocabulary, `records.py` for persistence, `events.py` for
