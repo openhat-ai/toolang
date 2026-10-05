@@ -30,7 +30,7 @@ dispatch, detached processes, restart/resume, and new CLI/API flags.
   thread-scoped. Fork requires a terminal anchor; rewind changes visible history
   without deleting physical records.
 - Store admission derives control `triggered_by` from the execution parent.
-  Atomic child receipts support model Tool Steps only; thread creation has a
+  Atomic child launch replies support model Tool Steps only; thread creation has a
   separate transaction. Spawn must extend these boundaries.
 
 ## Invocation and Inputs
@@ -91,8 +91,8 @@ that run's result without launching work. For `Run<Text[]>`, await returns
 Run's meaning is independent of who owns its lifetime: async children remain
 parent-owned, while spawned roots remain executor-owned.
 
-A returned Run handle serves as the launch receipt; receipt is a role, not
-another type. Agic receives `{id, thread, status}` and can cite id or pass it as the run
+Returning a Run handle confirms admission. Agic receives `{id, thread, status}`
+and can cite id or pass it as the run
 argument to history/read_output. The reply is a snapshot; it does not update
 inside model history. Keep `_toolang/run`'s existing `{run_id, controls}` reply
 and completion message unchanged. Creation/entry controls remain persisted and
@@ -252,7 +252,7 @@ Paths below are relative to `src/toolang/`.
 | --- | --- |
 | Language | `lang/{ast,lower,types,input,contracts,flow_validation,format,description}.py`: Run vocabulary, field/type inference, CST, diagnostics, prepared-cache compatibility |
 | Execution | `execution/executor/{executor,common,content,frame,tool_runtime}.py`, new `execution/executor/stmts/spawn.py`: admission, Run views/projections, context, ownership, binding |
-| Runtime tools | `execution/tools/_toolang.py`, `base/protocols/tool.py`, `execution/runnables.py`, assembly guidance/result matching: registration, hands, receipt-only continuation |
+| Runtime tools | `execution/tools/_toolang.py`, `base/protocols/tool.py`, `execution/runnables.py`, assembly guidance/result matching: registration, hands, handle-only continuation |
 | Persistence/hosts | `execution/{store,threads,records,events,types,schemas}.py`, inspection/history and host observers: Run codec/view, atomic admission, provenance, retention, event routing |
 
 Pin the published grammar, update examples/generated references, and generate
