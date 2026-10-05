@@ -78,7 +78,8 @@ Handle await preserves its operand unless that local is also the destination.
   generate/map retain their own calls and arrays. Nested blocks are one child
   result each. An exec inside a called Flow affects only that called Run.
 - A direct await handle child awaits the captured `Run<T>` in its private local
-  copy and contributes T. The outer local retains its Run handle.
+  copy and contributes T. Here `Run<T>` is runtime design notation, not a language
+  type. The outer local retains its Run handle.
   It does not launch the target again or adopt ownership of that existing run.
 - Collect outputs in declaration order, not completion order. Arrays stay nested;
   an empty child array contributes one empty-array item. Null is an item, not
@@ -118,7 +119,7 @@ branch retry mode. Preserve old record kinds and historical decoding.
 
 - Upstream grammar plus `src/toolang/lang/{ast,lower,contracts,flow_validation,
   format,description}.py`: AwaitBlockStmt, child restrictions, lane clauses,
-  output contract inference, distinct handle/block binding rules, and diagnostics.
+  output contract inference, shared result binding rules, and diagnostics.
 - `src/toolang/execution/executor/stmts/await_block.py`, `steps/par.py`,
   `runs/flow.py`, `executor.py`, and `iteration.py`: isolated branch locals,
   concurrency, ownership-sensitive cleanup, ordered result collection, and retry.
